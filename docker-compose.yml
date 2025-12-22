@@ -9,8 +9,14 @@ services:
     # depends_on:
     #   - ollama # Aspetta che Ollama parta
     volumes:
+      - ./src:/app/src
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./yarn.lock:/app/yarn.lock
+      - ./transcribe.py:/app/transcribe.py
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
+    # command rimosso: usiamo il CMD del Dockerfile che lancia "yarn dev"
     deploy:
       resources:
         limits:

@@ -2,7 +2,6 @@ import { parentPort, workerData } from 'worker_threads';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
-import ffmpegPath from 'ffmpeg-static';
 import OpenAI from 'openai';
 import { getUserName } from './db';
 
@@ -106,9 +105,11 @@ async function run() {
 
 function convertPcmToWav(input: string, output: string): Promise<void> {
     return new Promise((resolve, reject) => {
-        if (!ffmpegPath) return reject("FFmpeg non trovato");
+        // Usiamo "ffmpeg" direttamente perché installato nel Dockerfile con apt-get
+        const ffmpegCommand = "ffmpeg";
+        
         // PCM s16le 48k stereo (come da tuo voicerecorder.ts)
-        const cmd = `"${ffmpegPath}" -f s16le -ar 48000 -ac 2 -i "${input}" "${output}" -y`;
+        const cmd = `${ffmpegCommand} -f s16le -ar 48000 -ac 2 -i "${input}" "${output}" -y`;
         exec(cmd, (err) => err ? reject(err) : resolve());
     });
 }
@@ -149,7 +150,8 @@ async function generateSummary(text: string): Promise<string> {
                     content: `Sei il Bardo Cronista di una campagna D&D. 
                     Riceverai un copione di dialogo nel formato "**Nome**: Frase".
                     Riassumi gli eventi accaduti in stile narrativo epico. 
-                    Usa i nomi dei personaggi forniti. Ignora commenti tecnici o fuori dal gioco.`
+                    Usa i nomi dei personaggi forniti.
+                    IMPORTANTE: Rispondi rigorosamente in lingua ITALIANA. Non usare inglese.`
                 },
                 { 
                     role: "user", 

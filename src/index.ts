@@ -19,10 +19,33 @@ const client = new Client({
 let autoLeaveTimer: NodeJS.Timeout | null = null;
 let sessionHeaderSent = false; // TRACCIA SE ABBIAMO GIÀ MANDATO L'INTESTAZIONE
 
+// --- FUNZIONE HELPER PER SPOSTARE FILE (FIX EXDEV) ---
+function moveFile(oldPath: string, newPath: string) {
+    try {
+        // Proviamo il rename veloce
+        fs.renameSync(oldPath, newPath);
+    } catch (err: any) {
+        // Se fallisce perché sono su volumi diversi (EXDEV), facciamo copia+cancella
+        if (err.code === 'EXDEV') {
+            fs.copyFileSync(oldPath, newPath);
+            fs.unlinkSync(oldPath);
+        } else {
+            throw err;
+        }
+    }
+}
+
 // --- COMANDI ---
 
 client.on('messageCreate', async (message: Message) => {
     if (!message.content.startsWith('!') || message.author.bot) return;
+
+    // FILTRO CANALE COMANDI
+    const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+    if (commandChannelId && message.channelId !== commandChannelId) {
+        // Se è impostato un canale specifico e il messaggio non arriva da lì, ignoriamo.
+        return;
+    }
 
     const args = message.content.slice(1).split(' ');
     const command = args.shift()?.toLowerCase();
@@ -38,7 +61,7 @@ client.on('messageCreate', async (message: Message) => {
             // RESETTO IL FLAG PER LA NUOVA SESSIONE
             sessionHeaderSent = false;
             
-            message.reply("📜 Il Bardo ha preso la piuma. Sto registrando...");
+            message.reply("🔊 Sono entrato nel canale vocale! Inizio ad ascoltare le vostre gesta.");
             
             // Se il bot entra e non c'è nessuno (improbabile ma possibile), avvia check
             checkAutoLeave(member.voice.channel);
@@ -47,11 +70,12 @@ client.on('messageCreate', async (message: Message) => {
         }
     }
 
-    if (command === 'leave') {
+    // MODIFICA: !leave -> !stopwriting
+    if (command === 'stopwriting') {
         const success = disconnect(message.guild.id);
         if (success) {
             sessionHeaderSent = false; // RESET
-            message.reply("🛑 Il Bardo ripone la piuma.");
+            message.reply("🛑 Disconnesso. Sto scrivendo le memorie di questa sessione...");
         }
         else message.reply("Non ero connesso.");
     }
@@ -60,7 +84,7 @@ client.on('messageCreate', async (message: Message) => {
         const characterName = args.join(' ');
         if (characterName) {
             setUserName(message.author.id, characterName);
-            message.reply(`⚔️ Salve, **${characterName}**!`);
+            message.reply(`⚔️ Benvenuto avventuriero! D'ora in poi sarai conosciuto come **${characterName}**.`);
         } else {
             message.reply("Uso: `!iam Nome Del Tuo PG`");
         }
@@ -101,11 +125,24 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
     if (humans === 0) {
         if (!autoLeaveTimer) {
             console.log("👻 Canale vuoto (solo bot). Avvio timer disconnessione (60s)...");
-            autoLeaveTimer = setTimeout(() => {
+            autoLeaveTimer = setTimeout(async () => {
                 if (channel.guild) {
                     disconnect(channel.guild.id);
                     sessionHeaderSent = false; // RESET
                     console.log("👋 Auto-leave per inattività.");
+
+                    // Notifica nel canale comandi se configurato
+                    const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+                    if (commandChannelId) {
+                        try {
+                            const cmdChannel = await client.channels.fetch(commandChannelId) as TextChannel;
+                            if (cmdChannel) {
+                                await cmdChannel.send("👻 Nessuno è rimasto ad ascoltare. Il Bardo si ritira nelle sue stanze (Auto-Leave).");
+                            }
+                        } catch (e) {
+                            console.error("Impossibile inviare notifica auto-leave:", e);
+                        }
+                    }
                 }
                 autoLeaveTimer = null;
             }, 60000); // 60 secondi
@@ -121,7 +158,9 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
 }
 
 // --- TIMER 10 MINUTI (WORKER) ---
-const WORKER_INTERVAL = 10 * 60 * 1000;
+// Default 1 minuto se non specificato, altrimenti usa il valore env
+const intervalMinutes = parseInt(process.env.SUMMARY_INTERVAL_MINUTES || '1');
+const WORKER_INTERVAL = intervalMinutes * 60 * 1000;
 let isWorkerRunning = false;
 
 setInterval(() => {
@@ -150,7 +189,8 @@ function runBatchProcessor() {
         const oldPath = path.join(recFolder, file);
         const newPath = path.join(batchFolder, file);
         try {
-            fs.renameSync(oldPath, newPath);
+            // FIX EXDEV: Usiamo la nostra funzione sicura
+            moveFile(oldPath, newPath);
         } catch (err: any) {
             console.error(`Errore spostamento ${file}:`, err.message);
         }
@@ -164,7 +204,9 @@ function runBatchProcessor() {
     console.log(`[Main] Lancio worker da: ${workerPath}`);
 
     const worker = new Worker(workerPath, { 
-        workerData: { batchFolder }
+        workerData: { batchFolder },
+        // FIX WORKER: Se il file è .ts, diciamo al worker di usare ts-node per capire il codice
+        execArgv: extension === 'ts' ? ['-r', 'ts-node/register'] : undefined
     });
 
     worker.on('message', async (result) => {
@@ -187,10 +229,13 @@ function runBatchProcessor() {
                     if (!sessionHeaderSent) {
                         const today = new Date();
                         const dateStr = today.toLocaleDateString('it-IT', {
-                            day: '2-digit', month: '2-digit', year: 'numeric'
+                            weekday: 'long', 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
                         });
                         // Prima volta: Intestazione Rossa
-                        messageContent = `\`\`\`diff\n-SESSIONE DEL ${dateStr}\n\`\`\`\n${result.summary}`;
+                        messageContent = `\`\`\`diff\n-SESSIONE DEL ${dateStr.toUpperCase()}\n\`\`\`\n${result.summary}`;
                         sessionHeaderSent = true;
                     } else {
                         // Volte successive: Solo separatore discreto

@@ -1,3 +1,6 @@
 /.env
 .idea
 node_modules
+recordings/*
+batch_processing/*
+batch_process/*

@@ -4,28 +4,18 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import ffmpegPath from 'ffmpeg-static';
 import OpenAI from 'openai';
+import { getUserName } from './db';
 
-// CONFIGURAZIONE OLLAMA (DOCKER NETWORK)
+// CONFIGURAZIONE IBRIDA (OLLAMA / OPENAI)
+const useOllama = process.env.AI_PROVIDER === 'ollama';
+
 const openai = new OpenAI({
-    baseURL: 'http://ollama:11434/v1',
-    apiKey: 'ollama', // Placeholder richiesto
+    // Se usiamo Ollama mettiamo l'URL locale, altrimenti undefined (usa default OpenAI)
+    baseURL: useOllama ? 'http://ollama:11434/v1' : undefined,
+    apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY, 
 });
 
 const { batchFolder } = workerData;
-
-// Mappa fittizia (da caricare da DB/JSON in futuro)
-const characterMap: Record<string, string> = {};
-
-// Carica la mappa dei personaggi se esiste
-const mapPath = path.join(__dirname, '..', 'character_map.json');
-if (fs.existsSync(mapPath)) {
-    try {
-        const data = fs.readFileSync(mapPath, 'utf8');
-        Object.assign(characterMap, JSON.parse(data));
-    } catch (e) {
-        console.error("[Worker] Errore caricamento character_map.json", e);
-    }
-}
 
 async function run() {
     const files = fs.readdirSync(batchFolder).filter(f => f.endsWith('.pcm'));
@@ -67,9 +57,12 @@ async function run() {
             // --- FILTRO 2: Lunghezza Testo ---
             // Modifica: Accettiamo tutto purché non sia vuoto (per non perdere "Sì", "No", "Ok")
             if (result && result.text && result.text.trim().length > 0) {
+                // Recuperiamo il nome dal DB
+                const characterName = getUserName(userId);
+                
                 transcriptions.push({
                     time: timestamp,
-                    user: characterMap[userId] || `Utente ${userId}`, // Usa il nome PG se c'è
+                    user: characterName || `Utente ${userId}`, // Usa il nome PG se c'è
                     text: result.text.trim()
                 });
             }
@@ -97,7 +90,7 @@ async function run() {
         .join("\n");
 
     console.log(`[Worker] 📝 Dialogo ricostruito:\n${fullDialogue.substring(0, 200)}...`);
-    console.log(`[Worker] 🧙‍♂️ Chiedo il riassunto a Ollama (Llama 3.2)...`);
+    console.log(`[Worker] 🧙‍♂️ Chiedo il riassunto a ${useOllama ? 'Ollama' : 'OpenAI'}...`);
 
     // 5. RIASSUNTO LOCALE (Ollama)
     const summary = await generateSummary(fullDialogue);
@@ -144,14 +137,19 @@ function transcribeLocal(wavPath: string): Promise<{ text: string, error?: strin
 }
 
 async function generateSummary(text: string): Promise<string> {
+    // Scegli il modello in base al provider
+    const modelName = useOllama ? "llama3.2" : "gpt-4o"; // o "gpt-3.5-turbo" per risparmiare
+
     try {
         const completion = await openai.chat.completions.create({
-            model: "llama3.2", // Il nome del modello che hai scaricato su Ollama
+            model: modelName, 
             messages: [
                 { 
                     role: "system", 
-                    content: `Sei il Bardo Cronista di D&D. Riassumi questa sessione in italiano.
-                    Stile: Epico, Conciso, Bullet Points. Ignora il meta-game.`
+                    content: `Sei il Bardo Cronista di una campagna D&D. 
+                    Riceverai un copione di dialogo nel formato "**Nome**: Frase".
+                    Riassumi gli eventi accaduti in stile narrativo epico. 
+                    Usa i nomi dei personaggi forniti. Ignora commenti tecnici o fuori dal gioco.`
                 },
                 { 
                     role: "user", 
@@ -159,10 +157,10 @@ async function generateSummary(text: string): Promise<string> {
                 }
             ],
         });
-        return completion.choices[0].message.content || "Errore Ollama.";
+        return completion.choices[0].message.content || "Errore Generazione.";
     } catch (e) {
-        console.error("Errore Ollama:", e);
-        return "Impossibile contattare il Bardo (Ollama offline?).";
+        console.error("Errore AI:", e);
+        return "Il Bardo non risponde.";
     }
 }
 

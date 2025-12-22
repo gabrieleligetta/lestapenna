@@ -4,6 +4,7 @@ import { connectToChannel, disconnect } from './voicerecorder';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Worker } from 'worker_threads';
+import { setUserName, getUserName } from './db';
 
 const client = new Client({
     intents: [
@@ -14,22 +15,9 @@ const client = new Client({
     ]
 });
 
-// --- GESTIONE NOMI PG ---
-const mapPath = path.join(__dirname, '..', 'character_map.json');
-let characterMap: Record<string, string> = {};
-
-// Carica mappa all'avvio
-if (fs.existsSync(mapPath)) {
-    try {
-        characterMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
-    } catch (e) {
-        console.error("Errore lettura character_map.json", e);
-    }
-}
-
-function saveCharacterMap() {
-    fs.writeFileSync(mapPath, JSON.stringify(characterMap, null, 2));
-}
+// --- VARIABILI GLOBALI ---
+let autoLeaveTimer: NodeJS.Timeout | null = null;
+let sessionHeaderSent = false; // TRACCIA SE ABBIAMO GIÀ MANDATO L'INTESTAZIONE
 
 // --- COMANDI ---
 
@@ -41,38 +29,100 @@ client.on('messageCreate', async (message: Message) => {
 
     if (!message.guild) return; // Ignora messaggi privati
 
-    if (command === 'join') {
-        // TypeScript vuole essere sicuro che 'voice' esista su 'member'
+    // MODIFICA: !join -> !write
+    if (command === 'write') {
         const member = message.member;
         if (member?.voice.channel) {
             await connectToChannel(member.voice.channel);
-            message.reply("👂 Sto registrando...");
+            
+            // RESETTO IL FLAG PER LA NUOVA SESSIONE
+            sessionHeaderSent = false;
+            
+            message.reply("📜 Il Bardo ha preso la piuma. Sto registrando...");
+            
+            // Se il bot entra e non c'è nessuno (improbabile ma possibile), avvia check
+            checkAutoLeave(member.voice.channel);
         } else {
-            message.reply("Devi essere in un canale vocale!");
+            message.reply("Devi essere in un canale vocale per evocare il Bardo!");
         }
     }
 
     if (command === 'leave') {
         const success = disconnect(message.guild.id);
-        if (success) message.reply("🛑 Registrazione fermata.");
+        if (success) {
+            sessionHeaderSent = false; // RESET
+            message.reply("🛑 Il Bardo ripone la piuma.");
+        }
         else message.reply("Non ero connesso.");
     }
 
     if (command === 'iam') {
         const characterName = args.join(' ');
         if (characterName) {
-            characterMap[message.author.id] = characterName;
-            saveCharacterMap();
-            message.reply(`✅ Ok, da ora sei **${characterName}**.`);
+            setUserName(message.author.id, characterName);
+            message.reply(`⚔️ Salve, **${characterName}**!`);
         } else {
             message.reply("Uso: `!iam Nome Del Tuo PG`");
         }
     }
+
+    if (command === 'whoami') {
+        const name = getUserName(message.author.id);
+        if (name) {
+            message.reply(`Tu sei **${name}**.`);
+        } else {
+            message.reply("Non so chi sei. Usa `!iam Nome Del Tuo PG` per presentarti.");
+        }
+    }
 });
 
-// --- TIMER 10 MINUTI ---
+// --- AUTO LEAVE LOGIC ---
+
+client.on('voiceStateUpdate', (oldState, newState) => {
+    // Determina in quale gilda è successo l'evento
+    const guild = newState.guild || oldState.guild;
+    if (!guild) return;
+
+    // Recupera il bot come membro della gilda
+    const botMember = guild.members.cache.get(client.user!.id);
+    
+    // Se il bot non è connesso a nessun canale vocale in questa gilda, non fare nulla
+    if (!botMember?.voice.channel) return;
+
+    // Controlliamo il canale dove si trova il bot
+    checkAutoLeave(botMember.voice.channel);
+});
+
+function checkAutoLeave(channel: VoiceBasedChannel) {
+    // Conta i membri umani (escludendo i bot)
+    const humans = channel.members.filter(member => !member.user.bot).size;
+
+    // Se ci sono 0 umani (quindi solo bot), avvia il timer
+    if (humans === 0) {
+        if (!autoLeaveTimer) {
+            console.log("👻 Canale vuoto (solo bot). Avvio timer disconnessione (60s)...");
+            autoLeaveTimer = setTimeout(() => {
+                if (channel.guild) {
+                    disconnect(channel.guild.id);
+                    sessionHeaderSent = false; // RESET
+                    console.log("👋 Auto-leave per inattività.");
+                }
+                autoLeaveTimer = null;
+            }, 60000); // 60 secondi
+        }
+    } else {
+        // Se c'è almeno un umano, annulla il timer
+        if (autoLeaveTimer) {
+            console.log("👥 Umani rilevati. Timer auto-leave annullato.");
+            clearTimeout(autoLeaveTimer);
+            autoLeaveTimer = null;
+        }
+    }
+}
+
+// --- TIMER 10 MINUTI (WORKER) ---
 const WORKER_INTERVAL = 10 * 60 * 1000;
-let isWorkerRunning = false; // SEMAFORO PER LA CONCORRENZA
+let isWorkerRunning = false;
 
 setInterval(() => {
     console.log("⏰ Check Worker...");
@@ -87,11 +137,9 @@ function runBatchProcessor() {
     const recFolder = path.join(__dirname, '..', 'recordings');
     const batchFolder = path.join(__dirname, '..', 'batch_processing');
 
-    // Assicuriamoci che le cartelle esistano
     if (!fs.existsSync(recFolder)) fs.mkdirSync(recFolder);
     if (!fs.existsSync(batchFolder)) fs.mkdirSync(batchFolder);
 
-    // Spostiamo i file (Move atomico)
     const files = fs.readdirSync(recFolder).filter(f => f.endsWith('.pcm'));
     
     if (files.length === 0) return;
@@ -108,10 +156,8 @@ function runBatchProcessor() {
         }
     });
 
-    // --- AVVIO DEL WORKER ---
-    isWorkerRunning = true; // BLOCCO IL SEMAFORO
+    isWorkerRunning = true;
 
-    // Se siamo in esecuzione TS (ts-node) cerchiamo .ts, altrimenti .js
     const extension = __filename.endsWith('.ts') ? 'ts' : 'js';
     const workerPath = path.join(__dirname, `worker.${extension}`);
     
@@ -125,7 +171,6 @@ function runBatchProcessor() {
         if (result.status === 'success') {
             console.log("✅ [Main] Worker completato!");
             
-            // --- LOGICA DI INVIO DISCORD ---
             try {
                 const channelId = process.env.DISCORD_SUMMARY_CHANNEL_ID;
                 if (!channelId) {
@@ -133,17 +178,26 @@ function runBatchProcessor() {
                     return;
                 }
 
-                // Recuperiamo il canale
                 const channel = await client.channels.fetch(channelId) as TextChannel;
                 
                 if (channel) {
-                    const today = new Date();
-                    const dateStr = today.toLocaleDateString('it-IT', {
-                        day: '2-digit', month: '2-digit', year: 'numeric'
-                    });
-                    
-                    const header = `\`\`\`diff\n-SESSIONE DEL ${dateStr}\n\`\`\``;
-                    await channel.send(`${header}\n${result.summary}`);
+                    let messageContent = "";
+
+                    // LOGICA INTESTAZIONE
+                    if (!sessionHeaderSent) {
+                        const today = new Date();
+                        const dateStr = today.toLocaleDateString('it-IT', {
+                            day: '2-digit', month: '2-digit', year: 'numeric'
+                        });
+                        // Prima volta: Intestazione Rossa
+                        messageContent = `\`\`\`diff\n-SESSIONE DEL ${dateStr}\n\`\`\`\n${result.summary}`;
+                        sessionHeaderSent = true;
+                    } else {
+                        // Volte successive: Solo separatore discreto
+                        messageContent = `**...continua:**\n${result.summary}`;
+                    }
+
+                    await channel.send(messageContent);
                     
                     console.log("📨 Riassunto inviato al canale Discord!");
                 } else {
@@ -159,11 +213,11 @@ function runBatchProcessor() {
 
     worker.on('error', (err) => {
         console.error("❌ [Main] Errore nel Worker:", err);
-        isWorkerRunning = false; // SBLOCCO IN CASO DI ERRORE
+        isWorkerRunning = false;
     });
 
     worker.on('exit', (code) => {
-        isWorkerRunning = false; // SBLOCCO ALLA FINE
+        isWorkerRunning = false;
         if (code !== 0) console.error(`[Main] Worker fermato con codice ${code}`);
     });
 }

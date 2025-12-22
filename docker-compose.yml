@@ -6,8 +6,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    depends_on:
-      - ollama # Aspetta che Ollama parta
+    # depends_on:
+    #   - ollama # Aspetta che Ollama parta
     volumes:
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
@@ -18,14 +18,14 @@ services:
           memory: 2048M
 
   # 2. IL CERVELLO (Ollama Containerizzato)
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama-server
-    restart: always
-    ports:
-      - "11434:11434" # Espone la porta (utile per testare dal Mac o per debug)
-    volumes:
-      - ollama_data:/root/.ollama # Salva i modelli scaricati qui
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama-server
+  #   restart: always
+  #   ports:
+  #     - "11434:11434" # Espone la porta (utile per testare dal Mac o per debug)
+  #   volumes:
+  #     - ollama_data:/root/.ollama # Salva i modelli scaricati qui
 
 volumes:
   ollama_data: # Volume persistente gestito da Docker

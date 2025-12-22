@@ -1,17 +1,17 @@
 import sys
+import json
 from faster_whisper import WhisperModel
 
 # Prendiamo il file audio dagli argomenti
 if len(sys.argv) < 2:
-    print("Errore: Manca il file audio")
+    print(json.dumps({"error": "Manca il file audio"}))
     sys.exit(1)
 
 audio_file = sys.argv[1]
 
 # Carichiamo il modello. 
-# 'medium' è un buon compromesso. 'small' è più veloce. 'large-v3' è il più preciso.
-# Su Oracle ARM useremo "int8" per andare veloci.
-model_size = "medium"
+# 'small' è molto più veloce di 'medium' su CPU e ha una buona accuratezza per l'italiano.
+model_size = "small"
 
 try:
     # Run on CPU with INT8 quantization
@@ -23,8 +23,8 @@ try:
     for segment in segments:
         full_text += segment.text + " "
         
-    print(full_text.strip())
+    print(json.dumps({"text": full_text.strip()}))
 
 except Exception as e:
-    print(f"Errore Trascrizione: {e}")
+    print(json.dumps({"error": str(e)}))
     sys.exit(1)

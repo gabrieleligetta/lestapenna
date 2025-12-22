@@ -14,6 +14,23 @@ const client = new Client({
     ]
 });
 
+// --- GESTIONE NOMI PG ---
+const mapPath = path.join(__dirname, '..', 'character_map.json');
+let characterMap: Record<string, string> = {};
+
+// Carica mappa all'avvio
+if (fs.existsSync(mapPath)) {
+    try {
+        characterMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+    } catch (e) {
+        console.error("Errore lettura character_map.json", e);
+    }
+}
+
+function saveCharacterMap() {
+    fs.writeFileSync(mapPath, JSON.stringify(characterMap, null, 2));
+}
+
 // --- COMANDI ---
 
 client.on('messageCreate', async (message: Message) => {
@@ -40,13 +57,29 @@ client.on('messageCreate', async (message: Message) => {
         if (success) message.reply("🛑 Registrazione fermata.");
         else message.reply("Non ero connesso.");
     }
+
+    if (command === 'iam') {
+        const characterName = args.join(' ');
+        if (characterName) {
+            characterMap[message.author.id] = characterName;
+            saveCharacterMap();
+            message.reply(`✅ Ok, da ora sei **${characterName}**.`);
+        } else {
+            message.reply("Uso: `!iam Nome Del Tuo PG`");
+        }
+    }
 });
 
 // --- TIMER 10 MINUTI ---
 const WORKER_INTERVAL = 10 * 60 * 1000;
+let isWorkerRunning = false; // SEMAFORO PER LA CONCORRENZA
 
 setInterval(() => {
     console.log("⏰ Check Worker...");
+    if (isWorkerRunning) {
+        console.log("⚠️ Worker precedente ancora in esecuzione. Salto questo turno.");
+        return;
+    }
     runBatchProcessor();
 }, WORKER_INTERVAL);
 
@@ -76,11 +109,12 @@ function runBatchProcessor() {
     });
 
     // --- AVVIO DEL WORKER ---
+    isWorkerRunning = true; // BLOCCO IL SEMAFORO
+
     // Se siamo in esecuzione TS (ts-node) cerchiamo .ts, altrimenti .js
     const extension = __filename.endsWith('.ts') ? 'ts' : 'js';
     const workerPath = path.join(__dirname, `worker.${extension}`);
     
-    // Debug per essere sicuri
     console.log(`[Main] Lancio worker da: ${workerPath}`);
 
     const worker = new Worker(workerPath, { 
@@ -103,18 +137,12 @@ function runBatchProcessor() {
                 const channel = await client.channels.fetch(channelId) as TextChannel;
                 
                 if (channel) {
-                    // 1. Otteniamo la data formattata (DD/MM/YYYY)
                     const today = new Date();
                     const dateStr = today.toLocaleDateString('it-IT', {
                         day: '2-digit', month: '2-digit', year: 'numeric'
                     });
                     
-                    // 2. Formattazione stile screenshot (Red Text / Diff)
-                    // Il trattino '-' all'inizio della riga in ```diff lo rende rosso.
                     const header = `\`\`\`diff\n-SESSIONE DEL ${dateStr}\n\`\`\``;
-
-                    // 3. Invio del messaggio
-                    // Mettiamo il riassunto sotto l'header
                     await channel.send(`${header}\n${result.summary}`);
                     
                     console.log("📨 Riassunto inviato al canale Discord!");
@@ -124,14 +152,18 @@ function runBatchProcessor() {
             } catch (err) {
                 console.error("❌ Errore nell'invio del messaggio:", err);
             }
+        } else if (result.status === 'skipped') {
+            console.log(`ℹ️ [Main] Worker skipped: ${result.message}`);
         }
     });
 
     worker.on('error', (err) => {
         console.error("❌ [Main] Errore nel Worker:", err);
+        isWorkerRunning = false; // SBLOCCO IN CASO DI ERRORE
     });
 
     worker.on('exit', (code) => {
+        isWorkerRunning = false; // SBLOCCO ALLA FINE
         if (code !== 0) console.error(`[Main] Worker fermato con codice ${code}`);
     });
 }

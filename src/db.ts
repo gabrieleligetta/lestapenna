@@ -115,6 +115,10 @@ export const getSessionRecordings = (sessionId: string): Recording[] => {
     return db.prepare('SELECT * FROM recordings WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId) as Recording[];
 };
 
+export const getRecording = (filename: string): Recording | undefined => {
+    return db.prepare('SELECT * FROM recordings WHERE filename = ?').get(filename) as Recording | undefined;
+};
+
 export const updateRecordingStatus = (filename: string, status: string, text: string | null = null, error: string | null = null) => {
     if (text !== null) {
         db.prepare('UPDATE recordings SET status = ?, transcription_text = ? WHERE filename = ?').run(status, text, filename);
@@ -152,6 +156,27 @@ export const resetSessionData = (sessionId: string): Recording[] => {
     return getSessionRecordings(sessionId);
 };
 
+/**
+ * Riporta allo stato PENDING solo i file che erano in fase di elaborazione
+ * o in coda, evitando di toccare quelli già completati o scartati.
+ * Utile per il recovery automatico al riavvio.
+ */
+export const resetUnfinishedRecordings = (sessionId: string): Recording[] => {
+    // 1. Riporta a PENDING i file che erano "in volo" (interrotti dal crash)
+    db.prepare(`
+        UPDATE recordings 
+        SET status = 'PENDING', error_log = NULL 
+        WHERE session_id = ? AND status IN ('QUEUED', 'PROCESSING')
+    `).run(sessionId);
+
+    // 2. Recupera tutti i file che risultano da processare per questa sessione
+    // (Inclusi quelli che erano già PENDING)
+    return db.prepare(`
+        SELECT * FROM recordings 
+        WHERE session_id = ? AND status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING')
+    `).all(sessionId) as Recording[];
+};
+
 // --- NUOVE FUNZIONI PER IL BARDO ---
 
 export const getSessionTranscript = (sessionId: string) => {
@@ -168,6 +193,13 @@ export const getSessionTranscript = (sessionId: string) => {
     return rows;
 };
 
+export const getSessionErrors = (sessionId: string) => {
+    return db.prepare(`
+        SELECT filename, error_log FROM recordings 
+        WHERE session_id = ? AND status = 'ERROR'
+    `).all(sessionId) as Array<{ filename: string, error_log: string | null }>;
+};
+
 export const getAvailableSessions = (): SessionSummary[] => {
     return db.prepare(`
         SELECT session_id, MIN(timestamp) as start_time, COUNT(*) as fragments 
@@ -176,6 +208,34 @@ export const getAvailableSessions = (): SessionSummary[] => {
         ORDER BY start_time DESC 
         LIMIT 5
     `).all() as SessionSummary[];
+};
+
+/**
+ * Ritorna il numero sequenziale della sessione basato sul tempo di inizio.
+ */
+export const getSessionNumber = (sessionId: string): number => {
+    const result = db.prepare(`
+        SELECT COUNT(DISTINCT session_id) as count 
+        FROM recordings 
+        WHERE timestamp <= (SELECT MIN(timestamp) FROM recordings WHERE session_id = ?)
+    `).get(sessionId) as { count: number };
+    return result.count || 1;
+};
+
+/**
+ * Ritorna l'ID dell'utente che ha iniziato la sessione (primo frammento).
+ */
+export const getSessionAuthor = (sessionId: string): string | null => {
+    const row = db.prepare('SELECT user_id FROM recordings WHERE session_id = ? ORDER BY timestamp ASC LIMIT 1').get(sessionId) as { user_id: string } | undefined;
+    return row ? row.user_id : null;
+};
+
+/**
+ * Ritorna il timestamp di inizio della sessione.
+ */
+export const getSessionStartTime = (sessionId: string): number | null => {
+    const row = db.prepare('SELECT MIN(timestamp) as start_time FROM recordings WHERE session_id = ?').get(sessionId) as { start_time: number } | undefined;
+    return row ? row.start_time : null;
 };
 
 export { db };

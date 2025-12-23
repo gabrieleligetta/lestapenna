@@ -14,9 +14,14 @@ export function convertPcmToWav(input: string, output: string): Promise<void> {
             '-y'
         ]);
 
-        ffmpeg.on('close', (code) => {
+        ffmpeg.on('close', (code, signal) => {
             if (code === 0) resolve();
-            else reject(new Error(`ffmpeg exited with code ${code}`));
+            else {
+                const errorMsg = code === null 
+                    ? `ffmpeg killed by signal ${signal}` 
+                    : `ffmpeg exited with code ${code}`;
+                reject(new Error(errorMsg));
+            }
         });
 
         ffmpeg.on('error', (err) => reject(err));
@@ -39,10 +44,13 @@ export function transcribeLocal(wavPath: string): Promise<{ text: string, error?
             stderr += data.toString();
         });
 
-        python.on('close', (code) => {
+        python.on('close', (code, signal) => {
             if (code !== 0) {
-                console.error("Python Error:", stderr);
-                return reject(new Error(`Python process exited with code ${code}`));
+                if (stderr) console.error("Python Error:", stderr);
+                const errorMsg = code === null 
+                    ? `Python process killed by signal ${signal} (possibile OOM)` 
+                    : `Python process exited with code ${code}`;
+                return reject(new Error(errorMsg));
             }
 
             try {

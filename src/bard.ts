@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import {getSessionTranscript, getUserProfile} from './db';
+import {getSessionTranscript, getUserProfile, getSessionErrors} from './db';
 
 // --- CONFIGURAZIONE TONI (PRESET) ---
 export const TONES = {
@@ -21,9 +21,18 @@ const openai = new OpenAI({
 
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<string> {
     // 1. RECUPERA I DATI DAL DB (Nessuna trascrizione necessaria!)
+    console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId}...`);
     const transcriptions = getSessionTranscript(sessionId);
+    const errors = getSessionErrors(sessionId);
+
+    if (errors.length > 0) {
+        console.warn(`[Bardo] Attenzione: ${errors.length} frammenti non sono stati trascritti a causa di errori.`);
+    }
 
     if (transcriptions.length === 0) {
+        if (errors.length > 0) {
+            return `Purtroppo non è stato possibile recuperare la storia. Tutti i ${errors.length} frammenti audio hanno riscontrato errori durante la trascrizione (lo Scriba ha avuto problemi tecnici).`;
+        }
         return "Non ho trovato trascrizioni valide per questa sessione. Forse lo Scriba sta ancora lavorando o la sessione era vuota?";
     }
 
@@ -85,6 +94,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
             ]
         });
 
+        console.log(`[Bardo] ✅ Riassunto generato con successo per sessione ${sessionId}.`);
         return response.choices[0].message.content || "Il Bardo è rimasto senza parole.";
     } catch (err: any) {
         console.error("Errore generazione riassunto:", err);

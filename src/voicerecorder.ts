@@ -76,6 +76,8 @@ function createListeningStream(receiver: any, userId: string) {
 
     activeStreams.set(userId, { out, decoder, currentPath: filepath, startTime });
 
+    console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId}: ${filename}`);
+
     opusStream.on('end', async () => {
         activeStreams.delete(userId);
         
@@ -105,13 +107,14 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         filePath,
         userId
     }, {
+        jobId: fileName, // Deduplicazione basata sul nome del file
         attempts: 5,
         backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: true,
         removeOnFail: false
     });
     
-    // console.log(`[SafeMode] File ${fileName} accodato.`);
+    console.log(`[Recorder] 📥 File ${fileName} salvato e accodato per la sessione ${currentSessionId}.`);
 }
 
 export function disconnect(guildId: string): boolean {

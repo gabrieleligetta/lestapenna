@@ -20,8 +20,17 @@ export async function removeSessionJobs(sessionId: string) {
 
     for (const job of jobs) {
         if (job.data && job.data.sessionId === sessionId) {
-            await job.remove();
-            removedCount++;
+            try {
+                const state = await job.getState();
+                if (state === 'active') {
+                    console.log(`[Queue] Job ${job.id} (${job.data?.fileName}) è già in elaborazione, non lo rimuovo.`);
+                    continue;
+                }
+                await job.remove();
+                removedCount++;
+            } catch (err: any) {
+                console.warn(`[Queue] Impossibile rimuovere il job ${job.id}: ${err.message}`);
+            }
         }
     }
     return removedCount;

@@ -4,8 +4,20 @@ import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, Emb
 import { connectToChannel, disconnect } from './voicerecorder';
 import { audioQueue, removeSessionJobs } from './queue';
 import { generateSummary, TONES, ToneKey } from './bard';
-import { getAvailableSessions, updateUserField, getUserProfile, getUnprocessedRecordings, resetSessionData } from './db';
+import { 
+    getAvailableSessions, 
+    updateUserField, 
+    getUserProfile, 
+    getUnprocessedRecordings, 
+    resetSessionData, 
+    resetUnfinishedRecordings,
+    getSessionNumber,
+    getSessionAuthor,
+    getUserName,
+    getSessionStartTime
+} from './db';
 import { v4 as uuidv4 } from 'uuid';
+import { startWorker } from './worker';
 
 const client = new Client({
     intents: [
@@ -110,6 +122,7 @@ client.on('messageCreate', async (message: Message) => {
                 filePath: job.filepath,
                 userId: job.user_id
             }, {
+                jobId: job.filename,
                 attempts: 5,
                 backoff: { type: 'exponential', delay: 2000 },
                 removeOnComplete: true,
@@ -152,15 +165,12 @@ client.on('messageCreate', async (message: Message) => {
         const channel = message.channel as TextChannel;
         await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
-        const summary = await generateSummary(targetSessionId, requestedTone || 'DM');
-        
-        if (summary.length > 1900) {
-            const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-            for (const chunk of chunks) {
-                await channel.send(chunk);
-            }
-        } else {
-            await channel.send(summary);
+        try {
+            const summary = await generateSummary(targetSessionId, requestedTone || 'DM');
+            await publishSummary(targetSessionId, summary, channel, true);
+        } catch (err) {
+            console.error(`❌ Errore durante il racconto della sessione ${targetSessionId}:`, err);
+            await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
         }
     }
 
@@ -254,32 +264,70 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
         const jobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
         const sessionJobs = jobs.filter(j => j.data && j.data.sessionId === sessionId);
         
-        if (sessionJobs.length === 0) {
+        if (sessionJobs.length > 0) {
+            const details = await Promise.all(sessionJobs.map(async j => {
+                const state = await j.getState();
+                return `${j.data?.fileName} [${state}]`;
+            }));
+            console.log(`[Monitor] Sessione ${sessionId}: ancora ${sessionJobs.length} file da elaborare... (${details.join(', ')})`);
+        } else {
             clearInterval(checkInterval);
             console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);
             
             try {
                 const summary = await generateSummary(sessionId, 'DM');
-                
-                const today = new Date();
-                const dateStr = today.toLocaleDateString('it-IT', {
-                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-                });
-                
-                await discordChannel.send(`\`\`\`diff\n- SESSIONE DEL ${dateStr.toUpperCase()}\n\`\`\``);
-                
-                const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-                for (const chunk of chunks) {
-                    await discordChannel.send(chunk);
-                }
-                
-                console.log(`📨 Riassunto inviato per sessione ${sessionId}!`);
+                await publishSummary(sessionId, summary, discordChannel);
             } catch (err) {
                 console.error(`❌ Errore durante il riassunto finale di ${sessionId}:`, err);
                 await discordChannel.send(`⚠️ Errore durante la generazione del riassunto per la sessione \`${sessionId}\`. Puoi riprovare con \`!racconta ${sessionId}\`.`);
             }
         }
     }, 10000); // 10 secondi per non sovraccaricare Redis/CPU
+}
+
+/**
+ * Invia il riassunto formattato al canale dedicato o a quello di fallback.
+ */
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false) {
+    const summaryChannelId = process.env.DISCORD_SUMMARY_CHANNEL_ID;
+    let targetChannel: TextChannel = defaultChannel;
+
+    if (summaryChannelId) {
+        try {
+            const ch = await client.channels.fetch(summaryChannelId);
+            if (ch && ch.isTextBased()) {
+                targetChannel = ch as TextChannel;
+            }
+        } catch (e) {
+            console.error("❌ Impossibile recuperare il canale dei riassunti specifico:", e);
+        }
+    }
+
+    const sessionNum = getSessionNumber(sessionId);
+    const authorId = getSessionAuthor(sessionId);
+    const authorName = authorId ? (getUserName(authorId) || "Viandante") : "Viandante";
+    const sessionStartTime = getSessionStartTime(sessionId);
+    const sessionDate = new Date(sessionStartTime || Date.now());
+    
+    const dateStr = sessionDate.toLocaleDateString('it-IT');
+    const dateShort = sessionDate.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    const timeStr = sessionDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
+    const replayTag = isReplay ? " (REPLAY)" : "";
+    await targetChannel.send(`\`\`\`diff\n-SESSIONE ${sessionNum} - ${dateStr}${replayTag}\n\`\`\``);
+    await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
+
+    const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
+    for (const chunk of chunks) {
+        await targetChannel.send(chunk);
+    }
+    
+    // Se abbiamo inviato in un canale diverso da quello di origine, notifichiamo l'utente
+    if (targetChannel.id !== defaultChannel.id) {
+        await defaultChannel.send(`✅ Riassunto della sessione \`${sessionId}\` inviato in <#${targetChannel.id}>`);
+    }
+
+    console.log(`📨 Riassunto inviato per sessione ${sessionId} nel canale ${targetChannel.name}!`);
 }
 
 // --- AUTO LEAVE ---
@@ -356,11 +404,11 @@ client.once('ready', async () => {
         for (const sessionId of sessionIds) {
             console.log(`🔄 Ripristino automatico sessione ${sessionId}...`);
             
-            // 1. Pulizia coda
+            // 1. Pulizia coda (sicurezza)
             await removeSessionJobs(sessionId);
             
-            // 2. Reset DB
-            const filesToProcess = resetSessionData(sessionId);
+            // 2. Reset DB (SOLO per i file non completati)
+            const filesToProcess = resetUnfinishedRecordings(sessionId);
             
             // 3. Reinserimento
             for (const job of filesToProcess) {
@@ -370,6 +418,7 @@ client.once('ready', async () => {
                     filePath: job.filepath,
                     userId: job.user_id
                 }, {
+                    jobId: job.filename,
                     attempts: 5,
                     backoff: { type: 'exponential', delay: 2000 },
                     removeOnComplete: true,
@@ -390,6 +439,10 @@ client.once('ready', async () => {
     } else {
         console.log("✨ Nessun lavoro in sospeso trovato.");
     }
+
+    // --- AVVIO WORKER ---
+    // Lo avviamo solo ora, dopo la recovery, per evitare race conditions sulla coda
+    startWorker();
 });
 
 (async () => {

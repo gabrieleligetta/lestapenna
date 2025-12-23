@@ -14,7 +14,8 @@ import {
     getSessionNumber,
     getSessionAuthor,
     getUserName,
-    getSessionStartTime
+    getSessionStartTime,
+    setSessionNumber
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -286,24 +287,87 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
 }
 
 /**
+ * Tenta di risalire alle informazioni della sessione leggendo la cronologia del canale.
+ * Cerca l'ultimo numero reale (non replay) e, opzionalmente, il numero di una sessione specifica.
+ */
+async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId?: string): Promise<{ lastRealNumber: number, sessionNumber?: number }> {
+    let lastRealNumber = 0;
+    let foundSessionNumber: number | undefined;
+
+    try {
+        const messages = await channel.messages.fetch({ limit: 50 });
+        for (const msg of messages.values()) {
+            // Pattern per il numero della sessione: -SESSIONE X
+            const sessionMatch = msg.content.match(/-SESSIONE (\d+)/i);
+            // Pattern per l'ID della sessione: [ID: uuid]
+            const idMatch = msg.content.match(/\[ID: ([a-f0-9-]+)\]/i);
+            const isReplay = msg.content.includes("(REPLAY)");
+
+            if (sessionMatch) {
+                const num = parseInt(sessionMatch[1]);
+                if (!isNaN(num)) {
+                    // Troviamo l'ultimo numero reale (il primo non-replay che incontriamo venendo dal presente)
+                    if (!isReplay && lastRealNumber === 0) {
+                        lastRealNumber = num;
+                    }
+
+                    // Se stiamo cercando una sessione specifica tramite ID
+                    if (targetSessionId && idMatch && idMatch[1] === targetSessionId) {
+                        foundSessionNumber = num;
+                        // Se abbiamo trovato entrambi i dati che ci servono, possiamo fermarci
+                        if (lastRealNumber !== 0) break;
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("❌ Errore durante il recupero della cronologia del canale:", e);
+    }
+
+    return { lastRealNumber, sessionNumber: foundSessionNumber };
+}
+
+/**
  * Invia il riassunto formattato al canale dedicato o a quello di fallback.
  */
 async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false) {
     const summaryChannelId = process.env.DISCORD_SUMMARY_CHANNEL_ID;
     let targetChannel: TextChannel = defaultChannel;
+    let discordSummaryChannel: TextChannel | null = null;
 
     if (summaryChannelId) {
         try {
             const ch = await client.channels.fetch(summaryChannelId);
             if (ch && ch.isTextBased()) {
-                targetChannel = ch as TextChannel;
+                discordSummaryChannel = ch as TextChannel;
+                targetChannel = discordSummaryChannel;
             }
         } catch (e) {
             console.error("❌ Impossibile recuperare il canale dei riassunti specifico:", e);
         }
     }
 
-    const sessionNum = getSessionNumber(sessionId);
+    let sessionNum = getSessionNumber(sessionId);
+
+    // Sincronizzazione con la cronologia di Discord (Fonte di Verità)
+    if (discordSummaryChannel) {
+        const info = await fetchSessionInfoFromHistory(discordSummaryChannel, sessionId);
+        
+        if (isReplay) {
+            // Se è un replay, la priorità è il numero trovato in cronologia Discord per questo ID
+            if (info.sessionNumber) {
+                sessionNum = info.sessionNumber;
+                setSessionNumber(sessionId, sessionNum); // Sincronizziamo il DB
+            }
+        } else {
+            // Se è una nuova sessione, prendiamo l'ultimo numero reale + 1
+            sessionNum = info.lastRealNumber + 1;
+            setSessionNumber(sessionId, sessionNum);
+        }
+    }
+
+    if (sessionNum === null) sessionNum = 1;
+
     const authorId = getSessionAuthor(sessionId);
     const authorName = authorId ? (getUserName(authorId) || "Viandante") : "Viandante";
     const sessionStartTime = getSessionStartTime(sessionId);
@@ -314,7 +378,8 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     const timeStr = sessionDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
     const replayTag = isReplay ? " (REPLAY)" : "";
-    await targetChannel.send(`\`\`\`diff\n-SESSIONE ${sessionNum} - ${dateStr}${replayTag}\n\`\`\``);
+    // Header con ID sessione per permettere il recupero futuro dalla cronologia
+    await targetChannel.send(`\`\`\`diff\n-SESSIONE ${sessionNum} - ${dateStr}${replayTag}\n[ID: ${sessionId}]\n\`\`\``);
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
 
     const chunks = summary.match(/[\s\S]{1,1900}/g) || [];

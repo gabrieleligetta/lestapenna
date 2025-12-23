@@ -6,3 +6,4 @@ batch_processing/*
 batch_process/*
 hf_cache/
 data/
+/dist/

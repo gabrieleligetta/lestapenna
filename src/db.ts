@@ -34,6 +34,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     error_log TEXT
 )`);
 
+// --- TABELLA SESSIONI ---
+db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    session_id TEXT PRIMARY KEY,
+    session_number INTEGER
+)`);
+
 // Indici per velocizzare le ricerche
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_session_id ON recordings (session_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)`);
@@ -43,7 +49,8 @@ const migrations = [
     "ALTER TABLE users ADD COLUMN race TEXT",
     "ALTER TABLE users ADD COLUMN class TEXT",
     "ALTER TABLE users ADD COLUMN description TEXT",
-    "ALTER TABLE recordings ADD COLUMN error_log TEXT"
+    "ALTER TABLE recordings ADD COLUMN error_log TEXT",
+    "CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_number INTEGER)"
 ];
 
 for (const m of migrations) {
@@ -211,15 +218,29 @@ export const getAvailableSessions = (): SessionSummary[] => {
 };
 
 /**
- * Ritorna il numero sequenziale della sessione basato sul tempo di inizio.
+ * Ritorna il numero sequenziale della sessione.
+ * Cerca prima nella tabella sessions, poi calcola un numero ordinale nel DB.
  */
-export const getSessionNumber = (sessionId: string): number => {
+export const getSessionNumber = (sessionId: string): number | null => {
+    // 1. Controlla se abbiamo un numero assegnato esplicitamente
+    const row = db.prepare('SELECT session_number FROM sessions WHERE session_id = ?').get(sessionId) as { session_number: number } | undefined;
+    if (row) return row.session_number;
+
+    // 2. Fallback: conteggio ordinale nel database
     const result = db.prepare(`
         SELECT COUNT(DISTINCT session_id) as count 
         FROM recordings 
         WHERE timestamp <= (SELECT MIN(timestamp) FROM recordings WHERE session_id = ?)
     `).get(sessionId) as { count: number };
-    return result.count || 1;
+    
+    return result.count || null;
+};
+
+/**
+ * Salva il numero di sessione assegnato.
+ */
+export const setSessionNumber = (sessionId: string, num: number): void => {
+    db.prepare('INSERT OR REPLACE INTO sessions (session_id, session_number) VALUES (?, ?)').run(sessionId, num);
 };
 
 /**

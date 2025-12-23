@@ -3,7 +3,7 @@ FROM node:22-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y python3 python3-pip python3-venv make g++ && rm -rf /var/lib/apt/lists/*
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+RUN yarn install
 COPY . .
 RUN yarn tsc
 

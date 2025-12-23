@@ -7,3 +7,5 @@ batch_process/*
 hf_cache/
 data/
 /dist/
+/start-ollama.sh
+/stop-ollama.sh

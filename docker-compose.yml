@@ -9,15 +9,15 @@ services:
     depends_on:
       - redis
     volumes:
-      - ./src:/app/src
-      - ./package.json:/app/package.json
-      - ./tsconfig.json:/app/tsconfig.json
-      - ./yarn.lock:/app/yarn.lock
-      - ./transcribe.py:/app/transcribe.py
-      - ./recordings:/app/recordings
-      - ./batch_processing:/app/batch_processing
+      - ./src:/usr/src/app/src
+      - ./package.json:/usr/src/app/package.json
+      - ./tsconfig.json:/usr/src/app/tsconfig.json
+      - ./yarn.lock:/usr/src/app/yarn.lock
+      - ./transcribe.py:/usr/src/app/transcribe.py
+      - ./recordings:/usr/src/app/recordings
+      - ./batch_processing:/usr/src/app/batch_processing
       - ./hf_cache:/root/.cache/huggingface
-      - ./data:/app/data
+      - ./data:/usr/src/app/data
     deploy:
       resources:
         limits:
@@ -29,8 +29,12 @@ services:
     image: redis:alpine
     container_name: redis-server
     restart: always
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
 
 volumes:
   ollama_data: # Volume persistente gestito da Docker
+  redis_data:

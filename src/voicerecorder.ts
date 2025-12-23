@@ -19,40 +19,38 @@ interface ActiveStream {
     encoder: prism.FFmpeg;
     currentPath: string;
     startTime: number;
+    sessionId: string;
 }
 
 // Mappa aggiornata: UserId -> Dati Stream
 const activeStreams = new Map<string, ActiveStream>();
 const connectionErrors = new Map<string, number>();
 
-// ID Sessione corrente (impostato dal bot)
-let currentSessionId: string | null = null;
-
 export async function connectToChannel(channel: VoiceBasedChannel, sessionId: string) {
     if (!channel.guild) return;
 
-    currentSessionId = sessionId; // Salviamo l'ID sessione
-
+    const guildId = channel.guild.id;
     const connection: VoiceConnection = joinVoiceChannel({
         channelId: channel.id,
-        guildId: channel.guild.id,
+        guildId: guildId,
         adapterCreator: channel.guild.voiceAdapterCreator,
         selfDeaf: false,
         selfMute: false
     });
 
-    console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId})`);
+    console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
 
     connection.receiver.speaking.on('start', (userId: string) => {
-        createListeningStream(connection.receiver, userId);
+        createListeningStream(connection.receiver, userId, sessionId, guildId);
     });
 }
 
-function createListeningStream(receiver: any, userId: string) {
-    const lastError = connectionErrors.get(userId) || 0;
+function createListeningStream(receiver: any, userId: string, sessionId: string, guildId: string) {
+    const streamKey = `${guildId}-${userId}`;
+    const lastError = connectionErrors.get(streamKey) || 0;
     if (Date.now() - lastError < 1000) return; 
 
-    if (activeStreams.has(userId)) return;
+    if (activeStreams.has(streamKey)) return;
 
     const opusStream = receiver.subscribe(userId, {
         end: {
@@ -77,6 +75,13 @@ function createListeningStream(receiver: any, userId: string) {
     const getNewFile = () => {
         const filename = `${userId}-${Date.now()}.mp3`;
         const filepath = path.join(__dirname, '..', 'recordings', filename);
+        
+        // Assicuriamoci che la cartella recordings esista
+        const recordingsDir = path.dirname(filepath);
+        if (!fs.existsSync(recordingsDir)) {
+            fs.mkdirSync(recordingsDir, { recursive: true });
+        }
+
         const out = fs.createWriteStream(filepath);
         return { out, filepath, filename };
     };
@@ -87,38 +92,34 @@ function createListeningStream(receiver: any, userId: string) {
     // PIPELINE: Discord (Opus) -> PCM -> MP3 -> File
     opusStream.pipe(decoder).pipe(encoder).pipe(out);
 
-    activeStreams.set(userId, { out, decoder, encoder, currentPath: filepath, startTime });
+    activeStreams.set(streamKey, { out, decoder, encoder, currentPath: filepath, startTime, sessionId });
 
-    console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId}: ${filename}`);
+    console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId} (Guild: ${guildId}): ${filename} (Sessione: ${sessionId})`);
 
     opusStream.on('end', async () => {
-        activeStreams.delete(userId);
+        activeStreams.delete(streamKey);
         
         // Quando il file è chiuso (la pipeline finisce), procediamo con il backup e l'accodamento
         out.on('finish', async () => {
-            if (currentSessionId) {
-                await onFileClosed(userId, filepath, filename, startTime);
-            }
+            await onFileClosed(userId, filepath, filename, startTime, sessionId);
         });
     });
 
     opusStream.on('error', (err: Error) => {
-        console.error(`Errore stream ${userId}:`, err.message);
-        activeStreams.delete(userId);
-        connectionErrors.set(userId, Date.now());
+        console.error(`Errore stream ${userId} (Guild: ${guildId}):`, err.message);
+        activeStreams.delete(streamKey);
+        connectionErrors.set(streamKey, Date.now());
     });
 }
 
-async function onFileClosed(userId: string, filePath: string, fileName: string, timestamp: number) {
-    if (!currentSessionId) return;
-
+async function onFileClosed(userId: string, filePath: string, fileName: string, timestamp: number, sessionId: string) {
     // 1. SALVA SU DB (Stato: PENDING)
-    addRecording(currentSessionId, fileName, filePath, userId, timestamp);
+    addRecording(sessionId, fileName, filePath, userId, timestamp);
 
     // 2. BACKUP CLOUD (Il "Custode" mette al sicuro l'audio grezzo)
     // Attendiamo l'upload per garantire la sicurezza del file prima di proseguire
     try {
-        const uploaded = await uploadToOracle(filePath, fileName, currentSessionId);
+        const uploaded = await uploadToOracle(filePath, fileName, sessionId);
         if (uploaded) {
             updateRecordingStatus(fileName, 'SECURED');
         }
@@ -128,7 +129,7 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
 
     // 3. ACCODA (Il job rimarrà in 'waiting' finché non facciamo resume)
     await audioQueue.add('transcribe-job', {
-        sessionId: currentSessionId,
+        sessionId: sessionId,
         fileName,
         filePath,
         userId
@@ -140,14 +141,13 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         removeOnFail: false
     });
     
-    console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${currentSessionId}.`);
+    console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${sessionId}.`);
 }
 
 export function disconnect(guildId: string): boolean {
     const connection = getVoiceConnection(guildId);
     if (connection) {
         connection.destroy();
-        currentSessionId = null; // Reset sessione
         console.log("👋 Disconnesso.");
         return true;
     }

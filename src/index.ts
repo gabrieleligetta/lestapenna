@@ -19,10 +19,14 @@ import {
     getUserName,
     getSessionStartTime,
     setSessionNumber,
-    getExplicitSessionNumber
+    getExplicitSessionNumber,
+    findSessionByTimestamp,
+    getRecording,
+    addRecording
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
+import * as path from 'path';
 
 const client = new Client({
     intents: [
@@ -33,8 +37,8 @@ const client = new Client({
     ]
 });
 
-let currentSessionId: string | null = null;
-let autoLeaveTimer: NodeJS.Timeout | null = null;
+const guildSessions = new Map<string, string>(); // GuildId -> SessionId
+const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
 
 client.on('messageCreate', async (message: Message) => {
     if (!message.content.startsWith('!') || message.author.bot) return;
@@ -67,10 +71,11 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'listen') {
         const member = message.member;
         if (member?.voice.channel) {
-            currentSessionId = uuidv4();
+            const sessionId = uuidv4();
+            guildSessions.set(message.guild.id, sessionId);
             await audioQueue.pause();
-            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${currentSessionId}`);
-            await connectToChannel(member.voice.channel, currentSessionId);
+            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId} (Guild: ${message.guild.id})`);
+            await connectToChannel(member.voice.channel, sessionId);
             message.reply("🔊 **Modalità Ascolto Attiva**. Le risorse sono dedicate alla registrazione. L'elaborazione partirà alla fine.");
             checkAutoLeave(member.voice.channel);
         } else {
@@ -80,27 +85,28 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- COMANDO STOPLISTENING (FINE SESSIONE) ---
     if (command === 'stoplistening') {
-        if (!currentSessionId) {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) {
             disconnect(message.guild.id);
             message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
             return;
         }
 
-        const sessionIdEnded = currentSessionId;
         disconnect(message.guild.id);
-        currentSessionId = null;
+        guildSessions.delete(message.guild.id);
 
-        message.reply(`🛑 Sessione **${sessionIdEnded}** terminata. Lo Scriba sta trascrivendo...`);
+        message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
         
         await audioQueue.resume();
         console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
 
-        waitForCompletionAndSummarize(sessionIdEnded, message.channel as TextChannel);
+        waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
     }
 
     // --- NUOVO: !setsession <numero> ---
     if (command === 'setsession') {
-        if (!currentSessionId) {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) {
             return message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!listen`.");
         }
 
@@ -109,7 +115,7 @@ client.on('messageCreate', async (message: Message) => {
             return message.reply("Uso: `!setsession <numero>` (es. `!setsession 5`)");
         }
 
-        setSessionNumber(currentSessionId, sessionNum);
+        setSessionNumber(sessionId, sessionNum);
         message.reply(`✅ Numero sessione impostato a **${sessionNum}**. Sarà usato per il prossimo riassunto.`);
     }
 
@@ -469,6 +475,84 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     console.log(`📨 Riassunto inviato per sessione ${sessionId} nel canale ${targetChannel.name}!`);
 }
 
+/**
+ * Scansiona la cartella recordings per trovare file MP3 che non sono nel database.
+ * Tenta di associarli a sessioni esistenti o crea sessioni di emergenza.
+ */
+async function recoverOrphanedFiles() {
+    const recordingsDir = path.join(__dirname, '..', 'recordings');
+    if (!fs.existsSync(recordingsDir)) return;
+
+    const files = fs.readdirSync(recordingsDir);
+    const mp3Files = files.filter(f => f.endsWith('.mp3'));
+
+    if (mp3Files.length === 0) return;
+
+    console.log(`🔍 Scansione file orfani in corso (${mp3Files.length} file trovati)...`);
+    let recoveredCount = 0;
+
+    for (const file of mp3Files) {
+        const filePath = path.join(recordingsDir, file);
+        
+        // Estraiamo userId e timestamp dal nome: userId-timestamp.mp3
+        const match = file.match(/^(.+)-(\d+)\.mp3$/);
+        if (!match) continue;
+
+        const userId = match[1];
+        const timestamp = parseInt(match[2]);
+
+        // Verifichiamo se il file è già nel DB
+        const existing = getRecording(file);
+        if (existing) continue;
+
+        // Saltiamo i file troppo recenti (potrebbero essere ancora in fase di scrittura)
+        if (Date.now() - timestamp < 300000) continue; // 5 minuti
+
+        console.log(`🩹 Trovato file orfano: ${file}. Tento recupero...`);
+
+        // Cerchiamo una sessione compatibile
+        let sessionId = findSessionByTimestamp(timestamp);
+        
+        if (!sessionId) {
+            sessionId = `recovered-${uuidv4().substring(0, 8)}`;
+            console.log(`🆕 Nessuna sessione trovata per ${file}. Creo sessione di emergenza: ${sessionId}`);
+        }
+
+        // 1. Aggiungi al DB
+        addRecording(sessionId, file, filePath, userId, timestamp);
+
+        // 2. Backup Cloud
+        try {
+            const uploaded = await uploadToOracle(filePath, file, sessionId);
+            if (uploaded) {
+                updateRecordingStatus(file, 'SECURED');
+            }
+        } catch (err) {
+            console.error(`[Recovery] Fallimento upload per ${file}:`, err);
+        }
+
+        // 3. Accoda
+        await audioQueue.add('transcribe-job', {
+            sessionId,
+            fileName: file,
+            filePath,
+            userId
+        }, {
+            jobId: file,
+            attempts: 5,
+            backoff: { type: 'exponential', delay: 2000 },
+            removeOnComplete: true,
+            removeOnFail: false
+        });
+
+        recoveredCount++;
+    }
+
+    if (recoveredCount > 0) {
+        console.log(`✅ Recupero completato: ${recoveredCount} file orfani ripristinati.`);
+    }
+}
+
 // --- AUTO LEAVE ---
 client.on('voiceStateUpdate', (oldState, newState) => {
     const guild = newState.guild || oldState.guild;
@@ -480,36 +564,38 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 
 function checkAutoLeave(channel: VoiceBasedChannel) {
     const humans = channel.members.filter(member => !member.user.bot).size;
+    const guildId = channel.guild.id;
+
     if (humans === 0) {
-        if (!autoLeaveTimer) {
-            console.log("👻 Canale vuoto. Timer 60s...");
-            autoLeaveTimer = setTimeout(async () => {
-                if (channel.guild) {
-                    if (currentSessionId) {
-                        const sessionIdEnded = currentSessionId;
-                        disconnect(channel.guild.id);
-                        currentSessionId = null;
-                        await audioQueue.resume();
-                        
-                        const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
-                        if (commandChannelId) {
-                            const ch = await client.channels.fetch(commandChannelId) as TextChannel;
-                            if (ch) {
-                                ch.send("👻 Auto-Leave per inattività. Elaborazione sessione avviata...");
-                                waitForCompletionAndSummarize(sessionIdEnded, ch);
-                            }
+        if (!autoLeaveTimers.has(guildId)) {
+            console.log(`👻 Canale vuoto in ${guildId}. Timer 60s...`);
+            const timer = setTimeout(async () => {
+                const sessionId = guildSessions.get(guildId);
+                if (sessionId) {
+                    disconnect(guildId);
+                    guildSessions.delete(guildId);
+                    await audioQueue.resume();
+                    
+                    const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+                    if (commandChannelId) {
+                        const ch = await client.channels.fetch(commandChannelId) as TextChannel;
+                        if (ch) {
+                            ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione sessione avviata...`);
+                            waitForCompletionAndSummarize(sessionId, ch);
                         }
-                    } else {
-                        disconnect(channel.guild.id);
                     }
+                } else {
+                    disconnect(guildId);
                 }
-                autoLeaveTimer = null;
+                autoLeaveTimers.delete(guildId);
             }, 60000);
+            autoLeaveTimers.set(guildId, timer);
         }
     } else {
-        if (autoLeaveTimer) {
-            clearTimeout(autoLeaveTimer);
-            autoLeaveTimer = null;
+        const timer = autoLeaveTimers.get(guildId);
+        if (timer) {
+            clearTimeout(timer);
+            autoLeaveTimers.delete(guildId);
         }
     }
 }
@@ -517,7 +603,10 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
 client.once('ready', async () => {
     console.log(`🤖 Bot TS online: ${client.user?.tag}`);
 
-    // --- LOGICA DI RECOVERY AL RIAVVIO ---
+    // --- RECUPERO FILE ORFANI (CRASH RECOVERY) ---
+    await recoverOrphanedFiles();
+
+    // --- LOGICA DI RECOVERY AL RIAVVIO (JOBS IN SOSPESO) ---
     console.log("🔍 Controllo lavori interrotti nel database...");
     const orphanJobs = getUnprocessedRecordings();
 

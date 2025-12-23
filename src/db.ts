@@ -267,4 +267,19 @@ export const getSessionStartTime = (sessionId: string): number | null => {
     return row ? row.start_time : null;
 };
 
+/**
+ * Tenta di trovare una session_id esistente per un timestamp dato.
+ * Cerca registrazioni entro una finestra di 2 ore.
+ */
+export const findSessionByTimestamp = (timestamp: number): string | null => {
+    const row = db.prepare(`
+        SELECT session_id FROM recordings 
+        WHERE timestamp > ? AND timestamp < ?
+        ORDER BY ABS(timestamp - ?) ASC
+        LIMIT 1
+    `).get(timestamp - 7200000, timestamp + 7200000, timestamp) as { session_id: string } | undefined;
+    
+    return row ? row.session_id : null;
+};
+
 export { db };

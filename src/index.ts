@@ -15,7 +15,8 @@ import {
     getSessionAuthor,
     getUserName,
     getSessionStartTime,
-    setSessionNumber
+    setSessionNumber,
+    getExplicitSessionNumber
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -50,7 +51,7 @@ client.on('messageCreate', async (message: Message) => {
             .setColor("#D4AF37")
             .setDescription("Benvenuti, avventurieri! Io sono il vostro bardo e cronista personale.")
             .addFields(
-                { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione.\n`!stoplistening`: Termina e avvia il riassunto.\n`!reset <ID>`: Forza la rielaborazione di una sessione." },
+                { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione.\n`!stoplistening`: Termina e avvia il riassunto.\n`!setsession <N>`: Imposta manualmente il numero della sessione corrente.\n`!setsessionid <ID> <N>`: Imposta il numero per una specifica sessione.\n`!reset <ID>`: Forza la rielaborazione di una sessione." },
                 { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto.\n`!toni`: Elenco dei toni disponibili." },
                 { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome.\n`!myclass <Classe>`: Imposta la tua classe.\n`!myrace <Razza>`: Imposta la tua razza.\n`!mydesc <Desc>`: Breve biografia.\n`!whoami`: Visualizza il tuo profilo." }
             )
@@ -92,6 +93,34 @@ client.on('messageCreate', async (message: Message) => {
         console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
 
         waitForCompletionAndSummarize(sessionIdEnded, message.channel as TextChannel);
+    }
+
+    // --- NUOVO: !setsession <numero> ---
+    if (command === 'setsession') {
+        if (!currentSessionId) {
+            return message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!listen`.");
+        }
+
+        const sessionNum = parseInt(args[0]);
+        if (isNaN(sessionNum) || sessionNum <= 0) {
+            return message.reply("Uso: `!setsession <numero>` (es. `!setsession 5`)");
+        }
+
+        setSessionNumber(currentSessionId, sessionNum);
+        message.reply(`✅ Numero sessione impostato a **${sessionNum}**. Sarà usato per il prossimo riassunto.`);
+    }
+
+    // --- NUOVO: !setsessionid <id_sessione> <numero> ---
+    if (command === 'setsessionid') {
+        const targetSessionId = args[0];
+        const sessionNum = parseInt(args[1]);
+
+        if (!targetSessionId || isNaN(sessionNum)) {
+            return message.reply("Uso: `!setsessionid <ID_SESSIONE> <NUMERO>`");
+        }
+
+        setSessionNumber(targetSessionId, sessionNum);
+        message.reply(`✅ Numero sessione per \`${targetSessionId}\` impostato a **${sessionNum}**.`);
     }
 
     // --- NUOVO: !reset <id_sessione> ---
@@ -349,10 +378,14 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         }
     }
 
-    let sessionNum = getSessionNumber(sessionId);
+    // 1. Controlliamo se c'è un numero esplicito nel DB (priorità massima)
+    let sessionNum = getExplicitSessionNumber(sessionId);
+    if (sessionNum !== null) {
+        console.log(`[Publish] Sessione ${sessionId}: Usato numero manuale ${sessionNum}`);
+    }
 
-    // Sincronizzazione con la cronologia di Discord (Fonte di Verità)
-    if (discordSummaryChannel) {
+    // 2. Se non c'è, proviamo a sincronizzarci con la cronologia di Discord
+    if (sessionNum === null && discordSummaryChannel) {
         const info = await fetchSessionInfoFromHistory(discordSummaryChannel, sessionId);
         
         if (isReplay) {
@@ -366,14 +399,15 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
             if (info.lastRealNumber > 0) {
                 sessionNum = info.lastRealNumber + 1;
                 setSessionNumber(sessionId, sessionNum);
-            } else if (sessionNum === null) {
-                sessionNum = 1;
-                setSessionNumber(sessionId, sessionNum);
             }
         }
     }
 
-    if (sessionNum === null) sessionNum = 1;
+    // 3. Fallback finale: se ancora null, usiamo 1
+    if (sessionNum === null) {
+        sessionNum = 1;
+        setSessionNumber(sessionId, sessionNum);
+    }
 
     const authorId = getSessionAuthor(sessionId);
     const authorName = authorId ? (getUserName(authorId) || "Viandante") : "Viandante";

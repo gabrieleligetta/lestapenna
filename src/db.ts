@@ -237,6 +237,14 @@ export const getSessionNumber = (sessionId: string): number | null => {
 };
 
 /**
+ * Ritorna il numero della sessione SOLO se è stato impostato esplicitamente.
+ */
+export const getExplicitSessionNumber = (sessionId: string): number | null => {
+    const row = db.prepare('SELECT session_number FROM sessions WHERE session_id = ?').get(sessionId) as { session_number: number } | undefined;
+    return row ? row.session_number : null;
+};
+
+/**
  * Salva il numero di sessione assegnato.
  */
 export const setSessionNumber = (sessionId: string, num: number): void => {

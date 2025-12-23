@@ -29,8 +29,8 @@ client.on('messageCreate', async (message: Message) => {
 
     if (!message.guild) return;
 
-    // --- COMANDO WRITE (INIZIO SESSIONE) ---
-    if (command === 'write') {
+    // --- COMANDO LISTEN (INIZIO SESSIONE) ---
+    if (command === 'listen') {
         const member = message.member;
         if (member?.voice.channel) {
             currentSessionId = uuidv4();
@@ -44,8 +44,8 @@ client.on('messageCreate', async (message: Message) => {
         }
     }
 
-    // --- COMANDO STOPWRITING (FINE SESSIONE) ---
-    if (command === 'stopwriting') {
+    // --- COMANDO STOPLISTENING (FINE SESSIONE) ---
+    if (command === 'stoplistening') {
         if (!currentSessionId) {
             disconnect(message.guild.id);
             message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
@@ -85,7 +85,7 @@ client.on('messageCreate', async (message: Message) => {
         await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
         // CHIAMATA DIRETTA AL BARDO
-        const summary = await generateSummary(targetSessionId, requestedTone || 'EPICO');
+        const summary = await generateSummary(targetSessionId, requestedTone || 'DM');
         
         // Invia i messaggi gestendo il limite di 2000 caratteri
         if (summary.length > 1900) {
@@ -170,7 +170,7 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
             clearInterval(checkInterval);
             console.log("✅ Tutti i file processati. Generazione Riassunto...");
             
-            const summary = await generateSummary(sessionId, 'EPICO');
+            const summary = await generateSummary(sessionId, 'DM');
             
             const today = new Date();
             const dateStr = today.toLocaleDateString('it-IT', {

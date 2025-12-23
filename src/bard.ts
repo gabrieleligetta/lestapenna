@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { getSessionTranscript, getUserProfile } from './db';
+import {getSessionTranscript, getUserProfile} from './db';
 
 // --- CONFIGURAZIONE TONI (PRESET) ---
 export const TONES = {
@@ -16,10 +16,10 @@ const useOllama = process.env.AI_PROVIDER === 'ollama';
 
 const openai = new OpenAI({
     baseURL: useOllama ? 'http://ollama:11434/v1' : undefined,
-    apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY, 
+    apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
 });
 
-export async function generateSummary(sessionId: string, tone: ToneKey = 'EPICO'): Promise<string> {
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<string> {
     // 1. RECUPERA I DATI DAL DB (Nessuna trascrizione necessaria!)
     const transcriptions = getSessionTranscript(sessionId);
 
@@ -31,12 +31,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'EPICO'
     // (Utile per dare colore alla narrazione)
     const userIds = new Set(transcriptions.map(t => t.user_id));
     let castContext = "PERSONAGGI E PROTAGONISTI:\n";
-    
+
     userIds.forEach(uid => {
         const p = getUserProfile(uid);
         if (p.character_name) {
-            if (p.character_name.toLowerCase().includes('dungeon master') || p.character_name.toLowerCase().includes('narratore')) {
-                 castContext += `- ${p.character_name}: Il Narratore e Arbitro di gioco.\n`;
+            if (p.character_name.toLowerCase().includes('dungeon master') || p.character_name.toLowerCase().includes('narratore') || p.character_name.toLowerCase().includes('DM')) {
+                castContext += `- ${p.character_name}: Il Narratore e Arbitro di gioco.\n`;
             } else {
                 let details = [];
                 if (p.race) details.push(p.race);
@@ -56,7 +56,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'EPICO'
         .map(t => `[${t.character_name || 'Sconosciuto'}]: ${t.transcription_text}`)
         .join("\n");
 
-    const systemPrompt = TONES[tone] || TONES.EPICO;
+    const systemPrompt = TONES[tone] || TONES.DM;
 
     console.log(`[Bardo] Genero riassunto per sessione ${sessionId} con tono ${tone}...`);
 
@@ -65,17 +65,17 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'EPICO'
         const response = await openai.chat.completions.create({
             model: useOllama ? "llama3.2" : "gpt-5-mini",
             messages: [
-                { 
-                    role: "system", 
+                {
+                    role: "system",
                     content: `${systemPrompt}
                     
                     ${castContext}
                     
                     ISTRUZIONI AGGIUNTIVE:
                     - Rispondi rigorosamente in lingua ITALIANA.
-                    - Basati SOLO sul dialogo fornito.` 
+                    - Basati SOLO sul dialogo fornito.`
                 },
-                { role: "user", content: "Ecco la trascrizione della sessione:\n\n" + fullDialogue }
+                {role: "user", content: "Ecco la trascrizione della sessione:\n\n" + fullDialogue}
             ]
         });
 

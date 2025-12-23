@@ -302,17 +302,18 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
 };
 
 /**
- * Svuota tutte le tabelle del database.
+ * Svuota le tabelle relative alle sessioni (recordings, sessions),
+ * preservando utenti e configurazione.
  */
 export const wipeDatabase = () => {
-    console.log("[DB] 🧹 Svuotamento database in corso...");
+    console.log("[DB] 🧹 Svuotamento database (Sessioni) in corso...");
     db.prepare('DELETE FROM recordings').run();
     db.prepare('DELETE FROM sessions').run();
-    db.prepare('DELETE FROM users').run();
-    db.prepare('DELETE FROM config').run();
-    db.prepare('DELETE FROM sqlite_sequence WHERE name IN ("recordings", "sessions", "users", "config")').run();
+    // Preserviamo utenti e configurazione
+    // Corretto: uso apici singoli per le stringhe SQL
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions')").run();
     db.exec('VACUUM');
-    console.log("[DB] ✅ Database svuotato.");
+    console.log("[DB] ✅ Database sessioni svuotato.");
 };
 
 export { db };

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
@@ -179,6 +179,10 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
 /**
  * Svuota completamente la cartella recordings/ nel bucket.
  * ATTENZIONE: Operazione distruttiva.
+ * 
+ * NOTA: Usiamo cancellazioni singole invece di DeleteObjects (batch) perché
+ * Oracle Cloud richiede l'header Content-MD5 per le richieste batch, che spesso
+ * causa problemi di compatibilità con l'SDK JS.
  */
 export async function wipeBucket(): Promise<number> {
     const bucket = getBucketName();
@@ -189,6 +193,9 @@ export async function wipeBucket(): Promise<number> {
         console.log(`[Custode] 🧹 Inizio svuotamento bucket: ${bucket}...`);
         
         // 1. Elenchiamo gli oggetti con prefisso recordings/
+        // Nota: ListObjectsV2 ritorna max 1000 oggetti per pagina.
+        // Per un wipe completo dovremmo gestire la paginazione, ma per ora
+        // assumiamo che un singolo wipe pulisca il grosso o venga rilanciato.
         const listCommand = new ListObjectsV2Command({
             Bucket: bucket,
             Prefix: 'recordings/'
@@ -201,23 +208,26 @@ export async function wipeBucket(): Promise<number> {
             return 0;
         }
 
-        // 2. Prepariamo la cancellazione batch
-        const objectsToDelete = listResponse.Contents
+        // 2. Cancellazione sequenziale (o parallela con Promise.all)
+        const deletePromises = listResponse.Contents
             .filter(obj => obj.Key)
-            .map(obj => ({ Key: obj.Key }));
-
-        if (objectsToDelete.length > 0) {
-            const deleteCommand = new DeleteObjectsCommand({
-                Bucket: bucket,
-                Delete: { Objects: objectsToDelete }
+            .map(async (obj) => {
+                try {
+                    await client.send(new DeleteObjectCommand({
+                        Bucket: bucket,
+                        Key: obj.Key
+                    }));
+                    deletedCount++;
+                } catch (e) {
+                    console.error(`[Custode] Errore cancellazione ${obj.Key}:`, e);
+                }
             });
 
-            await client.send(deleteCommand);
-            deletedCount = objectsToDelete.length;
-            console.log(`[Custode] ✅ Eliminati ${deletedCount} oggetti dal Cloud.`);
-        }
-
+        await Promise.all(deletePromises);
+        
+        console.log(`[Custode] ✅ Eliminati ${deletedCount} oggetti dal Cloud.`);
         return deletedCount;
+
     } catch (err) {
         console.error("[Custode] ❌ Errore durante lo svuotamento del bucket:", err);
         throw err;

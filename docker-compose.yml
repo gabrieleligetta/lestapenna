@@ -1,5 +1,4 @@
 services:
-  # 1. IL NOSTRO BOT (Node + Python Whisper)
   dnd-bot:
     build: .
     container_name: dnd-bot-container
@@ -9,22 +8,22 @@ services:
     depends_on:
       - redis
     volumes:
-      - ./src:/usr/src/app/src
-      - ./package.json:/usr/src/app/package.json
-      - ./tsconfig.json:/usr/src/app/tsconfig.json
-      - ./yarn.lock:/usr/src/app/yarn.lock
-      - ./transcribe.py:/usr/src/app/transcribe.py
-      - ./recordings:/usr/src/app/recordings
-      - ./batch_processing:/usr/src/app/batch_processing
-      - ./hf_cache:/root/.cache/huggingface
-      - ./data:/usr/src/app/data
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 4096M
+      # Mappatura corretta su /app
+      - ./src:/app/src
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./yarn.lock:/app/yarn.lock
+      - ./transcribe.py:/app/transcribe.py
+      - ./recordings:/app/recordings
+      - ./batch_processing:/app/batch_processing
+      - ./data:/app/data
+      
+      # ❌ RIMOSSO VOLUME CACHE: Lasciamo che usi il modello 'medium' interno all'immagine
 
-  # 2. REDIS (Per BullMQ)
+    # ❌ RIMOSSI LIMITI RISORSE:
+    # deploy:
+    #   resources: ... (Cancellato per usare tutta la RAM necessaria)
+
   redis:
     image: redis:alpine
     container_name: redis-server
@@ -36,5 +35,5 @@ services:
       - "6379:6379"
 
 volumes:
-  ollama_data: # Volume persistente gestito da Docker
+  ollama_data:
   redis_data:

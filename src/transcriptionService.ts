@@ -88,13 +88,18 @@ const whisperWorker = new WhisperWorker();
 
 export function convertPcmToWav(input: string, output: string): Promise<void> {
     return new Promise((resolve, reject) => {
-        // Usiamo "ffmpeg" direttamente perché installato nel Dockerfile con apt-get
-        // -f s16le -ar 48000 -ac 2 (PCM s16le 48k stereo)
+        // OTTIMIZZAZIONE:
+        // -ar 16000: Campionamento a 16kHz (quello che vuole Whisper)
+        // -ac 1: Mono (Whisper mixa comunque a mono internamente)
+        // Questo riduce la dimensione del file WAV di input di circa 6 volte (48k stereo -> 16k mono)
+        // velocizzando lettura disco e pre-processing del modello.
         const ffmpeg = spawn('ffmpeg', [
             '-f', 's16le',
-            '-ar', '48000',
-            '-ac', '2',
+            '-ar', '48000', // Input rate (PCM raw di Discord è 48k)
+            '-ac', '2',     // Input channels
             '-i', input,
+            '-ar', '16000', // OUTPUT rate
+            '-ac', '1',     // OUTPUT channels
             output,
             '-y'
         ]);

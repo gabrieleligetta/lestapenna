@@ -3,20 +3,37 @@ import json
 import os
 from faster_whisper import WhisperModel
 
-# Carichiamo il modello. 
-# 'small' è molto più veloce di 'medium' su CPU e ha una ottima accuratezza per l'italiano.
+# Manteniamo MEDIUM come richiesto
 model_size = "medium"
 
 def load_model():
-    # Carichiamo il modello una volta per esecuzione
-    # NOTA: Per performance ottimali in produzione, questo script dovrebbe rimanere attivo come demone.
-    return WhisperModel(model_size, device="cpu", compute_type="int8")
+    # Ottimizzazione CPU ARM (M1/Oracle A1):
+    # cpu_threads=4: Usa tutti e 4 i core della tua futura istanza OCI.
+    # num_workers=1: Evita parallelismi interni che saturano la memoria su file singoli.
+    return WhisperModel(
+        model_size, 
+        device="cpu", 
+        compute_type="int8", 
+        cpu_threads=4, 
+        num_workers=1
+    )
 
 def process_audio(model, audio_file):
     if not os.path.exists(audio_file):
         return {"error": f"File non trovato: {audio_file}"}
     
-    segments, info = model.transcribe(audio_file, beam_size=5, language="it")
+    # OTTIMIZZAZIONI QUI:
+    # 1. vad_filter=True: Salta i silenzi (enorme risparmio di tempo)
+    # 2. beam_size=2: Compromesso tra velocità e qualità (meglio di 1, più veloce di 5)
+    segments, info = model.transcribe(
+        audio_file, 
+        beam_size=2,            # Impostato a 2 come richiesto
+        language="it",
+        vad_filter=True,        # Fondamentale: ignora i silenzi
+        vad_parameters=dict(min_silence_duration_ms=500), # Ignora pause > 0.5s
+        condition_on_previous_text=False # Evita allucinazioni e loop in alcuni casi
+    )
+    
     full_text = " ".join([segment.text for segment in segments])
     return {"text": full_text.strip()}
 

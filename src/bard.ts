@@ -50,15 +50,20 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     });
 
     // 3. AGGREGA IL TESTO
-    // (Aggiungiamo un limite per non sforare i token se la sessione è di 8 ore)
-    // TODO: Se diventa troppo lungo, bisognerà implementare una logica di chunking
-    const fullDialogue = transcriptions
+    // Gestione della lunghezza per evitare di superare i limiti di token
+    const MAX_CHARS = 400000; // Circa 100k token, per stare sicuri con GPT-4o-mini/Llama3
+    let fullDialogue = transcriptions
         .map(t => `[${t.character_name || 'Sconosciuto'}]: ${t.transcription_text}`)
         .join("\n");
 
+    if (fullDialogue.length > MAX_CHARS) {
+        console.warn(`[Bardo] Sessione estremamente lunga (${fullDialogue.length} caratteri). Troncamento per limiti tecnici.`);
+        fullDialogue = fullDialogue.substring(0, MAX_CHARS) + "\n\n... [Il resto della trascrizione è stato omesso perché troppo lungo] ...";
+    }
+
     const systemPrompt = TONES[tone] || TONES.DM;
 
-    console.log(`[Bardo] Genero riassunto per sessione ${sessionId} con tono ${tone}...`);
+    console.log(`[Bardo] Genero riassunto per sessione ${sessionId} con tono ${tone} (${fullDialogue.length} caratteri)...`);
 
     // 4. CHIAMATA LLM
     try {
@@ -73,7 +78,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                     
                     ISTRUZIONI AGGIUNTIVE:
                     - Rispondi rigorosamente in lingua ITALIANA.
-                    - Basati SOLO sul dialogo fornito.`
+                    - Basati esclusivamente sulla trascrizione fornita.
+                    - Se ci sono buchi o incongruenze, mantieni la coerenza narrativa senza inventare fatti non presenti.`
                 },
                 {role: "user", content: "Ecco la trascrizione della sessione:\n\n" + fullDialogue}
             ]

@@ -1,9 +1,10 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel } from 'discord.js';
+import sodium from 'libsodium-wrappers';
+import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder } from 'discord.js';
 import { connectToChannel, disconnect } from './voicerecorder';
-import { audioQueue } from './queue';
+import { audioQueue, removeSessionJobs } from './queue';
 import { generateSummary, TONES, ToneKey } from './bard';
-import { getAvailableSessions, updateUserField, getUserProfile } from './db';
+import { getAvailableSessions, updateUserField, getUserProfile, getUnprocessedRecordings, resetSessionData } from './db';
 import { v4 as uuidv4 } from 'uuid';
 
 const client = new Client({
@@ -28,6 +29,22 @@ client.on('messageCreate', async (message: Message) => {
     const command = args.shift()?.toLowerCase();
 
     if (!message.guild) return;
+
+    // --- COMANDO HELP ---
+    if (command === 'help' || command === 'aiuto') {
+        const helpEmbed = new EmbedBuilder()
+            .setTitle("🖋️ Lestapenna - Comandi Disponibili")
+            .setColor("#D4AF37")
+            .setDescription("Benvenuti, avventurieri! Io sono il vostro bardo e cronista personale.")
+            .addFields(
+                { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione.\n`!stoplistening`: Termina e avvia il riassunto.\n`!reset <ID>`: Forza la rielaborazione di una sessione." },
+                { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto.\n`!toni`: Elenco dei toni disponibili." },
+                { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome.\n`!myclass <Classe>`: Imposta la tua classe.\n`!myrace <Razza>`: Imposta la tua razza.\n`!mydesc <Desc>`: Breve biografia.\n`!whoami`: Visualizza il tuo profilo." }
+            )
+            .setFooter({ text: "Lestapenna v1.1 - Per aspera ad astra" });
+        
+        return message.reply({ embeds: [helpEmbed] });
+    }
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
     if (command === 'listen') {
@@ -64,6 +81,51 @@ client.on('messageCreate', async (message: Message) => {
         waitForCompletionAndSummarize(sessionIdEnded, message.channel as TextChannel);
     }
 
+    // --- NUOVO: !reset <id_sessione> ---
+    if (command === 'reset') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) {
+            return message.reply("Uso: `!reset <ID_SESSIONE>` - Forza la rielaborazione completa.");
+        }
+
+        message.reply(`🔄 **Reset Sessione ${targetSessionId}** avviato...\n1. Pulizia coda...`);
+        
+        // 1. Rimuovi job vecchi dalla coda
+        const removed = await removeSessionJobs(targetSessionId);
+        
+        // 2. Resetta DB
+        const filesToProcess = resetSessionData(targetSessionId);
+        
+        if (filesToProcess.length === 0) {
+            return message.reply(`⚠️ Nessun file trovato per la sessione ${targetSessionId}.`);
+        }
+
+        message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Reinserimento in coda...`);
+
+        // 3. Riaccoda
+        for (const job of filesToProcess) {
+            await audioQueue.add('transcribe-job', {
+                sessionId: job.session_id,
+                fileName: job.filename,
+                filePath: job.filepath,
+                userId: job.user_id
+            }, {
+                attempts: 5,
+                backoff: { type: 'exponential', delay: 2000 },
+                removeOnComplete: true,
+                removeOnFail: false // Teniamo i fallimenti per debug, ma removeSessionJobs li pulirà
+            });
+        }
+
+        // Assicuriamoci che la coda sia attiva
+        await audioQueue.resume();
+
+        message.reply(`✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda. L'elaborazione è ripartita.`);
+        
+        // Avvia monitoraggio per il riassunto finale
+        waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
+    }
+
     // --- NUOVO: !racconta <id_sessione> [tono] ---
     if (command === 'racconta') {
         const targetSessionId = args[0];
@@ -71,27 +133,31 @@ client.on('messageCreate', async (message: Message) => {
 
         if (!targetSessionId) {
             const sessions = getAvailableSessions();
-            const list = sessions.map(s => `- \`${s.session_id}\` (${new Date(s.start_time).toLocaleString()}) - ${s.fragments} frammenti`).join('\n');
-            return message.reply(`Uso: \`!racconta <ID> [TONO]\`\n\n**Sessioni recenti:**\n${list}`);
+            if (sessions.length === 0) return message.reply("Nessuna sessione trovata.");
+            
+            const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
+            const embed = new EmbedBuilder()
+                .setTitle("📜 Sessioni Disponibili")
+                .setColor("#7289DA")
+                .setDescription(list)
+                .setFooter({ text: "Uso: !racconta <ID> [TONO]" });
+            
+            return message.reply({ embeds: [embed] });
         }
 
         if (requestedTone && !TONES[requestedTone]) {
             return message.reply(`Tono non valido. Toni disponibili: ${Object.keys(TONES).join(', ')}`);
         }
 
-        // FIX ERRORE TS2339: Castiamo a TextChannel per usare .send()
         const channel = message.channel as TextChannel;
-        
         await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
-        // CHIAMATA DIRETTA AL BARDO
         const summary = await generateSummary(targetSessionId, requestedTone || 'DM');
         
-        // Invia i messaggi gestendo il limite di 2000 caratteri
         if (summary.length > 1900) {
             const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
             for (const chunk of chunks) {
-                await channel.send(chunk); // Ora 'channel' è tipizzato correttamente
+                await channel.send(chunk);
             }
         } else {
             await channel.send(summary);
@@ -104,15 +170,25 @@ client.on('messageCreate', async (message: Message) => {
         if (sessions.length === 0) {
             message.reply("Nessuna sessione trovata negli archivi.");
         } else {
-            const list = sessions.map(s => `- \`${s.session_id}\` (${new Date(s.start_time).toLocaleString()}) - ${s.fragments} frammenti`).join('\n');
-            message.reply(`📜 **Sessioni Archiviate:**\n\n${list}`);
+            const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
+            const embed = new EmbedBuilder()
+                .setTitle("📜 Cronache delle Sessioni")
+                .setColor("#7289DA")
+                .setDescription(list);
+            
+            message.reply({ embeds: [embed] });
         }
     }
 
     // --- NUOVO: !toni ---
     if (command === 'toni') {
-        const list = Object.entries(TONES).map(([key, desc]) => `**${key}**: ${desc}`).join('\n\n');
-        message.reply(`🎭 **Toni Narrativi Disponibili:**\n\n${list}`);
+        const embed = new EmbedBuilder()
+            .setTitle("🎭 Toni Narrativi")
+            .setColor("#9B59B6")
+            .setDescription("Scegli come deve essere raccontata la tua storia:")
+            .addFields(Object.entries(TONES).map(([key, desc]) => ({ name: key, value: desc })));
+        
+        message.reply({ embeds: [embed] });
     }
 
     // --- ALTRI COMANDI (IAM, MYCLASS, ETC) ---
@@ -151,44 +227,59 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'whoami') {
         const p = getUserProfile(message.author.id);
         if (p.character_name) {
-            let msg = `👤 **${p.character_name}**`;
-            if (p.race || p.class) msg += ` (${p.race || '?'} ${p.class || '?'})`;
-            if (p.description) msg += `\n📝 "${p.description}"`;
-            message.reply(msg);
+            const embed = new EmbedBuilder()
+                .setTitle(`👤 Profilo di ${p.character_name}`)
+                .setColor("#3498DB")
+                .addFields(
+                    { name: "⚔️ Nome", value: p.character_name || "Non impostato", inline: true },
+                    { name: "🛡️ Classe", value: p.class || "Sconosciuta", inline: true },
+                    { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
+                    { name: "📜 Biografia", value: p.description || "Nessuna descrizione." }
+                )
+                .setThumbnail(message.author.displayAvatarURL());
+            
+            message.reply({ embeds: [embed] });
         } else {
-            message.reply("Non ti conosco. Usa `!iam` per iniziare.");
+            message.reply("Non ti conosco. Usa `!iam <Nome>` per iniziare la tua leggenda!");
         }
     }
 });
 
 // --- FUNZIONE MONITORAGGIO CODA ---
 async function waitForCompletionAndSummarize(sessionId: string, discordChannel: TextChannel) {
+    console.log(`[Monitor] Avviato monitoraggio per sessione ${sessionId}...`);
+    
     const checkInterval = setInterval(async () => {
-        const counts = await audioQueue.getJobCounts();
+        // Recuperiamo tutti i job che potrebbero appartenere alla sessione
+        const jobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
+        const sessionJobs = jobs.filter(j => j.data && j.data.sessionId === sessionId);
         
-        if (counts.waiting === 0 && counts.active === 0 && counts.delayed === 0) {
+        if (sessionJobs.length === 0) {
             clearInterval(checkInterval);
-            console.log("✅ Tutti i file processati. Generazione Riassunto...");
+            console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);
             
-            const summary = await generateSummary(sessionId, 'DM');
-            
-            const today = new Date();
-            const dateStr = today.toLocaleDateString('it-IT', {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-            });
-            
-            const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-            
-            await discordChannel.send(`\`\`\`diff\n-SESSIONE DEL ${dateStr.toUpperCase()}\n\`\`\``);
-            
-            for (const chunk of chunks) {
-                await discordChannel.send(chunk);
+            try {
+                const summary = await generateSummary(sessionId, 'DM');
+                
+                const today = new Date();
+                const dateStr = today.toLocaleDateString('it-IT', {
+                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+                });
+                
+                await discordChannel.send(`\`\`\`diff\n- SESSIONE DEL ${dateStr.toUpperCase()}\n\`\`\``);
+                
+                const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
+                for (const chunk of chunks) {
+                    await discordChannel.send(chunk);
+                }
+                
+                console.log(`📨 Riassunto inviato per sessione ${sessionId}!`);
+            } catch (err) {
+                console.error(`❌ Errore durante il riassunto finale di ${sessionId}:`, err);
+                await discordChannel.send(`⚠️ Errore durante la generazione del riassunto per la sessione \`${sessionId}\`. Puoi riprovare con \`!racconta ${sessionId}\`.`);
             }
-            
-            console.log("📨 Riassunto inviato!");
-
         }
-    }, 5000);
+    }, 10000); // 10 secondi per non sovraccaricare Redis/CPU
 }
 
 // --- AUTO LEAVE ---
@@ -236,8 +327,72 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
     }
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`🤖 Bot TS online: ${client.user?.tag}`);
+
+    // --- LOGICA DI RECOVERY AL RIAVVIO ---
+    console.log("🔍 Controllo lavori interrotti nel database...");
+    const orphanJobs = getUnprocessedRecordings();
+
+    if (orphanJobs.length > 0) {
+        // Estraiamo gli ID sessione univoci
+        const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
+        console.log(`📦 Trovati ${orphanJobs.length} file orfani appartenenti a ${sessionIds.length} sessioni.`);
+
+        // Recupero canale per i report (opzionale)
+        const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+        let recoveryChannel: TextChannel | null = null;
+        if (commandChannelId) {
+            try {
+                const ch = await client.channels.fetch(commandChannelId);
+                if (ch && ch.isTextBased()) {
+                    recoveryChannel = ch as TextChannel;
+                }
+            } catch (e) {
+                console.error("❌ Impossibile recuperare il canale di recovery:", e);
+            }
+        }
+
+        for (const sessionId of sessionIds) {
+            console.log(`🔄 Ripristino automatico sessione ${sessionId}...`);
+            
+            // 1. Pulizia coda
+            await removeSessionJobs(sessionId);
+            
+            // 2. Reset DB
+            const filesToProcess = resetSessionData(sessionId);
+            
+            // 3. Reinserimento
+            for (const job of filesToProcess) {
+                await audioQueue.add('transcribe-job', {
+                    sessionId: job.session_id,
+                    fileName: job.filename,
+                    filePath: job.filepath,
+                    userId: job.user_id
+                }, {
+                    attempts: 5,
+                    backoff: { type: 'exponential', delay: 2000 },
+                    removeOnComplete: true,
+                    removeOnFail: false
+                });
+            }
+            console.log(`✅ Sessione ${sessionId}: ${filesToProcess.length} file riaccodati.`);
+            
+            if (recoveryChannel) {
+                recoveryChannel.send(`🔄 **Ripristino automatico** della sessione \`${sessionId}\` in corso...`);
+                waitForCompletionAndSummarize(sessionId, recoveryChannel);
+            }
+        }
+        
+        // Assicuriamoci che la coda riparta
+        await audioQueue.resume();
+
+    } else {
+        console.log("✨ Nessun lavoro in sospeso trovato.");
+    }
 });
 
-client.login(process.env.DISCORD_BOT_TOKEN);
+(async () => {
+    await sodium.ready;
+    client.login(process.env.DISCORD_BOT_TOKEN);
+})();

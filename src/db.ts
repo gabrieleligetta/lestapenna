@@ -21,11 +21,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS users (
     description TEXT
 )`);
 
-// MIGRATION "SPORCA"
-try { db.exec("ALTER TABLE users ADD COLUMN race TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE users ADD COLUMN class TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE users ADD COLUMN description TEXT"); } catch (e) {}
-
 // --- TABELLA REGISTRAZIONI ---
 db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,8 +34,21 @@ db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     error_log TEXT
 )`);
 
-// Migration per error_log
-try { db.exec("ALTER TABLE recordings ADD COLUMN error_log TEXT"); } catch (e) {}
+// Indici per velocizzare le ricerche
+db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_session_id ON recordings (session_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)`);
+
+// Migration "SPORCA" Raggruppata
+const migrations = [
+    "ALTER TABLE users ADD COLUMN race TEXT",
+    "ALTER TABLE users ADD COLUMN class TEXT",
+    "ALTER TABLE users ADD COLUMN description TEXT",
+    "ALTER TABLE recordings ADD COLUMN error_log TEXT"
+];
+
+for (const m of migrations) {
+    try { db.exec(m); } catch (e) { /* Ignora se la colonna esiste già */ }
+}
 
 db.pragma('journal_mode = WAL');
 
@@ -115,6 +123,33 @@ export const updateRecordingStatus = (filename: string, status: string, text: st
     } else {
         db.prepare('UPDATE recordings SET status = ? WHERE filename = ?').run(status, filename);
     }
+};
+
+/**
+ * Recupera tutte le registrazioni che non sono ancora state trascritte.
+ * Utile al riavvio del bot per riprendere il lavoro.
+ */
+export const getUnprocessedRecordings = () => {
+    return db.prepare(`
+        SELECT * FROM recordings 
+        WHERE status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING')
+    `).all() as Recording[];
+};
+
+/**
+ * Resetta lo stato di una sessione per permettere la rielaborazione.
+ * Riporta tutti i file a 'PENDING' e cancella le trascrizioni precedenti.
+ */
+export const resetSessionData = (sessionId: string): Recording[] => {
+    // 1. Reset dei campi
+    db.prepare(`
+        UPDATE recordings 
+        SET status = 'PENDING', transcription_text = NULL, error_log = NULL 
+        WHERE session_id = ?
+    `).run(sessionId);
+
+    // 2. Ritorna i file pronti per essere riaccodati
+    return getSessionRecordings(sessionId);
 };
 
 // --- NUOVE FUNZIONI PER IL BARDO ---

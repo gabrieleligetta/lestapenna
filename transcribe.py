@@ -10,11 +10,12 @@ if len(sys.argv) < 2:
 audio_file = sys.argv[1]
 
 # Carichiamo il modello. 
-# 'small' è molto più veloce di 'medium' su CPU e ha una buona accuratezza per l'italiano.
+# 'small' è molto più veloce di 'medium' su CPU e ha una ottima accuratezza per l'italiano.
 model_size = "medium"
 
 try:
-    # Run on CPU with INT8 quantization
+    # Carichiamo il modello una volta per esecuzione
+    # NOTA: Per performance ottimali in produzione, questo script dovrebbe rimanere attivo come demone.
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     
     segments, info = model.transcribe(audio_file, beam_size=5, language="it")

@@ -11,6 +11,10 @@ const worker = new Worker('audio-processing', async job => {
     const { sessionId, fileName, filePath, userId } = job.data;
     console.log(`[Scriba] 🔨 Elaborazione job: ${fileName} (Sessione: ${sessionId})`);
     
+    // 0. Aggiorniamo stato a PROCESSING (o QUEUED se preferisci tracciare l'inizio effettivo)
+    // Questo aiuta a capire se un job è "in corso" vs "in attesa"
+    updateRecordingStatus(fileName, 'PROCESSING');
+
     try {
         // 1. Verifica esistenza file
         if (!fs.existsSync(filePath)) {

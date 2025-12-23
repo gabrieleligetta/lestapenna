@@ -1,35 +1,59 @@
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 
 export function convertPcmToWav(input: string, output: string): Promise<void> {
     return new Promise((resolve, reject) => {
         // Usiamo "ffmpeg" direttamente perché installato nel Dockerfile con apt-get
-        const ffmpegCommand = "ffmpeg";
-        
-        // PCM s16le 48k stereo (come da tuo voicerecorder.ts)
-        const cmd = `${ffmpegCommand} -f s16le -ar 48000 -ac 2 -i "${input}" "${output}" -y`;
-        exec(cmd, (err) => err ? reject(err) : resolve());
+        // -f s16le -ar 48000 -ac 2 (PCM s16le 48k stereo)
+        const ffmpeg = spawn('ffmpeg', [
+            '-f', 's16le',
+            '-ar', '48000',
+            '-ac', '2',
+            '-i', input,
+            output,
+            '-y'
+        ]);
+
+        ffmpeg.on('close', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`ffmpeg exited with code ${code}`));
+        });
+
+        ffmpeg.on('error', (err) => reject(err));
     });
 }
 
 export function transcribeLocal(wavPath: string): Promise<{ text: string, error?: string }> {
     return new Promise((resolve, reject) => {
-        // Chiamiamo lo script python creato prima
-        const command = `python3 transcribe.py "${wavPath}"`;
+        // Chiamiamo lo script python
+        const python = spawn('python3', ['transcribe.py', wavPath]);
         
-        exec(command, (error, stdout, stderr) => {
-            if (error) {
+        let stdout = '';
+        let stderr = '';
+
+        python.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        python.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        python.on('close', (code) => {
+            if (code !== 0) {
                 console.error("Python Error:", stderr);
-                reject(error);
-            } else {
-                try {
-                    const jsonResult = JSON.parse(stdout.trim());
-                    resolve(jsonResult);
-                } catch (e) {
-                    // Fallback se non è JSON valido
-                    resolve({ text: stdout.trim() });
-                }
+                return reject(new Error(`Python process exited with code ${code}`));
+            }
+
+            try {
+                const jsonResult = JSON.parse(stdout.trim());
+                resolve(jsonResult);
+            } catch (e) {
+                // Fallback se non è JSON valido
+                resolve({ text: stdout.trim() });
             }
         });
+
+        python.on('error', (err) => reject(err));
     });
 }

@@ -105,9 +105,10 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         filePath,
         userId
     }, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
-        removeOnComplete: true
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: false
     });
     
     // console.log(`[SafeMode] File ${fileName} accodato.`);

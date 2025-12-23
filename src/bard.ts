@@ -13,14 +13,96 @@ export const TONES = {
 export type ToneKey = keyof typeof TONES;
 
 const useOllama = process.env.AI_PROVIDER === 'ollama';
+// Modello "veloce" per la fase MAP (estrazione fatti)
+const FAST_MODEL = useOllama ? "llama3.2" : process.env.OPEN_AI_MODEL;
+// Modello "smart" per la fase REDUCE (narrazione finale) - Usiamo lo stesso per ora, o gpt-4o se disponibile
+const SMART_MODEL = useOllama ? "llama3.2" : process.env.OPEN_AI_MODEL;
 
 const openai = new OpenAI({
     baseURL: useOllama ? 'http://ollama:11434/v1' : undefined,
     apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
 });
 
+/**
+ * Divide il testo in chunk con sovrapposizione per mantenere il contesto.
+ * @param text Testo completo
+ * @param chunkSize Dimensione target del chunk (caratteri)
+ * @param overlap Sovrapposizione tra chunk (caratteri)
+ */
+function splitTextInChunks(text: string, chunkSize: number = 15000, overlap: number = 1000): string[] {
+    const chunks = [];
+    let i = 0;
+    while (i < text.length) {
+        // Se siamo vicini alla fine, prendiamo tutto il resto
+        if (i + chunkSize >= text.length) {
+            chunks.push(text.substring(i));
+            break;
+        }
+
+        let end = i + chunkSize;
+        
+        // Cerchiamo un punto di taglio naturale (a capo o spazio) per non troncare parole/frasi
+        // Cerchiamo all'indietro partendo dal limite del chunk
+        const lastNewLine = text.lastIndexOf('\n', end);
+        const lastSpace = text.lastIndexOf(' ', end);
+        
+        // Preferiamo tagliare su un a capo se è abbastanza vicino (entro ultimi 10% del chunk)
+        if (lastNewLine > i + (chunkSize * 0.9)) {
+            end = lastNewLine;
+        } else if (lastSpace > i + (chunkSize * 0.9)) {
+            end = lastSpace;
+        }
+
+        chunks.push(text.substring(i, end));
+        
+        // Avanziamo, ma torniamo indietro di 'overlap' per mantenere il contesto
+        // Assicuriamoci di non andare in loop se overlap >= chunkSize (impossibile con i default)
+        i = end - overlap;
+    }
+    return chunks;
+}
+
+/**
+ * FASE MAP: Estrae i fatti salienti da un chunk di testo.
+ */
+async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<string> {
+    console.log(`[Bardo] 🗺️  Fase MAP: Analisi chunk ${index + 1}/${total} (${chunk.length} chars)...`);
+    
+    try {
+        const response = await openai.chat.completions.create({
+            model: process.env.OPEN_AI_MODEL!,
+            messages: [
+                {
+                    role: "system",
+                    content: `Sei un assistente analitico per sessioni di D&D.
+                    Il tuo compito è leggere la trascrizione fornita ed estrarre SOLO i fatti rilevanti in un elenco puntato strutturato.
+                    
+                    ${castContext}
+
+                    CATEGORIE RICHIESTE:
+                    - ⚔️ Eventi/Combattimenti (chi contro chi, esito)
+                    - 🗣️ Dialoghi Chiave (decisioni prese, rivelazioni)
+                    - 👤 NPC Incontrati (nomi, ruoli, atteggiamento)
+                    - 💎 Loot/Oggetti (cosa è stato trovato e chi lo ha preso)
+                    
+                    ISTRUZIONI:
+                    - Sii conciso e oggettivo.
+                    - Ignora chiacchiere off-topic, regole tecniche o battute fuori dal gioco.
+                    - Usa i timestamp [MM:SS] se presenti per ordinare gli eventi.
+                    - NON narrare, solo elenca.`
+                },
+                { role: "user", content: chunk }
+            ]
+        });
+        return response.choices[0].message.content || "";
+    } catch (err) {
+        console.error(`[Bardo] ❌ Errore fase MAP chunk ${index + 1}:`, err);
+        return ""; // Ritorniamo vuoto per non bloccare il processo
+    }
+}
+
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<string> {
-    // 1. RECUPERA I DATI DAL DB (Nessuna trascrizione necessaria!)
+    // 1. RECUPERA I DATI DAL DB
     console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId}...`);
     const transcriptions = getSessionTranscript(sessionId);
     const errors = getSessionErrors(sessionId);
@@ -32,13 +114,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
 
     if (transcriptions.length === 0) {
         if (errors.length > 0) {
-            return `Purtroppo non è stato possibile recuperare la storia. Tutti i ${errors.length} frammenti audio hanno riscontrato errori durante la trascrizione (lo Scriba ha avuto problemi tecnici).`;
+            return `Purtroppo non è stato possibile recuperare la storia. Tutti i ${errors.length} frammenti audio hanno riscontrato errori durante la trascrizione.`;
         }
-        return "Non ho trovato trascrizioni valide per questa sessione. Forse lo Scriba sta ancora lavorando o la sessione era vuota?";
+        return "Non ho trovato trascrizioni valide per questa sessione.";
     }
 
     // 2. COSTRUISCI IL CONTESTO DEI PERSONAGGI
-    // (Utile per dare colore alla narrazione)
     const userIds = new Set(transcriptions.map(t => t.user_id));
     let castContext = "PERSONAGGI E PROTAGONISTI:\n";
 
@@ -59,45 +140,57 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         }
     });
 
-    // 3. AGGREGA IL TESTO CON TIMESTAMP RELATIVI
-    // Gestione della lunghezza per evitare di superare i limiti di token
-    const MAX_CHARS = 400000; // Circa 100k token
-    
+    // 3. AGGREGA IL TESTO CON TIMESTAMP
     let fullDialogue = transcriptions
         .map(t => {
-            // Calcola offset temporale in formato MM:SS
             const offsetMs = t.timestamp - startTime;
             const minutes = Math.floor(offsetMs / 60000);
             const seconds = Math.floor((offsetMs % 60000) / 1000);
             const timeStr = `[${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}]`;
-            
             return `${timeStr} [${t.character_name || 'Sconosciuto'}]: ${t.transcription_text}`;
         })
         .join("\n");
 
-    // CHUNKING INTELLIGENTE (Semplificato)
-    // Se superiamo il limite, invece di troncare alla fine, cerchiamo di mantenere l'inizio e la fine,
-    // sacrificando la parte centrale se necessario, o semplicemente troncando se è l'unica opzione.
-    if (fullDialogue.length > MAX_CHARS) {
-        console.warn(`[Bardo] Sessione estremamente lunga (${fullDialogue.length} caratteri). Applico chunking.`);
-        // Strategia semplice: prendiamo i primi 60% e gli ultimi 40% del limite disponibile
-        const limitHead = Math.floor(MAX_CHARS * 0.6);
-        const limitTail = Math.floor(MAX_CHARS * 0.4);
-        
-        const head = fullDialogue.substring(0, limitHead);
-        const tail = fullDialogue.substring(fullDialogue.length - limitTail);
-        
-        fullDialogue = `${head}\n\n... [PARTE CENTRALE OMESSA PER LIMITI DI MEMORIA] ...\n\n${tail}`;
+    // 4. STRATEGIA DI ELABORAZIONE
+    const CHAR_LIMIT_FOR_MAP_REDUCE = 20000; // Soglia per attivare Map-Reduce
+    let contextForFinalStep = "";
+    let isMapReduce = false;
+
+    if (fullDialogue.length > CHAR_LIMIT_FOR_MAP_REDUCE) {
+        // --- STRATEGIA MAP-REDUCE ---
+        console.log(`[Bardo] 🐘 Testo lungo rilevato (${fullDialogue.length} chars). Attivo strategia Map-Reduce.`);
+        isMapReduce = true;
+
+        const chunks = splitTextInChunks(fullDialogue);
+        console.log(`[Bardo] 🔪 Testo diviso in ${chunks.length} segmenti.`);
+
+        // Eseguiamo le chiamate MAP in parallelo (con limite di concorrenza implicito di Promise.all)
+        // Se i chunk sono tanti, potremmo voler limitare la concorrenza, ma per ora va bene così.
+        const mapResults = await Promise.all(chunks.map((chunk, index) => 
+            extractFactsFromChunk(chunk, index, chunks.length, castContext)
+        ));
+
+        // Uniamo gli appunti
+        contextForFinalStep = mapResults.join("\n\n--- SEGMENTO SUCCESSIVO ---\n\n");
+        console.log(`[Bardo] 📉 Fase MAP completata. Contesto ridotto a ${contextForFinalStep.length} chars.`);
+
+    } else {
+        // --- STRATEGIA DIRETTA ---
+        console.log(`[Bardo] 🐇 Testo breve (${fullDialogue.length} chars). Strategia diretta.`);
+        contextForFinalStep = fullDialogue;
     }
 
+    // 5. FASE REDUCE (O DIRETTA): Generazione Narrazione
     const systemPrompt = TONES[tone] || TONES.DM;
+    const promptIntro = isMapReduce 
+        ? "Ecco gli APPUNTI CRONOLOGICI estratti dalla sessione. Usali per ricostruire la narrazione completa." 
+        : "Ecco la TRASCRIZIONE DIRETTA della sessione.";
 
-    console.log(`[Bardo] Genero riassunto per sessione ${sessionId} con tono ${tone} (${fullDialogue.length} caratteri)...`);
+    console.log(`[Bardo] ✍️  Fase REDUCE: Generazione racconto con tono ${tone}...`);
 
-    // 4. CHIAMATA LLM
     try {
         const response = await openai.chat.completions.create({
-            model: useOllama ? "llama3.2" : "gpt-5-mini",
+            model: process.env.OPEN_AI_MODEL!,
             messages: [
                 {
                     role: "system",
@@ -107,13 +200,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                     
                     ISTRUZIONI AGGIUNTIVE:
                     - Rispondi rigorosamente in lingua ITALIANA.
-                    - Basati esclusivamente sulla trascrizione fornita.
-                    - I timestamp [MM:SS] indicano quando è stata pronunciata la frase. Usali per ricostruire la sequenza temporale corretta, specialmente se ci sono sovrapposizioni.
-                    - Se più personaggi parlano contemporaneamente o si interrompono, cerca di ricostruire il filo logico della discussione principale.
-                    - Dai priorità alle descrizioni del Dungeon Master (DM/Narratore) per stabilire i fatti oggettivi.
-                    - Se ci sono buchi o incongruenze, mantieni la coerenza narrativa senza inventare fatti non presenti.`
+                    - ${isMapReduce ? "Usa gli appunti forniti per creare una narrazione fluida e coerente." : "Basati sulla trascrizione fornita."}
+                    - Se ci sono buchi o incongruenze, mantieni la coerenza narrativa senza inventare fatti non presenti.
+                    - Dai priorità alle descrizioni del Dungeon Master per stabilire i fatti oggettivi.`
                 },
-                {role: "user", content: "Ecco la trascrizione della sessione:\n\n" + fullDialogue}
+                { role: "user", content: `${promptIntro}\n\n${contextForFinalStep}` }
             ]
         });
 

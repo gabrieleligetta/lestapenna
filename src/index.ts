@@ -324,10 +324,16 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     let foundSessionNumber: number | undefined;
 
     try {
-        const messages = await channel.messages.fetch({ limit: 50 });
-        for (const msg of messages.values()) {
+        // Aumentiamo il limite a 100 per essere sicuri di coprire più chat
+        const messages = await channel.messages.fetch({ limit: 100 });
+        
+        // Ordiniamo esplicitamente dal più recente al più vecchio per sicurezza
+        const sortedMessages = Array.from(messages.values()).sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+        for (const msg of sortedMessages) {
             // Pattern per il numero della sessione: -SESSIONE X
-            const sessionMatch = msg.content.match(/-SESSIONE (\d+)/i);
+            // Cerchiamo specificamente la riga che inizia con -SESSIONE (tipica del blocco diff)
+            const sessionMatch = msg.content.match(/-SESSIONE\s+(\d+)/i);
             // Pattern per l'ID della sessione: [ID: uuid]
             const idMatch = msg.content.match(/\[ID: ([a-f0-9-]+)\]/i);
             const isReplay = msg.content.includes("(REPLAY)");

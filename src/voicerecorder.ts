@@ -60,12 +60,16 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     });
 
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+    
+    // PIPELINE AGGIORNATA: Aggiunto filtro di normalizzazione audio (loudnorm)
+    // Questo aiuta a livellare i volumi tra utenti che urlano e utenti che sussurrano
     const encoder = new prism.FFmpeg({
         args: [
             '-f', 's16le',
             '-ar', '48000',
             '-ac', '2',
             '-i', '-',
+            '-filter:a', 'loudnorm', // Normalizzazione EBU R128
             '-codec:a', 'libmp3lame',
             '-b:a', '64k',
             '-f', 'mp3',
@@ -89,7 +93,7 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     const { out, filepath, filename } = getNewFile();
     const startTime = Date.now();
 
-    // PIPELINE: Discord (Opus) -> PCM -> MP3 -> File
+    // PIPELINE: Discord (Opus) -> PCM -> Normalizzazione -> MP3 -> File
     opusStream.pipe(decoder).pipe(encoder).pipe(out);
 
     activeStreams.set(streamKey, { out, decoder, encoder, currentPath: filepath, startTime, sessionId });

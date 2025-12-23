@@ -189,13 +189,14 @@ export const resetUnfinishedRecordings = (sessionId: string): Recording[] => {
 export const getSessionTranscript = (sessionId: string) => {
     // Recuperiamo solo i file trascritti con successo, ordinati per tempo
     // Facciamo una JOIN per avere subito il nome del personaggio
+    // AGGIUNTO: Recupero del timestamp per la diarizzazione temporale
     const rows = db.prepare(`
-        SELECT r.transcription_text, r.user_id, u.character_name 
+        SELECT r.transcription_text, r.user_id, r.timestamp, u.character_name 
         FROM recordings r
         LEFT JOIN users u ON r.user_id = u.discord_id
         WHERE r.session_id = ? AND r.status = 'PROCESSED'
         ORDER BY r.timestamp ASC
-    `).all(sessionId) as Array<{ transcription_text: string, user_id: string, character_name: string | null }>;
+    `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
 
     return rows;
 };

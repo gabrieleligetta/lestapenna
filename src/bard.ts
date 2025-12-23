@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import {getSessionTranscript, getUserProfile, getSessionErrors} from './db';
+import {getSessionTranscript, getUserProfile, getSessionErrors, getSessionStartTime} from './db';
 
 // --- CONFIGURAZIONE TONI (PRESET) ---
 export const TONES = {
@@ -24,6 +24,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId}...`);
     const transcriptions = getSessionTranscript(sessionId);
     const errors = getSessionErrors(sessionId);
+    const startTime = getSessionStartTime(sessionId) || 0;
 
     if (errors.length > 0) {
         console.warn(`[Bardo] Attenzione: ${errors.length} frammenti non sono stati trascritti a causa di errori.`);
@@ -58,16 +59,35 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         }
     });
 
-    // 3. AGGREGA IL TESTO
+    // 3. AGGREGA IL TESTO CON TIMESTAMP RELATIVI
     // Gestione della lunghezza per evitare di superare i limiti di token
-    const MAX_CHARS = 400000; // Circa 100k token, per stare sicuri con GPT-4o-mini/Llama3
+    const MAX_CHARS = 400000; // Circa 100k token
+    
     let fullDialogue = transcriptions
-        .map(t => `[${t.character_name || 'Sconosciuto'}]: ${t.transcription_text}`)
+        .map(t => {
+            // Calcola offset temporale in formato MM:SS
+            const offsetMs = t.timestamp - startTime;
+            const minutes = Math.floor(offsetMs / 60000);
+            const seconds = Math.floor((offsetMs % 60000) / 1000);
+            const timeStr = `[${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}]`;
+            
+            return `${timeStr} [${t.character_name || 'Sconosciuto'}]: ${t.transcription_text}`;
+        })
         .join("\n");
 
+    // CHUNKING INTELLIGENTE (Semplificato)
+    // Se superiamo il limite, invece di troncare alla fine, cerchiamo di mantenere l'inizio e la fine,
+    // sacrificando la parte centrale se necessario, o semplicemente troncando se è l'unica opzione.
     if (fullDialogue.length > MAX_CHARS) {
-        console.warn(`[Bardo] Sessione estremamente lunga (${fullDialogue.length} caratteri). Troncamento per limiti tecnici.`);
-        fullDialogue = fullDialogue.substring(0, MAX_CHARS) + "\n\n... [Il resto della trascrizione è stato omesso perché troppo lungo] ...";
+        console.warn(`[Bardo] Sessione estremamente lunga (${fullDialogue.length} caratteri). Applico chunking.`);
+        // Strategia semplice: prendiamo i primi 60% e gli ultimi 40% del limite disponibile
+        const limitHead = Math.floor(MAX_CHARS * 0.6);
+        const limitTail = Math.floor(MAX_CHARS * 0.4);
+        
+        const head = fullDialogue.substring(0, limitHead);
+        const tail = fullDialogue.substring(fullDialogue.length - limitTail);
+        
+        fullDialogue = `${head}\n\n... [PARTE CENTRALE OMESSA PER LIMITI DI MEMORIA] ...\n\n${tail}`;
     }
 
     const systemPrompt = TONES[tone] || TONES.DM;
@@ -88,6 +108,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                     ISTRUZIONI AGGIUNTIVE:
                     - Rispondi rigorosamente in lingua ITALIANA.
                     - Basati esclusivamente sulla trascrizione fornita.
+                    - I timestamp [MM:SS] indicano quando è stata pronunciata la frase. Usali per ricostruire la sequenza temporale corretta, specialmente se ci sono sovrapposizioni.
+                    - Se più personaggi parlano contemporaneamente o si interrompono, cerca di ricostruire il filo logico della discussione principale.
+                    - Dai priorità alle descrizioni del Dungeon Master (DM/Narratore) per stabilire i fatti oggettivi.
                     - Se ci sono buchi o incongruenze, mantieni la coerenza narrativa senza inventare fatti non presenti.`
                 },
                 {role: "user", content: "Ecco la trascrizione della sessione:\n\n" + fullDialogue}

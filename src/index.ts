@@ -2,7 +2,9 @@ import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
 import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder } from 'discord.js';
 import { connectToChannel, disconnect } from './voicerecorder';
+import { uploadToOracle, downloadFromOracle } from './backupService';
 import { audioQueue, removeSessionJobs } from './queue';
+import * as fs from 'fs';
 import { generateSummary, TONES, ToneKey } from './bard';
 import { 
     getAvailableSessions, 
@@ -10,6 +12,7 @@ import {
     getUserProfile, 
     getUnprocessedRecordings, 
     resetSessionData, 
+    updateRecordingStatus,
     resetUnfinishedRecordings,
     getSessionNumber,
     getSessionAuthor,
@@ -142,10 +145,29 @@ client.on('messageCreate', async (message: Message) => {
             return message.reply(`⚠️ Nessun file trovato per la sessione ${targetSessionId}.`);
         }
 
-        message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Reinserimento in coda...`);
+        message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Ripristino file e reinserimento in coda...`);
 
-        // 3. Riaccoda
+        let restoredCount = 0;
+
+        // 3. Riaccoda e Backup Cloud
         for (const job of filesToProcess) {
+            // Se il file locale non esiste, proviamo a scaricarlo dal Cloud
+            if (!fs.existsSync(job.filepath)) {
+                const success = await downloadFromOracle(job.filename, job.filepath, targetSessionId);
+                if (success) restoredCount++;
+            }
+
+            // Backup Cloud (uploadToOracle gestirà l'invio solo se non già presente nel Cloud)
+            // Attendiamo l'upload per garantire che i file siano al sicuro prima di procedere
+            try {
+                const uploaded = await uploadToOracle(job.filepath, job.filename, targetSessionId);
+                if (uploaded) {
+                    updateRecordingStatus(job.filename, 'SECURED');
+                }
+            } catch (err) {
+                console.error(`[Custode] Fallimento upload durante reset per ${job.filename}:`, err);
+            }
+
             await audioQueue.add('transcribe-job', {
                 sessionId: job.session_id,
                 fileName: job.filename,
@@ -163,7 +185,12 @@ client.on('messageCreate', async (message: Message) => {
         // Assicuriamoci che la coda sia attiva
         await audioQueue.resume();
 
-        message.reply(`✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda. L'elaborazione è ripartita.`);
+        let statusMsg = `✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda.`;
+        if (restoredCount > 0) {
+            statusMsg += `\n📦 ${restoredCount} file mancanti sono stati ripristinati dal Cloud.`;
+        }
+
+        message.reply(statusMsg);
         
         // Avvia monitoraggio per il riassunto finale
         waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);

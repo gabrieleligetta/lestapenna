@@ -8,8 +8,9 @@ import { VoiceBasedChannel } from 'discord.js';
 import * as fs from 'fs';
 import * as prism from 'prism-media';
 import * as path from 'path';
-import { addRecording } from './db';
+import { addRecording, updateRecordingStatus } from './db';
 import { audioQueue } from './queue';
+import { uploadToOracle } from './backupService';
 
 // Struttura per tracciare lo stato completo dello stream
 interface ActiveStream {
@@ -100,7 +101,18 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
     // 1. SALVA SU DB (Stato: PENDING)
     addRecording(currentSessionId, fileName, filePath, userId, timestamp);
 
-    // 2. ACCODA (Il job rimarrà in 'waiting' finché non facciamo resume)
+    // 2. BACKUP CLOUD (Il "Custode" mette al sicuro l'audio grezzo)
+    // Attendiamo l'upload per garantire la sicurezza del file prima di proseguire
+    try {
+        const uploaded = await uploadToOracle(filePath, fileName, currentSessionId);
+        if (uploaded) {
+            updateRecordingStatus(fileName, 'SECURED');
+        }
+    } catch (err) {
+        console.error(`[Custode] Fallimento upload per ${fileName}:`, err);
+    }
+
+    // 3. ACCODA (Il job rimarrà in 'waiting' finché non facciamo resume)
     await audioQueue.add('transcribe-job', {
         sessionId: currentSessionId,
         fileName,
@@ -114,7 +126,7 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         removeOnFail: false
     });
     
-    console.log(`[Recorder] 📥 File ${fileName} salvato e accodato per la sessione ${currentSessionId}.`);
+    console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${currentSessionId}.`);
 }
 
 export function disconnect(guildId: string): boolean {

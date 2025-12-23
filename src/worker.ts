@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import * as fs from 'fs';
 import { updateRecordingStatus, getUserName, getRecording } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
+import { downloadFromOracle, uploadToOracle } from './backupService';
 
 // Worker BullMQ - LO SCRIBA
 // Questo worker si occupa SOLO di trascrivere e salvare nel DB.
@@ -25,9 +26,13 @@ export function startWorker() {
 
         try {
             if (!fs.existsSync(filePath)) {
-                console.warn(`[Scriba] ⚠️ File non trovato: ${fileName} al percorso ${filePath}`);
-                updateRecordingStatus(fileName, 'ERROR', null, 'File non trovato su disco');
-                return { status: 'failed', reason: 'file_not_found' };
+                console.warn(`[Scriba] ⚠️ File non trovato localmente: ${fileName}. Tento ripristino dal Cloud...`);
+                const success = await downloadFromOracle(fileName, filePath, sessionId);
+                if (!success) {
+                    console.error(`[Scriba] ❌ File non trovato nemmeno su Oracle: ${fileName}`);
+                    updateRecordingStatus(fileName, 'ERROR', null, 'File non trovato su disco né su Cloud');
+                    return { status: 'failed', reason: 'file_not_found' };
+                }
             }
 
             const stats = fs.statSync(filePath);
@@ -50,10 +55,32 @@ export function startWorker() {
             if (result && result.text && result.text.trim().length > 0) {
                 updateRecordingStatus(fileName, 'PROCESSED', result.text.trim());
                 console.log(`[Scriba] ✅ Trascritto ${fileName}: "${result.text.substring(0, 30)}..."`);
+                
+                // --- PULIZIA FINALE ---
+                // Verifichiamo il backup prima di eliminare il locale
+                const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
+                if (isBackedUp) {
+                    try {
+                        fs.unlinkSync(filePath);
+                        console.log(`[Scriba] 🧹 File locale eliminato dopo backup: ${fileName}`);
+                    } catch (err) {
+                        console.error(`[Scriba] ❌ Errore durante eliminazione locale ${fileName}:`, err);
+                    }
+                } else {
+                    console.warn(`[Scriba] ⚠️ Backup non confermato per ${fileName}, mantengo file locale.`);
+                }
+
                 return { status: 'ok', text: result.text };
             } else {
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');
                 console.log(`[Scriba] 🔇 Audio ${fileName} scartato (silenzio o incomprensibile)`);
+
+                // Anche se scartato, se abbiamo il backup possiamo pulire il locale
+                const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
+                if (isBackedUp) {
+                    try { fs.unlinkSync(filePath); } catch(e) {}
+                }
+
                 return { status: 'skipped', reason: 'silence' };
             }
 

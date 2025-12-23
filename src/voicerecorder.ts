@@ -41,6 +41,16 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
 
     connection.receiver.speaking.on('start', (userId: string) => {
+        // --- FILTRO BOT ---
+        // Recuperiamo l'utente dalla cache del client (se disponibile)
+        // Nota: In un contesto reale, 'channel.client' è accessibile.
+        const user = channel.client.users.cache.get(userId);
+        if (user?.bot) {
+            // Ignoriamo completamente lo stream audio dei bot
+            return; 
+        }
+        // -----------------
+
         createListeningStream(connection.receiver, userId, sessionId, guildId);
     });
 }

@@ -12,6 +12,12 @@ if (!fs.existsSync(dataDir)){
 
 const db = new Database(dbPath);
 
+// --- TABELLA CONFIGURAZIONE (NUOVA) ---
+db.exec(`CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value TEXT
+)`);
+
 // --- TABELLA UTENTI ---
 db.exec(`CREATE TABLE IF NOT EXISTS users (
     discord_id TEXT PRIMARY KEY,
@@ -50,7 +56,8 @@ const migrations = [
     "ALTER TABLE users ADD COLUMN class TEXT",
     "ALTER TABLE users ADD COLUMN description TEXT",
     "ALTER TABLE recordings ADD COLUMN error_log TEXT",
-    "CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_number INTEGER)"
+    "CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_number INTEGER)",
+    "CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)"
 ];
 
 for (const m of migrations) {
@@ -84,6 +91,17 @@ export interface SessionSummary {
     start_time: number;
     fragments: number;
 }
+
+// --- FUNZIONI CONFIGURAZIONE (NUOVE) ---
+
+export const setConfig = (key: string, value: string): void => {
+    db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run(key, value);
+};
+
+export const getConfig = (key: string): string | null => {
+    const row = db.prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined;
+    return row ? row.value : null;
+};
 
 // --- FUNZIONI UTENTI ---
 
@@ -291,7 +309,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM recordings').run();
     db.prepare('DELETE FROM sessions').run();
     db.prepare('DELETE FROM users').run();
-    db.prepare('DELETE FROM sqlite_sequence WHERE name IN ("recordings", "sessions", "users")').run();
+    db.prepare('DELETE FROM config').run();
+    db.prepare('DELETE FROM sqlite_sequence WHERE name IN ("recordings", "sessions", "users", "config")').run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database svuotato.");
 };

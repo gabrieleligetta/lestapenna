@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
-import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder, ChannelType } from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
 import { uploadToOracle, downloadFromOracle, wipeBucket } from './backupService';
 import { audioQueue, removeSessionJobs, clearQueue } from './queue';
@@ -23,7 +23,9 @@ import {
     findSessionByTimestamp,
     getRecording,
     addRecording,
-    wipeDatabase
+    wipeDatabase,
+    setConfig,
+    getConfig
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -41,11 +43,19 @@ const client = new Client({
 const guildSessions = new Map<string, string>(); // GuildId -> SessionId
 const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
 
+// Helper per recuperare i canali configurati (DB > ENV)
+const getCmdChannelId = () => getConfig('cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+const getSummaryChannelId = () => getConfig('summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
+
 client.on('messageCreate', async (message: Message) => {
     if (!message.content.startsWith('!') || message.author.bot) return;
 
-    const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
-    if (commandChannelId && message.channelId !== commandChannelId) return;
+    // Controllo Canale Comandi (se configurato)
+    const allowedChannelId = getCmdChannelId();
+    // Eccezione: permettiamo il comando !setcmd ovunque se siamo admin, per configurare il bot la prima volta
+    const isConfigCommand = message.content.startsWith('!setcmd');
+    
+    if (allowedChannelId && message.channelId !== allowedChannelId && !isConfigCommand) return;
 
     const args = message.content.slice(1).split(' ');
     const command = args.shift()?.toLowerCase();
@@ -59,27 +69,76 @@ client.on('messageCreate', async (message: Message) => {
             .setColor("#D4AF37")
             .setDescription("Benvenuti, avventurieri! Io sono il vostro bardo e cronista personale.")
             .addFields(
-                { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione.\n`!stoplistening`: Termina e avvia il riassunto.\n`!setsession <N>`: Imposta manualmente il numero della sessione corrente.\n`!setsessionid <ID> <N>`: Imposta il numero per una specifica sessione.\n`!reset <ID>`: Forza la rielaborazione di una sessione." },
-                { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto.\n`!toni`: Elenco dei toni disponibili." },
-                { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome.\n`!myclass <Classe>`: Imposta la tua classe.\n`!myrace <Razza>`: Imposta la tua razza.\n`!mydesc <Desc>`: Breve biografia.\n`!whoami`: Visualizza il tuo profilo." },
-                { name: "⚙️ Admin", value: "`!wipe`: Svuota database, bucket, code e file locali (Solo Sviluppo)." }
+                { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione (Richiede nomi impostati!).\n`!stoplistening`: Termina e avvia il riassunto.\n`!setsession <N>`: Imposta manualmente il numero." },
+                { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto." },
+                { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome (Obbligatorio).\n`!whoami`: Visualizza profilo." },
+                { name: "⚙️ Configurazione", value: "`!setcmd`: Imposta questo canale per i comandi.\n`!setsummary`: Imposta questo canale per i riassunti." }
             )
-            .setFooter({ text: "Lestapenna v1.1 - Per aspera ad astra" });
+            .setFooter({ text: "Lestapenna v1.2 - Bot Protected" });
         
         return message.reply({ embeds: [helpEmbed] });
+    }
+
+    // --- COMANDI CONFIGURAZIONE CANALI ---
+    if (command === 'setcmd') {
+        // Controllo permessi (opzionale: solo chi ha permessi di gestione canali/admin)
+        if (!message.member?.permissions.has('ManageChannels')) {
+            return message.reply("⛔ Non hai il permesso di configurare il bot.");
+        }
+        setConfig('cmd_channel_id', message.channelId);
+        return message.reply(`✅ Canale Comandi impostato su <#${message.channelId}>.`);
+    }
+
+    if (command === 'setsummary') {
+        if (!message.member?.permissions.has('ManageChannels')) {
+            return message.reply("⛔ Non hai il permesso di configurare il bot.");
+        }
+        setConfig('summary_channel_id', message.channelId);
+        return message.reply(`✅ Canale Riassunti impostato su <#${message.channelId}>.`);
     }
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
     if (command === 'listen') {
         const member = message.member;
         if (member?.voice.channel) {
+            const voiceChannel = member.voice.channel;
+
+            // 1. FILTRO BOT: Ignoriamo i bot nella stanza (per il check dei nomi)
+            const humanMembers = voiceChannel.members.filter(m => !m.user.bot);
+            const botMembers = voiceChannel.members.filter(m => m.user.bot);
+
+            // 2. CHECK NOMI OBBLIGATORI
+            const missingNames: string[] = [];
+            humanMembers.forEach(m => {
+                const profile = getUserProfile(m.id);
+                if (!profile.character_name) {
+                    missingNames.push(m.displayName);
+                }
+            });
+
+            if (missingNames.length > 0) {
+                return message.reply(
+                    `🛑 **ALT!** Non posso iniziare la cronaca.\n` +
+                    `I seguenti avventurieri non hanno dichiarato il loro nome:\n` +
+                    missingNames.map(n => `- **${n}** (Usa: \`!iam NomePersonaggio\`)`).join('\n')
+                );
+            }
+            
+            // Avviso presenza bot (opzionale, solo per info)
+            // FIX ERROR: Casting esplicito a TextChannel per evitare errore TS2339
+            if (botMembers.size > 0) {
+                const botNames = botMembers.map(b => b.displayName).join(', ');
+                (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
+            }
+
             const sessionId = uuidv4();
             guildSessions.set(message.guild.id, sessionId);
             await audioQueue.pause();
-            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId} (Guild: ${message.guild.id})`);
-            await connectToChannel(member.voice.channel, sessionId);
-            message.reply("🔊 **Modalità Ascolto Attiva**. Le risorse sono dedicate alla registrazione. L'elaborazione partirà alla fine.");
-            checkAutoLeave(member.voice.channel);
+            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
+            
+            await connectToChannel(voiceChannel, sessionId);
+            message.reply(`🔊 **Cronaca Iniziata**. ID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+            checkAutoLeave(voiceChannel);
         } else {
             message.reply("Devi essere in un canale vocale per evocare il Bardo!");
         }
@@ -165,8 +224,6 @@ client.on('messageCreate', async (message: Message) => {
                 if (success) restoredCount++;
             }
 
-            // Backup Cloud (uploadToOracle gestirà l'invio solo se non già presente nel Cloud)
-            // Attendiamo l'upload per garantire che i file siano al sicuro prima di procedere
             try {
                 const uploaded = await uploadToOracle(job.filepath, job.filename, targetSessionId);
                 if (uploaded) {
@@ -186,11 +243,10 @@ client.on('messageCreate', async (message: Message) => {
                 attempts: 5,
                 backoff: { type: 'exponential', delay: 2000 },
                 removeOnComplete: true,
-                removeOnFail: false // Teniamo i fallimenti per debug, ma removeSessionJobs li pulirà
+                removeOnFail: false
             });
         }
 
-        // Assicuriamoci che la coda sia attiva
         await audioQueue.resume();
 
         let statusMsg = `✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda.`;
@@ -199,8 +255,6 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         message.reply(statusMsg);
-        
-        // Avvia monitoraggio per il riassunto finale
         waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
     }
 
@@ -268,9 +322,6 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- NUOVO: !wipe (SOLO SVILUPPO) ---
     if (command === 'wipe') {
-        // Opzionale: Aggiungere un controllo per ID utente specifico o ruolo admin
-        // if (message.author.id !== 'ID_ADMIN') return message.reply("Solo gli dei possono scatenare il Ragnarok.");
-
         const filter = (m: Message) => m.author.id === message.author.id;
         message.reply("⚠️ **ATTENZIONE**: Questa operazione cancellerà **TUTTO** (DB, Cloud, Code, File Locali). Sei sicuro? Scrivi `CONFERMO` entro 15 secondi.");
 
@@ -284,21 +335,13 @@ client.on('messageCreate', async (message: Message) => {
 
             if (collected.size > 0) {
                 const statusMsg = await message.reply("🧹 **Ragnarok avviato...**");
-                
                 try {
-                    // 1. Svuota Code
                     await clearQueue();
                     await statusMsg.edit("🧹 **Ragnarok in corso...**\n- Code svuotate ✅");
-
-                    // 2. Svuota Cloud
                     const cloudCount = await wipeBucket();
                     await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅`);
-
-                    // 3. Svuota DB
                     wipeDatabase();
                     await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅`);
-
-                    // 4. Svuota File Locali
                     wipeLocalFiles();
                     await statusMsg.edit(`🔥 **Ragnarok completato.** Tutto è stato riportato al nulla.\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅\n- File locali eliminati ✅`);
                 } catch (err: any) {
@@ -370,7 +413,6 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
     console.log(`[Monitor] Avviato monitoraggio per sessione ${sessionId}...`);
     
     const checkInterval = setInterval(async () => {
-        // Recuperiamo tutti i job che potrebbero appartenere alla sessione
         const jobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
         const sessionJobs = jobs.filter(j => j.data && j.data.sessionId === sessionId);
         
@@ -392,46 +434,34 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                 await discordChannel.send(`⚠️ Errore durante la generazione del riassunto per la sessione \`${sessionId}\`. Puoi riprovare con \`!racconta ${sessionId}\`.`);
             }
         }
-    }, 10000); // 10 secondi per non sovraccaricare Redis/CPU
+    }, 10000);
 }
 
 /**
  * Tenta di risalire alle informazioni della sessione leggendo la cronologia del canale.
- * Cerca l'ultimo numero reale (non replay) e, opzionalmente, il numero di una sessione specifica.
  */
 async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId?: string): Promise<{ lastRealNumber: number, sessionNumber?: number }> {
     let lastRealNumber = 0;
     let foundSessionNumber: number | undefined;
 
     try {
-        // Aumentiamo il limite a 100 per essere sicuri di coprire più chat
         const messages = await channel.messages.fetch({ limit: 100 });
-        
-        // Ordiniamo esplicitamente dal più recente al più vecchio per sicurezza
         const sortedMessages = Array.from(messages.values()).sort((a, b) => b.createdTimestamp - a.createdTimestamp);
 
         for (const msg of sortedMessages) {
-            // Pattern per il numero della sessione: -SESSIONE X
-            // Cerchiamo specificamente la riga che inizia con -SESSIONE (tipica del blocco diff)
             const sessionMatch = msg.content.match(/-SESSIONE\s+(\d+)/i);
-            // Pattern per l'ID della sessione: [ID: uuid]
             const idMatch = msg.content.match(/\[ID: ([a-f0-9-]+)\]/i);
             const isReplay = msg.content.includes("(REPLAY)");
 
             if (sessionMatch) {
                 const num = parseInt(sessionMatch[1]);
                 if (!isNaN(num)) {
-                    // Troviamo l'ultimo numero reale (il primo non-replay che incontriamo venendo dal presente)
                     if (!isReplay && lastRealNumber === 0) {
                         lastRealNumber = num;
                     }
-
-                    // Se stiamo cercando una sessione specifica tramite ID
                     if (targetSessionId && idMatch && idMatch[1] === targetSessionId) {
                         foundSessionNumber = num;
                     }
-
-                    // Ottimizzazione: se abbiamo trovato quello che cercavamo, usciamo
                     if (!targetSessionId && lastRealNumber !== 0) break;
                     if (targetSessionId && lastRealNumber !== 0 && foundSessionNumber !== undefined) break;
                 }
@@ -445,10 +475,10 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
 }
 
 /**
- * Invia il riassunto formattato al canale dedicato o a quello di fallback.
+ * Invia il riassunto formattato al canale dedicato (configurato o .env).
  */
 async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false) {
-    const summaryChannelId = process.env.DISCORD_SUMMARY_CHANNEL_ID;
+    const summaryChannelId = getSummaryChannelId();
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
 
@@ -464,24 +494,19 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         }
     }
 
-    // 1. Controlliamo se c'è un numero esplicito nel DB (priorità massima)
     let sessionNum = getExplicitSessionNumber(sessionId);
     if (sessionNum !== null) {
         console.log(`[Publish] Sessione ${sessionId}: Usato numero manuale ${sessionNum}`);
     }
 
-    // 2. Se non c'è, proviamo a sincronizzarci con la cronologia di Discord
     if (sessionNum === null && discordSummaryChannel) {
         const info = await fetchSessionInfoFromHistory(discordSummaryChannel, sessionId);
-        
         if (isReplay) {
-            // Se è un replay, la priorità è il numero trovato in cronologia Discord per questo ID
             if (info.sessionNumber) {
                 sessionNum = info.sessionNumber;
-                setSessionNumber(sessionId, sessionNum); // Sincronizziamo il DB
+                setSessionNumber(sessionId, sessionNum);
             }
         } else {
-            // Se è una nuova sessione, prendiamo l'ultimo numero reale + 1 (se trovato in cronologia)
             if (info.lastRealNumber > 0) {
                 sessionNum = info.lastRealNumber + 1;
                 setSessionNumber(sessionId, sessionNum);
@@ -489,7 +514,6 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         }
     }
 
-    // 3. Fallback finale: se ancora null, usiamo 1
     if (sessionNum === null) {
         sessionNum = 1;
         setSessionNumber(sessionId, sessionNum);
@@ -505,7 +529,6 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     const timeStr = sessionDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
     const replayTag = isReplay ? " (REPLAY)" : "";
-    // Header con ID sessione per permettere il recupero futuro dalla cronologia
     await targetChannel.send(`\`\`\`diff\n-SESSIONE ${sessionNum} - ${dateStr}${replayTag}\n[ID: ${sessionId}]\n\`\`\``);
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
 
@@ -514,7 +537,6 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         await targetChannel.send(chunk);
     }
     
-    // Se abbiamo inviato in un canale diverso da quello di origine, notifichiamo l'utente
     if (targetChannel.id !== defaultChannel.id) {
         await defaultChannel.send(`✅ Riassunto della sessione \`${sessionId}\` inviato in <#${targetChannel.id}>`);
     }
@@ -522,10 +544,8 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     console.log(`📨 Riassunto inviato per sessione ${sessionId} nel canale ${targetChannel.name}!`);
 }
 
-/**
- * Scansiona la cartella recordings per trovare file MP3 che non sono nel database.
- * Tenta di associarli a sessioni esistenti o crea sessioni di emergenza.
- */
+// ... (Resto delle funzioni recoverOrphanedFiles e AutoLeave invariate, omesse per brevità ma presenti nel file caricato) ...
+
 async function recoverOrphanedFiles() {
     const recordingsDir = path.join(__dirname, '..', 'recordings');
     if (!fs.existsSync(recordingsDir)) return;
@@ -540,24 +560,19 @@ async function recoverOrphanedFiles() {
 
     for (const file of mp3Files) {
         const filePath = path.join(recordingsDir, file);
-        
-        // Estraiamo userId e timestamp dal nome: userId-timestamp.mp3
         const match = file.match(/^(.+)-(\d+)\.mp3$/);
         if (!match) continue;
 
         const userId = match[1];
         const timestamp = parseInt(match[2]);
 
-        // Verifichiamo se il file è già nel DB
         const existing = getRecording(file);
         if (existing) continue;
 
-        // Saltiamo i file troppo recenti (potrebbero essere ancora in fase di scrittura)
-        if (Date.now() - timestamp < 300000) continue; // 5 minuti
+        if (Date.now() - timestamp < 300000) continue; 
 
         console.log(`🩹 Trovato file orfano: ${file}. Tento recupero...`);
 
-        // Cerchiamo una sessione compatibile
         let sessionId = findSessionByTimestamp(timestamp);
         
         if (!sessionId) {
@@ -565,10 +580,8 @@ async function recoverOrphanedFiles() {
             console.log(`🆕 Nessuna sessione trovata per ${file}. Creo sessione di emergenza: ${sessionId}`);
         }
 
-        // 1. Aggiungi al DB
         addRecording(sessionId, file, filePath, userId, timestamp);
 
-        // 2. Backup Cloud
         try {
             const uploaded = await uploadToOracle(filePath, file, sessionId);
             if (uploaded) {
@@ -578,7 +591,6 @@ async function recoverOrphanedFiles() {
             console.error(`[Recovery] Fallimento upload per ${file}:`, err);
         }
 
-        // 3. Accoda
         await audioQueue.add('transcribe-job', {
             sessionId,
             fileName: file,
@@ -600,7 +612,6 @@ async function recoverOrphanedFiles() {
     }
 }
 
-// --- AUTO LEAVE ---
 client.on('voiceStateUpdate', (oldState, newState) => {
     const guild = newState.guild || oldState.guild;
     if (!guild) return;
@@ -623,7 +634,7 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
                     guildSessions.delete(guildId);
                     await audioQueue.resume();
                     
-                    const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+                    const commandChannelId = getCmdChannelId();
                     if (commandChannelId) {
                         const ch = await client.channels.fetch(commandChannelId) as TextChannel;
                         if (ch) {
@@ -650,20 +661,16 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
 client.once('ready', async () => {
     console.log(`🤖 Bot TS online: ${client.user?.tag}`);
 
-    // --- RECUPERO FILE ORFANI (CRASH RECOVERY) ---
     await recoverOrphanedFiles();
 
-    // --- LOGICA DI RECOVERY AL RIAVVIO (JOBS IN SOSPESO) ---
     console.log("🔍 Controllo lavori interrotti nel database...");
     const orphanJobs = getUnprocessedRecordings();
 
     if (orphanJobs.length > 0) {
-        // Estraiamo gli ID sessione univoci
         const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
         console.log(`📦 Trovati ${orphanJobs.length} file orfani appartenenti a ${sessionIds.length} sessioni.`);
 
-        // Recupero canale per i report (opzionale)
-        const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+        const commandChannelId = getCmdChannelId();
         let recoveryChannel: TextChannel | null = null;
         if (commandChannelId) {
             try {
@@ -678,14 +685,9 @@ client.once('ready', async () => {
 
         for (const sessionId of sessionIds) {
             console.log(`🔄 Ripristino automatico sessione ${sessionId}...`);
-            
-            // 1. Pulizia coda (sicurezza)
             await removeSessionJobs(sessionId);
-            
-            // 2. Reset DB (SOLO per i file non completati)
             const filesToProcess = resetUnfinishedRecordings(sessionId);
             
-            // 3. Reinserimento
             for (const job of filesToProcess) {
                 await audioQueue.add('transcribe-job', {
                     sessionId: job.session_id,
@@ -707,16 +709,11 @@ client.once('ready', async () => {
                 waitForCompletionAndSummarize(sessionId, recoveryChannel);
             }
         }
-        
-        // Assicuriamoci che la coda riparta
         await audioQueue.resume();
-
     } else {
         console.log("✨ Nessun lavoro in sospeso trovato.");
     }
 
-    // --- AVVIO WORKER ---
-    // Lo avviamo solo ora, dopo la recovery, per evitare race conditions sulla coda
     startWorker();
 });
 

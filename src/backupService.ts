@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
@@ -173,5 +173,53 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
             console.error(`[Custode] ❌ Errore download da Oracle per ${fileName}:`, err);
         }
         return false;
+    }
+}
+
+/**
+ * Svuota completamente la cartella recordings/ nel bucket.
+ * ATTENZIONE: Operazione distruttiva.
+ */
+export async function wipeBucket(): Promise<number> {
+    const bucket = getBucketName();
+    const client = getS3Client();
+    let deletedCount = 0;
+
+    try {
+        console.log(`[Custode] 🧹 Inizio svuotamento bucket: ${bucket}...`);
+        
+        // 1. Elenchiamo gli oggetti con prefisso recordings/
+        const listCommand = new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: 'recordings/'
+        });
+
+        const listResponse = await client.send(listCommand);
+        
+        if (!listResponse.Contents || listResponse.Contents.length === 0) {
+            console.log("[Custode] Bucket già vuoto o nessuna registrazione trovata.");
+            return 0;
+        }
+
+        // 2. Prepariamo la cancellazione batch
+        const objectsToDelete = listResponse.Contents
+            .filter(obj => obj.Key)
+            .map(obj => ({ Key: obj.Key }));
+
+        if (objectsToDelete.length > 0) {
+            const deleteCommand = new DeleteObjectsCommand({
+                Bucket: bucket,
+                Delete: { Objects: objectsToDelete }
+            });
+
+            await client.send(deleteCommand);
+            deletedCount = objectsToDelete.length;
+            console.log(`[Custode] ✅ Eliminati ${deletedCount} oggetti dal Cloud.`);
+        }
+
+        return deletedCount;
+    } catch (err) {
+        console.error("[Custode] ❌ Errore durante lo svuotamento del bucket:", err);
+        throw err;
     }
 }

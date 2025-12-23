@@ -35,3 +35,15 @@ export async function removeSessionJobs(sessionId: string) {
     }
     return removedCount;
 }
+
+/**
+ * Svuota completamente la coda e rimuove ogni metadato da Redis.
+ */
+export async function clearQueue() {
+    console.log("[Queue] 🧹 Svuotamento completo della coda in corso...");
+    await audioQueue.pause();
+    await audioQueue.drain(true); // Rimuove tutti i job in attesa
+    await audioQueue.clean(0, 1000, 'completed');
+    await audioQueue.clean(0, 1000, 'failed');
+    console.log("[Queue] ✅ Coda svuotata.");
+}

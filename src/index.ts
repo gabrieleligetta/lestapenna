@@ -1,9 +1,9 @@
 import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
 import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder } from 'discord.js';
-import { connectToChannel, disconnect } from './voicerecorder';
-import { uploadToOracle, downloadFromOracle } from './backupService';
-import { audioQueue, removeSessionJobs } from './queue';
+import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
+import { uploadToOracle, downloadFromOracle, wipeBucket } from './backupService';
+import { audioQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
 import { generateSummary, TONES, ToneKey } from './bard';
 import { 
@@ -22,7 +22,8 @@ import {
     getExplicitSessionNumber,
     findSessionByTimestamp,
     getRecording,
-    addRecording
+    addRecording,
+    wipeDatabase
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -60,7 +61,8 @@ client.on('messageCreate', async (message: Message) => {
             .addFields(
                 { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione.\n`!stoplistening`: Termina e avvia il riassunto.\n`!setsession <N>`: Imposta manualmente il numero della sessione corrente.\n`!setsessionid <ID> <N>`: Imposta il numero per una specifica sessione.\n`!reset <ID>`: Forza la rielaborazione di una sessione." },
                 { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto.\n`!toni`: Elenco dei toni disponibili." },
-                { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome.\n`!myclass <Classe>`: Imposta la tua classe.\n`!myrace <Razza>`: Imposta la tua razza.\n`!mydesc <Desc>`: Breve biografia.\n`!whoami`: Visualizza il tuo profilo." }
+                { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome.\n`!myclass <Classe>`: Imposta la tua classe.\n`!myrace <Razza>`: Imposta la tua razza.\n`!mydesc <Desc>`: Breve biografia.\n`!whoami`: Visualizza il tuo profilo." },
+                { name: "⚙️ Admin", value: "`!wipe`: Svuota database, bucket, code e file locali (Solo Sviluppo)." }
             )
             .setFooter({ text: "Lestapenna v1.1 - Per aspera ad astra" });
         
@@ -262,6 +264,51 @@ client.on('messageCreate', async (message: Message) => {
             .addFields(Object.entries(TONES).map(([key, desc]) => ({ name: key, value: desc })));
         
         message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !wipe (SOLO SVILUPPO) ---
+    if (command === 'wipe') {
+        // Opzionale: Aggiungere un controllo per ID utente specifico o ruolo admin
+        // if (message.author.id !== 'ID_ADMIN') return message.reply("Solo gli dei possono scatenare il Ragnarok.");
+
+        const filter = (m: Message) => m.author.id === message.author.id;
+        message.reply("⚠️ **ATTENZIONE**: Questa operazione cancellerà **TUTTO** (DB, Cloud, Code, File Locali). Sei sicuro? Scrivi `CONFERMO` entro 15 secondi.");
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1, 
+                time: 15000, 
+                errors: ['time'] 
+            });
+
+            if (collected.size > 0) {
+                const statusMsg = await message.reply("🧹 **Ragnarok avviato...**");
+                
+                try {
+                    // 1. Svuota Code
+                    await clearQueue();
+                    await statusMsg.edit("🧹 **Ragnarok in corso...**\n- Code svuotate ✅");
+
+                    // 2. Svuota Cloud
+                    const cloudCount = await wipeBucket();
+                    await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅`);
+
+                    // 3. Svuota DB
+                    wipeDatabase();
+                    await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅`);
+
+                    // 4. Svuota File Locali
+                    wipeLocalFiles();
+                    await statusMsg.edit(`🔥 **Ragnarok completato.** Tutto è stato riportato al nulla.\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅\n- File locali eliminati ✅`);
+                } catch (err: any) {
+                    console.error("❌ Errore durante il wipe:", err);
+                    await statusMsg.edit(`❌ Errore durante il Ragnarok: ${err.message}`);
+                }
+            }
+        } catch (e) {
+            message.reply("⌛ Tempo scaduto. Il mondo è salvo.");
+        }
     }
 
     // --- ALTRI COMANDI (IAM, MYCLASS, ETC) ---

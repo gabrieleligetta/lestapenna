@@ -282,4 +282,17 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
     return row ? row.session_id : null;
 };
 
+/**
+ * Svuota tutte le tabelle del database.
+ */
+export const wipeDatabase = () => {
+    console.log("[DB] 🧹 Svuotamento database in corso...");
+    db.prepare('DELETE FROM recordings').run();
+    db.prepare('DELETE FROM sessions').run();
+    db.prepare('DELETE FROM users').run();
+    db.prepare('DELETE FROM sqlite_sequence WHERE name IN ("recordings", "sessions", "users")').run();
+    db.exec('VACUUM');
+    console.log("[DB] ✅ Database svuotato.");
+};
+
 export { db };

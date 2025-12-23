@@ -163,3 +163,24 @@ export function isFileActive(fullPath: string): boolean {
     }
     return false;
 }
+
+/**
+ * Elimina tutti i file nella cartella recordings locale.
+ */
+export function wipeLocalFiles() {
+    const recordingsDir = path.join(__dirname, '..', 'recordings');
+    if (fs.existsSync(recordingsDir)) {
+        try {
+            const files = fs.readdirSync(recordingsDir);
+            for (const file of files) {
+                // Evitiamo di cancellare file nascosti o .gitkeep se presenti
+                if (file.startsWith('.')) continue;
+                
+                fs.unlinkSync(path.join(recordingsDir, file));
+            }
+            console.log(`[Recorder] 🧹 File locali eliminati (${files.length} file).`);
+        } catch (e) {
+            console.error("[Recorder] ❌ Errore durante la pulizia dei file locali:", e);
+        }
+    }
+}

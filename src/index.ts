@@ -79,15 +79,22 @@ client.on('messageCreate', async (message: Message) => {
             return message.reply(`Tono non valido. Toni disponibili: ${Object.keys(TONES).join(', ')}`);
         }
 
-        message.channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
+        // FIX ERRORE TS2339: Castiamo a TextChannel per usare .send()
+        const channel = message.channel as TextChannel;
+        
+        await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
+        // CHIAMATA DIRETTA AL BARDO
         const summary = await generateSummary(targetSessionId, requestedTone || 'EPICO');
         
+        // Invia i messaggi gestendo il limite di 2000 caratteri
         if (summary.length > 1900) {
             const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-            for (const chunk of chunks) await message.channel.send(chunk);
+            for (const chunk of chunks) {
+                await channel.send(chunk); // Ora 'channel' è tipizzato correttamente
+            }
         } else {
-            message.channel.send(summary);
+            await channel.send(summary);
         }
     }
 

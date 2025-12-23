@@ -63,7 +63,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'EPICO'
     // 4. CHIAMATA LLM
     try {
         const response = await openai.chat.completions.create({
-            model: useOllama ? "llama3.2" : "gpt-4o",
+            model: useOllama ? "llama3.2" : "gpt-5-mini",
             messages: [
                 { 
                     role: "system", 

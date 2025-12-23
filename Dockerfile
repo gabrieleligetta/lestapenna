@@ -17,7 +17,7 @@ RUN pip3 install faster-whisper --break-system-packages
 
 # 🔥 NUOVA RIGA: Scarichiamo il modello ORA (durante la build) invece che dopo
 # Nota: Se nel file transcribe.py usi "small" o "base", cambia 'medium' qui sotto!
-RUN python3 -c "from faster_whisper import download_model; download_model('small')"
+RUN python3 -c "from faster_whisper import download_model; download_model('medium')"
 
 # Copiamo tutto dal builder (inclusi node_modules completi con devDependencies per nodemon)
 COPY --from=builder /app/package.json ./

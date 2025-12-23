@@ -1,7 +1,15 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
+import * as fs from 'fs';
 
-const dbPath = path.join(__dirname, '..', 'dnd_bot.db');
+const dataDir = path.join(__dirname, '..', 'data');
+const dbPath = path.join(dataDir, 'dnd_bot.db');
+
+// Assicuriamoci che la cartella esista
+if (!fs.existsSync(dataDir)){
+    fs.mkdirSync(dataDir);
+}
+
 const db = new Database(dbPath);
 
 // Creiamo la tabella con i nuovi campi

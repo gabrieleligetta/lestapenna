@@ -130,6 +130,12 @@ async function run() {
         .map(t => `[${t.user}]: ${t.text}`)
         .join("\n");
 
+    // --- NUOVI LOG DI DEBUG ---
+    console.log(`\n[Worker] 📜 --- INIZIO TESTO INVIATO ALL'AI ---`);
+    console.log(fullDialogue);
+    console.log(`[Worker] 📜 --- FINE TESTO INVIATO ALL'AI ---\n`);
+    // --------------------------
+
     console.log(`[Worker] 📝 Dialogo ricostruito (${transcriptions.length} linee). Generazione riassunto in corso...`);
     
     // 5. RIASSUNTO LOCALE (Ollama)

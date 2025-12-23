@@ -4,3 +4,5 @@ node_modules
 recordings/*
 batch_processing/*
 batch_process/*
+hf_cache/
+data/

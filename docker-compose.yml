@@ -16,12 +16,14 @@ services:
       - ./transcribe.py:/app/transcribe.py
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
+      - ./hf_cache:/root/.cache/huggingface
+      - ./data:/app/data
     # command rimosso: usiamo il CMD del Dockerfile che lancia "yarn dev"
     deploy:
       resources:
         limits:
           cpus: '2.0'
-          memory: 2048M
+          memory: 4096M
 
   # 2. IL CERVELLO (Ollama Containerizzato)
   # ollama:

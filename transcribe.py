@@ -11,7 +11,7 @@ audio_file = sys.argv[1]
 
 # Carichiamo il modello. 
 # 'small' è molto più veloce di 'medium' su CPU e ha una buona accuratezza per l'italiano.
-model_size = "small"
+model_size = "medium"
 
 try:
     # Run on CPU with INT8 quantization

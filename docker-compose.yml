@@ -1,5 +1,7 @@
 services:
   dnd-bot:
+    # Aggiungi questa riga per forzare l'architettura ARM64
+    platform: linux/arm64
     build: .
     container_name: dnd-bot-container
     restart: unless-stopped
@@ -17,12 +19,6 @@ services:
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
       - ./data:/app/data
-      
-      # ❌ RIMOSSO VOLUME CACHE: Lasciamo che usi il modello 'medium' interno all'immagine
-
-    # ❌ RIMOSSI LIMITI RISORSE:
-    # deploy:
-    #   resources: ... (Cancellato per usare tutta la RAM necessaria)
 
   redis:
     image: redis:alpine

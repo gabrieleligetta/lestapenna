@@ -104,7 +104,7 @@ export function startWorker() {
             host: process.env.REDIS_HOST || 'redis', 
             port: parseInt(process.env.REDIS_PORT || '6379') 
         },
-        concurrency: 1 
+        concurrency: 3
     });
 
     worker.on('failed', (job, err) => {

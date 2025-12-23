@@ -18,8 +18,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip && rm -rf /var/lib/apt/lists/*
 RUN pip3 install faster-whisper --break-system-packages
 
-# 🔥 MODIFICA QUI: Scarichiamo 'medium' invece di 'small'
-RUN python3 -c "from faster_whisper import download_model; download_model('medium')"
+# 🔥 MODIFICA QUI: Scarichiamo 'small' invece di 'medium' per velocità
+RUN python3 -c "from faster_whisper import download_model; download_model('small')"
 
 # Copia dei file
 COPY --from=builder /app/package.json ./

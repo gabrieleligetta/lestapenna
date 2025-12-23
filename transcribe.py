@@ -3,8 +3,8 @@ import json
 import os
 from faster_whisper import WhisperModel
 
-# Manteniamo MEDIUM come richiesto
-model_size = "medium"
+# Cambia da "medium" a "small" per velocità
+model_size = "small"
 
 def load_model():
     # Ottimizzazione CPU ARM (M1/Oracle A1):
@@ -24,10 +24,10 @@ def process_audio(model, audio_file):
     
     # OTTIMIZZAZIONI QUI:
     # 1. vad_filter=True: Salta i silenzi (enorme risparmio di tempo)
-    # 2. beam_size=2: Compromesso tra velocità e qualità (meglio di 1, più veloce di 5)
+    # 2. beam_size=1: Modalità "greedy", molto più veloce.
     segments, info = model.transcribe(
         audio_file, 
-        beam_size=2,            # Impostato a 2 come richiesto
+        beam_size=1,            # Cambia da 2 a 1 per velocità pura
         language="it",
         vad_filter=True,        # Fondamentale: ignora i silenzi
         vad_parameters=dict(min_silence_duration_ms=500), # Ignora pause > 0.5s

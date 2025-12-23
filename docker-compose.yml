@@ -6,8 +6,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # depends_on:
-    #   - ollama # Aspetta che Ollama parta
+    depends_on:
+      - redis
     volumes:
       - ./src:/app/src
       - ./package.json:/app/package.json
@@ -18,22 +18,19 @@ services:
       - ./batch_processing:/app/batch_processing
       - ./hf_cache:/root/.cache/huggingface
       - ./data:/app/data
-    # command rimosso: usiamo il CMD del Dockerfile che lancia "yarn dev"
     deploy:
       resources:
         limits:
           cpus: '2.0'
           memory: 4096M
 
-  # 2. IL CERVELLO (Ollama Containerizzato)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: ollama-server
-  #   restart: always
-  #   ports:
-  #     - "11434:11434" # Espone la porta (utile per testare dal Mac o per debug)
-  #   volumes:
-  #     - ollama_data:/root/.ollama # Salva i modelli scaricati qui
+  # 2. REDIS (Per BullMQ)
+  redis:
+    image: redis:alpine
+    container_name: redis-server
+    restart: always
+    ports:
+      - "6379:6379"
 
 volumes:
   ollama_data: # Volume persistente gestito da Docker

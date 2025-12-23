@@ -1,10 +1,10 @@
-import 'dotenv/config'; // Carica .env
+import 'dotenv/config';
 import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel } from 'discord.js';
-import { connectToChannel, disconnect, rotateAllStreams, isFileActive } from './voicerecorder';
-import * as fs from 'fs';
-import * as path from 'path';
-import { Worker } from 'worker_threads';
-import { setUserName, getUserName, updateUserField, getUserProfile } from './db';
+import { connectToChannel, disconnect } from './voicerecorder';
+import { audioQueue } from './queue';
+import { generateSummary, TONES, ToneKey } from './bard';
+import { getAvailableSessions, updateUserField, getUserProfile } from './db';
+import { v4 as uuidv4 } from 'uuid';
 
 const client = new Client({
     intents: [
@@ -15,72 +15,100 @@ const client = new Client({
     ]
 });
 
-// --- VARIABILI GLOBALI ---
+let currentSessionId: string | null = null;
 let autoLeaveTimer: NodeJS.Timeout | null = null;
-let sessionHeaderSent = false; // TRACCIA SE ABBIAMO GIÀ MANDATO L'INTESTAZIONE
-
-// --- FUNZIONE HELPER PER SPOSTARE FILE (FIX EXDEV) ---
-function moveFile(oldPath: string, newPath: string) {
-    try {
-        // Proviamo il rename veloce
-        fs.renameSync(oldPath, newPath);
-    } catch (err: any) {
-        // Se fallisce perché sono su volumi diversi (EXDEV), facciamo copia+cancella
-        if (err.code === 'EXDEV') {
-            fs.copyFileSync(oldPath, newPath);
-            fs.unlinkSync(oldPath);
-        } else {
-            throw err;
-        }
-    }
-}
-
-// --- COMANDI ---
 
 client.on('messageCreate', async (message: Message) => {
     if (!message.content.startsWith('!') || message.author.bot) return;
 
-    // FILTRO CANALE COMANDI
     const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
-    if (commandChannelId && message.channelId !== commandChannelId) {
-        // Se è impostato un canale specifico e il messaggio non arriva da lì, ignoriamo.
-        return;
-    }
+    if (commandChannelId && message.channelId !== commandChannelId) return;
 
     const args = message.content.slice(1).split(' ');
     const command = args.shift()?.toLowerCase();
 
-    if (!message.guild) return; // Ignora messaggi privati
+    if (!message.guild) return;
 
-    // MODIFICA: !join -> !write
+    // --- COMANDO WRITE (INIZIO SESSIONE) ---
     if (command === 'write') {
         const member = message.member;
         if (member?.voice.channel) {
-            await connectToChannel(member.voice.channel);
-            
-            // RESETTO IL FLAG PER LA NUOVA SESSIONE
-            sessionHeaderSent = false;
-            
-            message.reply("🔊 Sono entrato nel canale vocale! Inizio ad ascoltare le vostre gesta.");
-            
-            // Se il bot entra e non c'è nessuno (improbabile ma possibile), avvia check
+            currentSessionId = uuidv4();
+            await audioQueue.pause();
+            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${currentSessionId}`);
+            await connectToChannel(member.voice.channel, currentSessionId);
+            message.reply("🔊 **Modalità Ascolto Attiva**. Le risorse sono dedicate alla registrazione. L'elaborazione partirà alla fine.");
             checkAutoLeave(member.voice.channel);
         } else {
             message.reply("Devi essere in un canale vocale per evocare il Bardo!");
         }
     }
 
-    // MODIFICA: !leave -> !stopwriting
+    // --- COMANDO STOPWRITING (FINE SESSIONE) ---
     if (command === 'stopwriting') {
-        const success = disconnect(message.guild.id);
-        if (success) {
-            sessionHeaderSent = false; // RESET
-            message.reply("🛑 Disconnesso. Sto scrivendo le memorie di questa sessione...");
+        if (!currentSessionId) {
+            disconnect(message.guild.id);
+            message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
+            return;
         }
-        else message.reply("Non ero connesso.");
+
+        const sessionIdEnded = currentSessionId;
+        disconnect(message.guild.id);
+        currentSessionId = null;
+
+        message.reply(`🛑 Sessione **${sessionIdEnded}** terminata. Lo Scriba sta trascrivendo...`);
+        
+        await audioQueue.resume();
+        console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
+
+        waitForCompletionAndSummarize(sessionIdEnded, message.channel as TextChannel);
     }
 
-    // IMPOSTA NOME
+    // --- NUOVO: !racconta <id_sessione> [tono] ---
+    if (command === 'racconta') {
+        const targetSessionId = args[0];
+        const requestedTone = args[1]?.toUpperCase() as ToneKey;
+
+        if (!targetSessionId) {
+            const sessions = getAvailableSessions();
+            const list = sessions.map(s => `- \`${s.session_id}\` (${new Date(s.start_time).toLocaleString()}) - ${s.fragments} frammenti`).join('\n');
+            return message.reply(`Uso: \`!racconta <ID> [TONO]\`\n\n**Sessioni recenti:**\n${list}`);
+        }
+
+        if (requestedTone && !TONES[requestedTone]) {
+            return message.reply(`Tono non valido. Toni disponibili: ${Object.keys(TONES).join(', ')}`);
+        }
+
+        message.channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
+
+        const summary = await generateSummary(targetSessionId, requestedTone || 'EPICO');
+        
+        if (summary.length > 1900) {
+            const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) await message.channel.send(chunk);
+        } else {
+            message.channel.send(summary);
+        }
+    }
+
+    // --- NUOVO: !listasessioni ---
+    if (command === 'listasessioni') {
+        const sessions = getAvailableSessions();
+        if (sessions.length === 0) {
+            message.reply("Nessuna sessione trovata negli archivi.");
+        } else {
+            const list = sessions.map(s => `- \`${s.session_id}\` (${new Date(s.start_time).toLocaleString()}) - ${s.fragments} frammenti`).join('\n');
+            message.reply(`📜 **Sessioni Archiviate:**\n\n${list}`);
+        }
+    }
+
+    // --- NUOVO: !toni ---
+    if (command === 'toni') {
+        const list = Object.entries(TONES).map(([key, desc]) => `**${key}**: ${desc}`).join('\n\n');
+        message.reply(`🎭 **Toni Narrativi Disponibili:**\n\n${list}`);
+    }
+
+    // --- ALTRI COMANDI (IAM, MYCLASS, ETC) ---
     if (command === 'iam') {
         const val = args.join(' ');
         if (val) {
@@ -89,7 +117,6 @@ client.on('messageCreate', async (message: Message) => {
         } else message.reply("Uso: `!iam Nome`");
     }
 
-    // IMPOSTA CLASSE
     if (command === 'myclass') {
         const val = args.join(' ');
         if (val) {
@@ -98,7 +125,6 @@ client.on('messageCreate', async (message: Message) => {
         } else message.reply("Uso: `!myclass Barbaro / Mago / Ladro...`");
     }
 
-    // IMPOSTA RAZZA
     if (command === 'myrace') {
         const val = args.join(' ');
         if (val) {
@@ -107,7 +133,6 @@ client.on('messageCreate', async (message: Message) => {
         } else message.reply("Uso: `!myrace Umano / Elfo / Nano...`");
     }
 
-    // IMPOSTA DESCRIZIONE
     if (command === 'mydesc') {
         const val = args.join(' ');
         if (val) {
@@ -116,7 +141,6 @@ client.on('messageCreate', async (message: Message) => {
         } else message.reply("Uso: `!mydesc Breve descrizione del carattere o aspetto`");
     }
 
-    // VISUALIZZA SCHEDA
     if (command === 'whoami') {
         const p = getUserProfile(message.author.id);
         if (p.character_name) {
@@ -130,182 +154,79 @@ client.on('messageCreate', async (message: Message) => {
     }
 });
 
-// --- AUTO LEAVE LOGIC ---
+// --- FUNZIONE MONITORAGGIO CODA ---
+async function waitForCompletionAndSummarize(sessionId: string, discordChannel: TextChannel) {
+    const checkInterval = setInterval(async () => {
+        const counts = await audioQueue.getJobCounts();
+        
+        if (counts.waiting === 0 && counts.active === 0 && counts.delayed === 0) {
+            clearInterval(checkInterval);
+            console.log("✅ Tutti i file processati. Generazione Riassunto...");
+            
+            const summary = await generateSummary(sessionId, 'EPICO');
+            
+            const today = new Date();
+            const dateStr = today.toLocaleDateString('it-IT', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+            });
+            
+            const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
+            
+            await discordChannel.send(`\`\`\`diff\n-SESSIONE DEL ${dateStr.toUpperCase()}\n\`\`\``);
+            
+            for (const chunk of chunks) {
+                await discordChannel.send(chunk);
+            }
+            
+            console.log("📨 Riassunto inviato!");
 
+        }
+    }, 5000);
+}
+
+// --- AUTO LEAVE ---
 client.on('voiceStateUpdate', (oldState, newState) => {
-    // Determina in quale gilda è successo l'evento
     const guild = newState.guild || oldState.guild;
     if (!guild) return;
-
-    // Recupera il bot come membro della gilda
     const botMember = guild.members.cache.get(client.user!.id);
-    
-    // Se il bot non è connesso a nessun canale vocale in questa gilda, non fare nulla
     if (!botMember?.voice.channel) return;
-
-    // Controlliamo il canale dove si trova il bot
     checkAutoLeave(botMember.voice.channel);
 });
 
 function checkAutoLeave(channel: VoiceBasedChannel) {
-    // Conta i membri umani (escludendo i bot)
     const humans = channel.members.filter(member => !member.user.bot).size;
-
-    // Se ci sono 0 umani (quindi solo bot), avvia il timer
     if (humans === 0) {
         if (!autoLeaveTimer) {
-            console.log("👻 Canale vuoto (solo bot). Avvio timer disconnessione (60s)...");
+            console.log("👻 Canale vuoto. Timer 60s...");
             autoLeaveTimer = setTimeout(async () => {
                 if (channel.guild) {
-                    disconnect(channel.guild.id);
-                    sessionHeaderSent = false; // RESET
-                    console.log("👋 Auto-leave per inattività.");
-
-                    // Notifica nel canale comandi se configurato
-                    const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
-                    if (commandChannelId) {
-                        try {
-                            const cmdChannel = await client.channels.fetch(commandChannelId) as TextChannel;
-                            if (cmdChannel) {
-                                await cmdChannel.send("👻 Nessuno è rimasto ad ascoltare. Il Bardo si ritira nelle sue stanze (Auto-Leave).");
+                    if (currentSessionId) {
+                        const sessionIdEnded = currentSessionId;
+                        disconnect(channel.guild.id);
+                        currentSessionId = null;
+                        await audioQueue.resume();
+                        
+                        const commandChannelId = process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+                        if (commandChannelId) {
+                            const ch = await client.channels.fetch(commandChannelId) as TextChannel;
+                            if (ch) {
+                                ch.send("👻 Auto-Leave per inattività. Elaborazione sessione avviata...");
+                                waitForCompletionAndSummarize(sessionIdEnded, ch);
                             }
-                        } catch (e) {
-                            console.error("Impossibile inviare notifica auto-leave:", e);
                         }
+                    } else {
+                        disconnect(channel.guild.id);
                     }
                 }
                 autoLeaveTimer = null;
-            }, 60000); // 60 secondi
+            }, 60000);
         }
     } else {
-        // Se c'è almeno un umano, annulla il timer
         if (autoLeaveTimer) {
-            console.log("👥 Umani rilevati. Timer auto-leave annullato.");
             clearTimeout(autoLeaveTimer);
             autoLeaveTimer = null;
         }
     }
-}
-
-// --- TIMER 10 MINUTI (WORKER) ---
-// Default 1 minuto se non specificato, altrimenti usa il valore env
-const intervalMinutes = parseInt(process.env.SUMMARY_INTERVAL_MINUTES || '1');
-const WORKER_INTERVAL = intervalMinutes * 60 * 1000;
-let isWorkerRunning = false;
-
-setInterval(() => {
-    console.log("⏰ Check Worker...");
-    if (isWorkerRunning) {
-        console.log("⚠️ Worker precedente ancora in esecuzione. Salto questo turno.");
-        return;
-    }
-    
-    // [NUOVO] 1. Ruota i file: chiude quelli attuali (che diventano pronti) e ne apre di nuovi
-    rotateAllStreams();
-
-    runBatchProcessor();
-}, WORKER_INTERVAL);
-
-function runBatchProcessor() {
-    const recFolder = path.join(__dirname, '..', 'recordings');
-    const batchFolder = path.join(__dirname, '..', 'batch_processing');
-
-    if (!fs.existsSync(recFolder)) fs.mkdirSync(recFolder);
-    if (!fs.existsSync(batchFolder)) fs.mkdirSync(batchFolder);
-
-    const files = fs.readdirSync(recFolder).filter(f => f.endsWith('.pcm'));
-    
-    // [NUOVO] Filtriamo via i file che sono attualmente attivi (quelli appena creati dalla rotazione)
-    const filesToMove = files.filter(file => {
-        const fullPath = path.join(recFolder, file);
-        // Se è attivo, ritorna false (non includerlo)
-        return !isFileActive(fullPath);
-    });
-    
-    if (filesToMove.length === 0) return;
-
-    console.log(`📦 Sposto ${filesToMove.length} file nel batch processor...`);
-
-    filesToMove.forEach(file => {
-        const oldPath = path.join(recFolder, file);
-        const newPath = path.join(batchFolder, file);
-        try {
-            // FIX EXDEV: Usiamo la nostra funzione sicura
-            moveFile(oldPath, newPath);
-        } catch (err: any) {
-            console.error(`Errore spostamento ${file}:`, err.message);
-        }
-    });
-
-    isWorkerRunning = true;
-
-    const extension = __filename.endsWith('.ts') ? 'ts' : 'js';
-    const workerPath = path.join(__dirname, `worker.${extension}`);
-    
-    console.log(`[Main] Lancio worker da: ${workerPath}`);
-
-    const worker = new Worker(workerPath, { 
-        workerData: { batchFolder },
-        // FIX WORKER: Se il file è .ts, diciamo al worker di usare ts-node per capire il codice
-        execArgv: extension === 'ts' ? ['-r', 'ts-node/register'] : undefined
-    });
-
-    worker.on('message', async (result) => {
-        if (result.status === 'success') {
-            console.log("✅ [Main] Worker completato!");
-            
-            try {
-                const channelId = process.env.DISCORD_SUMMARY_CHANNEL_ID;
-                if (!channelId) {
-                    console.error("❌ Manca DISCORD_SUMMARY_CHANNEL_ID nel file .env");
-                    return;
-                }
-
-                const channel = await client.channels.fetch(channelId) as TextChannel;
-                
-                if (channel) {
-                    let messageContent = "";
-
-                    // LOGICA INTESTAZIONE
-                    if (!sessionHeaderSent) {
-                        const today = new Date();
-                        const dateStr = today.toLocaleDateString('it-IT', {
-                            weekday: 'long', 
-                            year: 'numeric', 
-                            month: 'long', 
-                            day: 'numeric' 
-                        });
-                        // Prima volta: Intestazione Rossa
-                        messageContent = `\`\`\`diff\n-SESSIONE DEL ${dateStr.toUpperCase()}\n\`\`\`\n${result.summary}`;
-                        sessionHeaderSent = true;
-                    } else {
-                        // Volte successive: Solo separatore discreto
-                        messageContent = `**...continua:**\n${result.summary}`;
-                    }
-
-                    await channel.send(messageContent);
-                    
-                    console.log("📨 Riassunto inviato al canale Discord!");
-                } else {
-                    console.error("❌ Canale non trovato o il bot non ha accesso.");
-                }
-            } catch (err) {
-                console.error("❌ Errore nell'invio del messaggio:", err);
-            }
-        } else if (result.status === 'skipped') {
-            console.log(`ℹ️ [Main] Worker skipped: ${result.message}`);
-        }
-    });
-
-    worker.on('error', (err) => {
-        console.error("❌ [Main] Errore nel Worker:", err);
-        isWorkerRunning = false;
-    });
-
-    worker.on('exit', (code) => {
-        isWorkerRunning = false;
-        if (code !== 0) console.error(`[Main] Worker fermato con codice ${code}`);
-    });
 }
 
 client.once('ready', () => {

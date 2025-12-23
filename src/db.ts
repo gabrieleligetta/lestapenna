@@ -12,7 +12,7 @@ if (!fs.existsSync(dataDir)){
 
 const db = new Database(dbPath);
 
-// Creiamo la tabella con i nuovi campi
+// --- TABELLA UTENTI ---
 db.exec(`CREATE TABLE IF NOT EXISTS users (
     discord_id TEXT PRIMARY KEY,
     character_name TEXT,
@@ -21,12 +21,30 @@ db.exec(`CREATE TABLE IF NOT EXISTS users (
     description TEXT
 )`);
 
-// MIGRATION "SPORCA" (Per non farti cancellare il DB a mano se esiste già)
+// MIGRATION "SPORCA"
 try { db.exec("ALTER TABLE users ADD COLUMN race TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN class TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN description TEXT"); } catch (e) {}
 
+// --- TABELLA REGISTRAZIONI ---
+db.exec(`CREATE TABLE IF NOT EXISTS recordings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    filename TEXT NOT NULL,
+    filepath TEXT NOT NULL,
+    user_id TEXT,
+    timestamp INTEGER,
+    status TEXT DEFAULT 'PENDING', 
+    transcription_text TEXT,
+    error_log TEXT
+)`);
+
+// Migration per error_log
+try { db.exec("ALTER TABLE recordings ADD COLUMN error_log TEXT"); } catch (e) {}
+
 db.pragma('journal_mode = WAL');
+
+// --- INTERFACCE ---
 
 export interface UserProfile {
     character_name: string | null;
@@ -35,13 +53,30 @@ export interface UserProfile {
     description: string | null;
 }
 
+export interface Recording {
+    id: number;
+    session_id: string;
+    filename: string;
+    filepath: string;
+    user_id: string;
+    timestamp: number;
+    status: string;
+    transcription_text: string | null;
+}
+
+export interface SessionSummary {
+    session_id: string;
+    start_time: number;
+    fragments: number;
+}
+
+// --- FUNZIONI UTENTI ---
+
 export const getUserProfile = (id: string): UserProfile => {
     const row = db.prepare('SELECT character_name, race, class, description FROM users WHERE discord_id = ?').get(id) as UserProfile | undefined;
     return row || { character_name: null, race: null, class: null, description: null };
 };
 
-// Manteniamo la vecchia funzione per compatibilità, ma usiamo la nuova logica interna se serve, 
-// oppure la lasciamo come wrapper semplice per getUserProfile
 export const getUserName = (id: string): string | null => {
     const p = getUserProfile(id);
     return p.character_name;
@@ -52,14 +87,60 @@ export const setUserName = (id: string, name: string): void => {
 };
 
 export const updateUserField = (id: string, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
-    // Upsert logic: inserisce se non esiste, aggiorna se esiste
     const exists = db.prepare('SELECT 1 FROM users WHERE discord_id = ?').get(id);
     
     if (exists) {
         db.prepare(`UPDATE users SET ${field} = ? WHERE discord_id = ?`).run(value, id);
     } else {
-        // Se è un nuovo utente, dobbiamo fare una insert specifica
         db.prepare('INSERT INTO users (discord_id) VALUES (?)').run(id);
         db.prepare(`UPDATE users SET ${field} = ? WHERE discord_id = ?`).run(value, id);
     }
 };
+
+// --- FUNZIONI REGISTRAZIONI ---
+
+export const addRecording = (sessionId: string, filename: string, filepath: string, userId: string, timestamp: number) => {
+    return db.prepare('INSERT INTO recordings (session_id, filename, filepath, user_id, timestamp) VALUES (?, ?, ?, ?, ?)').run(sessionId, filename, filepath, userId, timestamp);
+};
+
+export const getSessionRecordings = (sessionId: string): Recording[] => {
+    return db.prepare('SELECT * FROM recordings WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId) as Recording[];
+};
+
+export const updateRecordingStatus = (filename: string, status: string, text: string | null = null, error: string | null = null) => {
+    if (text !== null) {
+        db.prepare('UPDATE recordings SET status = ?, transcription_text = ? WHERE filename = ?').run(status, text, filename);
+    } else if (error !== null) {
+        db.prepare('UPDATE recordings SET status = ?, error_log = ? WHERE filename = ?').run(status, error, filename);
+    } else {
+        db.prepare('UPDATE recordings SET status = ? WHERE filename = ?').run(status, filename);
+    }
+};
+
+// --- NUOVE FUNZIONI PER IL BARDO ---
+
+export const getSessionTranscript = (sessionId: string) => {
+    // Recuperiamo solo i file trascritti con successo, ordinati per tempo
+    // Facciamo una JOIN per avere subito il nome del personaggio
+    const rows = db.prepare(`
+        SELECT r.transcription_text, r.user_id, u.character_name 
+        FROM recordings r
+        LEFT JOIN users u ON r.user_id = u.discord_id
+        WHERE r.session_id = ? AND r.status = 'PROCESSED'
+        ORDER BY r.timestamp ASC
+    `).all(sessionId) as Array<{ transcription_text: string, user_id: string, character_name: string | null }>;
+
+    return rows;
+};
+
+export const getAvailableSessions = (): SessionSummary[] => {
+    return db.prepare(`
+        SELECT session_id, MIN(timestamp) as start_time, COUNT(*) as fragments 
+        FROM recordings 
+        GROUP BY session_id 
+        ORDER BY start_time DESC 
+        LIMIT 5
+    `).all() as SessionSummary[];
+};
+
+export { db };

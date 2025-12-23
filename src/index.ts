@@ -314,9 +314,11 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
                     // Se stiamo cercando una sessione specifica tramite ID
                     if (targetSessionId && idMatch && idMatch[1] === targetSessionId) {
                         foundSessionNumber = num;
-                        // Se abbiamo trovato entrambi i dati che ci servono, possiamo fermarci
-                        if (lastRealNumber !== 0) break;
                     }
+
+                    // Ottimizzazione: se abbiamo trovato quello che cercavamo, usciamo
+                    if (!targetSessionId && lastRealNumber !== 0) break;
+                    if (targetSessionId && lastRealNumber !== 0 && foundSessionNumber !== undefined) break;
                 }
             }
         }
@@ -360,9 +362,14 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
                 setSessionNumber(sessionId, sessionNum); // Sincronizziamo il DB
             }
         } else {
-            // Se è una nuova sessione, prendiamo l'ultimo numero reale + 1
-            sessionNum = info.lastRealNumber + 1;
-            setSessionNumber(sessionId, sessionNum);
+            // Se è una nuova sessione, prendiamo l'ultimo numero reale + 1 (se trovato in cronologia)
+            if (info.lastRealNumber > 0) {
+                sessionNum = info.lastRealNumber + 1;
+                setSessionNumber(sessionId, sessionNum);
+            } else if (sessionNum === null) {
+                sessionNum = 1;
+                setSessionNumber(sessionId, sessionNum);
+            }
         }
     }
 

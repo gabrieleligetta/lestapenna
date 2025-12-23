@@ -19,6 +19,9 @@ interface ActiveStream {
 // Mappa aggiornata: UserId -> Dati Stream
 const activeStreams = new Map<string, ActiveStream>();
 
+// Mappa per tracciare gli errori di connessione per il debounce
+const connectionErrors = new Map<string, number>();
+
 export async function connectToChannel(channel: VoiceBasedChannel) {
     if (!channel.guild) return;
 
@@ -39,6 +42,12 @@ export async function connectToChannel(channel: VoiceBasedChannel) {
 }
 
 function createListeningStream(receiver: any, userId: string) {
+    // 1. DEBOUNCE: Se questo utente ha dato errore meno di 1 secondo fa, ignoriamo
+    const lastError = connectionErrors.get(userId) || 0;
+    if (Date.now() - lastError < 1000) {
+        return; 
+    }
+
     // Se c'è già uno stream attivo per questo utente, non ne creiamo un altro
     if (activeStreams.has(userId)) return;
 
@@ -82,6 +91,9 @@ function createListeningStream(receiver: any, userId: string) {
     opusStream.on('error', (err: Error) => {
         console.error(`Errore stream ${userId}:`, err.message);
         activeStreams.delete(userId);
+
+        // 2. REGISTRA L'ERRORE per attivare il freno
+        connectionErrors.set(userId, Date.now());
     });
 }
 

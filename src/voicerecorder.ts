@@ -16,6 +16,7 @@ import { uploadToOracle } from './backupService';
 interface ActiveStream {
     out: fs.WriteStream;
     decoder: prism.opus.Decoder;
+    encoder: prism.FFmpeg;
     currentPath: string;
     startTime: number;
 }
@@ -61,9 +62,20 @@ function createListeningStream(receiver: any, userId: string) {
     });
 
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+    const encoder = new prism.FFmpeg({
+        args: [
+            '-f', 's16le',
+            '-ar', '48000',
+            '-ac', '2',
+            '-i', '-',
+            '-codec:a', 'libmp3lame',
+            '-b:a', '64k',
+            '-f', 'mp3',
+        ],
+    });
 
     const getNewFile = () => {
-        const filename = `${userId}-${Date.now()}.pcm`;
+        const filename = `${userId}-${Date.now()}.mp3`;
         const filepath = path.join(__dirname, '..', 'recordings', filename);
         const out = fs.createWriteStream(filepath);
         return { out, filepath, filename };
@@ -72,20 +84,22 @@ function createListeningStream(receiver: any, userId: string) {
     const { out, filepath, filename } = getNewFile();
     const startTime = Date.now();
 
-    // PIPELINE: Discord -> Decoder -> File
-    opusStream.pipe(decoder).pipe(out);
+    // PIPELINE: Discord (Opus) -> PCM -> MP3 -> File
+    opusStream.pipe(decoder).pipe(encoder).pipe(out);
 
-    activeStreams.set(userId, { out, decoder, currentPath: filepath, startTime });
+    activeStreams.set(userId, { out, decoder, encoder, currentPath: filepath, startTime });
 
     console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId}: ${filename}`);
 
     opusStream.on('end', async () => {
         activeStreams.delete(userId);
         
-        // Quando lo stream finisce (silenzio), salviamo e accodiamo
-        if (currentSessionId) {
-            await onFileClosed(userId, filepath, filename, startTime);
-        }
+        // Quando il file è chiuso (la pipeline finisce), procediamo con il backup e l'accodamento
+        out.on('finish', async () => {
+            if (currentSessionId) {
+                await onFileClosed(userId, filepath, filename, startTime);
+            }
+        });
     });
 
     opusStream.on('error', (err: Error) => {

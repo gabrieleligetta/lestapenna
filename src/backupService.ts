@@ -102,11 +102,17 @@ export async function uploadToOracle(filePath: string, fileName: string, session
         const fileContent = fs.readFileSync(filePath);
         const targetKey = getPreferredKey(fileName, sessionId);
         
+        // Determiniamo il content type dall'estensione
+        const extension = path.extname(fileName).toLowerCase();
+        const contentType = extension === '.ogg' ? 'audio/ogg' : 
+                          extension === '.mp3' ? 'audio/mpeg' : 
+                          'audio/x-pcm';
+
         const command = new PutObjectCommand({
             Bucket: getBucketName(),
             Key: targetKey,
             Body: fileContent,
-            ContentType: 'audio/x-pcm'
+            ContentType: contentType
         });
 
         await getS3Client().send(command);

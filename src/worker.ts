@@ -43,14 +43,24 @@ export function startWorker() {
                 return { status: 'skipped', reason: 'too_small' };
             }
 
-            const wavPath = filePath.replace('.pcm', '.wav');
-            console.log(`[Scriba] 🔄 Conversione in WAV: ${fileName}`);
-            await convertPcmToWav(filePath, wavPath);
+            let transcriptionPath = filePath;
+            const extension = filePath.toLowerCase().split('.').pop();
+            const isPcm = extension === 'pcm';
+
+            if (isPcm) {
+                const wavPath = filePath.replace('.pcm', '.wav');
+                console.log(`[Scriba] 🔄 Conversione in WAV (Legacy PCM): ${fileName}`);
+                await convertPcmToWav(filePath, wavPath);
+                transcriptionPath = wavPath;
+            }
             
             console.log(`[Scriba] 🗣️  Inizio trascrizione Whisper: ${fileName}`);
-            const result = await transcribeLocal(wavPath);
+            const result = await transcribeLocal(transcriptionPath);
             
-            if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
+            // Pulizia del file temporaneo WAV se è stato creato
+            if (transcriptionPath !== filePath && fs.existsSync(transcriptionPath)) {
+                fs.unlinkSync(transcriptionPath);
+            }
 
             if (result && result.text && result.text.trim().length > 0) {
                 updateRecordingStatus(fileName, 'PROCESSED', result.text.trim());

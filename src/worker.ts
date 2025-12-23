@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import OpenAI from 'openai';
-import { getUserName } from './db';
+import { getUserName, getUserProfile } from './db';
 
 // CONFIGURAZIONE IBRIDA (OLLAMA / OPENAI)
 const useOllama = process.env.AI_PROVIDER === 'ollama';
@@ -17,12 +17,20 @@ const openai = new OpenAI({
 const { batchFolder } = workerData;
 
 async function run() {
+    // LOG DI AVVIO
+    console.log("[Worker] 🚀 Avviato job di elaborazione batch...");
+
     const files = fs.readdirSync(batchFolder).filter(f => f.endsWith('.pcm'));
     
-    if (files.length === 0) return;
+    if (files.length === 0) {
+        console.log("[Worker] 💤 Nessun file da elaborare. Chiudo.");
+        return;
+    }
 
-    console.log(`[Worker] 🎛️ Trovati ${files.length} frammenti. Elaborazione singola...`);
+    console.log(`[Worker] 📂 Trovati ${files.length} file audio. Inizio analisi...`);
 
+    // Set per tenere traccia degli ID unici dei parlanti in questa sessione
+    const activeUserIds = new Set<string>();
     const transcriptions: Array<{ time: number, user: string, text: string }> = [];
 
     for (const file of files) {
@@ -34,6 +42,8 @@ async function run() {
         const timestampStr = parts[1];
         const timestamp = parseInt(timestampStr);
 
+        activeUserIds.add(userId); // <--- Salviamo l'ID
+
         const pcmPath = path.join(batchFolder, file);
         
         // --- FILTRO 1: Dimensione File ---
@@ -42,6 +52,7 @@ async function run() {
         const stats = fs.statSync(pcmPath);
         if (stats.size < 20000) {
             fs.unlinkSync(pcmPath);
+            console.log(`[Worker] 🗑️ File troppo piccolo scartato: ${file}`);
             continue;
         }
 
@@ -56,14 +67,21 @@ async function run() {
             // --- FILTRO 2: Lunghezza Testo ---
             // Modifica: Accettiamo tutto purché non sia vuoto (per non perdere "Sì", "No", "Ok")
             if (result && result.text && result.text.trim().length > 0) {
-                // Recuperiamo il nome dal DB
-                const characterName = getUserName(userId);
+                // Recuperiamo solo il nome per il dialogo "script"
+                const profile = getUserProfile(userId);
+                const displayName = profile.character_name || `Utente ${userId}`;
                 
+                // LOG TRASCRIZIONE SUCCESSO
+                console.log(`[Worker] ✅ Trascritto (${displayName}): "${result.text.substring(0, 30)}..."`);
+
                 transcriptions.push({
                     time: timestamp,
-                    user: characterName || `Utente ${userId}`, // Usa il nome PG se c'è
+                    user: displayName,
                     text: result.text.trim()
                 });
+            } else {
+                // LOG TRASCRIZIONE VUOTA
+                console.log(`[Worker] 🗑️ Audio scartato (silenzio o non valido): ${file}`);
             }
             
             // Pulizia
@@ -71,11 +89,12 @@ async function run() {
             if (fs.existsSync(pcmPath)) fs.unlinkSync(pcmPath);
 
         } catch (err) {
-            console.error(`[Worker] Errore processamento file ${file}:`, err);
+            console.error(`[Worker] ❌ ERRORE processamento ${file}:`, err);
         }
     }
 
     if (transcriptions.length === 0) {
+        console.log("[Worker] ⚠️ Nessuna trascrizione valida prodotta. Skip.");
         parentPort?.postMessage({ status: 'skipped', message: 'Nessuna trascrizione valida (solo rumore?).' });
         return;
     }
@@ -83,16 +102,50 @@ async function run() {
     // 3. Riordina cronologicamente
     transcriptions.sort((a, b) => a.time - b.time);
 
+    // --- COSTRUZIONE DEL CAST LIST ---
+    let castContext = "PERSONAGGI E PROTAGONISTI:\n";
+    activeUserIds.forEach(uid => {
+        const p = getUserProfile(uid);
+        if (p.character_name) {
+            // Se è il DM
+            if (p.character_name.toLowerCase().includes('dungeon master') || p.character_name.toLowerCase().includes('narratore')) {
+                 castContext += `- ${p.character_name}: Il Narratore e Arbitro di gioco.\n`;
+            } else {
+                // Se è un PG
+                let details = [];
+                if (p.race) details.push(p.race);
+                if (p.class) details.push(p.class);
+                const info = details.length > 0 ? `(${details.join(' ')})` : '';
+                
+                castContext += `- ${p.character_name} ${info}`;
+                if (p.description) castContext += `: ${p.description}`;
+                castContext += "\n";
+            }
+        }
+    });
+    // ---------------------------------
+
     // 4. Crea il testo strutturato per Ollama
     const fullDialogue = transcriptions
         .map(t => `[${t.user}]: ${t.text}`)
         .join("\n");
 
-    console.log(`[Worker] 📝 Dialogo ricostruito:\n${fullDialogue.substring(0, 200)}...`);
-    console.log(`[Worker] 🧙‍♂️ Chiedo il riassunto a ${useOllama ? 'Ollama' : 'OpenAI'}...`);
-
+    console.log(`[Worker] 📝 Dialogo ricostruito (${transcriptions.length} linee). Generazione riassunto in corso...`);
+    
     // 5. RIASSUNTO LOCALE (Ollama)
-    const summary = await generateSummary(fullDialogue);
+    const summary = await generateSummary(fullDialogue, castContext);
+
+    // --- NUOVO CONTROLLO ---
+    if (summary.includes("SKIP_NESSUN_CONTENUTO")) {
+        console.log("[Worker] 🔇 L'AI ha scartato il frammento (troppo breve o senza senso). Nessun messaggio inviato.");
+        
+        // Comunichiamo al main che abbiamo saltato, così non da errore
+        parentPort?.postMessage({ status: 'skipped', message: 'AI: Contenuto non narrabile.' });
+        return;
+    }
+    // -----------------------
+
+    console.log("[Worker] ✨ Riassunto generato con successo! Invio al Main Thread.");
 
     parentPort?.postMessage({ 
         status: 'success', 
@@ -137,9 +190,11 @@ function transcribeLocal(wavPath: string): Promise<{ text: string, error?: strin
     });
 }
 
-async function generateSummary(text: string): Promise<string> {
+async function generateSummary(dialogue: string, castInfo: string): Promise<string> {
     // Scegli il modello in base al provider
     const modelName = useOllama ? "llama3.2" : "gpt-4o"; // o "gpt-3.5-turbo" per risparmiare
+    
+    console.log(`[Worker] 🧠 Richiesta inviata a ${useOllama ? 'Ollama' : 'OpenAI'} (Modello: ${modelName})... attendere...`);
 
     try {
         const completion = await openai.chat.completions.create({
@@ -147,22 +202,36 @@ async function generateSummary(text: string): Promise<string> {
             messages: [
                 { 
                     role: "system", 
-                    content: `Sei il Bardo Cronista di una campagna D&D. 
-                    Riceverai un copione di dialogo nel formato "**Nome**: Frase".
-                    Riassumi gli eventi accaduti in stile narrativo epico. 
-                    Usa i nomi dei personaggi forniti.
-                    IMPORTANTE: Rispondi rigorosamente in lingua ITALIANA. Non usare inglese.`
+                    content: `Sei il Bardo Cronista di una campagna D&D.
+                    
+                    ${castInfo}
+                    
+                    ISTRUZIONI BASE:
+                    - Usa le informazioni sui personaggi (razza, classe, carattere) per colorire la narrazione.
+                    - Ignora regole, meta-gaming e frasi tecniche.
+                    - Trasforma i dialoghi in narrazione epica in terza persona.
+                    
+                    ⚠️ ISTRUZIONE IMPORTANTE DI SICUREZZA ⚠️
+                    Se il testo che ricevi è:
+                    1. Troppo breve o frammentato per avere senso (es: parole a metà, frasi monche).
+                    2. Solo rumore o imprecazioni senza contesto.
+                    3. Completamente incomprensibile.
+                    
+                    ALLORA RISPONDI ESATTAMENTE E SOLO CON LA STRINGA: "SKIP_NESSUN_CONTENUTO".
+                    Non aggiungere spiegazioni, scuse o altro. Solo quella stringa.
+                    
+                    IMPORTANTE: Rispondi rigorosamente in lingua ITALIANA.`
                 },
                 { 
                     role: "user", 
-                    content: `Ecco la trascrizione del dialogo tra i personaggi. I nomi tra parentesi quadre indicano chi parla.\n\n${text}` 
+                    content: `Ecco il dialogo:\n\n${dialogue}` 
                 }
             ],
         });
         return completion.choices[0].message.content || "Errore Generazione.";
     } catch (e) {
         console.error("Errore AI:", e);
-        return "Il Bardo non risponde.";
+        return "SKIP_NESSUN_CONTENUTO"; // Fallback in caso di errore
     }
 }
 

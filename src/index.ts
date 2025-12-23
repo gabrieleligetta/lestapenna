@@ -1,10 +1,10 @@
 import 'dotenv/config'; // Carica .env
 import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel } from 'discord.js';
-import { connectToChannel, disconnect } from './voicerecorder';
+import { connectToChannel, disconnect, rotateAllStreams, isFileActive } from './voicerecorder';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Worker } from 'worker_threads';
-import { setUserName, getUserName } from './db';
+import { setUserName, getUserName, updateUserField, getUserProfile } from './db';
 
 const client = new Client({
     intents: [
@@ -80,22 +80,52 @@ client.on('messageCreate', async (message: Message) => {
         else message.reply("Non ero connesso.");
     }
 
+    // IMPOSTA NOME
     if (command === 'iam') {
-        const characterName = args.join(' ');
-        if (characterName) {
-            setUserName(message.author.id, characterName);
-            message.reply(`⚔️ Benvenuto avventuriero! D'ora in poi sarai conosciuto come **${characterName}**.`);
-        } else {
-            message.reply("Uso: `!iam Nome Del Tuo PG`");
-        }
+        const val = args.join(' ');
+        if (val) {
+            updateUserField(message.author.id, 'character_name', val);
+            message.reply(`⚔️ Nome aggiornato: **${val}**`);
+        } else message.reply("Uso: `!iam Nome`");
     }
 
+    // IMPOSTA CLASSE
+    if (command === 'myclass') {
+        const val = args.join(' ');
+        if (val) {
+            updateUserField(message.author.id, 'class', val);
+            message.reply(`🛡️ Classe aggiornata: **${val}**`);
+        } else message.reply("Uso: `!myclass Barbaro / Mago / Ladro...`");
+    }
+
+    // IMPOSTA RAZZA
+    if (command === 'myrace') {
+        const val = args.join(' ');
+        if (val) {
+            updateUserField(message.author.id, 'race', val);
+            message.reply(`🧬 Razza aggiornata: **${val}**`);
+        } else message.reply("Uso: `!myrace Umano / Elfo / Nano...`");
+    }
+
+    // IMPOSTA DESCRIZIONE
+    if (command === 'mydesc') {
+        const val = args.join(' ');
+        if (val) {
+            updateUserField(message.author.id, 'description', val);
+            message.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
+        } else message.reply("Uso: `!mydesc Breve descrizione del carattere o aspetto`");
+    }
+
+    // VISUALIZZA SCHEDA
     if (command === 'whoami') {
-        const name = getUserName(message.author.id);
-        if (name) {
-            message.reply(`Tu sei **${name}**.`);
+        const p = getUserProfile(message.author.id);
+        if (p.character_name) {
+            let msg = `👤 **${p.character_name}**`;
+            if (p.race || p.class) msg += ` (${p.race || '?'} ${p.class || '?'})`;
+            if (p.description) msg += `\n📝 "${p.description}"`;
+            message.reply(msg);
         } else {
-            message.reply("Non so chi sei. Usa `!iam Nome Del Tuo PG` per presentarti.");
+            message.reply("Non ti conosco. Usa `!iam` per iniziare.");
         }
     }
 });
@@ -169,6 +199,10 @@ setInterval(() => {
         console.log("⚠️ Worker precedente ancora in esecuzione. Salto questo turno.");
         return;
     }
+    
+    // [NUOVO] 1. Ruota i file: chiude quelli attuali (che diventano pronti) e ne apre di nuovi
+    rotateAllStreams();
+
     runBatchProcessor();
 }, WORKER_INTERVAL);
 
@@ -181,11 +215,18 @@ function runBatchProcessor() {
 
     const files = fs.readdirSync(recFolder).filter(f => f.endsWith('.pcm'));
     
-    if (files.length === 0) return;
+    // [NUOVO] Filtriamo via i file che sono attualmente attivi (quelli appena creati dalla rotazione)
+    const filesToMove = files.filter(file => {
+        const fullPath = path.join(recFolder, file);
+        // Se è attivo, ritorna false (non includerlo)
+        return !isFileActive(fullPath);
+    });
+    
+    if (filesToMove.length === 0) return;
 
-    console.log(`📦 Sposto ${files.length} file nel batch processor...`);
+    console.log(`📦 Sposto ${filesToMove.length} file nel batch processor...`);
 
-    files.forEach(file => {
+    filesToMove.forEach(file => {
         const oldPath = path.join(recFolder, file);
         const newPath = path.join(batchFolder, file);
         try {

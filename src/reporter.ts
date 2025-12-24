@@ -103,3 +103,21 @@ export async function processSessionReport(metrics: SessionMetrics) {
         try { fs.unlinkSync(logPath); } catch (e) {}
     }
 }
+
+export async function sendTestEmail(recipient: string): Promise<boolean> {
+    const mailOptions = {
+        from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
+        to: recipient,
+        subject: `[Lestapenna] Test Configurazione SMTP`,
+        text: `Ciao! Se leggi questa email, la configurazione SMTP di Porkbun funziona correttamente.\n\nHost: ${process.env.SMTP_HOST}\nPort: ${process.env.SMTP_PORT}\nUser: ${process.env.SMTP_USER}`
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log(`[Reporter] 📧 Email di test inviata a ${recipient}`);
+        return true;
+    } catch (e) {
+        console.error("[Reporter] ❌ Errore invio email di test:", e);
+        return false;
+    }
+}

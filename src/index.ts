@@ -32,7 +32,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
 import { monitor } from './monitor';
-import { processSessionReport } from './reporter';
+import { processSessionReport, sendTestEmail } from './reporter';
 
 const client = new Client({
     intents: [
@@ -428,6 +428,8 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- NUOVO: !wipe (SOLO SVILUPPO) ---
     if (command === 'wipe') {
+        if (message.author.id !== '310865403066712074') return; // Solo Owner
+
         const filter = (m: Message) => m.author.id === message.author.id;
         message.reply("⚠️ **ATTENZIONE**: Questa operazione cancellerà **TUTTO** (DB, Cloud, Code, File Locali). Sei sicuro? Scrivi `CONFERMO` entro 15 secondi.");
 
@@ -457,6 +459,20 @@ client.on('messageCreate', async (message: Message) => {
             }
         } catch (e) {
             message.reply("⌛ Tempo scaduto. Il mondo è salvo.");
+        }
+    }
+
+    // --- NUOVO: !testmail (HIDDEN) ---
+    if (command === 'testmail') {
+        if (message.author.id !== '310865403066712074') return; // Solo Owner
+
+        message.reply("📧 Invio email di test in corso...");
+        const success = await sendTestEmail('gabligetta@gmail.com');
+        
+        if (success) {
+            message.reply("✅ Email inviata con successo! Controlla la casella di posta.");
+        } else {
+            message.reply("❌ Errore durante l'invio. Controlla i log della console.");
         }
     }
 

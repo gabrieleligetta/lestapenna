@@ -15,6 +15,12 @@ export type ToneKey = keyof typeof TONES;
 // Configurazione Provider
 const useOllama = process.env.AI_PROVIDER === 'ollama';
 
+// --- CONFIGURAZIONE LIMITI (DINAMICA) ---
+// Se usiamo Ollama (Llama 3), teniamo chunk piccoli per non saturare la context window (spesso 8k o 128k ma fragile).
+// Se usiamo OpenAI (GPT-4o), usiamo chunk enormi (800k) per sfruttare la context window di 128k+ token.
+const MAX_CHUNK_SIZE = useOllama ? 15000 : 800000;
+const CHUNK_OVERLAP = useOllama ? 1000 : 5000;
+
 // Nota: Su Oracle A1, "llama3.1" (8B) potrebbe essere lento ma più intelligente. 
 // "llama3.2" (3B) è velocissimo ma meno dettagliato. Fai dei test.
 const MODEL_NAME = useOllama ? (process.env.OLLAMA_MODEL || "llama3.2") : (process.env.OPEN_AI_MODEL || "gpt-4o-mini");
@@ -33,8 +39,9 @@ const openai = new OpenAI({
 
 /**
  * Divide il testo in chunk
+ * I default sono ora dinamici in base al provider scelto.
  */
-function splitTextInChunks(text: string, chunkSize: number = 15000, overlap: number = 1000): string[] {
+function splitTextInChunks(text: string, chunkSize: number = MAX_CHUNK_SIZE, overlap: number = CHUNK_OVERLAP): string[] {
     const chunks = [];
     let i = 0;
     while (i < text.length) {
@@ -116,6 +123,7 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
 // Modificato: Restituisce oggetto con summary e token totali
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, tokens: number}> {
     console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
+    console.log(`[Bardo] ⚙️  Configurazione: Chunk Size=${MAX_CHUNK_SIZE}, Overlap=${CHUNK_OVERLAP}, Provider=${useOllama ? 'Ollama' : 'OpenAI'}`);
     
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
@@ -180,14 +188,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         })
         .join("\n");
 
-    const CHAR_LIMIT_FOR_MAP_REDUCE = 15000;
+    // Usiamo la costante dinamica per decidere se attivare Map-Reduce
     let contextForFinalStep = "";
     let accumulatedTokens = 0;
 
-    if (fullDialogue.length > CHAR_LIMIT_FOR_MAP_REDUCE) {
-        console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars). Attivo Map-Reduce.`);
+    if (fullDialogue.length > MAX_CHUNK_SIZE) {
+        console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars > ${MAX_CHUNK_SIZE}). Attivo Map-Reduce.`);
         
-        const chunks = splitTextInChunks(fullDialogue);
+        const chunks = splitTextInChunks(fullDialogue, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
         console.log(`[Bardo] 🔪 Diviso in ${chunks.length} segmenti. Concorrenza: ${CONCURRENCY_LIMIT}`);
 
         const mapResults = await processInBatches(chunks, CONCURRENCY_LIMIT, (chunk, index) => 

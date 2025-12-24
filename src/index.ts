@@ -549,8 +549,15 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'iam' || command === 'sono') {
         const val = args.join(' ');
         if (val) {
-            updateUserField(message.author.id, 'character_name', val);
-            await message.reply(`⚔️ Nome aggiornato: **${val}**`);
+            if (val.toUpperCase() === 'DM' || val.toUpperCase() === 'DUNGEON MASTER') {
+                updateUserField(message.author.id, 'character_name', 'DM');
+                updateUserField(message.author.id, 'class', 'Dungeon Master');
+                updateUserField(message.author.id, 'race', 'Narratore');
+                await message.reply(`🎲 **Saluti, Dungeon Master.** Il Bardo è ai tuoi ordini.`);
+            } else {
+                updateUserField(message.author.id, 'character_name', val);
+                await message.reply(`⚔️ Nome aggiornato: **${val}**`);
+            }
         } else await message.reply("Uso: `!sono Nome`");
     }
 

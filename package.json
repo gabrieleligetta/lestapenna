@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@aws-sdk/client-s3": "^3.957.0",
+    "@aws-sdk/s3-request-presigner": "^3.957.0",
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.0",
     "@snazzah/davey": "^0.1.9",

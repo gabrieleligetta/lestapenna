@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
@@ -173,6 +174,50 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
             console.error(`[Custode] ❌ Errore download da Oracle per ${fileName}:`, err);
         }
         return false;
+    }
+}
+
+/**
+ * Genera un URL firmato (Pre-Authenticated Request) per scaricare un file.
+ * L'URL scade dopo il tempo specificato (default 1 ora).
+ */
+export async function getPresignedUrl(fileName: string, sessionId?: string, expiresInSeconds: number = 3600): Promise<string | null> {
+    try {
+        // Cerchiamo dove si trova il file (legacy o nuova struttura)
+        const key = await findS3Key(fileName, sessionId);
+        
+        if (!key) {
+            // Se non esiste, assumiamo che sarà caricato nel percorso preferito
+            // Questo è utile se stiamo generando l'URL per un file appena caricato ma non ancora indicizzato
+            // o se vogliamo forzare il percorso nuovo.
+            // Tuttavia, per sicurezza, ritorniamo null se non lo troviamo, 
+            // perché getPresignedUrl su una chiave inesistente genererebbe comunque un link (che darebbe 404).
+            console.warn(`[Custode] ⚠️ Richiesto URL per file non trovato: ${fileName}`);
+            
+            // Fallback: proviamo a generare l'URL per dove DOVREBBE essere
+            const targetKey = getPreferredKey(fileName, sessionId);
+            console.log(`[Custode] 🔗 Genero URL per percorso previsto: ${targetKey}`);
+            
+            const command = new GetObjectCommand({
+                Bucket: getBucketName(),
+                Key: targetKey
+            });
+            
+            return await getSignedUrl(getS3Client(), command, { expiresIn: expiresInSeconds });
+        }
+
+        const command = new GetObjectCommand({
+            Bucket: getBucketName(),
+            Key: key
+        });
+
+        const url = await getSignedUrl(getS3Client(), command, { expiresIn: expiresInSeconds });
+        console.log(`[Custode] 🔗 URL generato per ${key}`);
+        return url;
+
+    } catch (err) {
+        console.error(`[Custode] ❌ Errore generazione URL firmato per ${fileName}:`, err);
+        return null;
     }
 }
 

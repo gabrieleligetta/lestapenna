@@ -327,6 +327,7 @@ client.on('messageCreate', async (message: Message) => {
             return `--- ${t.character_name || 'Sconosciuto'} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}\n`;
         }).join('\n');
 
+
         const fileName = `transcript-${targetSessionId}.txt`;
         const filePath = path.join(__dirname, '..', 'recordings', fileName);
         

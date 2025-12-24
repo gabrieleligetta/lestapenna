@@ -9,6 +9,8 @@ services:
       - .env
     depends_on:
       - redis
+    # Override del comando di default (che ora è node dist/index.js) per usare dev mode
+    command: yarn dev
     volumes:
       # Mappatura corretta su /app
       - ./src:/app/src

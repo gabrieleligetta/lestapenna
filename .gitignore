@@ -9,3 +9,5 @@ data/
 /dist/
 /start-ollama.sh
 /stop-ollama.sh
+/oracle/setup.sh
+/.env.prod

@@ -1,0 +1,35 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/lestapenna
+            
+            # 1. Scarica gli ultimi aggiornamenti
+            git pull origin main
+            
+            # 2. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
+            echo "${{ secrets.ENV_FILE }}" > .env
+            
+            # 3. Ricostruisci e riavvia i container
+            # Usiamo docker-compose.prod.yml esplicitamente
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            
+            # 4. Pulizia immagini vecchie per risparmiare spazio su disco
+            docker image prune -f

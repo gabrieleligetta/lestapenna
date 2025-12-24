@@ -1,0 +1,39 @@
+services:
+  dnd-bot:
+    platform: linux/arm64
+    build: .
+    container_name: dnd-bot-prod
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - ollama
+    env_file:
+      - .env
+    volumes:
+      # Persistenza dati (NON codice sorgente)
+      - ./recordings:/app/recordings
+      - ./data:/app/data
+      - ./batch_processing:/app/batch_processing
+
+  redis:
+    image: redis:alpine
+    container_name: redis-server-prod
+    restart: always
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-server
+    restart: always
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      # Esposto solo internamente tra i container, ma se vuoi testarlo da fuori scommenta:
+      # - "11434:11434"
+      - "11434"
+
+volumes:
+  ollama_data:
+  redis_data:

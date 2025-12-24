@@ -4,7 +4,7 @@ import os
 from faster_whisper import WhisperModel
 
 # Cambia da "medium" a "small" per velocità
-model_size = "small"
+model_size = "medium"
 
 def load_model():
     # Ottimizzazione CPU ARM (M1/Oracle A1):

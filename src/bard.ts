@@ -238,6 +238,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         return response.choices[0].message.content || "Errore generazione.";
     } catch (err: any) {
         console.error("Errore finale:", err);
-        return `Il Bardo è svenuto (Errore: ${err.message})`;
+        throw err; // Rilanciamo l'errore per permettere al chiamante di gestirlo
     }
 }

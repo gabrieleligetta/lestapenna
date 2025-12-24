@@ -9,6 +9,8 @@ services:
       - ollama
     env_file:
       - .env
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
     volumes:
       # Persistenza dati (NON codice sorgente)
       - ./recordings:/app/recordings

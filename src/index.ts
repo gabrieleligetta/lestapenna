@@ -2,7 +2,7 @@ import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
 import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder, ChannelType } from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
-import { uploadToOracle, downloadFromOracle, wipeBucket } from './backupService';
+import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
 import { generateSummary, TONES, ToneKey } from './bard';
@@ -354,10 +354,22 @@ client.on('messageCreate', async (message: Message) => {
                 // fs.unlinkSync(filePath);
             } else {
                 // Se è troppo grande, serve una strategia alternativa (es. upload su Oracle + Link)
-                // Per ora avvisiamo l'utente
-                (message.channel as TextChannel).send(`✅ **Audio Generato**, ma è troppo grande per Discord (${sizeMB.toFixed(2)} MB).\n📂 Il file si trova sul server in: \`${filePath}\``);
+                const fileName = path.basename(filePath);
+
+                // Carichiamo su Oracle
+                await uploadToOracle(filePath, fileName, targetSessionId);
                 
-                // TODO: Qui potresti implementare uploadToOracle(filePath) e generare un Pre-Authenticated Request (PAR) url
+                // Generiamo URL firmato
+                const presignedUrl = await getPresignedUrl(fileName, targetSessionId, 3600 * 24); // 24 ore
+
+                if (presignedUrl) {
+                    (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
+                } else {
+                    (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
+                }
+
+                // Pulizia locale
+                try { fs.unlinkSync(filePath); } catch(e) {}
             }
 
         } catch (err: any) {

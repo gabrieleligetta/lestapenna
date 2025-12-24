@@ -31,6 +31,8 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
+import { monitor } from './monitor';
+import { processSessionReport } from './reporter';
 
 const client = new Client({
     intents: [
@@ -161,6 +163,10 @@ client.on('messageCreate', async (message: Message) => {
 
             const sessionId = uuidv4();
             guildSessions.set(message.guild.id, sessionId);
+            
+            // START MONITOR
+            monitor.startSession(sessionId);
+
             await audioQueue.pause();
             console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
             
@@ -323,6 +329,21 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- COMANDO DOWNLOAD SESSIONE ---
     if (command === 'download' || command === 'scarica') {
+        // LOCK: Impedisci se c'è una sessione attiva O se la coda sta lavorando
+        const isActiveSession = guildSessions.has(message.guild.id);
+        const queueCounts = await audioQueue.getJobCounts();
+        const isProcessing = queueCounts.active > 0 || queueCounts.waiting > 0;
+
+        if (isActiveSession || isProcessing) {
+            return message.reply(
+                `🛑 **Sistema sotto carico.**\n` +
+                `Non posso generare il download mentre:\n` +
+                `- Una sessione è attiva: ${isActiveSession ? 'SÌ' : 'NO'}\n` +
+                `- Ci sono file in elaborazione: ${isProcessing ? 'SÌ' : 'NO'} (${queueCounts.waiting} in coda)\n\n` +
+                `Attendi la fine della sessione e del riassunto.`
+            );
+        }
+
         let targetSessionId = args[0];
         
         // Se non specificato, usa la sessione attiva
@@ -511,12 +532,22 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
             clearInterval(checkInterval);
             console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);
             
+            const startSummary = Date.now();
             try {
                 const summary = await generateSummary(sessionId, 'DM');
+                monitor.logSummarizationTime(Date.now() - startSummary);
                 await publishSummary(sessionId, summary, discordChannel);
-            } catch (err) {
+            } catch (err: any) {
                 console.error(`❌ Errore durante il riassunto finale di ${sessionId}:`, err);
+                monitor.logError('Summary', err.message);
                 await discordChannel.send(`⚠️ Errore durante la generazione del riassunto per la sessione \`${sessionId}\`. Puoi riprovare con \`!racconta ${sessionId}\`.`);
+            }
+
+            // FINE SESSIONE E REPORT
+            const metrics = monitor.endSession();
+            if (metrics) {
+                // Non aspettiamo (fire and forget) per non bloccare Discord
+                processSessionReport(metrics).catch(e => console.error(e));
             }
         }
     }, 10000);

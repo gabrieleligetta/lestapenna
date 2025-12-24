@@ -85,13 +85,16 @@ export async function checkFileExists(fileName: string, sessionId?: string): Pro
 /**
  * Carica un file su Oracle Cloud, solo se non è già presente.
  */
-export async function uploadToOracle(filePath: string, fileName: string, sessionId?: string): Promise<string | null> {
+export async function uploadToOracle(filePath: string, fileName: string, sessionId?: string, customKey?: string): Promise<string | null> {
     try {
         // 1. Controllo se il file esiste già nel Cloud (in qualsiasi posizione)
-        const existingKey = await findS3Key(fileName, sessionId);
-        if (existingKey) {
-            console.log(`[Custode] ⏩ Salto upload, file già presente su Oracle: ${existingKey}`);
-            return fileName;
+        // Se customKey è fornito, saltiamo il controllo di esistenza "smart" e ci fidiamo
+        if (!customKey) {
+            const existingKey = await findS3Key(fileName, sessionId);
+            if (existingKey) {
+                console.log(`[Custode] ⏩ Salto upload, file già presente su Oracle: ${existingKey}`);
+                return fileName;
+            }
         }
 
         // 2. Controllo se il file locale esiste
@@ -101,12 +104,13 @@ export async function uploadToOracle(filePath: string, fileName: string, session
         }
 
         const fileContent = fs.readFileSync(filePath);
-        const targetKey = getPreferredKey(fileName, sessionId);
+        const targetKey = customKey ? customKey : getPreferredKey(fileName, sessionId);
         
         // Determiniamo il content type dall'estensione
         const extension = path.extname(fileName).toLowerCase();
         const contentType = extension === '.ogg' ? 'audio/ogg' : 
                           extension === '.mp3' ? 'audio/mpeg' : 
+                          extension === '.json' ? 'application/json' :
                           'audio/x-pcm';
 
         const command = new PutObjectCommand({

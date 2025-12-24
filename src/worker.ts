@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { updateRecordingStatus, getUserName, getRecording } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
+import { monitor } from './monitor';
 
 // Worker BullMQ - LO SCRIBA
 // Questo worker si occupa SOLO di trascrivere e salvare nel DB.
@@ -12,6 +13,7 @@ export function startWorker() {
     const worker = new Worker('audio-processing', async job => {
         const { sessionId, fileName, filePath, userId } = job.data;
         const userName = getUserName(userId) || userId;
+        const startJob = Date.now();
 
         // Idempotenza: controlliamo se il file è già stato processato
         const currentRecording = getRecording(fileName);
@@ -31,6 +33,7 @@ export function startWorker() {
                 if (!success) {
                     console.error(`[Scriba] ❌ File non trovato nemmeno su Oracle: ${fileName}`);
                     updateRecordingStatus(fileName, 'ERROR', null, 'File non trovato su disco né su Cloud');
+                    monitor.logError('Worker', `File non trovato: ${fileName}`);
                     return { status: 'failed', reason: 'file_not_found' };
                 }
             }
@@ -63,6 +66,16 @@ export function startWorker() {
             if (transcriptionPath !== filePath && fs.existsSync(transcriptionPath)) {
                 fs.unlinkSync(transcriptionPath);
             }
+
+            // CALCOLO DURATA AUDIO (Approssimativa dal size o dai segmenti)
+            let audioDuration = 0;
+            if (result.segments && result.segments.length > 0) {
+                audioDuration = result.segments[result.segments.length - 1].end;
+            }
+
+            // LOG AL MONITOR
+            const processingTime = Date.now() - startJob;
+            monitor.logFileProcessed(audioDuration, processingTime);
 
             // Se abbiamo segmenti, salviamo il JSON completo
             if (result.segments && result.segments.length > 0) {
@@ -104,6 +117,7 @@ export function startWorker() {
         } catch (e: any) {
             console.error(`[Scriba] ❌ Errore trascrizione ${fileName}: ${e.message}`);
             updateRecordingStatus(fileName, 'ERROR', null, e.message);
+            monitor.logError('Worker', `File: ${fileName} - ${e.message}`);
             throw e; 
         }
     }, { 

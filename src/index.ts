@@ -106,25 +106,25 @@ client.on('messageCreate', async (message: Message) => {
             )
             .setFooter({ text: "Lestapenna v1.4 - Bot Protected" });
         
-        return message.reply({ embeds: [helpEmbed] });
+        return await message.reply({ embeds: [helpEmbed] });
     }
 
     // --- COMANDI CONFIGURAZIONE CANALI ---
     if (command === 'setcmd') {
         // Controllo permessi (opzionale: solo chi ha permessi di gestione canali/admin)
         if (!message.member?.permissions.has('ManageChannels')) {
-            return message.reply("⛔ Non hai il permesso di configurare il bot.");
+            return await message.reply("⛔ Non hai il permesso di configurare il bot.");
         }
         setConfig('cmd_channel_id', message.channelId);
-        return message.reply(`✅ Canale Comandi impostato su <#${message.channelId}>.`);
+        return await message.reply(`✅ Canale Comandi impostato su <#${message.channelId}>.`);
     }
 
     if (command === 'setsummary') {
         if (!message.member?.permissions.has('ManageChannels')) {
-            return message.reply("⛔ Non hai il permesso di configurare il bot.");
+            return await message.reply("⛔ Non hai il permesso di configurare il bot.");
         }
         setConfig('summary_channel_id', message.channelId);
-        return message.reply(`✅ Canale Riassunti impostato su <#${message.channelId}>.`);
+        return await message.reply(`✅ Canale Riassunti impostato su <#${message.channelId}>.`);
     }
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
@@ -147,7 +147,7 @@ client.on('messageCreate', async (message: Message) => {
             });
 
             if (missingNames.length > 0) {
-                return message.reply(
+                return await message.reply(
                     `🛑 **ALT!** Non posso iniziare la cronaca.\n` +
                     `I seguenti avventurieri non hanno dichiarato il loro nome:\n` +
                     missingNames.map(n => `- **${n}** (Usa: \`!sono NomePersonaggio\`)`).join('\n')
@@ -158,7 +158,7 @@ client.on('messageCreate', async (message: Message) => {
             // FIX ERROR: Casting esplicito a TextChannel per evitare errore TS2339
             if (botMembers.size > 0) {
                 const botNames = botMembers.map(b => b.displayName).join(', ');
-                (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
+                await (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
             }
 
             const sessionId = uuidv4();
@@ -171,10 +171,10 @@ client.on('messageCreate', async (message: Message) => {
             console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
             
             await connectToChannel(voiceChannel, sessionId);
-            message.reply(`🔊 **Cronaca Iniziata**. ID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+            await message.reply(`🔊 **Cronaca Iniziata**. ID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
             checkAutoLeave(voiceChannel);
         } else {
-            message.reply("Devi essere in un canale vocale per evocare il Bardo!");
+            await message.reply("Devi essere in un canale vocale per evocare il Bardo!");
         }
     }
 
@@ -183,35 +183,35 @@ client.on('messageCreate', async (message: Message) => {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
             disconnect(message.guild.id);
-            message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
+            await message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
             return;
         }
 
         disconnect(message.guild.id);
         guildSessions.delete(message.guild.id);
 
-        message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
+        await message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
         
         await audioQueue.resume();
         console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
 
-        waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
+        await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
     }
 
     // --- NUOVO: !setsession <numero> ---
     if (command === 'setsession' || command === 'impostasessione') {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
-            return message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!ascolta`.");
+            return await message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!ascolta`.");
         }
 
         const sessionNum = parseInt(args[0]);
         if (isNaN(sessionNum) || sessionNum <= 0) {
-            return message.reply("Uso: `!impostasessione <numero>` (es. `!impostasessione 5`)");
+            return await message.reply("Uso: `!impostasessione <numero>` (es. `!impostasessione 5`)");
         }
 
         setSessionNumber(sessionId, sessionNum);
-        message.reply(`✅ Numero sessione impostato a **${sessionNum}**. Sarà usato per il prossimo riassunto.`);
+        await message.reply(`✅ Numero sessione impostato a **${sessionNum}**. Sarà usato per il prossimo riassunto.`);
     }
 
     // --- NUOVO: !setsessionid <id_sessione> <numero> ---
@@ -220,21 +220,21 @@ client.on('messageCreate', async (message: Message) => {
         const sessionNum = parseInt(args[1]);
 
         if (!targetSessionId || isNaN(sessionNum)) {
-            return message.reply("Uso: `!impostasessioneid <ID_SESSIONE> <NUMERO>`");
+            return await message.reply("Uso: `!impostasessioneid <ID_SESSIONE> <NUMERO>`");
         }
 
         setSessionNumber(targetSessionId, sessionNum);
-        message.reply(`✅ Numero sessione per \`${targetSessionId}\` impostato a **${sessionNum}**.`);
+        await message.reply(`✅ Numero sessione per \`${targetSessionId}\` impostato a **${sessionNum}**.`);
     }
 
     // --- NUOVO: !reset <id_sessione> ---
     if (command === 'reset') {
         const targetSessionId = args[0];
         if (!targetSessionId) {
-            return message.reply("Uso: `!reset <ID_SESSIONE>` - Forza la rielaborazione completa.");
+            return await message.reply("Uso: `!reset <ID_SESSIONE>` - Forza la rielaborazione completa.");
         }
 
-        message.reply(`🔄 **Reset Sessione ${targetSessionId}** avviato...\n1. Pulizia coda...`);
+        await message.reply(`🔄 **Reset Sessione ${targetSessionId}** avviato...\n1. Pulizia coda...`);
         
         // 1. Rimuovi job vecchi dalla coda
         const removed = await removeSessionJobs(targetSessionId);
@@ -243,10 +243,10 @@ client.on('messageCreate', async (message: Message) => {
         const filesToProcess = resetSessionData(targetSessionId);
         
         if (filesToProcess.length === 0) {
-            return message.reply(`⚠️ Nessun file trovato per la sessione ${targetSessionId}.`);
+            return await message.reply(`⚠️ Nessun file trovato per la sessione ${targetSessionId}.`);
         }
 
-        message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Ripristino file e reinserimento in coda...`);
+        await message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Ripristino file e reinserimento in coda...`);
 
         let restoredCount = 0;
 
@@ -288,8 +288,8 @@ client.on('messageCreate', async (message: Message) => {
             statusMsg += `\n📦 ${restoredCount} file mancanti sono stati ripristinati dal Cloud.`;
         }
 
-        message.reply(statusMsg);
-        waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
+        await message.reply(statusMsg);
+        await waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
     }
 
     // --- NUOVO: !racconta <id_sessione> [tono] ---
@@ -299,7 +299,7 @@ client.on('messageCreate', async (message: Message) => {
 
         if (!targetSessionId) {
             const sessions = getAvailableSessions();
-            if (sessions.length === 0) return message.reply("Nessuna sessione trovata.");
+            if (sessions.length === 0) return await message.reply("Nessuna sessione trovata.");
             
             const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
             const embed = new EmbedBuilder()
@@ -308,11 +308,11 @@ client.on('messageCreate', async (message: Message) => {
                 .setDescription(list)
                 .setFooter({ text: "Uso: !racconta <ID> [TONO]" });
             
-            return message.reply({ embeds: [embed] });
+            return await message.reply({ embeds: [embed] });
         }
 
         if (requestedTone && !TONES[requestedTone]) {
-            return message.reply(`Tono non valido. Toni disponibili: ${Object.keys(TONES).join(', ')}`);
+            return await message.reply(`Tono non valido. Toni disponibili: ${Object.keys(TONES).join(', ')}`);
         }
 
         const channel = message.channel as TextChannel;
@@ -335,7 +335,7 @@ client.on('messageCreate', async (message: Message) => {
         const isProcessing = queueCounts.active > 0 || queueCounts.waiting > 0;
 
         if (isActiveSession || isProcessing) {
-            return message.reply(
+            return await message.reply(
                 `🛑 **Sistema sotto carico.**\n` +
                 `Non posso generare il download mentre:\n` +
                 `- Una sessione è attiva: ${isActiveSession ? 'SÌ' : 'NO'}\n` +
@@ -352,10 +352,10 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         if (!targetSessionId) {
-            return message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `!scarica <ID>`");
+            return await message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `!scarica <ID>`");
         }
 
-        message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
+        await message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
 
         try {
             // 1. Genera il file mixato
@@ -384,9 +384,9 @@ client.on('messageCreate', async (message: Message) => {
                 const presignedUrl = await getPresignedUrl(fileName, targetSessionId, 3600 * 24); // 24 ore
 
                 if (presignedUrl) {
-                    (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
+                    await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
                 } else {
-                    (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
+                    await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
                 }
 
                 // Pulizia locale
@@ -395,7 +395,7 @@ client.on('messageCreate', async (message: Message) => {
 
         } catch (err: any) {
             console.error(err);
-            (message.channel as TextChannel).send(`❌ Errore durante la generazione dell'audio: ${err.message}`);
+            await (message.channel as TextChannel).send(`❌ Errore durante la generazione dell'audio: ${err.message}`);
         }
     }
 
@@ -403,7 +403,7 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'listasessioni') {
         const sessions = getAvailableSessions();
         if (sessions.length === 0) {
-            message.reply("Nessuna sessione trovata negli archivi.");
+            await message.reply("Nessuna sessione trovata negli archivi.");
         } else {
             const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
             const embed = new EmbedBuilder()
@@ -411,7 +411,7 @@ client.on('messageCreate', async (message: Message) => {
                 .setColor("#7289DA")
                 .setDescription(list);
             
-            message.reply({ embeds: [embed] });
+            await message.reply({ embeds: [embed] });
         }
     }
 
@@ -423,7 +423,7 @@ client.on('messageCreate', async (message: Message) => {
             .setDescription("Scegli come deve essere raccontata la tua storia:")
             .addFields(Object.entries(TONES).map(([key, desc]) => ({ name: key, value: desc })));
         
-        message.reply({ embeds: [embed] });
+        await message.reply({ embeds: [embed] });
     }
 
     // --- NUOVO: !wipe (SOLO SVILUPPO) ---
@@ -431,7 +431,7 @@ client.on('messageCreate', async (message: Message) => {
         if (message.author.id !== '310865403066712074') return; // Solo Owner
 
         const filter = (m: Message) => m.author.id === message.author.id;
-        message.reply("⚠️ **ATTENZIONE**: Questa operazione cancellerà **TUTTO** (DB, Cloud, Code, File Locali). Sei sicuro? Scrivi `CONFERMO` entro 15 secondi.");
+        await message.reply("⚠️ **ATTENZIONE**: Questa operazione cancellerà **TUTTO** (DB, Cloud, Code, File Locali). Sei sicuro? Scrivi `CONFERMO` entro 15 secondi.");
 
         try {
             const collected = await (message.channel as TextChannel).awaitMessages({
@@ -458,7 +458,7 @@ client.on('messageCreate', async (message: Message) => {
                 }
             }
         } catch (e) {
-            message.reply("⌛ Tempo scaduto. Il mondo è salvo.");
+            await message.reply("⌛ Tempo scaduto. Il mondo è salvo.");
         }
     }
 
@@ -466,13 +466,13 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'testmail') {
         if (message.author.id !== '310865403066712074') return; // Solo Owner
 
-        message.reply("📧 Invio email di test in corso...");
+        await message.reply("📧 Invio email di test in corso...");
         const success = await sendTestEmail('gabligetta@gmail.com');
         
         if (success) {
-            message.reply("✅ Email inviata con successo! Controlla la casella di posta.");
+            await message.reply("✅ Email inviata con successo! Controlla la casella di posta.");
         } else {
-            message.reply("❌ Errore durante l'invio. Controlla i log della console.");
+            await message.reply("❌ Errore durante l'invio. Controlla i log della console.");
         }
     }
 
@@ -481,32 +481,32 @@ client.on('messageCreate', async (message: Message) => {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'character_name', val);
-            message.reply(`⚔️ Nome aggiornato: **${val}**`);
-        } else message.reply("Uso: `!sono Nome`");
+            await message.reply(`⚔️ Nome aggiornato: **${val}**`);
+        } else await message.reply("Uso: `!sono Nome`");
     }
 
     if (command === 'myclass' || command === 'miaclasse') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'class', val);
-            message.reply(`🛡️ Classe aggiornata: **${val}**`);
-        } else message.reply("Uso: `!miaclasse Barbaro / Mago / Ladro...`");
+            await message.reply(`🛡️ Classe aggiornata: **${val}**`);
+        } else await message.reply("Uso: `!miaclasse Barbaro / Mago / Ladro...`");
     }
 
     if (command === 'myrace' || command === 'miarazza') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'race', val);
-            message.reply(`🧬 Razza aggiornata: **${val}**`);
-        } else message.reply("Uso: `!miarazza Umano / Elfo / Nano...`");
+            await message.reply(`🧬 Razza aggiornata: **${val}**`);
+        } else await message.reply("Uso: `!miarazza Umano / Elfo / Nano...`");
     }
 
     if (command === 'mydesc' || command === 'miadesc') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'description', val);
-            message.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
-        } else message.reply("Uso: `!miadesc Breve descrizione del carattere o aspetto`");
+            await message.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
+        } else await message.reply("Uso: `!miadesc Breve descrizione del carattere o aspetto`");
     }
 
     if (command === 'whoami' || command === 'chisono') {
@@ -523,9 +523,9 @@ client.on('messageCreate', async (message: Message) => {
                 )
                 .setThumbnail(message.author.displayAvatarURL());
             
-            message.reply({ embeds: [embed] });
+            await message.reply({ embeds: [embed] });
         } else {
-            message.reply("Non ti conosco. Usa `!sono <Nome>` per iniziare la tua leggenda!");
+            await message.reply("Non ti conosco. Usa `!sono <Nome>` per iniziare la tua leggenda!");
         }
     }
 });
@@ -676,7 +676,6 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     console.log(`📨 Riassunto inviato per sessione ${sessionId} nel canale ${targetChannel.name}!`);
 }
 
-// ... (Resto delle funzioni recoverOrphanedFiles e AutoLeave invariate, omesse per brevità ma presenti nel file caricato) ...
 
 async function recoverOrphanedFiles() {
     const recordingsDir = path.join(__dirname, '..', 'recordings');
@@ -770,8 +769,8 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
                     if (commandChannelId) {
                         const ch = await client.channels.fetch(commandChannelId) as TextChannel;
                         if (ch) {
-                            ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione sessione avviata...`);
-                            waitForCompletionAndSummarize(sessionId, ch);
+                            await ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione sessione avviata...`);
+                            await waitForCompletionAndSummarize(sessionId, ch);
                         }
                     }
                 } else {
@@ -837,8 +836,8 @@ client.once('ready', async () => {
             console.log(`✅ Sessione ${sessionId}: ${filesToProcess.length} file riaccodati.`);
             
             if (recoveryChannel) {
-                recoveryChannel.send(`🔄 **Ripristino automatico** della sessione \`${sessionId}\` in corso...`);
-                waitForCompletionAndSummarize(sessionId, recoveryChannel);
+                await recoveryChannel.send(`🔄 **Ripristino automatico** della sessione \`${sessionId}\` in corso...`);
+                await waitForCompletionAndSummarize(sessionId, recoveryChannel);
             }
         }
         await audioQueue.resume();
@@ -851,5 +850,5 @@ client.once('ready', async () => {
 
 (async () => {
     await sodium.ready;
-    client.login(process.env.DISCORD_BOT_TOKEN);
+    await client.login(process.env.DISCORD_BOT_TOKEN);
 })();

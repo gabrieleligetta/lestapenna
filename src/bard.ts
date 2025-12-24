@@ -121,10 +121,27 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
 
     // Context Personaggi
     const userIds = new Set(transcriptions.map(t => t.user_id));
-    let castContext = "PERSONAGGI:\n";
+    let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
+    
     userIds.forEach(uid => {
         const p = getUserProfile(uid);
-        if (p.character_name) castContext += `- ${p.character_name} (${p.race || ''} ${p.class || ''})\n`;
+        if (p.character_name) {
+            // Costruiamo una riga dettagliata
+            let charInfo = `- **${p.character_name}**`;
+            
+            // Aggiungiamo Razza e Classe se presenti
+            const details = [];
+            if (p.race) details.push(p.race);
+            if (p.class) details.push(p.class);
+            if (details.length > 0) charInfo += ` (${details.join(' ')})`;
+            
+            // Aggiungiamo la descrizione se presente (PUNTO CRUCIALE CHE MANCAVA)
+            if (p.description) {
+                charInfo += `: "${p.description}"`;
+            }
+            
+            castContext += charInfo + "\n";
+        }
     });
 
     // --- RICOSTRUZIONE INTELLIGENTE (DIARIZZAZIONE) ---

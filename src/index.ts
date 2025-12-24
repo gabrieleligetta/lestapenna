@@ -2,7 +2,7 @@ import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
 import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder, ChannelType } from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
-import { uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl } from './backupService';
+import { uploadToOracle, downloadFromOracle, wipeBucket } from './backupService';
 import { audioQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
 import { generateSummary, TONES, ToneKey } from './bard';
@@ -70,12 +70,39 @@ client.on('messageCreate', async (message: Message) => {
             .setColor("#D4AF37")
             .setDescription("Benvenuti, avventurieri! Io sono il vostro bardo e cronista personale.")
             .addFields(
-                { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione (Richiede nomi impostati!).\n`!stoplistening`: Termina e avvia il riassunto.\n`!setsession <N>`: Imposta manualmente il numero." },
-                { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto.\n`!download <ID>`: Scarica l'audio completo della sessione." },
-                { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome (Obbligatorio).\n`!whoami`: Visualizza profilo." },
-                { name: "⚙️ Configurazione", value: "`!setcmd`: Imposta questo canale per i comandi.\n`!setsummary`: Imposta questo canale per i riassunti." }
+                { 
+                    name: "🎙️ Gestione Sessione", 
+                    value: 
+                    "`!ascolta`: Inizia la registrazione (Richiede nomi impostati).\n" +
+                    "`!stop`: Termina la sessione e avvia il riassunto.\n" +
+                    "`!impostasessione <N>`: Imposta il numero della sessione corrente.\n" +
+                    "`!impostasessioneid <ID> <N>`: Corregge il numero di una vecchia sessione." 
+                },
+                { 
+                    name: "📜 Narrazione & Archivi", 
+                    value: 
+                    "`!listasessioni`: Mostra le ultime 5 sessioni in archivio.\n" +
+                    "`!racconta <ID> [tono]`: Rigenera il riassunto (es. `!racconta abc12 EPICO`).\n" +
+                    "`!toni`: Visualizza la lista degli stili narrativi disponibili.\n" +
+                    "`!scarica <ID>`: Genera e scarica l'audio completo della sessione." 
+                },
+                { 
+                    name: "👤 Scheda Personaggio", 
+                    value: 
+                    "`!sono <Nome>`: Imposta il tuo nome (Obbligatorio per giocare).\n" +
+                    "`!miaclasse <Classe>`: Imposta la tua classe (es. Barbaro).\n" +
+                    "`!miarazza <Razza>`: Imposta la tua razza (es. Nano).\n" +
+                    "`!miadesc <Testo>`: Aggiunge dettagli visivi o caratteriali per l'AI.\n" +
+                    "`!chisono`: Visualizza la tua scheda completa." 
+                },
+                { 
+                    name: "⚙️ Configurazione", 
+                    value: 
+                    "`!setcmd`: Imposta questo canale per i comandi.\n" +
+                    "`!setsummary`: Imposta questo canale per la pubblicazione dei riassunti." 
+                }
             )
-            .setFooter({ text: "Lestapenna v1.2 - Bot Protected" });
+            .setFooter({ text: "Lestapenna v1.4 - Bot Protected" });
         
         return message.reply({ embeds: [helpEmbed] });
     }
@@ -99,7 +126,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
-    if (command === 'listen') {
+    if (command === 'listen' || command === 'ascolta') {
         const member = message.member;
         if (member?.voice.channel) {
             const voiceChannel = member.voice.channel;
@@ -121,7 +148,7 @@ client.on('messageCreate', async (message: Message) => {
                 return message.reply(
                     `🛑 **ALT!** Non posso iniziare la cronaca.\n` +
                     `I seguenti avventurieri non hanno dichiarato il loro nome:\n` +
-                    missingNames.map(n => `- **${n}** (Usa: \`!iam NomePersonaggio\`)`).join('\n')
+                    missingNames.map(n => `- **${n}** (Usa: \`!sono NomePersonaggio\`)`).join('\n')
                 );
             }
             
@@ -146,7 +173,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- COMANDO STOPLISTENING (FINE SESSIONE) ---
-    if (command === 'stoplistening') {
+    if (command === 'stoplistening' || command === 'stop') {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
             disconnect(message.guild.id);
@@ -166,15 +193,15 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: !setsession <numero> ---
-    if (command === 'setsession') {
+    if (command === 'setsession' || command === 'impostasessione') {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
-            return message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!listen`.");
+            return message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!ascolta`.");
         }
 
         const sessionNum = parseInt(args[0]);
         if (isNaN(sessionNum) || sessionNum <= 0) {
-            return message.reply("Uso: `!setsession <numero>` (es. `!setsession 5`)");
+            return message.reply("Uso: `!impostasessione <numero>` (es. `!impostasessione 5`)");
         }
 
         setSessionNumber(sessionId, sessionNum);
@@ -182,12 +209,12 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: !setsessionid <id_sessione> <numero> ---
-    if (command === 'setsessionid') {
+    if (command === 'setsessionid' || command === 'impostasessioneid') {
         const targetSessionId = args[0];
         const sessionNum = parseInt(args[1]);
 
         if (!targetSessionId || isNaN(sessionNum)) {
-            return message.reply("Uso: `!setsessionid <ID_SESSIONE> <NUMERO>`");
+            return message.reply("Uso: `!impostasessioneid <ID_SESSIONE> <NUMERO>`");
         }
 
         setSessionNumber(targetSessionId, sessionNum);
@@ -295,7 +322,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- COMANDO DOWNLOAD SESSIONE ---
-    if (command === 'download') {
+    if (command === 'download' || command === 'scarica') {
         let targetSessionId = args[0];
         
         // Se non specificato, usa la sessione attiva
@@ -304,7 +331,7 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         if (!targetSessionId) {
-            return message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `!download <ID>`");
+            return message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `!scarica <ID>`");
         }
 
         message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
@@ -327,22 +354,10 @@ client.on('messageCreate', async (message: Message) => {
                 // fs.unlinkSync(filePath);
             } else {
                 // Se è troppo grande, serve una strategia alternativa (es. upload su Oracle + Link)
-                const fileName = path.basename(filePath);
+                // Per ora avvisiamo l'utente
+                (message.channel as TextChannel).send(`✅ **Audio Generato**, ma è troppo grande per Discord (${sizeMB.toFixed(2)} MB).\n📂 Il file si trova sul server in: \`${filePath}\``);
                 
-                // Carichiamo su Oracle
-                await uploadToOracle(filePath, fileName, targetSessionId);
-                
-                // Generiamo URL firmato
-                const presignedUrl = await getPresignedUrl(fileName, targetSessionId, 3600 * 24); // 24 ore
-                
-                if (presignedUrl) {
-                    (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
-                } else {
-                    (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
-                }
-                
-                // Pulizia locale
-                try { fs.unlinkSync(filePath); } catch(e) {}
+                // TODO: Qui potresti implementare uploadToOracle(filePath) e generare un Pre-Authenticated Request (PAR) url
             }
 
         } catch (err: any) {
@@ -413,39 +428,39 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- ALTRI COMANDI (IAM, MYCLASS, ETC) ---
-    if (command === 'iam') {
+    if (command === 'iam' || command === 'sono') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'character_name', val);
             message.reply(`⚔️ Nome aggiornato: **${val}**`);
-        } else message.reply("Uso: `!iam Nome`");
+        } else message.reply("Uso: `!sono Nome`");
     }
 
-    if (command === 'myclass') {
+    if (command === 'myclass' || command === 'miaclasse') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'class', val);
             message.reply(`🛡️ Classe aggiornata: **${val}**`);
-        } else message.reply("Uso: `!myclass Barbaro / Mago / Ladro...`");
+        } else message.reply("Uso: `!miaclasse Barbaro / Mago / Ladro...`");
     }
 
-    if (command === 'myrace') {
+    if (command === 'myrace' || command === 'miarazza') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'race', val);
             message.reply(`🧬 Razza aggiornata: **${val}**`);
-        } else message.reply("Uso: `!myrace Umano / Elfo / Nano...`");
+        } else message.reply("Uso: `!miarazza Umano / Elfo / Nano...`");
     }
 
-    if (command === 'mydesc') {
+    if (command === 'mydesc' || command === 'miadesc') {
         const val = args.join(' ');
         if (val) {
             updateUserField(message.author.id, 'description', val);
             message.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
-        } else message.reply("Uso: `!mydesc Breve descrizione del carattere o aspetto`");
+        } else message.reply("Uso: `!miadesc Breve descrizione del carattere o aspetto`");
     }
 
-    if (command === 'whoami') {
+    if (command === 'whoami' || command === 'chisono') {
         const p = getUserProfile(message.author.id);
         if (p.character_name) {
             const embed = new EmbedBuilder()
@@ -461,7 +476,7 @@ client.on('messageCreate', async (message: Message) => {
             
             message.reply({ embeds: [embed] });
         } else {
-            message.reply("Non ti conosco. Usa `!iam <Nome>` per iniziare la tua leggenda!");
+            message.reply("Non ti conosco. Usa `!sono <Nome>` per iniziare la tua leggenda!");
         }
     }
 });

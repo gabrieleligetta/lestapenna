@@ -226,59 +226,58 @@ export async function getPresignedUrl(fileName: string, sessionId?: string, expi
 }
 
 /**
- * Svuota completamente la cartella recordings/ nel bucket.
+ * Svuota completamente il bucket.
  * ATTENZIONE: Operazione distruttiva.
- * 
- * NOTA: Usiamo cancellazioni singole invece di DeleteObjects (batch) perché
- * Oracle Cloud richiede l'header Content-MD5 per le richieste batch, che spesso
- * causa problemi di compatibilità con l'SDK JS.
  */
 export async function wipeBucket(): Promise<number> {
     const bucket = getBucketName();
     const client = getS3Client();
-    let deletedCount = 0;
+    let totalDeleted = 0;
+    
+    // Prefissi espliciti da pulire per garantire che S3/Oracle li trovi
+    // Aggiungiamo anche la root '' per sicurezza, ma iteriamo sui folder specifici
+    const prefixes = ['recordings/', 'logs/', 'transcripts/']; 
 
-    try {
-        console.log(`[Custode] 🧹 Inizio svuotamento bucket: ${bucket}...`);
-        
-        // 1. Elenchiamo gli oggetti con prefisso recordings/
-        // Nota: ListObjectsV2 ritorna max 1000 oggetti per pagina.
-        // Per un wipe completo dovremmo gestire la paginazione, ma per ora
-        // assumiamo che un singolo wipe pulisca il grosso o venga rilanciato.
-        const listCommand = new ListObjectsV2Command({
-            Bucket: bucket,
-            Prefix: 'recordings/'
-        });
+    console.log(`[Custode] 🧹 Inizio svuotamento COMPLETO bucket: ${bucket}...`);
 
-        const listResponse = await client.send(listCommand);
-        
-        if (!listResponse.Contents || listResponse.Contents.length === 0) {
-            console.log("[Custode] Bucket già vuoto o nessuna registrazione trovata.");
-            return 0;
-        }
+    for (const prefix of prefixes) {
+        let continuationToken: string | undefined = undefined;
+        console.log(`[Custode] 🧹 Scansione prefisso: '${prefix}'...`);
 
-        // 2. Cancellazione sequenziale (o parallela con Promise.all)
-        const deletePromises = listResponse.Contents
-            .filter(obj => obj.Key)
-            .map(async (obj) => {
-                try {
-                    await client.send(new DeleteObjectCommand({
-                        Bucket: bucket,
-                        Key: obj.Key
-                    }));
-                    deletedCount++;
-                } catch (e) {
-                    console.error(`[Custode] Errore cancellazione ${obj.Key}:`, e);
-                }
+        do {
+            const listCommand = new ListObjectsV2Command({
+                Bucket: bucket,
+                Prefix: prefix,
+                ContinuationToken: continuationToken
             });
 
-        await Promise.all(deletePromises);
-        
-        console.log(`[Custode] ✅ Eliminati ${deletedCount} oggetti dal Cloud.`);
-        return deletedCount;
+            const listResponse = await client.send(listCommand);
+            
+            if (!listResponse.Contents || listResponse.Contents.length === 0) {
+                break;
+            }
 
-    } catch (err) {
-        console.error("[Custode] ❌ Errore durante lo svuotamento del bucket:", err);
-        throw err;
+            const deletePromises = listResponse.Contents
+                .filter(obj => obj.Key)
+                .map(async (obj) => {
+                    try {
+                        await client.send(new DeleteObjectCommand({
+                            Bucket: bucket,
+                            Key: obj.Key
+                        }));
+                        console.log(`[Custode] 🗑️ Eliminato: ${obj.Key}`);
+                        totalDeleted++;
+                    } catch (e) {
+                        console.error(`[Custode] Errore cancellazione ${obj.Key}:`, e);
+                    }
+                });
+
+            await Promise.all(deletePromises);
+            continuationToken = listResponse.NextContinuationToken;
+
+        } while (continuationToken);
     }
+    
+    console.log(`[Custode] ✅ Eliminati ${totalDeleted} oggetti totali dal Cloud.`);
+    return totalDeleted;
 }

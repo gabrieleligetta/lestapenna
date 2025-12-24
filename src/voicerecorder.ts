@@ -182,6 +182,7 @@ export function isFileActive(fullPath: string): boolean {
  * Elimina tutti i file nella cartella recordings locale.
  */
 export function wipeLocalFiles() {
+    // 1. Pulizia Recordings
     const recordingsDir = path.join(__dirname, '..', 'recordings');
     if (fs.existsSync(recordingsDir)) {
         try {
@@ -189,7 +190,7 @@ export function wipeLocalFiles() {
             for (const file of files) {
                 // Evitiamo di cancellare file nascosti o .gitkeep se presenti
                 if (file.startsWith('.')) continue;
-                
+
                 fs.unlinkSync(path.join(recordingsDir, file));
             }
             console.log(`[Recorder] 🧹 File locali eliminati (${files.length} file).`);

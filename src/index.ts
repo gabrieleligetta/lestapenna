@@ -318,7 +318,7 @@ client.on('messageCreate', async (message: Message) => {
             const sizeMB = stats.size / (1024 * 1024);
 
             if (sizeMB < 25) { // Provo a mandarlo se < 25MB
-                await message.channel.send({
+                await (message.channel as TextChannel).send({
                     content: `✅ **Audio Sessione Pronto!** (${sizeMB.toFixed(2)} MB)`,
                     files: [filePath]
                 });
@@ -328,14 +328,14 @@ client.on('messageCreate', async (message: Message) => {
             } else {
                 // Se è troppo grande, serve una strategia alternativa (es. upload su Oracle + Link)
                 // Per ora avvisiamo l'utente
-                message.channel.send(`✅ **Audio Generato**, ma è troppo grande per Discord (${sizeMB.toFixed(2)} MB).\n📂 Il file si trova sul server in: \`${filePath}\``);
+                (message.channel as TextChannel).send(`✅ **Audio Generato**, ma è troppo grande per Discord (${sizeMB.toFixed(2)} MB).\n📂 Il file si trova sul server in: \`${filePath}\``);
                 
                 // TODO: Qui potresti implementare uploadToOracle(filePath) e generare un Pre-Authenticated Request (PAR) url
             }
 
         } catch (err: any) {
             console.error(err);
-            message.channel.send(`❌ Errore durante la generazione dell'audio: ${err.message}`);
+            (message.channel as TextChannel).send(`❌ Errore durante la generazione dell'audio: ${err.message}`);
         }
     }
 

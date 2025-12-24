@@ -1,28 +1,51 @@
-script: |
-  # Definisci le variabili
-  DIR=~/lestapenna
-  REPO_URL=https://github.com/gabrieleligetta/lestapenna.git
-  
-  # 1. Controllo se la cartella è un repo git valido
-  if [ ! -d "$DIR/.git" ]; then
-      echo "Repository non trovato. Eseguo la clonazione iniziale..."
-      # Rimuove la cartella se esiste ma è corrotta/vuota
-      rm -rf $DIR
-      git clone $REPO_URL $DIR
-  fi
-  
-  # 2. Entra nella cartella
-  cd $DIR
-  
-  # 3. Scarica gli ultimi aggiornamenti
-  git fetch origin
-  git reset --hard origin/main
-  
-  # 4. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
-  echo "${{ secrets.ENV_FILE }}" > .env
-  
-  # 5. Ricostruisci e riavvia i container
-  docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
-  
-  # 6. Pulizia
-  docker image prune -f
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Passiamo il secret ENV_FILE come variabile d'ambiente allo script
+          envs: ENV_FILE
+          script: |
+            # Definisci le variabili
+            DIR=~/lestapenna
+            REPO_URL=https://github.com/gabrieleligetta/lestapenna.git
+            
+            # 1. Controllo se la cartella è un repo git valido
+            if [ ! -d "$DIR/.git" ]; then
+                echo "Repository non trovato. Eseguo la clonazione iniziale..."
+                # Rimuove la cartella se esiste ma è corrotta/vuota
+                rm -rf $DIR
+                # Clona il repo
+                git clone $REPO_URL $DIR
+            fi
+
+            # 2. Entra nella cartella
+            cd $DIR
+            
+            # 3. Scarica gli ultimi aggiornamenti forzando l'allineamento con origin/main
+            git fetch origin
+            git reset --hard origin/main
+            
+            # 4. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
+            echo "${{ secrets.ENV_FILE }}" > .env
+            
+            # 5. Ricostruisci e riavvia i container usando il file di produzione
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            
+            # 6. Pulizia immagini vecchie
+            docker image prune -f

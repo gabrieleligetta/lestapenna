@@ -6,6 +6,7 @@ import { uploadToOracle, downloadFromOracle, wipeBucket } from './backupService'
 import { audioQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
 import { generateSummary, TONES, ToneKey } from './bard';
+import { mixSessionAudio } from './sessionMixer';
 import { 
     getAvailableSessions, 
     updateUserField, 
@@ -70,7 +71,7 @@ client.on('messageCreate', async (message: Message) => {
             .setDescription("Benvenuti, avventurieri! Io sono il vostro bardo e cronista personale.")
             .addFields(
                 { name: "🎙️ Sessione", value: "`!listen`: Inizia la registrazione (Richiede nomi impostati!).\n`!stoplistening`: Termina e avvia il riassunto.\n`!setsession <N>`: Imposta manualmente il numero." },
-                { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto." },
+                { name: "📜 Archivi", value: "`!listasessioni`: Ultime 5 sessioni.\n`!racconta <ID> [tono]`: Rigenera un riassunto.\n`!download <ID>`: Scarica l'audio completo della sessione." },
                 { name: "👤 Personaggio", value: "`!iam <Nome>`: Imposta il tuo nome (Obbligatorio).\n`!whoami`: Visualizza profilo." },
                 { name: "⚙️ Configurazione", value: "`!setcmd`: Imposta questo canale per i comandi.\n`!setsummary`: Imposta questo canale per i riassunti." }
             )
@@ -290,6 +291,51 @@ client.on('messageCreate', async (message: Message) => {
         } catch (err) {
             console.error(`❌ Errore durante il racconto della sessione ${targetSessionId}:`, err);
             await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
+        }
+    }
+
+    // --- COMANDO DOWNLOAD SESSIONE ---
+    if (command === 'download') {
+        let targetSessionId = args[0];
+        
+        // Se non specificato, usa la sessione attiva
+        if (!targetSessionId) {
+            targetSessionId = guildSessions.get(message.guild.id) || "";
+        }
+
+        if (!targetSessionId) {
+            return message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `!download <ID>`");
+        }
+
+        message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
+
+        try {
+            // 1. Genera il file mixato
+            const filePath = await mixSessionAudio(targetSessionId);
+            
+            // 2. Controllo Dimensioni (Discord ha limite 8MB o 25MB)
+            const stats = fs.statSync(filePath);
+            const sizeMB = stats.size / (1024 * 1024);
+
+            if (sizeMB < 25) { // Provo a mandarlo se < 25MB
+                await message.channel.send({
+                    content: `✅ **Audio Sessione Pronto!** (${sizeMB.toFixed(2)} MB)`,
+                    files: [filePath]
+                });
+                
+                // Opzionale: cancella dopo l'invio per spazio
+                // fs.unlinkSync(filePath);
+            } else {
+                // Se è troppo grande, serve una strategia alternativa (es. upload su Oracle + Link)
+                // Per ora avvisiamo l'utente
+                message.channel.send(`✅ **Audio Generato**, ma è troppo grande per Discord (${sizeMB.toFixed(2)} MB).\n📂 Il file si trova sul server in: \`${filePath}\``);
+                
+                // TODO: Qui potresti implementare uploadToOracle(filePath) e generare un Pre-Authenticated Request (PAR) url
+            }
+
+        } catch (err: any) {
+            console.error(err);
+            message.channel.send(`❌ Errore durante la generazione dell'audio: ${err.message}`);
         }
     }
 

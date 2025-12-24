@@ -127,11 +127,58 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         if (p.character_name) castContext += `- ${p.character_name} (${p.race || ''} ${p.class || ''})\n`;
     });
 
-    // Costruzione dialogo
-    let fullDialogue = transcriptions
-        .map(t => {
-            const minutes = Math.floor((t.timestamp - startTime) / 60000);
-            return `[${minutes}m] ${t.character_name}: ${t.transcription_text}`;
+    // --- RICOSTRUZIONE INTELLIGENTE (DIARIZZAZIONE) ---
+    // Invece di unire i blocchi di testo grezzi, esplodiamo i segmenti JSON
+    // e li riordiniamo temporalmente per gestire le interruzioni.
+    
+    interface DialogueFragment {
+        absoluteTime: number;
+        character: string;
+        text: string;
+    }
+
+    const allFragments: DialogueFragment[] = [];
+
+    for (const t of transcriptions) {
+        try {
+            // Proviamo a parsare il JSON dei segmenti
+            const segments = JSON.parse(t.transcription_text);
+            
+            if (Array.isArray(segments)) {
+                // Caso NUOVO: Abbiamo i segmenti temporali
+                for (const seg of segments) {
+                    allFragments.push({
+                        absoluteTime: t.timestamp + (seg.start * 1000),
+                        character: t.character_name || "Sconosciuto",
+                        text: seg.text
+                    });
+                }
+            } else {
+                // Fallback (non dovrebbe accadere se il formato è corretto)
+                throw new Error("Formato JSON non valido");
+            }
+        } catch (e) {
+            // Caso VECCHIO (Retrocompatibilità): Testo semplice
+            // Consideriamo tutto il blocco come iniziato al timestamp del file
+            allFragments.push({
+                absoluteTime: t.timestamp,
+                character: t.character_name || "Sconosciuto",
+                text: t.transcription_text
+            });
+        }
+    }
+
+    // Ordiniamo cronologicamente tutti i frammenti
+    allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
+
+    // Costruiamo il dialogo finale
+    let fullDialogue = allFragments
+        .map(f => {
+            // Calcoliamo il tempo relativo all'inizio della sessione in minuti
+            const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
+            const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
+            const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            return `[${timeStr}] ${f.character}: ${f.text}`;
         })
         .join("\n");
 

@@ -25,17 +25,26 @@ def process_audio(model, audio_file):
     # OTTIMIZZAZIONI QUI:
     # 1. vad_filter=True: Salta i silenzi (enorme risparmio di tempo)
     # 2. beam_size=1: Modalità "greedy", molto più veloce.
+    # 3. word_timestamps=True: Migliora la precisione dei timestamp
     segments, info = model.transcribe(
         audio_file, 
         beam_size=1,            # Cambia da 2 a 1 per velocità pura
         language="it",
         vad_filter=True,        # Fondamentale: ignora i silenzi
         vad_parameters=dict(min_silence_duration_ms=500), # Ignora pause > 0.5s
-        condition_on_previous_text=False # Evita allucinazioni e loop in alcuni casi
+        condition_on_previous_text=False, # Evita allucinazioni e loop in alcuni casi
+        word_timestamps=True    # Abilita timestamp precisi per segmentazione
     )
     
-    full_text = " ".join([segment.text for segment in segments])
-    return {"text": full_text.strip()}
+    output_segments = []
+    for segment in segments:
+        output_segments.append({
+            "start": segment.start,
+            "end": segment.end,
+            "text": segment.text.strip()
+        })
+
+    return {"segments": output_segments}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

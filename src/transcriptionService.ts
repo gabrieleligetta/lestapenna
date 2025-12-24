@@ -2,12 +2,24 @@ import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import { EventEmitter } from 'events';
 
+export interface TranscriptionSegment {
+    start: number;
+    end: number;
+    text: string;
+}
+
+export interface TranscriptionResult {
+    text?: string;
+    segments?: TranscriptionSegment[];
+    error?: string;
+}
+
 class WhisperWorker extends EventEmitter {
     private process: ChildProcess | null = null;
     private ready = false;
-    private currentResolve: ((value: any) => void) | null = null;
+    private currentResolve: ((value: TranscriptionResult) => void) | null = null;
     private currentReject: ((reason: any) => void) | null = null;
-    private queue: { path: string, resolve: any, reject: any }[] = [];
+    private queue: { path: string, resolve: (value: TranscriptionResult) => void, reject: (reason: any) => void }[] = [];
 
     constructor() {
         super();
@@ -76,7 +88,7 @@ class WhisperWorker extends EventEmitter {
         }
     }
 
-    async transcribe(audioPath: string): Promise<any> {
+    async transcribe(audioPath: string): Promise<TranscriptionResult> {
         return new Promise((resolve, reject) => {
             this.queue.push({ path: audioPath, resolve, reject });
             this.processNext();
@@ -118,6 +130,6 @@ export function convertPcmToWav(input: string, output: string): Promise<void> {
     });
 }
 
-export function transcribeLocal(audioPath: string): Promise<{ text: string, error?: string }> {
+export function transcribeLocal(audioPath: string): Promise<TranscriptionResult> {
     return whisperWorker.transcribe(audioPath);
 }

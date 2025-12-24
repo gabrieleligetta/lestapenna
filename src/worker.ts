@@ -64,17 +64,17 @@ export function startWorker() {
                 fs.unlinkSync(transcriptionPath);
             }
 
-            // FILTRO QUALITÀ TRASCRIZIONE
-            // Scartiamo se vuoto, solo spazi, o solo punteggiatura comune nelle allucinazioni
-            const cleanText = result?.text?.trim() || "";
-            const isGarbage = /^[.?!,]*$/.test(cleanText); // Solo punteggiatura
-
-            if (cleanText.length > 0 && !isGarbage) {
-                updateRecordingStatus(fileName, 'PROCESSED', cleanText);
-                console.log(`[Scriba] ✅ Trascritto ${fileName}: "${cleanText.substring(0, 30)}..."`);
+            // Se abbiamo segmenti, salviamo il JSON completo
+            if (result.segments && result.segments.length > 0) {
+                const jsonStr = JSON.stringify(result.segments);
+                
+                // Calcoliamo un testo "flat" per log e fallback rapido
+                const flatText = result.segments.map((s: any) => s.text).join(" ");
+                
+                updateRecordingStatus(fileName, 'PROCESSED', jsonStr);
+                console.log(`[Scriba] ✅ Trascritto ${fileName} (${result.segments.length} segmenti): "${flatText.substring(0, 30)}..."`);
                 
                 // --- PULIZIA FINALE ---
-                // Verifichiamo il backup prima di eliminare il locale
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
                 if (isBackedUp) {
                     try {
@@ -87,12 +87,12 @@ export function startWorker() {
                     console.warn(`[Scriba] ⚠️ Backup non confermato per ${fileName}, mantengo file locale.`);
                 }
 
-                return { status: 'ok', text: cleanText };
+                return { status: 'ok', segments: result.segments };
             } else {
+                // Fallback per casi strani o vuoti
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');
-                console.log(`[Scriba] 🔇 Audio ${fileName} scartato (silenzio o incomprensibile: "${cleanText}")`);
+                console.log(`[Scriba] 🔇 Audio ${fileName} scartato (silenzio o incomprensibile)`);
 
-                // Anche se scartato, se abbiamo il backup possiamo pulire il locale
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
                 if (isBackedUp) {
                     try { fs.unlinkSync(filePath); } catch(e) {}

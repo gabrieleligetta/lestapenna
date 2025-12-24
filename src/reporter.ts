@@ -54,8 +54,12 @@ export async function processSessionReport(metrics: SessionMetrics) {
 
     let emailBody = "";
     try {
+        const modelToUse = process.env.AI_PROVIDER === 'ollama' 
+            ? (process.env.OLLAMA_MODEL || "llama3.2") 
+            : (process.env.OPEN_AI_MODEL || "gpt-4o-mini");
+
         const response = await openai.chat.completions.create({
-            model: process.env.OLLAMA_MODEL || "gpt-4o-mini",
+            model: modelToUse,
             messages: [{ role: "user", content: prompt }]
         });
         emailBody = response.choices[0].message.content || "Report generico.";

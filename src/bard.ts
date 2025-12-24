@@ -23,14 +23,11 @@ const MODEL_NAME = useOllama ? (process.env.OLLAMA_MODEL || "llama3.2") : (proce
 const CONCURRENCY_LIMIT = useOllama ? 1 : 5;
 
 // URL Base: Gestione intelligente del default in base all'ambiente
-// Su Mac/Windows Docker Desktop: host.docker.internal
-// Su Linux (Oracle): Va sovrascritto via ENV (es. http://172.17.0.1:11434/v1)
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1';
 
 const openai = new OpenAI({
     baseURL: useOllama ? OLLAMA_BASE_URL : undefined,
     apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
-    // MODIFICA: Aumentiamo il timeout a 10 minuti per evitare crash su CPU lente (Oracle A1)
     timeout: 600 * 1000, 
 });
 
@@ -87,7 +84,8 @@ async function processInBatches<T, R>(items: T[], batchSize: number, fn: (item: 
 }
 
 // --- FASE 1: MAP ---
-async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<string> {
+// Modificato: Restituisce testo + token
+async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<{text: string, tokens: number}> {
     console.log(`[Bardo] 🗺️  Fase MAP: Analisi chunk ${index + 1}/${total} (${chunk.length} chars)...`);
     
     const mapPrompt = `Sei un analista di D&D.
@@ -103,21 +101,26 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
                 { role: "user", content: chunk }
             ],
         }));
-        return response.choices[0].message.content || "";
+        
+        return {
+            text: response.choices[0].message.content || "",
+            tokens: response.usage?.total_tokens || 0
+        };
     } catch (err) {
         console.error(`[Bardo] ❌ Errore Map chunk ${index + 1}:`, err);
-        return ""; 
+        return { text: "", tokens: 0 }; 
     }
 }
 
 // --- FUNZIONE PRINCIPALE ---
-export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<string> {
+// Modificato: Restituisce oggetto con summary e token totali
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, tokens: number}> {
     console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
     
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
 
-    if (transcriptions.length === 0) return "Nessuna trascrizione trovata.";
+    if (transcriptions.length === 0) return { summary: "Nessuna trascrizione trovata.", tokens: 0 };
 
     // Context Personaggi
     const userIds = new Set(transcriptions.map(t => t.user_id));
@@ -126,28 +129,17 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     userIds.forEach(uid => {
         const p = getUserProfile(uid);
         if (p.character_name) {
-            // Costruiamo una riga dettagliata
             let charInfo = `- **${p.character_name}**`;
-            
-            // Aggiungiamo Razza e Classe se presenti
             const details = [];
             if (p.race) details.push(p.race);
             if (p.class) details.push(p.class);
             if (details.length > 0) charInfo += ` (${details.join(' ')})`;
-            
-            // Aggiungiamo la descrizione se presente (PUNTO CRUCIALE CHE MANCAVA)
-            if (p.description) {
-                charInfo += `: "${p.description}"`;
-            }
-            
+            if (p.description) charInfo += `: "${p.description}"`;
             castContext += charInfo + "\n";
         }
     });
 
     // --- RICOSTRUZIONE INTELLIGENTE (DIARIZZAZIONE) ---
-    // Invece di unire i blocchi di testo grezzi, esplodiamo i segmenti JSON
-    // e li riordiniamo temporalmente per gestire le interruzioni.
-    
     interface DialogueFragment {
         absoluteTime: number;
         character: string;
@@ -158,11 +150,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
 
     for (const t of transcriptions) {
         try {
-            // Proviamo a parsare il JSON dei segmenti
             const segments = JSON.parse(t.transcription_text);
-            
             if (Array.isArray(segments)) {
-                // Caso NUOVO: Abbiamo i segmenti temporali
                 for (const seg of segments) {
                     allFragments.push({
                         absoluteTime: t.timestamp + (seg.start * 1000),
@@ -170,13 +159,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                         text: seg.text
                     });
                 }
-            } else {
-                // Fallback (non dovrebbe accadere se il formato è corretto)
-                throw new Error("Formato JSON non valido");
-            }
+            } else { throw new Error("Formato JSON non valido"); }
         } catch (e) {
-            // Caso VECCHIO (Retrocompatibilità): Testo semplice
-            // Consideriamo tutto il blocco come iniziato al timestamp del file
             allFragments.push({
                 absoluteTime: t.timestamp,
                 character: t.character_name || "Sconosciuto",
@@ -185,13 +169,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         }
     }
 
-    // Ordiniamo cronologicamente tutti i frammenti
     allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
 
-    // Costruiamo il dialogo finale
     let fullDialogue = allFragments
         .map(f => {
-            // Calcoliamo il tempo relativo all'inizio della sessione in minuti
             const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
             const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
             const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -199,9 +180,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         })
         .join("\n");
 
-    // Decisione Strategia
-    const CHAR_LIMIT_FOR_MAP_REDUCE = 15000; // Abbassato leggermente per sicurezza su Llama
+    const CHAR_LIMIT_FOR_MAP_REDUCE = 15000;
     let contextForFinalStep = "";
+    let accumulatedTokens = 0;
 
     if (fullDialogue.length > CHAR_LIMIT_FOR_MAP_REDUCE) {
         console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars). Attivo Map-Reduce.`);
@@ -213,7 +194,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
             extractFactsFromChunk(chunk, index, chunks.length, castContext)
         );
 
-        contextForFinalStep = mapResults.join("\n\n--- SEGMENTO SUCCESSIVO ---\n\n");
+        contextForFinalStep = mapResults.map(r => r.text).join("\n\n--- SEGMENTO SUCCESSIVO ---\n\n");
+        accumulatedTokens = mapResults.reduce((acc, curr) => acc + curr.tokens, 0);
     } else {
         contextForFinalStep = fullDialogue;
     }
@@ -235,9 +217,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
             ],
         }));
 
-        return response.choices[0].message.content || "Errore generazione.";
+        const finalSummary = response.choices[0].message.content || "Errore generazione.";
+        accumulatedTokens += response.usage?.total_tokens || 0;
+
+        return {
+            summary: finalSummary,
+            tokens: accumulatedTokens
+        };
     } catch (err: any) {
         console.error("Errore finale:", err);
-        throw err; // Rilanciamo l'errore per permettere al chiamante di gestirlo
+        throw err;
     }
 }

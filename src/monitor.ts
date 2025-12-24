@@ -9,6 +9,7 @@ export interface SessionMetrics {
     totalAudioDurationSec: number;
     transcriptionTimeMs: number;
     summarizationTimeMs: number;
+    totalTokensUsed: number; // NUOVO CAMPO
     errors: string[];
     resourceUsage: {
         cpuSamples: number[];
@@ -28,6 +29,7 @@ class SystemMonitor {
             totalAudioDurationSec: 0,
             transcriptionTimeMs: 0,
             summarizationTimeMs: 0,
+            totalTokensUsed: 0, // Inizializzazione
             errors: [],
             resourceUsage: { cpuSamples: [], ramSamplesMB: [] }
         };
@@ -58,6 +60,13 @@ class SystemMonitor {
 
     logSummarizationTime(ms: number) {
         if (this.currentSession) this.currentSession.summarizationTimeMs = ms;
+    }
+
+    // NUOVO METODO
+    logTokenUsage(tokens: number) {
+        if (this.currentSession) {
+            this.currentSession.totalTokensUsed += tokens;
+        }
     }
 
     logError(context: string, error: string) {

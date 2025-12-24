@@ -9,10 +9,10 @@ import * as path from 'path';
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || "smtp.porkbun.com",
     port: parseInt(process.env.SMTP_PORT || "465"),
-    secure: true, // true per porta 465 (Implicit TLS), false per altre porte
+    secure: true, 
     auth: {
-        user: process.env.SMTP_USER, // unicorn@gligetta.dev
-        pass: process.env.SMTP_PASS  // Password della casella email
+        user: process.env.SMTP_USER, 
+        pass: process.env.SMTP_PASS  
     }
 });
 
@@ -25,7 +25,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
     console.log(`[Reporter] 📝 Generazione report post-mortem per sessione ${metrics.sessionId}...`);
 
     // 1. Calcolo Statistiche
-    const durationMin = (metrics.endTime! - metrics.startTime) / 60000;
+    const durationMin = metrics.startTime && metrics.endTime ? (metrics.endTime - metrics.startTime) / 60000 : 0;
     const avgCpu = metrics.resourceUsage.cpuSamples.length > 0 
         ? metrics.resourceUsage.cpuSamples.reduce((a, b) => a + b, 0) / metrics.resourceUsage.cpuSamples.length 
         : 0;
@@ -44,6 +44,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
     - File Audio: ${metrics.totalFiles}
     - Durata Audio Totale: ${metrics.totalAudioDurationSec} sec
     - Tempo Trascrizione Totale: ${(metrics.transcriptionTimeMs / 1000).toFixed(2)} sec
+    - Token AI Utilizzati (Summ): ${metrics.totalTokensUsed}
     - CPU Media: ${avgCpu.toFixed(1)}%
     - RAM Max: ${maxRam} MB
     - Errori: ${metrics.errors.length}
@@ -67,10 +68,8 @@ export async function processSessionReport(metrics: SessionMetrics) {
     const logPath = path.join(__dirname, '..', 'recordings', logFileName);
     fs.writeFileSync(logPath, statsJson);
 
-    // 4. Upload su Oracle (Cartella 'logs/')
+    // 4. Upload su Oracle
     try {
-        // Nota: Assicurati che uploadToOracle supporti il percorso custom come discusso prima
-        // oppure usa la logica standard se non modificata.
         await uploadToOracle(logPath, logFileName, undefined, `logs/${logFileName}`);
         console.log("[Reporter] ☁️ Metriche caricate su Oracle Cloud.");
     } catch (e) {
@@ -81,8 +80,8 @@ export async function processSessionReport(metrics: SessionMetrics) {
     const mailOptions = {
         from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
         to: process.env.REPORT_RECIPIENT || 'gabligetta@gmail.com',
-        subject: `[Lestapenna] Report Sessione - ${metrics.errors.length > 0 ? '⚠️ ERRORI RILEVATI' : '✅ Successo'}`,
-        text: emailBody,
+        subject: `[Lestapenna] Report Sessione ${metrics.sessionId} - ${metrics.errors.length > 0 ? '⚠️ ALERT' : '✅ OK'}`,
+        text: emailBody + `\n\nDATI RAW:\n${statsJson}`,
         attachments: [
             {
                 filename: logFileName,
@@ -93,12 +92,11 @@ export async function processSessionReport(metrics: SessionMetrics) {
 
     try {
         await transporter.sendMail(mailOptions);
-        console.log(`[Reporter] 📧 Email inviata a ${mailOptions.to} via ${process.env.SMTP_HOST}`);
+        console.log(`[Reporter] 📧 Email inviata a ${mailOptions.to}`);
     } catch (e) {
         console.error("[Reporter] ❌ Errore invio email:", e);
     }
     
-    // Pulizia file locale
     if (fs.existsSync(logPath)) {
         try { fs.unlinkSync(logPath); } catch (e) {}
     }
@@ -109,15 +107,12 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
         from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
         to: recipient,
         subject: `[Lestapenna] Test Configurazione SMTP`,
-        text: `Ciao! Se leggi questa email, la configurazione SMTP di Porkbun funziona correttamente.\n\nHost: ${process.env.SMTP_HOST}\nPort: ${process.env.SMTP_PORT}\nUser: ${process.env.SMTP_USER}`
+        text: `Test OK.`
     };
-
     try {
         await transporter.sendMail(mailOptions);
-        console.log(`[Reporter] 📧 Email di test inviata a ${recipient}`);
         return true;
     } catch (e) {
-        console.error("[Reporter] ❌ Errore invio email di test:", e);
         return false;
     }
 }

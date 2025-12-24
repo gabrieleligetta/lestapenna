@@ -26,12 +26,13 @@ import {
     addRecording,
     wipeDatabase,
     setConfig,
-    getConfig
+    getConfig,
+    getSessionTranscript // Importato per il download
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
-import { monitor } from './monitor';
+import { monitor, SessionMetrics } from './monitor';
 import { processSessionReport, sendTestEmail } from './reporter';
 
 const client = new Client({
@@ -46,16 +47,14 @@ const client = new Client({
 const guildSessions = new Map<string, string>(); // GuildId -> SessionId
 const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
 
-// Helper per recuperare i canali configurati (DB > ENV)
+// ... (getCmdChannelId, getSummaryChannelId rimangono uguali) ...
 const getCmdChannelId = () => getConfig('cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
 const getSummaryChannelId = () => getConfig('summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
 
 client.on('messageCreate', async (message: Message) => {
     if (!message.content.startsWith('!') || message.author.bot) return;
 
-    // Controllo Canale Comandi (se configurato)
     const allowedChannelId = getCmdChannelId();
-    // Eccezione: permettiamo il comando !setcmd ovunque se siamo admin, per configurare il bot la prima volta
     const isConfigCommand = message.content.startsWith('!setcmd');
     
     if (allowedChannelId && message.channelId !== allowedChannelId && !isConfigCommand) return;
@@ -65,7 +64,8 @@ client.on('messageCreate', async (message: Message) => {
 
     if (!message.guild) return;
 
-    // --- COMANDO HELP ---
+    // ... (HELP, CONFIG, LISTEN, STOPLISTENING rimangono uguali fino a waitForCompletionAndSummarize) ...
+
     if (command === 'help' || command === 'aiuto') {
         const helpEmbed = new EmbedBuilder()
             .setTitle("🖋️ Lestapenna - Comandi Disponibili")
@@ -75,18 +75,18 @@ client.on('messageCreate', async (message: Message) => {
                 { 
                     name: "🎙️ Gestione Sessione", 
                     value: 
-                    "`!ascolta`: Inizia la registrazione (Richiede nomi impostati).\n" +
-                    "`!stop`: Termina la sessione e avvia il riassunto.\n" +
-                    "`!impostasessione <N>`: Imposta il numero della sessione corrente.\n" +
-                    "`!impostasessioneid <ID> <N>`: Corregge il numero di una vecchia sessione." 
+                    "`!ascolta`: Inizia la registrazione.\n" +
+                    "`!stop`: Termina la sessione.\n" +
+                    "`!impostasessione <N>`: Imposta numero sessione.\n" +
+                    "`!impostasessioneid <ID> <N>`: Corregge il numero." 
                 },
                 { 
                     name: "📜 Narrazione & Archivi", 
                     value: 
-                    "`!listasessioni`: Mostra le ultime 5 sessioni in archivio.\n" +
-                    "`!racconta <ID> [tono]`: Rigenera il riassunto (es. `!racconta abc12 EPICO`).\n" +
-                    "`!toni`: Visualizza la lista degli stili narrativi disponibili.\n" +
-                    "`!scarica <ID>`: Genera e scarica l'audio completo della sessione." 
+                    "`!listasessioni`: Ultime 5 sessioni.\n" +
+                    "`!racconta <ID> [tono]`: Rigenera riassunto.\n" +
+                    "`!scarica <ID>`: Scarica audio.\n" +
+                    "`!scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." // NUOVO
                 },
                 { 
                     name: "👤 Scheda Personaggio", 
@@ -103,9 +103,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`!setcmd`: Imposta questo canale per i comandi.\n" +
                     "`!setsummary`: Imposta questo canale per la pubblicazione dei riassunti." 
                 }
-            )
-            .setFooter({ text: "Lestapenna v1.4 - Bot Protected" });
-        
+            );
         return await message.reply({ embeds: [helpEmbed] });
     }
 
@@ -292,37 +290,107 @@ client.on('messageCreate', async (message: Message) => {
         await waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
     }
 
-    // --- NUOVO: !racconta <id_sessione> [tono] ---
+    // --- NUOVO: !scaricatrascrizioni <ID> ---
+    if (command === 'scaricatrascrizioni' || command === 'downloadtxt') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) {
+            return await message.reply("Uso: `!scaricatrascrizioni <ID>`");
+        }
+
+        const transcripts = getSessionTranscript(targetSessionId);
+        if (!transcripts || transcripts.length === 0) {
+            return await message.reply(`⚠️ Nessuna trascrizione trovata per la sessione \`${targetSessionId}\`.`);
+        }
+
+        // Formattiamo il testo in modo leggibile
+        const formattedText = transcripts.map(t => {
+            let text = "";
+            const startTime = getSessionStartTime(targetSessionId) || 0;
+            
+            try {
+                // Proviamo a parsare i segmenti JSON se presenti
+                const segments = JSON.parse(t.transcription_text);
+                if (Array.isArray(segments)) {
+                    text = segments.map(s => {
+                        const absTime = t.timestamp + (s.start * 1000);
+                        const mins = Math.floor((absTime - startTime) / 60000);
+                        const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
+                        return `[${mins}:${secs.toString().padStart(2, '0')}] ${s.text}`;
+                    }).join('\n');
+                } else {
+                    text = t.transcription_text;
+                }
+            } catch (e) {
+                text = t.transcription_text; // Fallback testo semplice
+            }
+            
+            return `--- ${t.character_name || 'Sconosciuto'} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}\n`;
+        }).join('\n');
+
+        const fileName = `transcript-${targetSessionId}.txt`;
+        const filePath = path.join(__dirname, '..', 'recordings', fileName);
+        
+        fs.writeFileSync(filePath, formattedText);
+
+        await message.reply({
+            content: `📜 **Trascrizione Completa** per sessione \`${targetSessionId}\``,
+            files: [filePath]
+        });
+
+        // Pulizia
+        try { fs.unlinkSync(filePath); } catch (e) {}
+    }
+
+    // --- MODIFICATO: !racconta <id_sessione> [tono] ---
     if (command === 'racconta') {
         const targetSessionId = args[0];
         const requestedTone = args[1]?.toUpperCase() as ToneKey;
 
         if (!targetSessionId) {
-            const sessions = getAvailableSessions();
-            if (sessions.length === 0) return await message.reply("Nessuna sessione trovata.");
-            
-            const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
-            const embed = new EmbedBuilder()
-                .setTitle("📜 Sessioni Disponibili")
-                .setColor("#7289DA")
-                .setDescription(list)
-                .setFooter({ text: "Uso: !racconta <ID> [TONO]" });
-            
-            return await message.reply({ embeds: [embed] });
+             const sessions = getAvailableSessions();
+             // ... (codice lista sessioni esistente) ...
+             if (sessions.length === 0) return await message.reply("Nessuna sessione trovata.");
+             const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
+             const embed = new EmbedBuilder().setTitle("📜 Sessioni Disponibili").setDescription(list);
+             return await message.reply({ embeds: [embed] });
         }
 
         if (requestedTone && !TONES[requestedTone]) {
-            return await message.reply(`Tono non valido. Toni disponibili: ${Object.keys(TONES).join(', ')}`);
+            return await message.reply(`Tono non valido. Toni: ${Object.keys(TONES).join(', ')}`);
         }
 
         const channel = message.channel as TextChannel;
         await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
+        const startProcessing = Date.now();
         try {
-            const summary = await generateSummary(targetSessionId, requestedTone || 'DM');
-            await publishSummary(targetSessionId, summary, channel, true);
+            // Chiamata modificata: ora ritorna oggetto
+            const result = await generateSummary(targetSessionId, requestedTone || 'DM');
+            await publishSummary(targetSessionId, result.summary, channel, true);
+
+            // --- GENERAZIONE REPORT REPLAY ---
+            const processingTime = Date.now() - startProcessing;
+            const transcripts = getSessionTranscript(targetSessionId);
+            
+            // Creiamo metriche sintetiche per il report
+            const replayMetrics: SessionMetrics = {
+                sessionId: targetSessionId,
+                startTime: startProcessing,
+                endTime: Date.now(),
+                totalFiles: transcripts.length,
+                totalAudioDurationSec: 0, // Dato non disponibile facilmente in replay
+                transcriptionTimeMs: 0, // Dato storico non disponibile
+                summarizationTimeMs: processingTime,
+                totalTokensUsed: result.tokens, // TOKEN USATI
+                errors: [],
+                resourceUsage: { cpuSamples: [], ramSamplesMB: [] }
+            };
+
+            // Inviamo la mail
+            processSessionReport(replayMetrics).catch(e => console.error("Err Report Replay:", e));
+
         } catch (err) {
-            console.error(`❌ Errore durante il racconto della sessione ${targetSessionId}:`, err);
+            console.error(`❌ Errore racconta ${targetSessionId}:`, err);
             await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
         }
     }
@@ -530,7 +598,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 });
 
-// --- FUNZIONE MONITORAGGIO CODA ---
+// --- FUNZIONE MONITORAGGIO CODA MODIFICATA ---
 async function waitForCompletionAndSummarize(sessionId: string, discordChannel: TextChannel) {
     console.log(`[Monitor] Avviato monitoraggio per sessione ${sessionId}...`);
     
@@ -539,30 +607,34 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
         const sessionJobs = jobs.filter(j => j.data && j.data.sessionId === sessionId);
         
         if (sessionJobs.length > 0) {
-            const details = await Promise.all(sessionJobs.map(async j => {
+            // ... (logica attesa esistente) ...
+             const details = await Promise.all(sessionJobs.map(async j => {
                 const state = await j.getState();
                 return `${j.data?.fileName} [${state}]`;
             }));
-            console.log(`[Monitor] Sessione ${sessionId}: ancora ${sessionJobs.length} file da elaborare... (${details.join(', ')})`);
+            console.log(`[Monitor] Sessione ${sessionId}: ancora ${sessionJobs.length} file... (${details.join(', ')})`);
         } else {
             clearInterval(checkInterval);
             console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);
             
             const startSummary = Date.now();
             try {
-                const summary = await generateSummary(sessionId, 'DM');
+                // Modificato: gestione result.tokens
+                const result = await generateSummary(sessionId, 'DM');
+                
                 monitor.logSummarizationTime(Date.now() - startSummary);
-                await publishSummary(sessionId, summary, discordChannel);
+                monitor.logTokenUsage(result.tokens); // REGISTRAZIONE TOKEN
+
+                await publishSummary(sessionId, result.summary, discordChannel);
             } catch (err: any) {
-                console.error(`❌ Errore durante il riassunto finale di ${sessionId}:`, err);
+                console.error(`❌ Errore riassunto finale ${sessionId}:`, err);
                 monitor.logError('Summary', err.message);
-                await discordChannel.send(`⚠️ Errore durante la generazione del riassunto per la sessione \`${sessionId}\`. Puoi riprovare con \`!racconta ${sessionId}\`.`);
+                await discordChannel.send(`⚠️ Errore riassunto. Riprova: \`!racconta ${sessionId}\`.`);
             }
 
             // FINE SESSIONE E REPORT
             const metrics = monitor.endSession();
             if (metrics) {
-                // Non aspettiamo (fire and forget) per non bloccare Discord
                 processSessionReport(metrics).catch(e => console.error(e));
             }
         }

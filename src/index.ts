@@ -1,6 +1,22 @@
 import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
-import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder, ChannelType, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
+import { 
+    Client, 
+    GatewayIntentBits, 
+    Message, 
+    VoiceBasedChannel, 
+    TextChannel, 
+    EmbedBuilder, 
+    ChannelType, 
+    DMChannel, 
+    NewsChannel, 
+    ThreadChannel,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ComponentType,
+    MessageComponentInteraction
+} from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, removeSessionJobs, clearQueue } from './queue';
@@ -54,6 +70,7 @@ const client = new Client({
 
 const guildSessions = new Map<string, string>(); // GuildId -> SessionId
 const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
+const chatHistory = new Map<string, { role: 'user' | 'assistant', content: string }[]>(); // ChannelId -> History
 
 const getCmdChannelId = (guildId: string) => getGuildConfig(guildId, 'cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
@@ -420,6 +437,11 @@ client.on('messageCreate', async (message: Message) => {
 
         const startProcessing = Date.now();
         try {
+            // FEEDBACK INGESTIONE
+            await channel.send("🧠 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
+            await ingestSessionRaw(targetSessionId);
+            await channel.send("✅ Memoria aggiornata. Inizio stesura del racconto...");
+
             const result = await generateSummary(targetSessionId, requestedTone || 'DM');
             await publishSummary(targetSessionId, result.summary, channel, true);
 
@@ -458,7 +480,18 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         try {
-            const answer = await askBard(activeCampaign!.id, question);
+            // GESTIONE MEMORIA BREVE
+            const history = chatHistory.get(message.channelId) || [];
+            const answer = await askBard(activeCampaign!.id, question, history);
+            
+            // Aggiorna cronologia
+            history.push({ role: 'user', content: question });
+            history.push({ role: 'assistant', content: answer });
+            
+            // Mantieni solo ultimi 6 messaggi (3 scambi)
+            if (history.length > 6) history.splice(0, history.length - 6);
+            chatHistory.set(message.channelId, history);
+
             await message.reply(answer);
         } catch (err) {
             console.error("Errore chiedialbardo:", err);
@@ -699,6 +732,11 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
             
             const startSummary = Date.now();
             try {
+                // FEEDBACK INGESTIONE
+                await discordChannel.send("🧠 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
+                await ingestSessionRaw(sessionId);
+                await discordChannel.send("✅ Memoria aggiornata. Inizio stesura del racconto...");
+
                 const result = await generateSummary(sessionId, 'DM');
                 
                 monitor.logSummarizationTime(Date.now() - startSummary);
@@ -817,12 +855,84 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         }
     }
 
-    await targetChannel.send(`\`\`\`diff\n${header}\n\`\`\``);
-    await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
+    // --- PAGINAZIONE ---
+    const PAGE_SIZE = 2000;
+    const pages: string[] = [];
+    
+    for (let i = 0; i < summary.length; i += PAGE_SIZE) {
+        pages.push(summary.substring(i, i + PAGE_SIZE));
+    }
 
-    const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-    for (const chunk of chunks) {
-        await targetChannel.send(chunk);
+    const generateEmbed = (pageIndex: number) => {
+        return new EmbedBuilder()
+            .setTitle(`📜 Cronaca Sessione ${sessionNum}`)
+            .setDescription(pages[pageIndex])
+            .setColor("#F1C40F")
+            .setFooter({ text: `Pagina ${pageIndex + 1} di ${pages.length} • ${header}` })
+            .setTimestamp();
+    };
+
+    const generateButtons = (pageIndex: number) => {
+        const row = new ActionRowBuilder<ButtonBuilder>();
+        
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId('prev')
+                .setLabel('⬅️ Precedente')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(pageIndex === 0),
+            new ButtonBuilder()
+                .setCustomId('next')
+                .setLabel('Successiva ➡️')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(pageIndex === pages.length - 1)
+        );
+        
+        return row;
+    };
+
+    const messageOptions: any = { 
+        embeds: [generateEmbed(0)],
+        content: `**${authorName}** — ${dateShort}, ${timeStr}`
+    };
+
+    if (pages.length > 1) {
+        messageOptions.components = [generateButtons(0)];
+    }
+
+    const sentMessage = await targetChannel.send(messageOptions);
+
+    if (pages.length > 1) {
+        const collector = sentMessage.createMessageComponentCollector({ 
+            componentType: ComponentType.Button, 
+            time: 600000 // 10 minuti
+        });
+
+        let currentPage = 0;
+
+        collector.on('collect', async (i: MessageComponentInteraction) => {
+            if (i.customId === 'prev') {
+                currentPage = Math.max(0, currentPage - 1);
+            } else if (i.customId === 'next') {
+                currentPage = Math.min(pages.length - 1, currentPage + 1);
+            }
+
+            await i.update({
+                embeds: [generateEmbed(currentPage)],
+                components: [generateButtons(currentPage)]
+            });
+        });
+
+        collector.on('end', async () => {
+            // Disabilita bottoni alla fine
+            const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder().setCustomId('prev').setLabel('⬅️').setStyle(ButtonStyle.Secondary).setDisabled(true),
+                new ButtonBuilder().setCustomId('next').setLabel('➡️').setStyle(ButtonStyle.Secondary).setDisabled(true)
+            );
+            try {
+                await sentMessage.edit({ components: [disabledRow] });
+            } catch (e) {}
+        });
     }
     
     if (targetChannel.id !== defaultChannel.id) {

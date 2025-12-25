@@ -362,7 +362,7 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 }
 
 // --- RAG: ASK BARD ---
-export async function askBard(campaignId: number, question: string): Promise<string> {
+export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
     // 1. Cerca nella memoria
     const context = await searchKnowledge(campaignId, question, 5);
     
@@ -371,21 +371,26 @@ export async function askBard(campaignId: number, question: string): Promise<str
         : "Nessuna memoria specifica trovata.";
 
     // 2. Genera risposta
-    const prompt = `Sei il Bardo della campagna. Rispondi alla domanda del giocatore basandoti ESCLUSIVAMENTE sulle trascrizioni fornite.
+    const systemPrompt = `Sei il Bardo della campagna. Rispondi alla domanda del giocatore basandoti sulle trascrizioni fornite e sulla conversazione precedente.
     Cita chi ha detto cosa se rilevante.
     Se la risposta non è nelle trascrizioni, ammetti di non ricordare o di non averlo sentito.
     
-    ${contextText}
-    
-    DOMANDA: ${question}`;
+    ${contextText}`;
+
+    const messages: any[] = [
+        { role: "system", content: systemPrompt }
+    ];
+
+    // Aggiungi cronologia
+    messages.push(...history);
+
+    // Aggiungi domanda corrente
+    messages.push({ role: "user", content: question });
 
     try {
         const response = await openai.chat.completions.create({
-            model: MODEL_NAME,
-            messages: [
-                { role: "system", content: "Sei un saggio Bardo che ricorda tutto ciò che è stato detto." },
-                { role: "user", content: prompt }
-            ]
+            model: "gpt-5-mini",
+            messages: messages as any
         });
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
@@ -479,8 +484,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
     console.log(`[Bardo] ⚙️  Configurazione: Chunk Size=${MAX_CHUNK_SIZE}, Overlap=${CHUNK_OVERLAP}, Provider=${useOllama ? 'Ollama' : 'OpenAI'}`);
     
-    // TRIGGER INGESTIONE RAG (Asincrona, non blocca il riassunto)
-    ingestSessionRaw(sessionId).catch(e => console.error("[RAG] Errore ingestione automatica:", e));
+    // NOTA: L'ingestione RAG è stata spostata in index.ts per fornire feedback all'utente.
 
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;

@@ -121,7 +121,7 @@ export const setUserName = (id: string, name: string): void => {
 
 export const updateUserField = (id: string, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
     const exists = db.prepare('SELECT 1 FROM users WHERE discord_id = ?').get(id);
-    
+
     if (exists) {
         db.prepare(`UPDATE users SET ${field} = ? WHERE discord_id = ?`).run(value, id);
     } else {
@@ -251,7 +251,7 @@ export const getSessionNumber = (sessionId: string): number | null => {
         FROM recordings 
         WHERE timestamp <= (SELECT MIN(timestamp) FROM recordings WHERE session_id = ?)
     `).get(sessionId) as { count: number };
-    
+
     return result.count || null;
 };
 
@@ -297,7 +297,7 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
         ORDER BY ABS(timestamp - ?) ASC
         LIMIT 1
     `).get(timestamp - 7200000, timestamp + 7200000, timestamp) as { session_id: string } | undefined;
-    
+
     return row ? row.session_id : null;
 };
 

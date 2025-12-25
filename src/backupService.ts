@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectCommand, ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import * as fs from 'fs';
 import * as path from 'path';
@@ -72,14 +72,6 @@ async function findS3Key(fileName: string, sessionId?: string): Promise<string |
     }
 
     return null;
-}
-
-/**
- * Verifica se un file esiste nel bucket OCI.
- */
-export async function checkFileExists(fileName: string, sessionId?: string): Promise<boolean> {
-    const key = await findS3Key(fileName, sessionId);
-    return key !== null;
 }
 
 /**
@@ -245,25 +237,25 @@ export async function wipeBucket(): Promise<number> {
         console.log(`[Custode] 🧹 Scansione prefisso: '${prefix}'...`);
 
         do {
-            const listCommand = new ListObjectsV2Command({
+            const listCommand: ListObjectsV2Command = new ListObjectsV2Command({
                 Bucket: bucket,
                 Prefix: prefix,
                 ContinuationToken: continuationToken
             });
 
-            const listResponse = await client.send(listCommand);
+            const listResponse: ListObjectsV2CommandOutput = await client.send(listCommand);
             
             if (!listResponse.Contents || listResponse.Contents.length === 0) {
                 break;
             }
 
             const deletePromises = listResponse.Contents
-                .filter(obj => obj.Key)
-                .map(async (obj) => {
+                .filter((obj: any) => obj.Key)
+                .map(async (obj: any) => {
                     try {
                         await client.send(new DeleteObjectCommand({
                             Bucket: bucket,
-                            Key: obj.Key
+                            Key: obj.Key!
                         }));
                         console.log(`[Custode] 🗑️ Eliminato: ${obj.Key}`);
                         totalDeleted++;

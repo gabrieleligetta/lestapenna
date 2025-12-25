@@ -136,8 +136,15 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
     
     const mapPrompt = `Sei un analista di D&D.
     ${castContext}
-    Estrai un elenco puntato cronologico di: Combattimenti, Dialoghi Importanti, Loot, Lore.
-    Sii conciso. Se non succede nulla, scrivi "Nessun evento".`;
+    Estrai un elenco puntato cronologico strutturato esattamente così:
+    1. Nomi di NPC incontrati;
+    2. Luoghi visitati;
+    3. Oggetti ottenuti (Loot) con dettagli;
+    4. Numeri/Danni rilevanti;
+    5. Decisioni chiave dei giocatori.
+    6. Dialoghi importanti e il loro contenuto.
+    
+    Sii conciso. Se per una categoria non ci sono dati, scrivi "Nessuno".`;
 
     try {
         const response = await withRetry(() => openai.chat.completions.create({
@@ -386,10 +393,14 @@ export async function askBard(campaignId: number, question: string, history: { r
 
     // 2. Genera risposta
     const systemPrompt = `Sei il Bardo della campagna. Rispondi alla domanda del giocatore basandoti sulle trascrizioni fornite e sulla conversazione precedente.
-    Cita chi ha detto cosa se rilevante.
-    Se la risposta non è nelle trascrizioni, ammetti di non ricordare o di non averlo sentito.
     
-    ${contextText}`;
+    ${contextText}
+    
+    ISTRUZIONI DI RAGIONAMENTO (Chain of Thought):
+    1. Prima di rispondere, elenca mentalmente i frammenti che supportano la tua risposta.
+    2. Se trovi informazioni contrastanti nelle trascrizioni, riportale entrambe come se avessi sentito voci diverse o dicerie contraddittorie.
+    3. Cita chi ha detto cosa se rilevante.
+    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare o di non averlo sentito.`;
 
     const messages: any[] = [
         { role: "system", content: systemPrompt }
@@ -448,9 +459,13 @@ export async function correctTranscription(segments: any[], campaignId?: number)
 ${contextInfo}
 
 Analizza il seguente array di segmenti di trascrizione audio.
-Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi, correggendo errori fonetici tipici della trascrizione automatica.
-Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature dei nomi propri.
-Mantieni il tono colloquiale se presente, ma correggi la grammatica dove il senso è compromesso.
+Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi.
+
+ISTRUZIONI SPECIFICHE:
+1. Rimuovi riempitivi verbali come "ehm", "uhm", "cioè", ripetizioni inutili e balbettii.
+2. Correggi i termini tecnici di D&D (es. incantesimi, mostri) usando la grafia corretta (es. "Dardo Incantato" invece di "dardo incantato").
+3. Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature.
+4. Mantieni il tono colloquiale ma rendilo leggibile.
 
 IMPORTANTE:
 1. Non modificare "start" e "end".
@@ -596,6 +611,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     
     const reducePrompt = `Sei un Bardo. ${TONES[tone]}
     ${castContext}
+    
+    ISTRUZIONI DI STILE:
+    - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
+    - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
+
     Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
     Includi un titolo.`;
 

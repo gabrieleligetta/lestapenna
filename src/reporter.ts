@@ -67,7 +67,11 @@ export async function processSessionReport(metrics: SessionMetrics) {
     - Errori: ${metrics.errors.length}
 
     Analizza brevemente la stabilità del sistema e segnala eventuali anomalie.
-    Se il disco è pieno oltre l'80%, lancia un allarme critico.
+    
+    ISTRUZIONI SPECIFICHE:
+    1. Se il disco è pieno oltre l'80%, lancia un allarme critico e suggerisci azioni specifiche (es. "Cancellare log vecchi in /var/log", "Spostare registrazioni su Oracle").
+    2. Se la RAM supera i 500MB, suggerisci di controllare memory leak.
+    3. Se ci sono errori, riassumili brevemente.
     `;
 
     let emailBody = "";

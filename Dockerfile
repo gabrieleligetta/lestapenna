@@ -14,9 +14,9 @@ RUN yarn tsc
 FROM node:22-slim
 WORKDIR /app
 
-# Dipendenze runtime (ffmpeg, python per Whisper)
+# Dipendenze runtime (ffmpeg, python per Whisper, yt-dlp per test)
 RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip && rm -rf /var/lib/apt/lists/*
-RUN pip3 install faster-whisper --break-system-packages
+RUN pip3 install faster-whisper yt-dlp --break-system-packages
 
 # Scarica il modello Whisper 'medium' durante la build per averlo nella cache
 RUN python3 -c "from faster_whisper import download_model; download_model('medium')"

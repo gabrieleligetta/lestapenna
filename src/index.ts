@@ -53,13 +53,15 @@ import {
     createSession,
     getSessionCampaignId,
     addChatMessage,
-    getChatHistory
+    getChatHistory,
+    db
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
 import { monitor, SessionMetrics } from './monitor';
 import { processSessionReport, sendTestEmail } from './reporter';
+import { exec } from 'child_process';
 
 const client = new Client({
     intents: [
@@ -132,7 +134,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'sono', 'miaclasse', 'miarazza', 'miadesc', 'chisono', 'listasessioni', 'chiedialbardo', 'ingest', 'memorizza'];
+    const campaignCommands = ['ascolta', 'sono', 'miaclasse', 'miarazza', 'miadesc', 'chisono', 'listasessioni', 'chiedialbardo', 'ingest', 'memorizza', 'teststream'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `!creacampagna <Nome>` o `!selezionacampagna <Nome>` prima di iniziare.");
@@ -183,6 +185,12 @@ client.on('messageCreate', async (message: Message) => {
                     value: 
                     "`!setcmd`: Imposta questo canale per i comandi.\n" +
                     "`!setsummary`: Imposta questo canale per la pubblicazione dei riassunti." 
+                },
+                {
+                    name: "🧪 Test & Debug",
+                    value:
+                    "`!teststream <URL>`: Simula una sessione scaricando audio da YouTube.\n" +
+                    "`!cleantest`: Rimuove tutte le sessioni di test dal DB."
                 }
             );
         return await message.reply({ embeds: [helpEmbed] });
@@ -607,6 +615,96 @@ client.on('messageCreate', async (message: Message) => {
             .addFields(Object.entries(TONES).map(([key, desc]) => ({ name: key, value: desc })));
         
         await message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !teststream <URL> ---
+    if (command === 'teststream') {
+        const url = args[0];
+        if (!url) return await message.reply("Uso: `!teststream <URL_YOUTUBE>`");
+
+        const sessionId = `test-youtube-${uuidv4().substring(0, 8)}`;
+        
+        // Crea sessione di test
+        createSession(sessionId, message.guild.id, activeCampaign!.id);
+        monitor.startSession(sessionId);
+        
+        await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nSto scaricando l'audio da YouTube...`);
+
+        const recordingsDir = path.join(__dirname, '..', 'recordings');
+        if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+
+        // Nome file temporaneo
+        const tempFileName = `${message.author.id}-${Date.now()}.mp3`;
+        const tempFilePath = path.join(recordingsDir, tempFileName);
+
+        // Esegui yt-dlp
+        const cmd = `yt-dlp -x --audio-format mp3 --audio-quality 64K -o "${tempFilePath}" "${url}"`;
+        
+        exec(cmd, async (error, stdout, stderr) => {
+            if (error) {
+                console.error(`[TestStream] Errore download: ${error.message}`);
+                return await message.reply(`❌ Errore download YouTube: ${error.message}`);
+            }
+
+            console.log(`[TestStream] Download completato: ${tempFilePath}`);
+            
+            // Registra nel DB come se fosse un file vocale
+            addRecording(sessionId, tempFileName, tempFilePath, message.author.id, Date.now());
+            
+            // Upload su Oracle (simulato)
+            try {
+                const uploaded = await uploadToOracle(tempFilePath, tempFileName, sessionId);
+                if (uploaded) updateRecordingStatus(tempFileName, 'SECURED');
+            } catch (e) {
+                console.error("[TestStream] Errore upload:", e);
+            }
+
+            // Accoda per trascrizione
+            await audioQueue.add('transcribe-job', {
+                sessionId: sessionId,
+                fileName: tempFileName,
+                filePath: tempFilePath,
+                userId: message.author.id
+            }, {
+                jobId: tempFileName,
+                attempts: 3,
+                removeOnComplete: true
+            });
+
+            await message.reply(`✅ Audio scaricato e accodato. Attendi la trascrizione e il riassunto...`);
+            
+            // Avvia monitoraggio per riassunto automatico
+            await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
+        });
+    }
+
+    // --- NUOVO: !cleantest ---
+    if (command === 'cleantest') {
+        if (!message.member?.permissions.has('Administrator')) return;
+
+        await message.reply("🧹 Pulizia sessioni di test (ID che iniziano con `test-youtube-`)...");
+
+        // 1. Trova sessioni di test
+        const testSessions = db.prepare("SELECT session_id FROM sessions WHERE session_id LIKE 'test-youtube-%'").all() as { session_id: string }[];
+        
+        if (testSessions.length === 0) {
+            return await message.reply("✅ Nessuna sessione di test trovata.");
+        }
+
+        let deletedCount = 0;
+        for (const s of testSessions) {
+            // Rimuovi job dalla coda
+            await removeSessionJobs(s.session_id);
+            
+            // Rimuovi file dal DB (recordings, knowledge, session)
+            db.prepare("DELETE FROM recordings WHERE session_id = ?").run(s.session_id);
+            db.prepare("DELETE FROM knowledge_fragments WHERE session_id = ?").run(s.session_id);
+            db.prepare("DELETE FROM sessions WHERE session_id = ?").run(s.session_id);
+            
+            deletedCount++;
+        }
+
+        await message.reply(`✅ Eliminate **${deletedCount}** sessioni di test dal database.`);
     }
 
     // --- NUOVO: !wipe (SOLO SVILUPPO) ---

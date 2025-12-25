@@ -859,13 +859,13 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     const authorName = authorId && campaignId ? (getUserName(authorId, campaignId) || "Viandante") : "Viandante";
     const sessionStartTime = getSessionStartTime(sessionId);
     const sessionDate = new Date(sessionStartTime || Date.now());
-    
+
     const dateStr = sessionDate.toLocaleDateString('it-IT');
     const dateShort = sessionDate.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' });
     const timeStr = sessionDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
     const replayTag = isReplay ? " (REPLAY)" : "";
-    
+
     // Header con nome campagna se disponibile
     let header = `-SESSIONE ${sessionNum} - ${dateStr}${replayTag}\n[ID: ${sessionId}]`;
     if (campaignId) {
@@ -876,86 +876,14 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         }
     }
 
-    // --- PAGINAZIONE ---
-    const PAGE_SIZE = 2000;
-    const pages: string[] = [];
-    
-    for (let i = 0; i < summary.length; i += PAGE_SIZE) {
-        pages.push(summary.substring(i, i + PAGE_SIZE));
+    await targetChannel.send(`\`\`\`diff\n${header}\n\`\`\``);
+    await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
+
+    const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
+    for (const chunk of chunks) {
+        await targetChannel.send(chunk);
     }
 
-    const generateEmbed = (pageIndex: number) => {
-        return new EmbedBuilder()
-            .setTitle(`📜 Cronaca Sessione ${sessionNum}`)
-            .setDescription(pages[pageIndex])
-            .setColor("#F1C40F")
-            .setFooter({ text: `Pagina ${pageIndex + 1} di ${pages.length} • ${header}` })
-            .setTimestamp();
-    };
-
-    const generateButtons = (pageIndex: number) => {
-        const row = new ActionRowBuilder<ButtonBuilder>();
-        
-        row.addComponents(
-            new ButtonBuilder()
-                .setCustomId('prev')
-                .setLabel('⬅️ Precedente')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(pageIndex === 0),
-            new ButtonBuilder()
-                .setCustomId('next')
-                .setLabel('Successiva ➡️')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(pageIndex === pages.length - 1)
-        );
-        
-        return row;
-    };
-
-    const messageOptions: any = { 
-        embeds: [generateEmbed(0)],
-        content: `**${authorName}** — ${dateShort}, ${timeStr}`
-    };
-
-    if (pages.length > 1) {
-        messageOptions.components = [generateButtons(0)];
-    }
-
-    const sentMessage = await targetChannel.send(messageOptions);
-
-    if (pages.length > 1) {
-        const collector = sentMessage.createMessageComponentCollector({ 
-            componentType: ComponentType.Button, 
-            time: 600000 // 10 minuti
-        });
-
-        let currentPage = 0;
-
-        collector.on('collect', async (i: MessageComponentInteraction) => {
-            if (i.customId === 'prev') {
-                currentPage = Math.max(0, currentPage - 1);
-            } else if (i.customId === 'next') {
-                currentPage = Math.min(pages.length - 1, currentPage + 1);
-            }
-
-            await i.update({
-                embeds: [generateEmbed(currentPage)],
-                components: [generateButtons(currentPage)]
-            });
-        });
-
-        collector.on('end', async () => {
-            // Disabilita bottoni alla fine
-            const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder().setCustomId('prev').setLabel('⬅️').setStyle(ButtonStyle.Secondary).setDisabled(true),
-                new ButtonBuilder().setCustomId('next').setLabel('➡️').setStyle(ButtonStyle.Secondary).setDisabled(true)
-            );
-            try {
-                await sentMessage.edit({ components: [disabledRow] });
-            } catch (e) {}
-        });
-    }
-    
     if (targetChannel.id !== defaultChannel.id) {
         await defaultChannel.send(`✅ Riassunto della sessione \`${sessionId}\` inviato in <#${targetChannel.id}>`);
     }

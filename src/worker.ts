@@ -91,7 +91,8 @@ export function startWorker() {
                 
                 // --- NUOVA FASE: CORREZIONE AI ---
                 console.log(`[Scriba] 🧠 Correzione AI in corso per ${fileName}...`);
-                const correctedSegments = await correctTranscription(result.segments);
+                // Passiamo il campaignId per dare contesto all'AI
+                const correctedSegments = await correctTranscription(result.segments, campaignId);
                 
                 const jsonStr = JSON.stringify(correctedSegments);
                 

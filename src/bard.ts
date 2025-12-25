@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import {getSessionTranscript, getUserProfile, getSessionErrors, getSessionStartTime, getSessionCampaignId, getCampaignById} from './db';
+import {getSessionTranscript, getUserProfile, getSessionErrors, getSessionStartTime, getSessionCampaignId, getCampaignById, getCampaigns, getCampaignCharacters} from './db';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -120,9 +120,31 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
 }
 
 // --- NUOVA FUNZIONE: CORREZIONE TRASCRIZIONE ---
-export async function correctTranscription(segments: any[]): Promise<any[]> {
+export async function correctTranscription(segments: any[], campaignId?: number): Promise<any[]> {
     console.log(`[Bardo] 🧹 Inizio correzione trascrizione (${segments.length} segmenti)...`);
     
+    // Costruzione contesto campagna
+    let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
+    if (campaignId) {
+        const campaign = getCampaignById(campaignId);
+        if (campaign) {
+            contextInfo += `\nCampagna: "${campaign.name}".`;
+            
+            // Recupero personaggi della campagna
+            const characters = getCampaignCharacters(campaignId);
+            if (characters.length > 0) {
+                contextInfo += "\nPersonaggi Giocanti (PG):";
+                characters.forEach(c => {
+                    if (c.character_name) {
+                        let charDesc = `\n- ${c.character_name}`;
+                        if (c.race || c.class) charDesc += ` (${[c.race, c.class].filter(Boolean).join(' ')})`;
+                        contextInfo += charDesc;
+                    }
+                });
+            }
+        }
+    }
+
     // Batch size: 20 segmenti per richiesta per bilanciare contesto e velocità
     const BATCH_SIZE = 20; 
     const correctedSegments: any[] = [];
@@ -133,9 +155,14 @@ export async function correctTranscription(segments: any[]): Promise<any[]> {
         const batchInput = { segments: batch };
         const batchJson = JSON.stringify(batchInput);
 
-        const prompt = `Sei un correttore di bozze esperto. 
+        const prompt = `Sei un correttore di bozze esperto per sessioni di D&D.
+${contextInfo}
+
 Analizza il seguente array di segmenti di trascrizione audio.
-Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi, correggendo errori fonetici (es. "Coteca" -> "Discoteche", "Letale" -> "Natale", "Pila" -> "PIL").
+Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi, correggendo errori fonetici tipici della trascrizione automatica (es. "Coteca" -> "Discoteche", "Letale" -> "Natale", "Pila" -> "PIL", nomi di incantesimi o mostri storpiati).
+Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature dei nomi propri.
+Mantieni il tono colloquiale se presente, ma correggi la grammatica dove il senso è compromesso.
+
 IMPORTANTE:
 1. Non modificare "start" e "end".
 2. Non unire o dividere segmenti. Il numero di oggetti in output deve essere identico all'input.
@@ -146,7 +173,7 @@ ${batchJson}`;
 
         try {
             const response = await withRetry(() => openai.chat.completions.create({
-                model: "gpt-5-mini",
+                model: "gpt-5.1-mini",
                 messages: [
                     { role: "system", content: "Sei un assistente che parla solo JSON valido." },
                     { role: "user", content: prompt }

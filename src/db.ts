@@ -179,6 +179,10 @@ export const getUserName = (userId: string, campaignId: number): string | null =
     return p.character_name;
 };
 
+export const getCampaignCharacters = (campaignId: number): UserProfile[] => {
+    return db.prepare('SELECT character_name, race, class, description FROM characters WHERE campaign_id = ?').all(campaignId) as UserProfile[];
+};
+
 export const updateUserCharacter = (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
     const exists = db.prepare('SELECT 1 FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId);
 

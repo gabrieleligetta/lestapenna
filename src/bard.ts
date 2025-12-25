@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import {getSessionTranscript, getUserProfile, getSessionErrors, getSessionStartTime} from './db';
+import {getSessionTranscript, getUserProfile, getSessionErrors, getSessionStartTime, getSessionCampaignId, getCampaignById} from './db';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -127,6 +127,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
+    const campaignId = getSessionCampaignId(sessionId);
 
     if (transcriptions.length === 0) return { summary: "Nessuna trascrizione trovata.", tokens: 0 };
 
@@ -134,18 +135,28 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     const userIds = new Set(transcriptions.map(t => t.user_id));
     let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
     
-    userIds.forEach(uid => {
-        const p = getUserProfile(uid);
-        if (p.character_name) {
-            let charInfo = `- **${p.character_name}**`;
-            const details = [];
-            if (p.race) details.push(p.race);
-            if (p.class) details.push(p.class);
-            if (details.length > 0) charInfo += ` (${details.join(' ')})`;
-            if (p.description) charInfo += `: "${p.description}"`;
-            castContext += charInfo + "\n";
-        }
-    });
+    // Se abbiamo una campagna, recuperiamo i profili corretti
+    if (campaignId) {
+        const campaign = getCampaignById(campaignId);
+        if (campaign) castContext += `CAMPAGNA: ${campaign.name}\n`;
+        
+        userIds.forEach(uid => {
+            const p = getUserProfile(uid, campaignId);
+            if (p.character_name) {
+                let charInfo = `- **${p.character_name}**`;
+                const details = [];
+                if (p.race) details.push(p.race);
+                if (p.class) details.push(p.class);
+                if (details.length > 0) charInfo += ` (${details.join(' ')})`;
+                if (p.description) charInfo += `: "${p.description}"`;
+                castContext += charInfo + "\n";
+            }
+        });
+    } else {
+        // Fallback per sessioni vecchie senza campagna (o recuperate)
+        // Usiamo i nomi salvati nella trascrizione se disponibili, o generici
+        castContext += "Nota: Profili personaggi non disponibili per questa sessione legacy.\n";
+    }
 
     // --- RICOSTRUZIONE INTELLIGENTE (DIARIZZAZIONE) ---
     interface DialogueFragment {

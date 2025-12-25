@@ -12,22 +12,38 @@ if (!fs.existsSync(dataDir)){
 
 const db = new Database(dbPath);
 
-// --- TABELLA CONFIGURAZIONE (NUOVA) ---
+// --- TABELLA CONFIGURAZIONE GLOBALE E PER GUILD ---
+// key ora può essere 'guild_ID_setting' per settings specifici
 db.exec(`CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT
 )`);
 
-// --- TABELLA UTENTI ---
-db.exec(`CREATE TABLE IF NOT EXISTS users (
-    discord_id TEXT PRIMARY KEY,
+// --- TABELLA CAMPAGNE ---
+db.exec(`CREATE TABLE IF NOT EXISTS campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    is_active INTEGER DEFAULT 0,
+    created_at INTEGER
+)`);
+
+// --- TABELLA PERSONAGGI (Sostituisce users globale) ---
+// Un utente può avere personaggi diversi in campagne diverse
+db.exec(`CREATE TABLE IF NOT EXISTS characters (
+    user_id TEXT NOT NULL,
+    campaign_id INTEGER NOT NULL,
     character_name TEXT,
     race TEXT,
     class TEXT,
-    description TEXT
+    description TEXT,
+    PRIMARY KEY (user_id, campaign_id),
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
 // --- TABELLA REGISTRAZIONI ---
+// Aggiungiamo il riferimento alla campagna per facilitare query future se necessario,
+// ma principalmente è la sessione che detta la campagna.
 db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT,
@@ -41,28 +57,20 @@ db.exec(`CREATE TABLE IF NOT EXISTS recordings (
 )`);
 
 // --- TABELLA SESSIONI ---
+// Aggiungiamo guild_id e campaign_id
 db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
-    session_number INTEGER
+    guild_id TEXT,
+    campaign_id INTEGER,
+    session_number INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
 )`);
 
-// Indici per velocizzare le ricerche
+// Indici
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_session_id ON recordings (session_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)`);
-
-// Migration "SPORCA" Raggruppata
-const migrations = [
-    "ALTER TABLE users ADD COLUMN race TEXT",
-    "ALTER TABLE users ADD COLUMN class TEXT",
-    "ALTER TABLE users ADD COLUMN description TEXT",
-    "ALTER TABLE recordings ADD COLUMN error_log TEXT",
-    "CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_number INTEGER)",
-    "CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)"
-];
-
-for (const m of migrations) {
-    try { db.exec(m); } catch (e) { /* Ignora se la colonna esiste già */ }
-}
+db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_guild ON campaigns (guild_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions (campaign_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -90,9 +98,18 @@ export interface SessionSummary {
     session_id: string;
     start_time: number;
     fragments: number;
+    campaign_name?: string;
+    session_number?: number;
 }
 
-// --- FUNZIONI CONFIGURAZIONE (NUOVE) ---
+export interface Campaign {
+    id: number;
+    guild_id: string;
+    name: string;
+    is_active: number;
+}
+
+// --- FUNZIONI CONFIGURAZIONE ---
 
 export const setConfig = (key: string, value: string): void => {
     db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run(key, value);
@@ -103,30 +120,63 @@ export const getConfig = (key: string): string | null => {
     return row ? row.value : null;
 };
 
-// --- FUNZIONI UTENTI ---
+// Helper per settings di gilda (es. canale comandi)
+export const getGuildConfig = (guildId: string, key: string): string | null => {
+    return getConfig(`${guildId}_${key}`);
+};
 
-export const getUserProfile = (id: string): UserProfile => {
-    const row = db.prepare('SELECT character_name, race, class, description FROM users WHERE discord_id = ?').get(id) as UserProfile | undefined;
+export const setGuildConfig = (guildId: string, key: string, value: string): void => {
+    setConfig(`${guildId}_${key}`, value);
+};
+
+// --- FUNZIONI CAMPAGNE ---
+
+export const createCampaign = (guildId: string, name: string): number => {
+    const info = db.prepare('INSERT INTO campaigns (guild_id, name, created_at) VALUES (?, ?, ?)').run(guildId, name, Date.now());
+    return info.lastInsertRowid as number;
+};
+
+export const getCampaigns = (guildId: string): Campaign[] => {
+    return db.prepare('SELECT * FROM campaigns WHERE guild_id = ? ORDER BY created_at DESC').all(guildId) as Campaign[];
+};
+
+export const getActiveCampaign = (guildId: string): Campaign | undefined => {
+    // Cerchiamo la campagna attiva salvata nella config o nel flag is_active
+    // Per semplicità usiamo un flag is_active nella tabella campaigns, assicurandoci che ce ne sia solo una a 1 per gilda
+    return db.prepare('SELECT * FROM campaigns WHERE guild_id = ? AND is_active = 1').get(guildId) as Campaign | undefined;
+};
+
+export const setActiveCampaign = (guildId: string, campaignId: number): void => {
+    db.transaction(() => {
+        db.prepare('UPDATE campaigns SET is_active = 0 WHERE guild_id = ?').run(guildId);
+        db.prepare('UPDATE campaigns SET is_active = 1 WHERE id = ? AND guild_id = ?').run(campaignId, guildId);
+    })();
+};
+
+export const getCampaignById = (id: number): Campaign | undefined => {
+    return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as Campaign | undefined;
+};
+
+// --- FUNZIONI PERSONAGGI (CONTEXT AWARE) ---
+
+export const getUserProfile = (userId: string, campaignId: number): UserProfile => {
+    const row = db.prepare('SELECT character_name, race, class, description FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as UserProfile | undefined;
     return row || { character_name: null, race: null, class: null, description: null };
 };
 
-export const getUserName = (id: string): string | null => {
-    const p = getUserProfile(id);
+export const getUserName = (userId: string, campaignId: number): string | null => {
+    const p = getUserProfile(userId, campaignId);
     return p.character_name;
 };
 
-export const setUserName = (id: string, name: string): void => {
-    updateUserField(id, 'character_name', name);
-};
-
-export const updateUserField = (id: string, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
-    const exists = db.prepare('SELECT 1 FROM users WHERE discord_id = ?').get(id);
+export const updateUserCharacter = (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
+    const exists = db.prepare('SELECT 1 FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId);
 
     if (exists) {
-        db.prepare(`UPDATE users SET ${field} = ? WHERE discord_id = ?`).run(value, id);
+        db.prepare(`UPDATE characters SET ${field} = ? WHERE user_id = ? AND campaign_id = ?`).run(value, userId, campaignId);
     } else {
-        db.prepare('INSERT INTO users (discord_id) VALUES (?)').run(id);
-        db.prepare(`UPDATE users SET ${field} = ? WHERE discord_id = ?`).run(value, id);
+        db.prepare('INSERT INTO characters (user_id, campaign_id) VALUES (?, ?)').run(userId, campaignId);
+        db.prepare(`UPDATE characters SET ${field} = ? WHERE user_id = ? AND campaign_id = ?`).run(value, userId, campaignId);
     }
 };
 
@@ -154,10 +204,6 @@ export const updateRecordingStatus = (filename: string, status: string, text: st
     }
 };
 
-/**
- * Recupera tutte le registrazioni che non sono ancora state trascritte.
- * Utile al riavvio del bot per riprendere il lavoro.
- */
 export const getUnprocessedRecordings = () => {
     return db.prepare(`
         SELECT * FROM recordings 
@@ -165,56 +211,54 @@ export const getUnprocessedRecordings = () => {
     `).all() as Recording[];
 };
 
-/**
- * Resetta lo stato di una sessione per permettere la rielaborazione.
- * Riporta tutti i file a 'PENDING' e cancella le trascrizioni precedenti.
- */
 export const resetSessionData = (sessionId: string): Recording[] => {
-    // 1. Reset dei campi
     db.prepare(`
         UPDATE recordings 
         SET status = 'PENDING', transcription_text = NULL, error_log = NULL 
         WHERE session_id = ?
     `).run(sessionId);
-
-    // 2. Ritorna i file pronti per essere riaccodati
     return getSessionRecordings(sessionId);
 };
 
-/**
- * Riporta allo stato PENDING solo i file che erano in fase di elaborazione
- * o in coda, evitando di toccare quelli già completati o scartati.
- * Utile per il recovery automatico al riavvio.
- */
 export const resetUnfinishedRecordings = (sessionId: string): Recording[] => {
-    // 1. Riporta a PENDING i file che erano "in volo" (interrotti dal crash)
     db.prepare(`
         UPDATE recordings 
         SET status = 'PENDING', error_log = NULL 
         WHERE session_id = ? AND status IN ('QUEUED', 'PROCESSING')
     `).run(sessionId);
 
-    // 2. Recupera tutti i file che risultano da processare per questa sessione
-    // (Inclusi quelli che erano già PENDING)
     return db.prepare(`
         SELECT * FROM recordings 
         WHERE session_id = ? AND status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING')
     `).all(sessionId) as Recording[];
 };
 
-// --- NUOVE FUNZIONI PER IL BARDO ---
+// --- FUNZIONI BARDO & SESSIONI ---
 
+// Recupera trascrizioni con info personaggio corrette per la campagna della sessione
 export const getSessionTranscript = (sessionId: string) => {
-    // Recuperiamo solo i file trascritti con successo, ordinati per tempo
-    // Facciamo una JOIN per avere subito il nome del personaggio
-    // AGGIUNTO: Recupero del timestamp per la diarizzazione temporale
+    // 1. Trova campaign_id della sessione
+    const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
+    
+    if (!session) {
+        // Fallback se sessione non trovata (vecchia o errore): usa solo user_id o prova a cercare in users legacy se esistesse
+        // Qui facciamo una query semplice senza join characters se non abbiamo campaign_id
+        return db.prepare(`
+            SELECT r.transcription_text, r.user_id, r.timestamp, NULL as character_name
+            FROM recordings r
+            WHERE r.session_id = ? AND r.status = 'PROCESSED'
+            ORDER BY r.timestamp ASC
+        `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
+    }
+
+    // 2. Join con characters usando campaign_id
     const rows = db.prepare(`
-        SELECT r.transcription_text, r.user_id, r.timestamp, u.character_name 
+        SELECT r.transcription_text, r.user_id, r.timestamp, c.character_name 
         FROM recordings r
-        LEFT JOIN users u ON r.user_id = u.discord_id
+        LEFT JOIN characters c ON r.user_id = c.user_id AND c.campaign_id = ?
         WHERE r.session_id = ? AND r.status = 'PROCESSED'
         ORDER BY r.timestamp ASC
-    `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
+    `).all(session.campaign_id, sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
 
     return rows;
 };
@@ -226,70 +270,84 @@ export const getSessionErrors = (sessionId: string) => {
     `).all(sessionId) as Array<{ filename: string, error_log: string | null }>;
 };
 
-export const getAvailableSessions = (): SessionSummary[] => {
-    return db.prepare(`
-        SELECT session_id, MIN(timestamp) as start_time, COUNT(*) as fragments 
-        FROM recordings 
-        GROUP BY session_id 
-        ORDER BY start_time DESC 
-        LIMIT 5
-    `).all() as SessionSummary[];
+// Ritorna le sessioni della campagna attiva (o tutte se non specificato, ma meglio filtrare)
+export const getAvailableSessions = (guildId?: string, campaignId?: number): SessionSummary[] => {
+    let query = `
+        SELECT s.session_id, MIN(r.timestamp) as start_time, COUNT(r.id) as fragments, c.name as campaign_name, s.session_number
+        FROM sessions s
+        JOIN recordings r ON s.session_id = r.session_id
+        LEFT JOIN campaigns c ON s.campaign_id = c.id
+    `;
+    
+    const params: any[] = [];
+    const conditions: string[] = [];
+
+    if (guildId) {
+        conditions.push("s.guild_id = ?");
+        params.push(guildId);
+    }
+    if (campaignId) {
+        conditions.push("s.campaign_id = ?");
+        params.push(campaignId);
+    }
+
+    if (conditions.length > 0) {
+        query += " WHERE " + conditions.join(" AND ");
+    }
+
+    query += ` GROUP BY s.session_id ORDER BY start_time DESC LIMIT 5`;
+
+    return db.prepare(query).all(...params) as SessionSummary[];
 };
 
-/**
- * Ritorna il numero sequenziale della sessione.
- * Cerca prima nella tabella sessions, poi calcola un numero ordinale nel DB.
- */
 export const getSessionNumber = (sessionId: string): number | null => {
-    // 1. Controlla se abbiamo un numero assegnato esplicitamente
     const row = db.prepare('SELECT session_number FROM sessions WHERE session_id = ?').get(sessionId) as { session_number: number } | undefined;
-    if (row) return row.session_number;
+    if (row && row.session_number) return row.session_number;
+    
+    // Fallback ordinale per campagna
+    const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
+    if (!session) return null;
 
-    // 2. Fallback: conteggio ordinale nel database
     const result = db.prepare(`
-        SELECT COUNT(DISTINCT session_id) as count 
-        FROM recordings 
-        WHERE timestamp <= (SELECT MIN(timestamp) FROM recordings WHERE session_id = ?)
-    `).get(sessionId) as { count: number };
+        SELECT COUNT(DISTINCT s.session_id) as count 
+        FROM sessions s
+        JOIN recordings r ON s.session_id = r.session_id
+        WHERE s.campaign_id = ? 
+        AND r.timestamp <= (SELECT MIN(timestamp) FROM recordings WHERE session_id = ?)
+    `).get(session.campaign_id, sessionId) as { count: number };
 
     return result.count || null;
 };
 
-/**
- * Ritorna il numero della sessione SOLO se è stato impostato esplicitamente.
- */
 export const getExplicitSessionNumber = (sessionId: string): number | null => {
     const row = db.prepare('SELECT session_number FROM sessions WHERE session_id = ?').get(sessionId) as { session_number: number } | undefined;
     return row ? row.session_number : null;
 };
 
-/**
- * Salva il numero di sessione assegnato.
- */
 export const setSessionNumber = (sessionId: string, num: number): void => {
-    db.prepare('INSERT OR REPLACE INTO sessions (session_id, session_number) VALUES (?, ?)').run(sessionId, num);
+    db.prepare('UPDATE sessions SET session_number = ? WHERE session_id = ?').run(num, sessionId);
 };
 
-/**
- * Ritorna l'ID dell'utente che ha iniziato la sessione (primo frammento).
- */
+// Crea la sessione nel DB all'inizio
+export const createSession = (sessionId: string, guildId: string, campaignId: number): void => {
+    db.prepare('INSERT INTO sessions (session_id, guild_id, campaign_id) VALUES (?, ?, ?)').run(sessionId, guildId, campaignId);
+};
+
 export const getSessionAuthor = (sessionId: string): string | null => {
     const row = db.prepare('SELECT user_id FROM recordings WHERE session_id = ? ORDER BY timestamp ASC LIMIT 1').get(sessionId) as { user_id: string } | undefined;
     return row ? row.user_id : null;
 };
 
-/**
- * Ritorna il timestamp di inizio della sessione.
- */
 export const getSessionStartTime = (sessionId: string): number | null => {
     const row = db.prepare('SELECT MIN(timestamp) as start_time FROM recordings WHERE session_id = ?').get(sessionId) as { start_time: number } | undefined;
     return row ? row.start_time : null;
 };
 
-/**
- * Tenta di trovare una session_id esistente per un timestamp dato.
- * Cerca registrazioni entro una finestra di 2 ore.
- */
+export const getSessionCampaignId = (sessionId: string): number | undefined => {
+    const row = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
+    return row?.campaign_id;
+};
+
 export const findSessionByTimestamp = (timestamp: number): string | null => {
     const row = db.prepare(`
         SELECT session_id FROM recordings 
@@ -301,17 +359,13 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
     return row ? row.session_id : null;
 };
 
-/**
- * Svuota le tabelle relative alle sessioni (recordings, sessions),
- * preservando utenti e configurazione.
- */
 export const wipeDatabase = () => {
     console.log("[DB] 🧹 Svuotamento database (Sessioni) in corso...");
     db.prepare('DELETE FROM recordings').run();
     db.prepare('DELETE FROM sessions').run();
-    // Preserviamo utenti e configurazione
-    // Corretto: uso apici singoli per le stringhe SQL
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions')").run();
+    db.prepare('DELETE FROM campaigns').run();
+    db.prepare('DELETE FROM characters').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

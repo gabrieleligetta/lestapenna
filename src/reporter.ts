@@ -57,7 +57,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
     try {
         const modelToUse = process.env.AI_PROVIDER === 'ollama' 
             ? (process.env.OLLAMA_MODEL || "llama3.2") 
-            : (process.env.OPEN_AI_MODEL || "gpt-4o-mini");
+            : (process.env.OPEN_AI_MODEL || "gpt-5-mini");
 
         const response = await openai.chat.completions.create({
             model: modelToUse,

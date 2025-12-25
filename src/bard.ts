@@ -17,13 +17,13 @@ const useOllama = process.env.AI_PROVIDER === 'ollama';
 
 // --- CONFIGURAZIONE LIMITI (DINAMICA) ---
 // Se usiamo Ollama (Llama 3), teniamo chunk piccoli per non saturare la context window (spesso 8k o 128k ma fragile).
-// Se usiamo OpenAI (GPT-4o), usiamo chunk enormi (800k) per sfruttare la context window di 128k+ token.
+// Se usiamo OpenAI (gpt-5-mini), usiamo chunk enormi (800k) per sfruttare la context window di 128k+ token.
 const MAX_CHUNK_SIZE = useOllama ? 15000 : 800000;
 const CHUNK_OVERLAP = useOllama ? 1000 : 5000;
 
 // Nota: Su Oracle A1, "llama3.1" (8B) potrebbe essere lento ma più intelligente. 
 // "llama3.2" (3B) è velocissimo ma meno dettagliato. Fai dei test.
-const MODEL_NAME = useOllama ? (process.env.OLLAMA_MODEL || "llama3.2") : (process.env.OPEN_AI_MODEL || "gpt-4o-mini");
+const MODEL_NAME = useOllama ? (process.env.OLLAMA_MODEL || "llama3.2") : (process.env.OPEN_AI_MODEL || "gpt-5-mini");
 
 // Concurrency: 1 per locale, 5 per Cloud
 const CONCURRENCY_LIMIT = useOllama ? 1 : 5;
@@ -174,7 +174,7 @@ ${batchJson}`;
 
         try {
             const response = await withRetry(() => openai.chat.completions.create({
-                model: "gpt-5.1-mini",
+                model: "gpt-5-mini",
                 messages: [
                     { role: "system", content: "Sei un assistente che parla solo JSON valido." },
                     { role: "user", content: prompt }

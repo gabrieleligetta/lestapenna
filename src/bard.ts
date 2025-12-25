@@ -166,16 +166,11 @@ export async function ingestSessionRaw(sessionId: string) {
         return;
     }
 
-    // Determina il provider attivo
-    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
-    const isOllama = provider === 'ollama';
-    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
-    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+    console.log(`[RAG] 🧠 Ingestione RAW (Double Encoding) per sessione ${sessionId}...`);
 
-    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Model: ${model})...`);
-
-    // 1. Pulisci vecchi frammenti per questo modello/sessione per evitare duplicati
-    deleteSessionKnowledge(sessionId, model);
+    // 1. Pulisci vecchi frammenti per ENTRAMBI i modelli
+    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
+    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OLLAMA);
 
     // 2. Recupera e ricostruisci il dialogo completo
     const transcriptions = getSessionTranscript(sessionId);
@@ -256,34 +251,67 @@ export async function ingestSessionRaw(sessionId: string) {
         i = end - OVERLAP;
     }
 
-    console.log(`[RAG] Generati ${chunks.length} chunk. Inizio embedding...`);
+    console.log(`[RAG] Generati ${chunks.length} chunk. Inizio embedding parallelo...`);
 
-    // 4. Calcolo Embedding e Salvataggio
-    let savedCount = 0;
+    // 4. Calcolo Embedding e Salvataggio (Double Encoding)
+    let savedCountOpenAI = 0;
+    let savedCountOllama = 0;
     
     // Processiamo in batch per non saturare
-    await processInBatches(chunks, 10, async (chunk, idx) => {
-        try {
-            const resp = await client.embeddings.create({
-                model: model,
+    await processInBatches(chunks, 5, async (chunk, idx) => {
+        // Prepariamo le promise per entrambi i provider
+        const promises = [];
+
+        // OpenAI Task
+        promises.push(
+            openaiEmbedClient.embeddings.create({
+                model: EMBEDDING_MODEL_OPENAI,
                 input: chunk.text
-            });
-            
-            insertKnowledgeFragment(
-                campaignId, 
-                sessionId, 
-                chunk.text, 
-                resp.data[0].embedding, 
-                model, 
-                chunk.timestamp
-            );
-            savedCount++;
-        } catch (e) {
-            console.error(`[RAG] ❌ Errore embedding chunk ${idx}:`, e);
+            }).then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+        );
+
+        // Ollama Task
+        promises.push(
+            ollamaEmbedClient.embeddings.create({
+                model: EMBEDDING_MODEL_OLLAMA,
+                input: chunk.text
+            }).then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+        );
+
+        // Eseguiamo in parallelo
+        const results = await Promise.allSettled(promises);
+
+        for (const res of results) {
+            if (res.status === 'fulfilled') {
+                const val = res.value;
+                if (val.provider === 'openai') {
+                    insertKnowledgeFragment(
+                        campaignId, 
+                        sessionId, 
+                        chunk.text, 
+                        val.data, 
+                        EMBEDDING_MODEL_OPENAI, 
+                        chunk.timestamp
+                    );
+                    savedCountOpenAI++;
+                } else if (val.provider === 'ollama') {
+                    insertKnowledgeFragment(
+                        campaignId, 
+                        sessionId, 
+                        chunk.text, 
+                        val.data, 
+                        EMBEDDING_MODEL_OLLAMA, 
+                        chunk.timestamp
+                    );
+                    savedCountOllama++;
+                }
+            } else {
+                console.warn(`[RAG] ⚠️ Errore embedding chunk ${idx}:`, res.reason);
+            }
         }
     });
 
-    console.log(`[RAG] ✅ Indicizzazione completata: ${savedCount} frammenti salvati (${model}).`);
+    console.log(`[RAG] ✅ Indicizzazione completata: OpenAI=${savedCountOpenAI}, Ollama=${savedCountOllama}.`);
 }
 
 // --- RAG: SEARCH ---

@@ -51,7 +51,9 @@ import {
     getActiveCampaign,
     setActiveCampaign,
     createSession,
-    getSessionCampaignId
+    getSessionCampaignId,
+    addChatMessage,
+    getChatHistory
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -70,7 +72,6 @@ const client = new Client({
 
 const guildSessions = new Map<string, string>(); // GuildId -> SessionId
 const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
-const chatHistory = new Map<string, { role: 'user' | 'assistant', content: string }[]>(); // ChannelId -> History
 
 const getCmdChannelId = (guildId: string) => getGuildConfig(guildId, 'cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
@@ -436,12 +437,21 @@ client.on('messageCreate', async (message: Message) => {
         await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
         const startProcessing = Date.now();
+        
+        // FASE 1: INGESTIONE (Opzionale ma consigliata)
         try {
-            // FEEDBACK INGESTIONE
             await channel.send("🧠 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
             await ingestSessionRaw(targetSessionId);
-            await channel.send("✅ Memoria aggiornata. Inizio stesura del racconto...");
+            await channel.send("✅ Memoria aggiornata.");
+        } catch (ingestErr: any) {
+            console.error(`⚠️ Errore ingestione ${targetSessionId}:`, ingestErr);
+            await channel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`!memorizza ${targetSessionId}\`.`);
+            // Non blocchiamo il riassunto
+        }
 
+        // FASE 2: RIASSUNTO
+        try {
+            await channel.send("✍️ Inizio stesura del racconto...");
             const result = await generateSummary(targetSessionId, requestedTone || 'DM');
             await publishSummary(targetSessionId, result.summary, channel, true);
 
@@ -480,17 +490,13 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         try {
-            // GESTIONE MEMORIA BREVE
-            const history = chatHistory.get(message.channelId) || [];
+            // GESTIONE MEMORIA PERSISTENTE
+            const history = getChatHistory(message.channelId, 6); // Recupera ultimi 6 messaggi (3 scambi)
             const answer = await askBard(activeCampaign!.id, question, history);
             
-            // Aggiorna cronologia
-            history.push({ role: 'user', content: question });
-            history.push({ role: 'assistant', content: answer });
-            
-            // Mantieni solo ultimi 6 messaggi (3 scambi)
-            if (history.length > 6) history.splice(0, history.length - 6);
-            chatHistory.set(message.channelId, history);
+            // Salva nel DB
+            addChatMessage(message.channelId, 'user', question);
+            addChatMessage(message.channelId, 'assistant', answer);
 
             await message.reply(answer);
         } catch (err) {
@@ -731,12 +737,21 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
             console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);
             
             const startSummary = Date.now();
+            
+            // FASE 1: INGESTIONE (Separata)
             try {
-                // FEEDBACK INGESTIONE
                 await discordChannel.send("🧠 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
                 await ingestSessionRaw(sessionId);
-                await discordChannel.send("✅ Memoria aggiornata. Inizio stesura del racconto...");
+                await discordChannel.send("✅ Memoria aggiornata.");
+            } catch (ingestErr: any) {
+                console.error(`⚠️ Errore ingestione ${sessionId}:`, ingestErr);
+                await discordChannel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`!memorizza ${sessionId}\`.`);
+                // Non blocchiamo il riassunto
+            }
 
+            // FASE 2: RIASSUNTO
+            try {
+                await discordChannel.send("✍️ Inizio stesura del racconto...");
                 const result = await generateSummary(sessionId, 'DM');
                 
                 monitor.logSummarizationTime(Date.now() - startSummary);

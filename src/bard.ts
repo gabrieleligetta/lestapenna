@@ -256,6 +256,7 @@ export async function ingestSessionRaw(sessionId: string) {
     // 4. Calcolo Embedding e Salvataggio (Double Encoding)
     let savedCountOpenAI = 0;
     let savedCountOllama = 0;
+    let errors: string[] = [];
     
     // Processiamo in batch per non saturare
     await processInBatches(chunks, 5, async (chunk, idx) => {
@@ -268,6 +269,7 @@ export async function ingestSessionRaw(sessionId: string) {
                 model: EMBEDDING_MODEL_OPENAI,
                 input: chunk.text
             }).then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'openai', error: err.message }))
         );
 
         // Ollama Task
@@ -276,6 +278,7 @@ export async function ingestSessionRaw(sessionId: string) {
                 model: EMBEDDING_MODEL_OLLAMA,
                 input: chunk.text
             }).then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'ollama', error: err.message }))
         );
 
         // Eseguiamo in parallelo
@@ -283,7 +286,13 @@ export async function ingestSessionRaw(sessionId: string) {
 
         for (const res of results) {
             if (res.status === 'fulfilled') {
-                const val = res.value;
+                const val = res.value as any;
+                if (val.error) {
+                    console.warn(`[RAG] ⚠️ Errore embedding ${val.provider} chunk ${idx}:`, val.error);
+                    errors.push(`${val.provider}: ${val.error}`);
+                    continue;
+                }
+
                 if (val.provider === 'openai') {
                     insertKnowledgeFragment(
                         campaignId, 
@@ -312,6 +321,11 @@ export async function ingestSessionRaw(sessionId: string) {
     });
 
     console.log(`[RAG] ✅ Indicizzazione completata: OpenAI=${savedCountOpenAI}, Ollama=${savedCountOllama}.`);
+    
+    // Se entrambi hanno fallito completamente, lanciamo errore
+    if (savedCountOpenAI === 0 && savedCountOllama === 0 && chunks.length > 0) {
+        throw new Error(`Ingestione fallita completamente. Errori: ${errors.slice(0, 3).join(', ')}`);
+    }
 }
 
 // --- RAG: SEARCH ---

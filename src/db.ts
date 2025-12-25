@@ -75,6 +75,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS knowledge_fragments (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
+// --- TABELLA CHAT HISTORY ---
+db.exec(`CREATE TABLE IF NOT EXISTS chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp INTEGER
+)`);
+
 // --- MIGRATIONS ---
 const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
@@ -93,6 +102,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)
 db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_guild ON campaigns (guild_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_campaign_model ON knowledge_fragments (campaign_id, embedding_model)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_history_channel ON chat_history (channel_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -406,6 +416,17 @@ export const deleteSessionKnowledge = (sessionId: string, model: string) => {
     db.prepare(`DELETE FROM knowledge_fragments WHERE session_id = ? AND embedding_model = ?`).run(sessionId, model);
 };
 
+// --- FUNZIONI CHAT HISTORY ---
+
+export const addChatMessage = (channelId: string, role: 'user' | 'assistant', content: string) => {
+    db.prepare('INSERT INTO chat_history (channel_id, role, content, timestamp) VALUES (?, ?, ?, ?)').run(channelId, role, content, Date.now());
+};
+
+export const getChatHistory = (channelId: string, limit: number = 10): { role: 'user' | 'assistant', content: string }[] => {
+    const rows = db.prepare('SELECT role, content FROM chat_history WHERE channel_id = ? ORDER BY timestamp DESC LIMIT ?').all(channelId, limit) as { role: 'user' | 'assistant', content: string }[];
+    return rows.reverse();
+};
+
 export const wipeDatabase = () => {
     console.log("[DB] 🧹 Svuotamento database (Sessioni) in corso...");
     db.prepare('DELETE FROM recordings').run();
@@ -413,7 +434,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM campaigns').run();
     db.prepare('DELETE FROM characters').run();
     db.prepare('DELETE FROM knowledge_fragments').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments')").run();
+    db.prepare('DELETE FROM chat_history').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

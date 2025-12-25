@@ -388,19 +388,20 @@ export async function askBard(campaignId: number, question: string, history: { r
     const context = await searchKnowledge(campaignId, question, 5);
     
     const contextText = context.length > 0 
-        ? "TRASCRIZIONI RILEVANTI:\n" + context.map(c => `...\n${c}\n...`).join("\n")
+        ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
         : "Nessuna memoria specifica trovata.";
 
-    // 2. Genera risposta
-    const systemPrompt = `Sei il Bardo della campagna. Rispondi alla domanda del giocatore basandoti sulle trascrizioni fornite e sulla conversazione precedente.
+    // 2. Genera risposta - PROMPT MODIFICATO
+    const systemPrompt = `Sei il Bardo della campagna. Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
     
     ${contextText}
     
-    ISTRUZIONI DI RAGIONAMENTO (Chain of Thought):
-    1. Prima di rispondere, elenca mentalmente i frammenti che supportano la tua risposta.
-    2. Se trovi informazioni contrastanti nelle trascrizioni, riportale entrambe come se avessi sentito voci diverse o dicerie contraddittorie.
-    3. Cita chi ha detto cosa se rilevante.
-    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare o di non averlo sentito.`;
+    REGOLAMENTO RIGIDO:
+    1. La cronologia della chat serve SOLO per capire il contesto (es. se l'utente chiede "Come si chiama?", guarda i messaggi precedenti per capire di chi parla).
+    2. NON ripetere mai le risposte già presenti nella cronologia.
+    3. Rispondi in modo diretto e conciso alla domanda corrente.
+    4. Se trovi informazioni contrastanti nelle trascrizioni, riportale come voci diverse.
+    5. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
 
     const messages: any[] = [
         { role: "system", content: systemPrompt }
@@ -413,10 +414,10 @@ export async function askBard(campaignId: number, question: string, history: { r
     messages.push({ role: "user", content: question });
 
     try {
-        const response = await openai.chat.completions.create({
+        const response = await withRetry(() => openai.chat.completions.create({
             model: "gpt-5-mini",
             messages: messages as any
-        });
+        }));
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
         console.error("[Bardo] Errore risposta:", e);

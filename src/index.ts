@@ -59,6 +59,7 @@ import * as path from 'path';
 import { monitor, SessionMetrics } from './monitor';
 import { processSessionReport, sendTestEmail } from './reporter';
 import { exec } from 'child_process';
+import { pipeline } from 'stream/promises';
 
 const client = new Client({
     intents: [
@@ -186,7 +187,7 @@ client.on('messageCreate', async (message: Message) => {
                 {
                     name: "🧪 Test & Debug",
                     value:
-                    "`!teststream <URL>`: Simula una sessione scaricando audio da YouTube.\n" +
+                    "`!teststream <URL>`: Simula una sessione scaricando un file audio diretto (mp3/wav).\n" +
                     "`!cleantest`: Rimuove tutte le sessioni di test dal DB."
                 }
             );
@@ -617,15 +618,15 @@ client.on('messageCreate', async (message: Message) => {
     // --- NUOVO: !teststream <URL> ---
     if (command === 'teststream') {
         const url = args[0];
-        if (!url) return await message.reply("Uso: `!teststream <URL_YOUTUBE>`");
+        if (!url) return await message.reply("Uso: `!teststream <URL_FILE_AUDIO>` (es. link diretto a mp3/wav)");
 
-        const sessionId = `test-youtube-${uuidv4().substring(0, 8)}`;
+        const sessionId = `test-direct-${uuidv4().substring(0, 8)}`;
         
         // Crea sessione di test
         createSession(sessionId, message.guild.id, activeCampaign!.id);
         monitor.startSession(sessionId);
         
-        await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nSto scaricando l'audio da YouTube...`);
+        await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nSto scaricando il file audio...`);
 
         const recordingsDir = path.join(__dirname, '..', 'recordings');
         if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
@@ -634,14 +635,12 @@ client.on('messageCreate', async (message: Message) => {
         const tempFileName = `${message.author.id}-${Date.now()}.mp3`;
         const tempFilePath = path.join(recordingsDir, tempFileName);
 
-        // Esegui yt-dlp
-        const cmd = `yt-dlp -x --audio-format mp3 --audio-quality 64K -o "${tempFilePath}" "${url}"`;
-        
-        exec(cmd, async (error, stdout, stderr) => {
-            if (error) {
-                console.error(`[TestStream] Errore download: ${error.message}`);
-                return await message.reply(`❌ Errore download YouTube: ${error.message}`);
-            }
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Errore HTTP: ${response.statusText}`);
+            if (!response.body) throw new Error("Nessun contenuto ricevuto");
+
+            await pipeline(response.body, fs.createWriteStream(tempFilePath));
 
             console.log(`[TestStream] Download completato: ${tempFilePath}`);
             
@@ -672,17 +671,21 @@ client.on('messageCreate', async (message: Message) => {
             
             // Avvia monitoraggio per riassunto automatico
             await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
-        });
+
+        } catch (error: any) {
+            console.error(`[TestStream] Errore download: ${error.message}`);
+            await message.reply(`❌ Errore download file: ${error.message}`);
+        }
     }
 
     // --- NUOVO: !cleantest ---
     if (command === 'cleantest') {
         if (!message.member?.permissions.has('Administrator')) return;
 
-        await message.reply("🧹 Pulizia sessioni di test (ID che iniziano con `test-youtube-`)...");
+        await message.reply("🧹 Pulizia sessioni di test (ID che iniziano con `test-`)...");
 
         // 1. Trova sessioni di test
-        const testSessions = db.prepare("SELECT session_id FROM sessions WHERE session_id LIKE 'test-youtube-%'").all() as { session_id: string }[];
+        const testSessions = db.prepare("SELECT session_id FROM sessions WHERE session_id LIKE 'test-%'").all() as { session_id: string }[];
         
         if (testSessions.length === 0) {
             return await message.reply("✅ Nessuna sessione di test trovata.");

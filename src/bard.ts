@@ -33,6 +33,7 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.inter
 
 const openai = new OpenAI({
     baseURL: useOllama ? OLLAMA_BASE_URL : undefined,
+    project: useOllama ? undefined : process.env.OPENAI_PROJECT_ID, // <--- AGGIUNGI QUESTA RIGA
     apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
     timeout: 600 * 1000, 
 });

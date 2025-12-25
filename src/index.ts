@@ -261,19 +261,22 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'stoplistening' || command === 'stop') {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
-            disconnect(message.guild.id);
+            await disconnect(message.guild.id);
             await message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
             return;
         }
 
-        disconnect(message.guild.id);
+        // 1. Disconnessione e chiusura file
+        await disconnect(message.guild.id);
         guildSessions.delete(message.guild.id);
 
         await message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
         
+        // 2. Ripresa coda
         await audioQueue.resume();
         console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
 
+        // 3. Monitoraggio
         await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
     }
 
@@ -722,6 +725,9 @@ client.on('messageCreate', async (message: Message) => {
 async function waitForCompletionAndSummarize(sessionId: string, discordChannel: TextChannel) {
     console.log(`[Monitor] Avviato monitoraggio per sessione ${sessionId}...`);
     
+    // Attesa iniziale per permettere ai file di essere accodati
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
     const checkInterval = setInterval(async () => {
         const jobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
         const sessionJobs = jobs.filter(j => j.data && j.data.sessionId === sessionId);
@@ -1045,7 +1051,7 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
             const timer = setTimeout(async () => {
                 const sessionId = guildSessions.get(guildId);
                 if (sessionId) {
-                    disconnect(guildId);
+                    await disconnect(guildId);
                     guildSessions.delete(guildId);
                     await audioQueue.resume();
                     
@@ -1058,7 +1064,7 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
                         }
                     }
                 } else {
-                    disconnect(guildId);
+                    await disconnect(guildId);
                 }
                 autoLeaveTimers.delete(guildId);
             }, 60000);

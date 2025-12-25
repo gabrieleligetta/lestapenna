@@ -110,13 +110,17 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
 
     console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId} (Guild: ${guildId}): ${filename} (Sessione: ${sessionId})`);
 
+    // MODIFICA: Agganciamo il listener subito per gestire anche le chiusure forzate
+    out.on('finish', async () => {
+        if (activeStreams.has(streamKey)) {
+            activeStreams.delete(streamKey);
+        }
+        await onFileClosed(userId, filepath, filename, startTime, sessionId);
+    });
+
     opusStream.on('end', async () => {
-        activeStreams.delete(streamKey);
-        
-        // Quando il file è chiuso (la pipeline finisce), procediamo con il backup e l'accodamento
-        out.on('finish', async () => {
-            await onFileClosed(userId, filepath, filename, startTime, sessionId);
-        });
+        // La pipeline chiuderà 'out' automaticamente
+        // Non serve fare altro qui, il lavoro sporco lo fa out.on('finish')
     });
 
     opusStream.on('error', (err: Error) => {
@@ -158,9 +162,43 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
     console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${sessionId}.`);
 }
 
-export function disconnect(guildId: string): boolean {
+export async function disconnect(guildId: string): Promise<boolean> {
     const connection = getVoiceConnection(guildId);
     if (connection) {
+        console.log(`[Recorder] Disconnessione richiesta per Guild ${guildId}...`);
+        
+        const closingPromises: Promise<void>[] = [];
+
+        // Chiudiamo manualmente tutti gli stream attivi per questa gilda
+        for (const [key, stream] of activeStreams) {
+            if (key.startsWith(`${guildId}-`)) {
+                console.log(`[Recorder] Chiusura forzata stream ${key}`);
+                
+                const p = new Promise<void>((resolve) => {
+                    // Se lo stream è già chiuso/in chiusura
+                    if (stream.out.writableEnded) {
+                        resolve();
+                        return;
+                    }
+                    
+                    // Attendiamo la fine della scrittura
+                    stream.out.once('finish', () => resolve());
+                    
+                    // Forziamo la chiusura dello stream di scrittura
+                    // Questo taglierà la pipeline ma salverà i dati bufferizzati
+                    stream.out.end(); 
+                });
+                
+                closingPromises.push(p);
+                activeStreams.delete(key); // Rimuoviamo dalla mappa
+            }
+        }
+
+        if (closingPromises.length > 0) {
+            await Promise.all(closingPromises);
+            console.log(`[Recorder] ${closingPromises.length} stream chiusi correttamente.`);
+        }
+
         connection.destroy();
         console.log("👋 Disconnesso.");
         return true;

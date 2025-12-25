@@ -155,11 +155,11 @@ export interface KnowledgeFragment {
 
 // --- FUNZIONI CONFIGURAZIONE ---
 
-export const setConfig = (key: string, value: string): void => {
+const setConfig = (key: string, value: string): void => {
     db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run(key, value);
 };
 
-export const getConfig = (key: string): string | null => {
+const getConfig = (key: string): string | null => {
     const row = db.prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined;
     return row ? row.value : null;
 };
@@ -337,24 +337,6 @@ export const getAvailableSessions = (guildId?: string, campaignId?: number): Ses
     query += ` GROUP BY s.session_id ORDER BY start_time DESC LIMIT 5`;
 
     return db.prepare(query).all(...params) as SessionSummary[];
-};
-
-export const getSessionNumber = (sessionId: string): number | null => {
-    const row = db.prepare('SELECT session_number FROM sessions WHERE session_id = ?').get(sessionId) as { session_number: number } | undefined;
-    if (row && row.session_number) return row.session_number;
-    
-    const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
-    if (!session) return null;
-
-    const result = db.prepare(`
-        SELECT COUNT(DISTINCT s.session_id) as count 
-        FROM sessions s
-        JOIN recordings r ON s.session_id = r.session_id
-        WHERE s.campaign_id = ? 
-        AND r.timestamp <= (SELECT MIN(timestamp) FROM recordings WHERE session_id = ?)
-    `).get(session.campaign_id, sessionId) as { count: number };
-
-    return result.count || null;
 };
 
 export const getExplicitSessionNumber = (sessionId: string): number | null => {

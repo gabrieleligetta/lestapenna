@@ -119,6 +119,66 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
     }
 }
 
+// --- NUOVA FUNZIONE: CORREZIONE TRASCRIZIONE ---
+export async function correctTranscription(segments: any[]): Promise<any[]> {
+    console.log(`[Bardo] 🧹 Inizio correzione trascrizione (${segments.length} segmenti)...`);
+    
+    // Batch size: 20 segmenti per richiesta per bilanciare contesto e velocità
+    const BATCH_SIZE = 20; 
+    const correctedSegments: any[] = [];
+
+    for (let i = 0; i < segments.length; i += BATCH_SIZE) {
+        const batch = segments.slice(i, i + BATCH_SIZE);
+        // Avvolgiamo in un oggetto per usare response_format: json_object
+        const batchInput = { segments: batch };
+        const batchJson = JSON.stringify(batchInput);
+
+        const prompt = `Sei un correttore di bozze esperto. 
+Analizza il seguente array di segmenti di trascrizione audio.
+Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi, correggendo errori fonetici (es. "Coteca" -> "Discoteche", "Letale" -> "Natale", "Pila" -> "PIL").
+IMPORTANTE:
+1. Non modificare "start" e "end".
+2. Non unire o dividere segmenti. Il numero di oggetti in output deve essere identico all'input.
+3. Restituisci un oggetto JSON con la chiave "segments".
+
+Input:
+${batchJson}`;
+
+        try {
+            const response = await withRetry(() => openai.chat.completions.create({
+                model: "gpt-5-mini",
+                messages: [
+                    { role: "system", content: "Sei un assistente che parla solo JSON valido." },
+                    { role: "user", content: prompt }
+                ],
+                response_format: { type: "json_object" }
+            }));
+
+            const content = response.choices[0].message.content;
+            if (!content) throw new Error("Risposta vuota");
+
+            const parsed = JSON.parse(content);
+            
+            if (parsed.segments && Array.isArray(parsed.segments)) {
+                // Controllo di sicurezza sulla lunghezza
+                if (parsed.segments.length !== batch.length) {
+                    console.warn(`[Bardo] ⚠️ Mismatch lunghezza batch ${i} (In: ${batch.length}, Out: ${parsed.segments.length}).`);
+                }
+                correctedSegments.push(...parsed.segments);
+            } else {
+                throw new Error("Formato JSON non valido (manca chiave 'segments')");
+            }
+
+        } catch (err) {
+            console.error(`[Bardo] ❌ Errore correzione batch ${i}:`, err);
+            // Fallback: manteniamo i segmenti originali in caso di errore
+            correctedSegments.push(...batch);
+        }
+    }
+
+    return correctedSegments;
+}
+
 // --- FUNZIONE PRINCIPALE ---
 // Modificato: Restituisce oggetto con summary e token totali
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, tokens: number}> {

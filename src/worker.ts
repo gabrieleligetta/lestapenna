@@ -4,6 +4,7 @@ import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId 
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
+import { correctTranscription } from './bard';
 
 // Worker BullMQ - LO SCRIBA
 // Questo worker si occupa SOLO di trascrivere e salvare nel DB.
@@ -87,13 +88,18 @@ export function startWorker() {
 
             // Se abbiamo segmenti, salviamo il JSON completo
             if (result.segments && result.segments.length > 0) {
-                const jsonStr = JSON.stringify(result.segments);
+                
+                // --- NUOVA FASE: CORREZIONE AI ---
+                console.log(`[Scriba] 🧠 Correzione AI in corso per ${fileName}...`);
+                const correctedSegments = await correctTranscription(result.segments);
+                
+                const jsonStr = JSON.stringify(correctedSegments);
                 
                 // Calcoliamo un testo "flat" per log e fallback rapido
-                const flatText = result.segments.map((s: any) => s.text).join(" ");
+                const flatText = correctedSegments.map((s: any) => s.text).join(" ");
                 
                 updateRecordingStatus(fileName, 'PROCESSED', jsonStr);
-                console.log(`[Scriba] ✅ Trascritto ${fileName} (${result.segments.length} segmenti): "${flatText.substring(0, 30)}..."`);
+                console.log(`[Scriba] ✅ Trascritto e Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..."`);
                 
                 // --- PULIZIA FINALE ---
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
@@ -108,7 +114,7 @@ export function startWorker() {
                     console.warn(`[Scriba] ⚠️ Backup non confermato per ${fileName}, mantengo file locale.`);
                 }
 
-                return { status: 'ok', segments: result.segments };
+                return { status: 'ok', segments: correctedSegments };
             } else {
                 // Fallback per casi strani o vuoti
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');

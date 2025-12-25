@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
@@ -12,7 +12,15 @@ import { monitor } from './monitor';
 export function startWorker() {
     const worker = new Worker('audio-processing', async job => {
         const { sessionId, fileName, filePath, userId } = job.data;
-        const userName = getUserName(userId) || userId;
+        
+        // Recuperiamo il campaignId dalla sessione per ottenere il nome corretto
+        const campaignId = getSessionCampaignId(sessionId);
+        // Se non c'è campagna (vecchia sessione), passiamo un valore dummy o gestiamo il null in getUserName
+        // getUserName ora richiede 2 argomenti. Se campaignId è undefined, usiamo 0 o gestiamo il fallback.
+        // Tuttavia, getUserName è pensato per il contesto campagna.
+        // Se è una sessione legacy senza campagna, il nome sarà null o useremo userId.
+        
+        const userName = (campaignId ? getUserName(userId, campaignId) : null) || userId;
         const startJob = Date.now();
 
         // Idempotenza: controlliamo se il file è già stato processato

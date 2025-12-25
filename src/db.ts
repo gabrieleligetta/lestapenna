@@ -13,7 +13,6 @@ if (!fs.existsSync(dataDir)){
 const db = new Database(dbPath);
 
 // --- TABELLA CONFIGURAZIONE GLOBALE E PER GUILD ---
-// key ora può essere 'guild_ID_setting' per settings specifici
 db.exec(`CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -28,8 +27,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS campaigns (
     created_at INTEGER
 )`);
 
-// --- TABELLA PERSONAGGI (Sostituisce users globale) ---
-// Un utente può avere personaggi diversi in campagne diverse
+// --- TABELLA PERSONAGGI ---
 db.exec(`CREATE TABLE IF NOT EXISTS characters (
     user_id TEXT NOT NULL,
     campaign_id INTEGER NOT NULL,
@@ -42,8 +40,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS characters (
 )`);
 
 // --- TABELLA REGISTRAZIONI ---
-// Aggiungiamo il riferimento alla campagna per facilitare query future se necessario,
-// ma principalmente è la sessione che detta la campagna.
 db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT,
@@ -57,7 +53,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS recordings (
 )`);
 
 // --- TABELLA SESSIONI ---
-// Aggiungiamo guild_id e campaign_id
+// Nota: Se la tabella esiste già dal vecchio schema, questa istruzione non fa nulla.
+// Le colonne nuove verranno aggiunte dalle migrazioni sotto.
 db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     guild_id TEXT,
@@ -66,7 +63,20 @@ db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
 )`);
 
-// Indici
+// --- MIGRATIONS (PRIMA DEGLI INDICI) ---
+// Gestione delle migrazioni per aggiungere colonne mancanti se il DB esiste già
+const migrations = [
+    "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
+    "ALTER TABLE sessions ADD COLUMN campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL",
+    "ALTER TABLE sessions ADD COLUMN session_number INTEGER"
+];
+
+for (const m of migrations) {
+    try { db.exec(m); } catch (e) { /* Ignora se la colonna esiste già */ }
+}
+
+// --- INDICI (DOPO LE MIGRATIONS) ---
+// Ora siamo sicuri che le colonne esistano
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_session_id ON recordings (session_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_guild ON campaigns (guild_id)`);

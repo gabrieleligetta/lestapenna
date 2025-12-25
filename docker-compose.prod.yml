@@ -36,6 +36,19 @@ services:
       # - "11434:11434"
       - "11434"
 
+  # Servizio "One-Shot" per scaricare i modelli all'avvio
+  ollama-puller:
+    image: ollama/ollama:latest
+    container_name: ollama-model-puller
+    restart: "no" # Esegue una volta e si ferma
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: /bin/sh
+    # Script: Aspetta che Ollama risponda, poi scarica i modelli necessari
+    command: -c "echo 'Waiting for Ollama server...'; until ollama list > /dev/null 2>&1; do sleep 2; done; echo 'Ollama is ready. Pulling models...'; ollama pull nomic-embed-text; ollama pull llama3.2; echo 'All models pulled successfully!'"
+
 volumes:
   ollama_data:
   redis_data:

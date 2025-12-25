@@ -53,8 +53,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS recordings (
 )`);
 
 // --- TABELLA SESSIONI ---
-// Nota: Se la tabella esiste già dal vecchio schema, questa istruzione non fa nulla.
-// Le colonne nuove verranno aggiunte dalle migrazioni sotto.
 db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     guild_id TEXT,
@@ -63,24 +61,38 @@ db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
 )`);
 
-// --- MIGRATIONS (PRIMA DEGLI INDICI) ---
-// Gestione delle migrazioni per aggiungere colonne mancanti se il DB esiste già
+// --- TABELLA MEMORIA A LUNGO TERMINE (RAG) ---
+db.exec(`CREATE TABLE IF NOT EXISTS knowledge_fragments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    session_id TEXT,
+    content TEXT NOT NULL,
+    embedding_json TEXT NOT NULL,
+    embedding_model TEXT NOT NULL,
+    vector_dimension INTEGER,
+    start_timestamp INTEGER,
+    created_at INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
+// --- MIGRATIONS ---
 const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
     "ALTER TABLE sessions ADD COLUMN campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL",
-    "ALTER TABLE sessions ADD COLUMN session_number INTEGER"
+    "ALTER TABLE sessions ADD COLUMN session_number INTEGER",
+    "ALTER TABLE knowledge_fragments ADD COLUMN start_timestamp INTEGER"
 ];
 
 for (const m of migrations) {
     try { db.exec(m); } catch (e) { /* Ignora se la colonna esiste già */ }
 }
 
-// --- INDICI (DOPO LE MIGRATIONS) ---
-// Ora siamo sicuri che le colonne esistano
+// --- INDICI ---
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_session_id ON recordings (session_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_guild ON campaigns (guild_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_campaign_model ON knowledge_fragments (campaign_id, embedding_model)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -119,6 +131,18 @@ export interface Campaign {
     is_active: number;
 }
 
+export interface KnowledgeFragment {
+    id: number;
+    campaign_id: number;
+    session_id: string;
+    content: string;
+    embedding_json: string;
+    embedding_model: string;
+    vector_dimension: number;
+    start_timestamp: number;
+    created_at: number;
+}
+
 // --- FUNZIONI CONFIGURAZIONE ---
 
 export const setConfig = (key: string, value: string): void => {
@@ -130,7 +154,6 @@ export const getConfig = (key: string): string | null => {
     return row ? row.value : null;
 };
 
-// Helper per settings di gilda (es. canale comandi)
 export const getGuildConfig = (guildId: string, key: string): string | null => {
     return getConfig(`${guildId}_${key}`);
 };
@@ -151,8 +174,6 @@ export const getCampaigns = (guildId: string): Campaign[] => {
 };
 
 export const getActiveCampaign = (guildId: string): Campaign | undefined => {
-    // Cerchiamo la campagna attiva salvata nella config o nel flag is_active
-    // Per semplicità usiamo un flag is_active nella tabella campaigns, assicurandoci che ce ne sia solo una a 1 per gilda
     return db.prepare('SELECT * FROM campaigns WHERE guild_id = ? AND is_active = 1').get(guildId) as Campaign | undefined;
 };
 
@@ -249,14 +270,10 @@ export const resetUnfinishedRecordings = (sessionId: string): Recording[] => {
 
 // --- FUNZIONI BARDO & SESSIONI ---
 
-// Recupera trascrizioni con info personaggio corrette per la campagna della sessione
 export const getSessionTranscript = (sessionId: string) => {
-    // 1. Trova campaign_id della sessione
     const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
     
     if (!session) {
-        // Fallback se sessione non trovata (vecchia o errore): usa solo user_id o prova a cercare in users legacy se esistesse
-        // Qui facciamo una query semplice senza join characters se non abbiamo campaign_id
         return db.prepare(`
             SELECT r.transcription_text, r.user_id, r.timestamp, NULL as character_name
             FROM recordings r
@@ -265,7 +282,6 @@ export const getSessionTranscript = (sessionId: string) => {
         `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
     }
 
-    // 2. Join con characters usando campaign_id
     const rows = db.prepare(`
         SELECT r.transcription_text, r.user_id, r.timestamp, c.character_name 
         FROM recordings r
@@ -284,7 +300,6 @@ export const getSessionErrors = (sessionId: string) => {
     `).all(sessionId) as Array<{ filename: string, error_log: string | null }>;
 };
 
-// Ritorna le sessioni della campagna attiva (o tutte se non specificato, ma meglio filtrare)
 export const getAvailableSessions = (guildId?: string, campaignId?: number): SessionSummary[] => {
     let query = `
         SELECT s.session_id, MIN(r.timestamp) as start_time, COUNT(r.id) as fragments, c.name as campaign_name, s.session_number
@@ -318,7 +333,6 @@ export const getSessionNumber = (sessionId: string): number | null => {
     const row = db.prepare('SELECT session_number FROM sessions WHERE session_id = ?').get(sessionId) as { session_number: number } | undefined;
     if (row && row.session_number) return row.session_number;
     
-    // Fallback ordinale per campagna
     const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
     if (!session) return null;
 
@@ -342,7 +356,6 @@ export const setSessionNumber = (sessionId: string, num: number): void => {
     db.prepare('UPDATE sessions SET session_number = ? WHERE session_id = ?').run(num, sessionId);
 };
 
-// Crea la sessione nel DB all'inizio
 export const createSession = (sessionId: string, guildId: string, campaignId: number): void => {
     db.prepare('INSERT INTO sessions (session_id, guild_id, campaign_id) VALUES (?, ?, ?)').run(sessionId, guildId, campaignId);
 };
@@ -373,13 +386,34 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
     return row ? row.session_id : null;
 };
 
+// --- FUNZIONI KNOWLEDGE BASE (RAG) ---
+
+export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0) => {
+    db.prepare(`
+        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now());
+};
+
+export const getKnowledgeFragments = (campaignId: number, model: string): KnowledgeFragment[] => {
+    return db.prepare(`
+        SELECT * FROM knowledge_fragments
+        WHERE campaign_id = ? AND embedding_model = ?
+    `).all(campaignId, model) as KnowledgeFragment[];
+};
+
+export const deleteSessionKnowledge = (sessionId: string, model: string) => {
+    db.prepare(`DELETE FROM knowledge_fragments WHERE session_id = ? AND embedding_model = ?`).run(sessionId, model);
+};
+
 export const wipeDatabase = () => {
     console.log("[DB] 🧹 Svuotamento database (Sessioni) in corso...");
     db.prepare('DELETE FROM recordings').run();
     db.prepare('DELETE FROM sessions').run();
     db.prepare('DELETE FROM campaigns').run();
     db.prepare('DELETE FROM characters').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters')").run();
+    db.prepare('DELETE FROM knowledge_fragments').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

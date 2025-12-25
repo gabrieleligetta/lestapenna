@@ -1,5 +1,18 @@
 import OpenAI from 'openai';
-import {getSessionTranscript, getUserProfile, getSessionErrors, getSessionStartTime, getSessionCampaignId, getCampaignById, getCampaigns, getCampaignCharacters} from './db';
+import {
+    getSessionTranscript, 
+    getUserProfile, 
+    getSessionErrors, 
+    getSessionStartTime, 
+    getSessionCampaignId, 
+    getCampaignById, 
+    getCampaigns, 
+    getCampaignCharacters,
+    insertKnowledgeFragment,
+    getKnowledgeFragments,
+    deleteSessionKnowledge,
+    KnowledgeFragment
+} from './db';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -16,31 +29,41 @@ export type ToneKey = keyof typeof TONES;
 const useOllama = process.env.AI_PROVIDER === 'ollama';
 
 // --- CONFIGURAZIONE LIMITI (DINAMICA) ---
-// Se usiamo Ollama (Llama 3), teniamo chunk piccoli per non saturare la context window (spesso 8k o 128k ma fragile).
-// Se usiamo OpenAI (gpt-5-mini), usiamo chunk enormi (800k) per sfruttare la context window di 128k+ token.
 const MAX_CHUNK_SIZE = useOllama ? 15000 : 800000;
 const CHUNK_OVERLAP = useOllama ? 1000 : 5000;
 
-// Nota: Su Oracle A1, "llama3.1" (8B) potrebbe essere lento ma più intelligente. 
-// "llama3.2" (3B) è velocissimo ma meno dettagliato. Fai dei test.
 const MODEL_NAME = useOllama ? (process.env.OLLAMA_MODEL || "llama3.2") : (process.env.OPEN_AI_MODEL || "gpt-5-mini");
 
 // Concurrency: 1 per locale, 5 per Cloud
 const CONCURRENCY_LIMIT = useOllama ? 1 : 5;
 
-// URL Base: Gestione intelligente del default in base all'ambiente
+// URL Base
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1';
 
+// Client Principale (Chat)
 const openai = new OpenAI({
     baseURL: useOllama ? OLLAMA_BASE_URL : undefined,
-    project: useOllama ? undefined : process.env.OPENAI_PROJECT_ID, // <--- AGGIUNGI QUESTA RIGA
+    project: useOllama ? undefined : process.env.OPENAI_PROJECT_ID,
     apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
     timeout: 600 * 1000, 
 });
 
+// --- CLIENT DEDICATI PER EMBEDDING ---
+const openaiEmbedClient = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY || 'dummy', 
+    project: process.env.OPENAI_PROJECT_ID,
+});
+
+const ollamaEmbedClient = new OpenAI({
+    baseURL: OLLAMA_BASE_URL,
+    apiKey: 'ollama',
+});
+
+const EMBEDDING_MODEL_OPENAI = "text-embedding-3-small";
+const EMBEDDING_MODEL_OLLAMA = "nomic-embed-text"; 
+
 /**
  * Divide il testo in chunk
- * I default sono ora dinamici in base al provider scelto.
  */
 function splitTextInChunks(text: string, chunkSize: number = MAX_CHUNK_SIZE, overlap: number = CHUNK_OVERLAP): string[] {
     const chunks = [];
@@ -78,7 +101,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
 }
 
 /**
- * Batch Processing per rispettare i limiti di concorrenza
+ * Batch Processing
  */
 async function processInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
     const results: R[] = [];
@@ -91,8 +114,23 @@ async function processInBatches<T, R>(items: T[], batchSize: number, fn: (item: 
     return results;
 }
 
+/**
+ * Calcolo Similarità Coseno
+ */
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+    }
+    if (normA === 0 || normB === 0) return 0;
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
 // --- FASE 1: MAP ---
-// Modificato: Restituisce testo + token
 async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<{text: string, tokens: number}> {
     console.log(`[Bardo] 🗺️  Fase MAP: Analisi chunk ${index + 1}/${total} (${chunk.length} chars)...`);
     
@@ -120,18 +158,223 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
     }
 }
 
-// --- NUOVA FUNZIONE: CORREZIONE TRASCRIZIONE ---
+// --- RAG: INGESTION (LOSSLESS SLIDING WINDOW) ---
+export async function ingestSessionRaw(sessionId: string) {
+    const campaignId = getSessionCampaignId(sessionId);
+    if (!campaignId) {
+        console.warn(`[RAG] ⚠️ Sessione ${sessionId} senza campagna. Salto ingestione.`);
+        return;
+    }
+
+    // Determina il provider attivo
+    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
+    const isOllama = provider === 'ollama';
+    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
+    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+
+    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Model: ${model})...`);
+
+    // 1. Pulisci vecchi frammenti per questo modello/sessione per evitare duplicati
+    deleteSessionKnowledge(sessionId, model);
+
+    // 2. Recupera e ricostruisci il dialogo completo
+    const transcriptions = getSessionTranscript(sessionId);
+    if (transcriptions.length === 0) return;
+
+    const startTime = getSessionStartTime(sessionId) || 0;
+    
+    interface DialogueLine {
+        timestamp: number;
+        text: string;
+    }
+
+    const lines: DialogueLine[] = [];
+
+    for (const t of transcriptions) {
+        try {
+            const segments = JSON.parse(t.transcription_text);
+            if (Array.isArray(segments)) {
+                for (const seg of segments) {
+                    const absTime = t.timestamp + (seg.start * 1000);
+                    const mins = Math.floor((absTime - startTime) / 60000);
+                    const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
+                    const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+                    const charName = t.character_name || "Sconosciuto";
+                    
+                    lines.push({
+                        timestamp: absTime,
+                        text: `[${timeStr}] ${charName}: ${seg.text}`
+                    });
+                }
+            }
+        } catch (e) { /* Ignora errori parsing */ }
+    }
+
+    lines.sort((a, b) => a.timestamp - b.timestamp);
+
+    // 3. Sliding Window Chunking
+    // Uniamo tutto in un unico testo ma teniamo traccia degli indici per recuperare il timestamp approssimativo
+    const fullText = lines.map(l => l.text).join("\n");
+    
+    // Chunk size ~1000 chars, Overlap ~200 chars
+    const CHUNK_SIZE = 1000;
+    const OVERLAP = 200;
+    
+    const chunks = [];
+    let i = 0;
+    while (i < fullText.length) {
+        let end = Math.min(i + CHUNK_SIZE, fullText.length);
+        
+        // Cerca di non tagliare a metà una riga
+        if (end < fullText.length) {
+            const lastNewLine = fullText.lastIndexOf('\n', end);
+            if (lastNewLine > i + (CHUNK_SIZE * 0.5)) {
+                end = lastNewLine;
+            }
+        }
+
+        const chunkText = fullText.substring(i, end).trim();
+        
+        // Trova il timestamp iniziale approssimativo parsando la prima riga del chunk
+        // Formato: [MM:SS] ...
+        let chunkTimestamp = startTime; // Default
+        const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
+        if (timeMatch) {
+            const mins = parseInt(timeMatch[1]);
+            const secs = parseInt(timeMatch[2]);
+            chunkTimestamp = startTime + (mins * 60000) + (secs * 1000);
+        }
+
+        if (chunkText.length > 50) { // Ignora chunk troppo piccoli
+            chunks.push({
+                text: chunkText,
+                timestamp: chunkTimestamp
+            });
+        }
+
+        if (end >= fullText.length) break;
+        i = end - OVERLAP;
+    }
+
+    console.log(`[RAG] Generati ${chunks.length} chunk. Inizio embedding...`);
+
+    // 4. Calcolo Embedding e Salvataggio
+    let savedCount = 0;
+    
+    // Processiamo in batch per non saturare
+    await processInBatches(chunks, 10, async (chunk, idx) => {
+        try {
+            const resp = await client.embeddings.create({
+                model: model,
+                input: chunk.text
+            });
+            
+            insertKnowledgeFragment(
+                campaignId, 
+                sessionId, 
+                chunk.text, 
+                resp.data[0].embedding, 
+                model, 
+                chunk.timestamp
+            );
+            savedCount++;
+        } catch (e) {
+            console.error(`[RAG] ❌ Errore embedding chunk ${idx}:`, e);
+        }
+    });
+
+    console.log(`[RAG] ✅ Indicizzazione completata: ${savedCount} frammenti salvati (${model}).`);
+}
+
+// --- RAG: SEARCH ---
+export async function searchKnowledge(campaignId: number, query: string, limit: number = 5): Promise<string[]> {
+    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
+    const isOllama = provider === 'ollama';
+    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
+    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+
+    console.log(`[RAG] 🔍 Ricerca con modello: ${model} (${provider})`);
+
+    try {
+        // 1. Genera embedding della query
+        const resp = await client.embeddings.create({
+            model: model,
+            input: query
+        });
+        const queryVector = resp.data[0].embedding;
+
+        // 2. Recupera frammenti dal DB (solo quelli compatibili col modello)
+        const fragments = getKnowledgeFragments(campaignId, model);
+        
+        if (fragments.length === 0) {
+            console.log("[RAG] Nessun frammento trovato per questo modello.");
+            return [];
+        }
+
+        // 3. Calcola similarità
+        const scored = fragments.map(f => {
+            const vector = JSON.parse(f.embedding_json);
+            return {
+                content: f.content,
+                score: cosineSimilarity(queryVector, vector)
+            };
+        });
+
+        // 4. Ordina e filtra
+        scored.sort((a, b) => b.score - a.score);
+        
+        scored.slice(0, 3).forEach((s, i) => console.log(`[RAG] Match #${i+1} (${s.score.toFixed(4)}): ${s.content.substring(0, 50)}...`));
+
+        return scored.slice(0, limit).map(s => s.content);
+
+    } catch (e) {
+        console.error("[RAG] ❌ Errore ricerca:", e);
+        return [];
+    }
+}
+
+// --- RAG: ASK BARD ---
+export async function askBard(campaignId: number, question: string): Promise<string> {
+    // 1. Cerca nella memoria
+    const context = await searchKnowledge(campaignId, question, 5);
+    
+    const contextText = context.length > 0 
+        ? "TRASCRIZIONI RILEVANTI:\n" + context.map(c => `...\n${c}\n...`).join("\n")
+        : "Nessuna memoria specifica trovata.";
+
+    // 2. Genera risposta
+    const prompt = `Sei il Bardo della campagna. Rispondi alla domanda del giocatore basandoti ESCLUSIVAMENTE sulle trascrizioni fornite.
+    Cita chi ha detto cosa se rilevante.
+    Se la risposta non è nelle trascrizioni, ammetti di non ricordare o di non averlo sentito.
+    
+    ${contextText}
+    
+    DOMANDA: ${question}`;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: MODEL_NAME,
+            messages: [
+                { role: "system", content: "Sei un saggio Bardo che ricorda tutto ciò che è stato detto." },
+                { role: "user", content: prompt }
+            ]
+        });
+        return response.choices[0].message.content || "Il Bardo è muto.";
+    } catch (e) {
+        console.error("[Bardo] Errore risposta:", e);
+        return "La mia mente è annebbiata...";
+    }
+}
+
+// --- CORREZIONE TRASCRIZIONE ---
 export async function correctTranscription(segments: any[], campaignId?: number): Promise<any[]> {
     console.log(`[Bardo] 🧹 Inizio correzione trascrizione (${segments.length} segmenti)...`);
     
-    // Costruzione contesto campagna
     let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
         if (campaign) {
             contextInfo += `\nCampagna: "${campaign.name}".`;
-            
-            // Recupero personaggi della campagna
             const characters = getCampaignCharacters(campaignId);
             if (characters.length > 0) {
                 contextInfo += "\nPersonaggi Giocanti (PG):";
@@ -146,13 +389,11 @@ export async function correctTranscription(segments: any[], campaignId?: number)
         }
     }
 
-    // Batch size: 20 segmenti per richiesta per bilanciare contesto e velocità
     const BATCH_SIZE = 20; 
     const correctedSegments: any[] = [];
 
     for (let i = 0; i < segments.length; i += BATCH_SIZE) {
         const batch = segments.slice(i, i + BATCH_SIZE);
-        // Avvolgiamo in un oggetto per usare response_format: json_object
         const batchInput = { segments: batch };
         const batchJson = JSON.stringify(batchInput);
 
@@ -160,7 +401,7 @@ export async function correctTranscription(segments: any[], campaignId?: number)
 ${contextInfo}
 
 Analizza il seguente array di segmenti di trascrizione audio.
-Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi, correggendo errori fonetici tipici della trascrizione automatica (es. "Coteca" -> "Discoteche", "Letale" -> "Natale", "Pila" -> "PIL", nomi di incantesimi o mostri storpiati).
+Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi, correggendo errori fonetici tipici della trascrizione automatica.
 Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature dei nomi propri.
 Mantieni il tono colloquiale se presente, ma correggi la grammatica dove il senso è compromesso.
 
@@ -188,7 +429,6 @@ ${batchJson}`;
             const parsed = JSON.parse(content);
             
             if (parsed.segments && Array.isArray(parsed.segments)) {
-                // Controllo di sicurezza sulla lunghezza
                 if (parsed.segments.length !== batch.length) {
                     console.warn(`[Bardo] ⚠️ Mismatch lunghezza batch ${i} (In: ${batch.length}, Out: ${parsed.segments.length}).`);
                 }
@@ -199,7 +439,6 @@ ${batchJson}`;
 
         } catch (err) {
             console.error(`[Bardo] ❌ Errore correzione batch ${i}:`, err);
-            // Fallback: manteniamo i segmenti originali in caso di errore
             correctedSegments.push(...batch);
         }
     }
@@ -208,22 +447,22 @@ ${batchJson}`;
 }
 
 // --- FUNZIONE PRINCIPALE ---
-// Modificato: Restituisce oggetto con summary e token totali
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, tokens: number}> {
     console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
     console.log(`[Bardo] ⚙️  Configurazione: Chunk Size=${MAX_CHUNK_SIZE}, Overlap=${CHUNK_OVERLAP}, Provider=${useOllama ? 'Ollama' : 'OpenAI'}`);
     
+    // TRIGGER INGESTIONE RAG (Asincrona, non blocca il riassunto)
+    ingestSessionRaw(sessionId).catch(e => console.error("[RAG] Errore ingestione automatica:", e));
+
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
     const campaignId = getSessionCampaignId(sessionId);
 
     if (transcriptions.length === 0) return { summary: "Nessuna trascrizione trovata.", tokens: 0 };
 
-    // Context Personaggi
     const userIds = new Set(transcriptions.map(t => t.user_id));
     let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
     
-    // Se abbiamo una campagna, recuperiamo i profili corretti
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
         if (campaign) castContext += `CAMPAGNA: ${campaign.name}\n`;
@@ -241,8 +480,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
             }
         });
     } else {
-        // Fallback per sessioni vecchie senza campagna (o recuperate)
-        // Usiamo i nomi salvati nella trascrizione se disponibili, o generici
         castContext += "Nota: Profili personaggi non disponibili per questa sessione legacy.\n";
     }
 
@@ -287,19 +524,20 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         })
         .join("\n");
 
-    // Usiamo la costante dinamica per decidere se attivare Map-Reduce
     let contextForFinalStep = "";
     let accumulatedTokens = 0;
 
+    // Se il testo è lungo, usiamo Map-Reduce
     if (fullDialogue.length > MAX_CHUNK_SIZE) {
         console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars > ${MAX_CHUNK_SIZE}). Attivo Map-Reduce.`);
         
         const chunks = splitTextInChunks(fullDialogue, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
         console.log(`[Bardo] 🔪 Diviso in ${chunks.length} segmenti. Concorrenza: ${CONCURRENCY_LIMIT}`);
 
-        const mapResults = await processInBatches(chunks, CONCURRENCY_LIMIT, (chunk, index) => 
-            extractFactsFromChunk(chunk, index, chunks.length, castContext)
-        );
+        const mapResults = await processInBatches(chunks, CONCURRENCY_LIMIT, async (chunk, index) => {
+            const result = await extractFactsFromChunk(chunk, index, chunks.length, castContext);
+            return result;
+        });
 
         contextForFinalStep = mapResults.map(r => r.text).join("\n\n--- SEGMENTO SUCCESSIVO ---\n\n");
         accumulatedTokens = mapResults.reduce((acc, curr) => acc + curr.tokens, 0);

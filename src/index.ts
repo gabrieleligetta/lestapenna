@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import sodium from 'libsodium-wrappers';
-import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder, ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, Message, VoiceBasedChannel, TextChannel, EmbedBuilder, ChannelType, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import { 
     getAvailableSessions, 
@@ -114,7 +114,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'sono', 'miaclasse', 'miarazza', 'miadesc', 'chisono', 'listasessioni'];
+    const campaignCommands = ['ascolta', 'sono', 'miaclasse', 'miarazza', 'miadesc', 'chisono', 'listasessioni', 'chiedialbardo', 'ingest', 'memorizza'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `!creacampagna <Nome>` o `!selezionacampagna <Nome>` prima di iniziare.");
@@ -146,6 +146,8 @@ client.on('messageCreate', async (message: Message) => {
                     value: 
                     "`!listasessioni`: Ultime 5 sessioni (Campagna Attiva).\n" +
                     "`!racconta <ID> [tono]`: Rigenera riassunto.\n" +
+                    "`!chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
+                    "`!memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
                     "`!scarica <ID>`: Scarica audio.\n" +
                     "`!scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
                 },
@@ -442,6 +444,41 @@ client.on('messageCreate', async (message: Message) => {
         } catch (err) {
             console.error(`❌ Errore racconta ${targetSessionId}:`, err);
             await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
+        }
+    }
+
+    // --- NUOVO: !chiedialbardo <Domanda> ---
+    if (command === 'chiedialbardo' || command === 'ask') {
+        const question = args.join(' ');
+        if (!question) return await message.reply("Uso: `!chiedialbardo <Domanda>`");
+
+        // Fix per TS2339: Controllo se il canale supporta sendTyping
+        if ('sendTyping' in message.channel) {
+            await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
+        }
+
+        try {
+            const answer = await askBard(activeCampaign!.id, question);
+            await message.reply(answer);
+        } catch (err) {
+            console.error("Errore chiedialbardo:", err);
+            await message.reply("Il Bardo ha un vuoto di memoria...");
+        }
+    }
+
+    // --- NUOVO: !ingest <session_id> ---
+    if (command === 'ingest' || command === 'memorizza') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) return await message.reply("Uso: `!ingest <ID_SESSIONE>`");
+
+        await message.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${targetSessionId}\`...\nSto leggendo le trascrizioni e creando i vettori.`);
+        
+        try {
+            await ingestSessionRaw(targetSessionId);
+            await message.reply(`✅ Memoria aggiornata per sessione \`${targetSessionId}\`. Ora puoi farmi domande su di essa.`);
+        } catch (e: any) {
+            console.error(e);
+            await message.reply(`❌ Errore durante l'ingestione: ${e.message}`);
         }
     }
 

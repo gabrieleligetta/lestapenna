@@ -155,7 +155,7 @@ client.on('messageCreate', async (message: Message) => {
                     name: "🎙️ Gestione Sessione", 
                     value: 
                     "`!ascolta`: Inizia la registrazione (Campagna Attiva).\n" +
-                    "`!stop`: Termina la sessione.\n" +
+                    "`!termina`: Termina la sessione.\n" +
                     "`!impostasessione <N>`: Imposta numero sessione.\n" +
                     "`!impostasessioneid <ID> <N>`: Corregge il numero." 
                 },
@@ -264,7 +264,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- COMANDO STOPLISTENING (FINE SESSIONE) ---
-    if (command === 'stoplistening' || command === 'stop') {
+    if (command === 'stoplistening' || command === 'termina') {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
             await disconnect(message.guild.id);
@@ -650,7 +650,9 @@ client.on('messageCreate', async (message: Message) => {
             // Upload su Oracle (simulato)
             try {
                 const uploaded = await uploadToOracle(tempFilePath, tempFileName, sessionId);
-                if (uploaded) updateRecordingStatus(tempFileName, 'SECURED');
+                if (uploaded) {
+                    updateRecordingStatus(tempFileName, 'SECURED');
+                }
             } catch (e) {
                 console.error("[TestStream] Errore upload:", e);
             }

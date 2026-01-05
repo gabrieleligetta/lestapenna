@@ -3,7 +3,6 @@ import os
 import json
 import argparse
 import logging
-import torch
 
 # Configura logging su STDERR per non sporcare il JSON su STDOUT
 logging.basicConfig(
@@ -13,6 +12,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
+# Importiamo solo faster_whisper, niente torch!
 try:
     from faster_whisper import WhisperModel
 except ImportError:
@@ -84,18 +84,24 @@ def main():
     parser.add_argument("--model", default="medium", help="Whisper model size")
     args = parser.parse_args()
 
-    # Rilevamento Device Ottimizzato
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
+    # Rilevamento Device con metodo "Try-Catch" (Non serve torch)
+    logger.info(f"Tentativo caricamento modello '{args.model}' su GPU...")
 
-    logger.info(f"💻 Caricamento modello '{args.model}' su {device.upper()} ({compute_type})...")
-
+    model = None
     try:
-        model = WhisperModel(args.model, device=device, compute_type=compute_type)
-        logger.info("✅ Modello caricato in memoria.")
+        # 1. Proviamo a forzare CUDA e float16 (Massima velocità)
+        model = WhisperModel(args.model, device="cuda", compute_type="float16")
+        logger.info("✅ Modello caricato su GPU (CUDA) - Modalità Turbo.")
     except Exception as e:
-        logger.error(f"❌ ERRORE CRITICO caricamento modello: {e}")
-        sys.exit(1)
+        logger.warning(f"⚠️ Impossibile usare GPU: {e}")
+        logger.info("🔄 Passaggio a CPU (int8)...")
+        try:
+            # 2. Fallback su CPU e int8 (Compatibilità totale)
+            model = WhisperModel(args.model, device="cpu", compute_type="int8")
+            logger.info("✅ Modello caricato su CPU.")
+        except Exception as e_cpu:
+            logger.error(f"❌ ERRORE CRITICO caricamento modello: {e_cpu}")
+            sys.exit(1)
 
     if args.daemon:
         logger.info("🚀 Avvio modalità DAEMON. In attesa di input su STDIN...")

@@ -1,4 +1,4 @@
-import { Worker } from 'bullmq';
+import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
 import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
@@ -19,11 +19,42 @@ export function startWorker() {
         const userName = (campaignId ? getUserName(userId, campaignId) : null) || userId;
         const startJob = Date.now();
 
-        // Idempotenza
+        // Idempotenza & Recupero "Buco Nero"
         const currentRecording = getRecording(fileName);
-        if (currentRecording && (currentRecording.status === 'PROCESSED' || currentRecording.status === 'TRANSCRIBED' || currentRecording.status === 'SKIPPED')) {
-            console.log(`[Scriba] ⏩ File ${fileName} già elaborato (stato: ${currentRecording.status}). Salto.`);
-            return { status: 'already_done', reason: currentRecording.status };
+        
+        if (currentRecording) {
+            // 1. Caso Completato o Skippato -> Esci
+            if (currentRecording.status === 'PROCESSED' || currentRecording.status === 'SKIPPED') {
+                console.log(`[Scriba] ⏩ File ${fileName} già elaborato (stato: ${currentRecording.status}). Salto.`);
+                return { status: 'already_done', reason: currentRecording.status };
+            }
+
+            // 2. Caso "Limbo" (TRANSCRIBED ma non PROCESSED) -> Recupero
+            // Se il server è crashato dopo la trascrizione ma prima dell'accodamento alla correzione
+            if (currentRecording.status === 'TRANSCRIBED') {
+                console.log(`[Scriba] ⚠️ File ${fileName} trovato in stato TRANSCRIBED. Tento recupero verso coda correzione...`);
+                try {
+                    const segments = JSON.parse(currentRecording.transcription_text || '[]');
+                    if (segments.length > 0) {
+                         await correctionQueue.add('correction-job', {
+                            sessionId,
+                            fileName,
+                            segments: segments,
+                            campaignId
+                        }, {
+                            jobId: `correct-${fileName}`,
+                            attempts: 3,
+                            backoff: { type: 'exponential', delay: 2000 },
+                            removeOnComplete: true
+                        });
+                        console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
+                        return { status: 'recovered_to_correction' };
+                    }
+                } catch (e) {
+                    console.error(`[Scriba] ❌ Errore recupero JSON per ${fileName}, procedo con ritrascrizione.`);
+                    // Se fallisce il parse, lasciamo che il codice prosegua e ritrascriva
+                }
+            }
         }
 
         console.log(`[Scriba] 🔨 Inizio elaborazione: ${fileName} (Sessione: ${sessionId}) - Utente: ${userName}`);
@@ -132,7 +163,7 @@ export function startWorker() {
             host: process.env.REDIS_HOST || 'redis', 
             port: parseInt(process.env.REDIS_PORT || '6379') 
         },
-        concurrency: 3 // Limitato dalla CPU per Whisper
+        concurrency: 6 // Aumentato per modalità Turbo (Macchina 24GB RAM)
     });
 
     // --- WORKER 2: CORRECTION PROCESSING ---
@@ -165,14 +196,25 @@ export function startWorker() {
         concurrency: 5 // Più alto perché è I/O bound (chiamate API)
     });
 
-    // Gestione Errori
-    const handleFailure = (workerName: string) => (job: any, err: any) => {
+    // Gestione Errori Globale
+    const handleFailure = (workerName: string) => async (job: Job | undefined, err: Error) => {
         const attemptsMade = job?.attemptsMade || 0;
         const maxAttempts = job?.opts.attempts || 1;
-        if (attemptsMade < maxAttempts) {
-            console.warn(`[${workerName}] Job ${job?.id} fallito (tentativo ${attemptsMade}/${maxAttempts}): ${err.message}. Riprovo...`);
+        
+        if (attemptsMade >= maxAttempts) {
+            console.error(`[${workerName}] 💀 Job ${job?.id} MORTO dopo ${attemptsMade} tentativi: ${err.message}`);
+            
+            // AGGIORNAMENTO DB: Segniamo come ERROR per evitare il limbo
+            if (job?.data?.fileName) {
+                try {
+                    updateRecordingStatus(job.data.fileName, 'ERROR', null, `Job Failed: ${err.message}`);
+                    console.log(`[${workerName}] 📝 Stato DB aggiornato a ERROR per ${job.data.fileName}`);
+                } catch (dbErr) {
+                    console.error(`[${workerName}] ❌ Impossibile aggiornare DB per job fallito:`, dbErr);
+                }
+            }
         } else {
-            console.error(`[${workerName}] Job ${job?.id} fallito DEFINITIVAMENTE dopo ${attemptsMade} tentativi: ${err.message}`);
+            console.warn(`[${workerName}] ⚠️ Job ${job?.id} fallito (tentativo ${attemptsMade}/${maxAttempts}): ${err.message}. Riprovo...`);
         }
     };
 

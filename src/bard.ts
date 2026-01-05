@@ -101,10 +101,11 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
     } catch (err: any) {
         if (retries <= 0) throw err;
 
-        // Gestione base Rate Limit
         if (err.status === 429) {
-            console.warn(`[Bardo] 🛑 Rate Limit. Attesa forzata di ${(delay * 2) / 1000}s...`);
-            await new Promise(resolve => setTimeout(resolve, delay * 2));
+            // Gestione Rate Limit
+            const jitter = Math.random() * 1000;
+            console.warn(`[Bardo] 🛑 Rate Limit. Attesa forzata di ${(delay * 2 + jitter) / 1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, delay * 2 + jitter));
         } else {
             console.warn(`[Bardo] ⚠️ Errore API (Tentativi rimasti: ${retries}). Riprovo tra ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -115,17 +116,50 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
 }
 
 /**
- * Batch Processing
+ * Batch Processing con Progress Bar Integrata
+ * @param items Array di elementi da processare
+ * @param batchSize Quanti elementi processare in parallelo
+ * @param fn Funzione da eseguire per ogni elemento
+ * @param taskName Nome del task per il log (es. "Correzione", "Embeddings")
  */
-async function processInBatches<T, R>(items: T[], batchSize: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+async function processInBatches<T, R>(
+    items: T[],
+    batchSize: number,
+    fn: (item: T, index: number) => Promise<R>,
+    taskName?: string
+): Promise<R[]> {
     const results: R[] = [];
+    const totalBatches = Math.ceil(items.length / batchSize);
+
+    if (taskName) {
+        console.log(`[Bardo] 🚀 Avvio ${taskName}: ${items.length} elementi in ${totalBatches} batch (Concorrenza: ${batchSize}).`);
+    }
+
+    let completedBatches = 0;
+
     for (let i = 0; i < items.length; i += batchSize) {
         const batch = items.slice(i, i + batchSize);
-        // Log ridotto per non intasare, ma utile per debug
-        // console.log(`[Bardo] ⚙️  Processing chunk group ${Math.floor(i/batchSize) + 1}/${Math.ceil(items.length/batchSize)}`);
+
+        // Esecuzione parallela del batch
         const batchResults = await Promise.all(batch.map((item, batchIndex) => fn(item, i + batchIndex)));
         results.push(...batchResults);
+
+        completedBatches++;
+
+        // Visualizzazione Progress Bar
+        if (taskName) {
+            const percent = Math.round((completedBatches / totalBatches) * 100);
+            const filledLen = Math.round((20 * completedBatches) / totalBatches);
+            const bar = '█'.repeat(filledLen) + '░'.repeat(20 - filledLen);
+
+            // Logghiamo sempre se i batch sono pochi (<50), altrimenti ogni 5 step per non intasare
+            if (totalBatches < 50 || completedBatches % 5 === 0 || completedBatches === totalBatches) {
+                console.log(`[Bardo] ⏳ ${taskName}: ${completedBatches}/${totalBatches} [${bar}] ${percent}%`);
+            }
+        }
     }
+
+    if (taskName) console.log(`[Bardo] ✅ ${taskName} completato.`);
     return results;
 }
 
@@ -147,8 +181,6 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 
 // --- FASE 1: MAP ---
 async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<{text: string, tokens: number}> {
-    console.log(`[Bardo] 🗺️  Fase MAP: Analisi chunk ${index + 1}/${total} (${chunk.length} chars) usando ${FAST_MODEL_NAME}...`);
-
     const mapPrompt = `Sei un analista di D&D.
     ${castContext}
     Estrai un elenco puntato cronologico strutturato esattamente così:
@@ -180,7 +212,7 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
     }
 }
 
-// --- RAG: INGESTION (LOSSLESS SLIDING WINDOW) ---
+// --- RAG: INGESTION ---
 export async function ingestSessionRaw(sessionId: string) {
     const campaignId = getSessionCampaignId(sessionId);
     if (!campaignId) {
@@ -188,7 +220,7 @@ export async function ingestSessionRaw(sessionId: string) {
         return;
     }
 
-    console.log(`[RAG] 🧠 Ingestione RAW (Double Encoding) per sessione ${sessionId}...`);
+    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId}...`);
 
     // 1. Pulisci vecchi frammenti per ENTRAMBI i modelli
     deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
@@ -200,11 +232,7 @@ export async function ingestSessionRaw(sessionId: string) {
 
     const startTime = getSessionStartTime(sessionId) || 0;
 
-    interface DialogueLine {
-        timestamp: number;
-        text: string;
-    }
-
+    interface DialogueLine { timestamp: number; text: string; }
     const lines: DialogueLine[] = [];
 
     for (const t of transcriptions) {
@@ -217,11 +245,7 @@ export async function ingestSessionRaw(sessionId: string) {
                     const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
                     const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
                     const charName = t.character_name || "Sconosciuto";
-
-                    lines.push({
-                        timestamp: absTime,
-                        text: `[${timeStr}] ${charName}: ${seg.text}`
-                    });
+                    lines.push({ timestamp: absTime, text: `[${timeStr}] ${charName}: ${seg.text}` });
                 }
             }
         } catch (e) { /* Ignora errori parsing */ }
@@ -230,10 +254,7 @@ export async function ingestSessionRaw(sessionId: string) {
     lines.sort((a, b) => a.timestamp - b.timestamp);
 
     // 3. Sliding Window Chunking
-    // Uniamo tutto in un unico testo ma teniamo traccia degli indici per recuperare il timestamp approssimativo
     const fullText = lines.map(l => l.text).join("\n");
-
-    // Chunk size ~1000 chars, Overlap ~200 chars
     const CHUNK_SIZE = 1000;
     const OVERLAP = 200;
 
@@ -241,113 +262,54 @@ export async function ingestSessionRaw(sessionId: string) {
     let i = 0;
     while (i < fullText.length) {
         let end = Math.min(i + CHUNK_SIZE, fullText.length);
-
-        // Cerca di non tagliare a metà una riga
         if (end < fullText.length) {
             const lastNewLine = fullText.lastIndexOf('\n', end);
-            if (lastNewLine > i + (CHUNK_SIZE * 0.5)) {
-                end = lastNewLine;
-            }
+            if (lastNewLine > i + (CHUNK_SIZE * 0.5)) end = lastNewLine;
         }
-
         const chunkText = fullText.substring(i, end).trim();
-
-        // Trova il timestamp iniziale approssimativo parsando la prima riga del chunk
-        // Formato: [MM:SS] ...
-        let chunkTimestamp = startTime; // Default
+        let chunkTimestamp = startTime;
         const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
-        if (timeMatch) {
-            const mins = parseInt(timeMatch[1]);
-            const secs = parseInt(timeMatch[2]);
-            chunkTimestamp = startTime + (mins * 60000) + (secs * 1000);
-        }
+        if (timeMatch) chunkTimestamp = startTime + (parseInt(timeMatch[1]) * 60000) + (parseInt(timeMatch[2]) * 1000);
 
-        if (chunkText.length > 50) { // Ignora chunk troppo piccoli
-            chunks.push({
-                text: chunkText,
-                timestamp: chunkTimestamp
-            });
-        }
-
+        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp });
         if (end >= fullText.length) break;
         i = end - OVERLAP;
     }
 
-    console.log(`[RAG] Generati ${chunks.length} chunk. Inizio embedding parallelo...`);
-
-    // 4. Calcolo Embedding e Salvataggio (Double Encoding)
-    let savedCountOpenAI = 0;
-    let savedCountOllama = 0;
-    let errors: string[] = [];
-
-    // Processiamo in batch per non saturare
+    // 4. Embedding con Progress Bar
+    // Usiamo una concorrenza sicura per gli embedding (5 richieste parallele)
     await processInBatches(chunks, 5, async (chunk, idx) => {
-        // Prepariamo le promise per entrambi i provider
         const promises = [];
 
         // OpenAI Task
         promises.push(
-            openaiEmbedClient.embeddings.create({
-                model: EMBEDDING_MODEL_OPENAI,
-                input: chunk.text
-            }).then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            openaiEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OPENAI, input: chunk.text })
+                .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
                 .catch(err => ({ provider: 'openai', error: err.message }))
         );
 
         // Ollama Task
         promises.push(
-            ollamaEmbedClient.embeddings.create({
-                model: EMBEDDING_MODEL_OLLAMA,
-                input: chunk.text
-            }).then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            ollamaEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OLLAMA, input: chunk.text })
+                .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
                 .catch(err => ({ provider: 'ollama', error: err.message }))
         );
 
-        // Eseguiamo in parallelo
         const results = await Promise.allSettled(promises);
 
         for (const res of results) {
             if (res.status === 'fulfilled') {
                 const val = res.value as any;
-                if (val.error) {
-                    console.warn(`[RAG] ⚠️ Errore embedding ${val.provider} chunk ${idx}:`, val.error);
-                    errors.push(`${val.provider}: ${val.error}`);
-                    continue;
-                }
-
-                if (val.provider === 'openai') {
+                if (!val.error) {
                     insertKnowledgeFragment(
-                        campaignId,
-                        sessionId,
-                        chunk.text,
-                        val.data,
-                        EMBEDDING_MODEL_OPENAI,
+                        campaignId, sessionId, chunk.text, val.data,
+                        val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
                         chunk.timestamp
                     );
-                    savedCountOpenAI++;
-                } else if (val.provider === 'ollama') {
-                    insertKnowledgeFragment(
-                        campaignId,
-                        sessionId,
-                        chunk.text,
-                        val.data,
-                        EMBEDDING_MODEL_OLLAMA,
-                        chunk.timestamp
-                    );
-                    savedCountOllama++;
                 }
-            } else {
-                console.warn(`[RAG] ⚠️ Errore embedding chunk ${idx}:`, res.reason);
             }
         }
-    });
-
-    console.log(`[RAG] ✅ Indicizzazione completata: OpenAI=${savedCountOpenAI}, Ollama=${savedCountOllama}.`);
-
-    // Se entrambi hanno fallito completamente, lanciamo errore
-    if (savedCountOpenAI === 0 && savedCountOllama === 0 && chunks.length > 0) {
-        throw new Error(`Ingestione fallita completamente. Errori: ${errors.slice(0, 3).join(', ')}`);
-    }
+    }, "Calcolo Embeddings (RAG)");
 }
 
 // --- RAG: SEARCH ---
@@ -360,37 +322,19 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
     console.log(`[RAG] 🔍 Ricerca con modello: ${model} (${provider})`);
 
     try {
-        // 1. Genera embedding della query
-        const resp = await client.embeddings.create({
-            model: model,
-            input: query
-        });
+        const resp = await client.embeddings.create({ model: model, input: query });
         const queryVector = resp.data[0].embedding;
-
-        // 2. Recupera frammenti dal DB (solo quelli compatibili col modello)
         const fragments = getKnowledgeFragments(campaignId, model);
 
-        if (fragments.length === 0) {
-            console.log("[RAG] Nessun frammento trovato per questo modello.");
-            return [];
-        }
+        if (fragments.length === 0) return [];
 
-        // 3. Calcola similarità
         const scored = fragments.map(f => {
             const vector = JSON.parse(f.embedding_json);
-            return {
-                content: f.content,
-                score: cosineSimilarity(queryVector, vector)
-            };
+            return { content: f.content, score: cosineSimilarity(queryVector, vector) };
         });
 
-        // 4. Ordina e filtra
         scored.sort((a, b) => b.score - a.score);
-
-        scored.slice(0, 3).forEach((s, i) => console.log(`[RAG] Match #${i+1} (${s.score.toFixed(4)}): ${s.content.substring(0, 50)}...`));
-
         return scored.slice(0, limit).map(s => s.content);
-
     } catch (e) {
         console.error("[RAG] ❌ Errore ricerca:", e);
         return [];
@@ -399,14 +343,12 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 
 // --- RAG: ASK BARD ---
 export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
-    // 1. Cerca nella memoria
     const context = await searchKnowledge(campaignId, question, 5);
-
     const contextText = context.length > 0
         ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
         : "Nessuna memoria specifica trovata.";
 
-    // 2. Genera risposta - PROMPT MODIFICATO
+    // Prompt Ricco Ripristinato
     const systemPrompt = `Sei il Bardo della campagna. Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
     
     ${contextText}
@@ -418,19 +360,11 @@ export async function askBard(campaignId: number, question: string, history: { r
     4. Se trovi informazioni contrastanti nelle trascrizioni, riportale come voci diverse.
     5. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
 
-    const messages: any[] = [
-        { role: "system", content: systemPrompt }
-    ];
-
-    // Aggiungi cronologia
-    messages.push(...history);
-
-    // Aggiungi domanda corrente
-    messages.push({ role: "user", content: question });
+    const messages: any[] = [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: question }];
 
     try {
         const response = await withRetry(() => openai.chat.completions.create({
-            model: FAST_MODEL_NAME, // USA IL MODELLO VELOCE PER LE RISPOSTE
+            model: FAST_MODEL_NAME, // Fast per le chat
             messages: messages as any
         }));
         return response.choices[0].message.content || "Il Bardo è muto.";
@@ -440,23 +374,9 @@ export async function askBard(campaignId: number, question: string, history: { r
     }
 }
 
-// --- CORREZIONE TRASCRIZIONE (OTTIMIZZATA: PARALLELA + PROGRESS BAR) ---
+// --- CORREZIONE TRASCRIZIONE ---
 export async function correctTranscription(segments: any[], campaignId?: number): Promise<any[]> {
-    const BATCH_SIZE = 20;
-
-    // 1. Prepariamo tutti i batch
-    const allBatches: any[][] = [];
-    for (let i = 0; i < segments.length; i += BATCH_SIZE) {
-        allBatches.push(segments.slice(i, i + BATCH_SIZE));
-    }
-
-    const totalBatches = allBatches.length;
-
-    // LOG DIAGNOSTICO: Importante per capire se Whisper ha allucinato
-    console.log(`[Bardo] 🧹 Inizio correzione: ${segments.length} segmenti totali divisi in ${totalBatches} batch.`);
-    console.log(`[Bardo] 🚀 Modalità Parallela attiva (Concorrenza: ${CONCURRENCY_LIMIT}).`);
-
-    // 2. Costruiamo il contesto
+    // 1. Costruzione Contesto (una tantum)
     let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
@@ -476,10 +396,18 @@ export async function correctTranscription(segments: any[], campaignId?: number)
         }
     }
 
-    // 3. Processamento singolo batch
-    const processBatch = async (batch: any[], index: number) => {
+    // 2. Prepariamo i batch (gruppi di segmenti)
+    const BATCH_SIZE = 20;
+    const allBatches: any[][] = [];
+    for (let i = 0; i < segments.length; i += BATCH_SIZE) {
+        allBatches.push(segments.slice(i, i + BATCH_SIZE));
+    }
+
+    // 3. Usiamo la funzione centralizzata processInBatches per gestire parallelismo e progress bar
+    const results = await processInBatches(allBatches, CONCURRENCY_LIMIT, async (batch, idx) => {
         const batchInput = { segments: batch };
-        // Prompt ottimizzato per JSON mode
+
+        // Prompt Ricco Ripristinato
         const prompt = `Sei un correttore di bozze esperto per sessioni di D&D.
 ${contextInfo}
 
@@ -511,55 +439,22 @@ ${JSON.stringify(batchInput)}`;
             }));
 
             const content = response.choices[0].message.content;
-            if (!content) throw new Error("Risposta vuota");
-
+            if (!content) throw new Error("Empty");
             const parsed = JSON.parse(content);
-            if (parsed.segments && Array.isArray(parsed.segments)) {
-                return parsed.segments;
-            } else {
-                throw new Error("Formato JSON non valido (manca chiave 'segments')");
-            }
+            return parsed.segments || batch; // Ritorna i segmenti corretti o l'originale se fallisce il parsing
         } catch (err) {
-            console.error(`[Bardo] ❌ Errore batch ${index + 1}, fallback su originale.`);
-            return batch; // Fallback: usa originale per non perdere dati
+            console.error(`[Bardo] ⚠️ Errore batch ${idx+1}, uso originale.`);
+            return batch;
         }
-    };
+    }, "Correzione Trascrizione");
 
-    // 4. Esecuzione Parallela con Feedback Visivo
-    let completed = 0;
-
-    // Wrapper per aggiornare la progress bar
-    const trackedProcess = async (batch: any[], idx: number) => {
-        const result = await processBatch(batch, idx);
-        completed++;
-
-        // Barra di avanzamento
-        const percent = Math.round((completed / totalBatches) * 100);
-        const filledLen = Math.round((20 * completed) / totalBatches);
-        const bar = '█'.repeat(filledLen) + '░'.repeat(20 - filledLen);
-
-        // Logghiamo sempre se i batch sono pochi, o ogni 5 se sono tanti
-        if (totalBatches < 50 || completed % 5 === 0 || completed === totalBatches) {
-            console.log(`[Bardo] ⏳ Avanzamento: ${completed}/${totalBatches} [${bar}] ${percent}%`);
-        }
-
-        return result;
-    };
-
-    // Usiamo CONCURRENCY_LIMIT (es. 5) per processare 5 batch insieme
-    const results = await processInBatches(allBatches, CONCURRENCY_LIMIT, trackedProcess);
-
-    const finalSegments = results.flat();
-    console.log(`[Bardo] ✅ Correzione completata.`);
-    return finalSegments;
+    // Appiattiamo il risultato (array di array -> array unico)
+    return results.flat();
 }
 
-// --- FUNZIONE PRINCIPALE ---
+// --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, tokens: number}> {
-    console.log(`[Bardo] 📚 Recupero trascrizioni per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
-    console.log(`[Bardo] ⚙️  Configurazione: Chunk Size=${MAX_CHUNK_SIZE}, Overlap=${CHUNK_OVERLAP}, Provider=${useOllama ? 'Ollama' : 'OpenAI'}`);
-
-    // NOTA: L'ingestione RAG è stata spostata in index.ts per fornire feedback all'utente.
+    console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
 
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
@@ -590,15 +485,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         castContext += "Nota: Profili personaggi non disponibili per questa sessione legacy.\n";
     }
 
-    // --- RICOSTRUZIONE INTELLIGENTE (DIARIZZAZIONE) ---
-    interface DialogueFragment {
-        absoluteTime: number;
-        character: string;
-        text: string;
-    }
-
-    const allFragments: DialogueFragment[] = [];
-
+    // Ricostruzione dialogo lineare
+    const allFragments = [];
     for (const t of transcriptions) {
         try {
             const segments = JSON.parse(t.transcription_text);
@@ -610,41 +498,31 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                         text: seg.text
                     });
                 }
-            } else { throw new Error("Formato JSON non valido"); }
-        } catch (e) {
-            allFragments.push({
-                absoluteTime: t.timestamp,
-                character: t.character_name || "Sconosciuto",
-                text: t.transcription_text
-            });
-        }
+            }
+        } catch (e) {}
     }
-
     allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
 
-    let fullDialogue = allFragments
-        .map(f => {
-            const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
-            const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
-            const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            return `[${timeStr}] ${f.character}: ${f.text}`;
-        })
-        .join("\n");
+    let fullDialogue = allFragments.map(f => {
+        const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
+        const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
+        const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        return `[${timeStr}] ${f.character}: ${f.text}`;
+    }).join("\n");
 
     let contextForFinalStep = "";
     let accumulatedTokens = 0;
 
-    // Se il testo è lungo, usiamo Map-Reduce
+    // FASE MAP: Analisi frammenti
     if (fullDialogue.length > MAX_CHUNK_SIZE) {
-        console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars > ${MAX_CHUNK_SIZE}). Attivo Map-Reduce.`);
+        console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars). Avvio Map-Reduce.`);
 
         const chunks = splitTextInChunks(fullDialogue, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
-        console.log(`[Bardo] 🔪 Diviso in ${chunks.length} segmenti. Concorrenza: ${CONCURRENCY_LIMIT}`);
 
+        // Usiamo processInBatches con barra di avanzamento
         const mapResults = await processInBatches(chunks, CONCURRENCY_LIMIT, async (chunk, index) => {
-            const result = await extractFactsFromChunk(chunk, index, chunks.length, castContext);
-            return result;
-        });
+            return await extractFactsFromChunk(chunk, index, chunks.length, castContext);
+        }, "Analisi Frammenti (Map Phase)");
 
         contextForFinalStep = mapResults.map(r => r.text).join("\n\n--- SEGMENTO SUCCESSIVO ---\n\n");
         accumulatedTokens = mapResults.reduce((acc, curr) => acc + curr.tokens, 0);
@@ -652,9 +530,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         contextForFinalStep = fullDialogue;
     }
 
-    // --- FASE 2: REDUCE ---
-    console.log(`[Bardo] ✍️  Fase REDUCE: Generazione racconto...`);
+    // FASE REDUCE: Scrittura finale
+    console.log(`[Bardo] ✍️  Fase REDUCE: Scrittura racconto finale...`);
 
+    // Prompt Ricco Ripristinato
     const reducePrompt = `Sei un Bardo. ${TONES[tone]}
     ${castContext}
     
@@ -667,7 +546,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
 
     try {
         const response = await withRetry(() => openai.chat.completions.create({
-            model: MODEL_NAME, // USA IL MODELLO SMART (GPT-5.2) PER LA PROSA FINALE
+            model: MODEL_NAME, // USA IL MODELLO SMART
             messages: [
                 { role: "system", content: reducePrompt },
                 { role: "user", content: contextForFinalStep }
@@ -677,10 +556,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         const finalSummary = response.choices[0].message.content || "Errore generazione.";
         accumulatedTokens += response.usage?.total_tokens || 0;
 
-        return {
-            summary: finalSummary,
-            tokens: accumulatedTokens
-        };
+        return { summary: finalSummary, tokens: accumulatedTokens };
     } catch (err: any) {
         console.error("Errore finale:", err);
         throw err;

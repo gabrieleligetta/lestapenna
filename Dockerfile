@@ -36,5 +36,8 @@ ENV NODE_ENV=production
 ENV OLLAMA_BASE_URL=http://ollama:11434/v1
 ENV AI_PROVIDER=ollama
 
+# Forza Python a non bufferizzare l'output (per vedere i log subito)
+ENV PYTHONUNBUFFERED=1
+
 # Comando di avvio produzione
 CMD ["node", "dist/index.js"]

@@ -19,7 +19,7 @@ import {
 } from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
-import { audioQueue, removeSessionJobs, clearQueue } from './queue';
+import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
 import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw } from './bard';
 import { mixSessionAudio } from './sessionMixer';
@@ -829,15 +829,20 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     const checkInterval = setInterval(async () => {
-        const jobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
-        const sessionJobs = jobs.filter(j => j.data && j.data.sessionId === sessionId);
+        const audioJobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
+        const correctionJobs = await correctionQueue.getJobs(['waiting', 'active', 'delayed']);
         
-        if (sessionJobs.length > 0) {
-             const details = await Promise.all(sessionJobs.map(async j => {
-                const state = await j.getState();
-                return `${j.data?.fileName} [${state}]`;
-            }));
-            console.log(`[Monitor] Sessione ${sessionId}: ancora ${sessionJobs.length} file... (${details.join(', ')})`);
+        const sessionAudioJobs = audioJobs.filter(j => j.data && j.data.sessionId === sessionId);
+        const sessionCorrectionJobs = correctionJobs.filter(j => j.data && j.data.sessionId === sessionId);
+        
+        const totalPending = sessionAudioJobs.length + sessionCorrectionJobs.length;
+
+        if (totalPending > 0) {
+             const details = [];
+             if (sessionAudioJobs.length > 0) details.push(`${sessionAudioJobs.length} audio`);
+             if (sessionCorrectionJobs.length > 0) details.push(`${sessionCorrectionJobs.length} correction`);
+             
+            console.log(`[Monitor] Sessione ${sessionId}: ancora ${totalPending} file... (${details.join(', ')})`);
         } else {
             clearInterval(checkInterval);
             console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);

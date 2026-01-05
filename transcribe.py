@@ -8,13 +8,13 @@ model_size = "medium"
 
 def load_model():
     # Ottimizzazione CPU ARM (M1/Oracle A1):
-    # cpu_threads=4: Usa tutti e 4 i core della tua futura istanza OCI.
+    # cpu_threads=4: Usa tutti e 3 i core della tua futura istanza OCI uno lo lasciamo per node.
     # num_workers=1: Evita parallelismi interni che saturano la memoria su file singoli.
     return WhisperModel(
         model_size, 
         device="cpu", 
         compute_type="int8", 
-        cpu_threads=4, 
+        cpu_threads=3,
         num_workers=1
     )
 
@@ -28,7 +28,7 @@ def process_audio(model, audio_file):
     # 3. word_timestamps=True: Migliora la precisione dei timestamp
     segments, info = model.transcribe(
         audio_file, 
-        beam_size=5,            # Cambia da 2 a 1 per velocità pura
+        beam_size=3,            # Cambia da 2 a 1 per velocità pura
         language="it",
         vad_filter=True,        # Fondamentale: ignora i silenzi
         vad_parameters=dict(min_silence_duration_ms=500), # Ignora pause > 0.5s

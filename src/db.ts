@@ -252,7 +252,7 @@ export const updateRecordingStatus = (filename: string, status: string, text: st
 export const getUnprocessedRecordings = () => {
     return db.prepare(`
         SELECT * FROM recordings 
-        WHERE status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING')
+        WHERE status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING', 'TRANSCRIBED')
     `).all() as Recording[];
 };
 
@@ -266,10 +266,11 @@ export const resetSessionData = (sessionId: string): Recording[] => {
 };
 
 export const resetUnfinishedRecordings = (sessionId: string): Recording[] => {
+    // Resetta anche quelli rimasti in TRANSCRIBED (che non hanno completato la correzione)
     db.prepare(`
         UPDATE recordings 
         SET status = 'PENDING', error_log = NULL 
-        WHERE session_id = ? AND status IN ('QUEUED', 'PROCESSING')
+        WHERE session_id = ? AND status IN ('QUEUED', 'PROCESSING', 'TRANSCRIBED')
     `).run(sessionId);
 
     return db.prepare(`

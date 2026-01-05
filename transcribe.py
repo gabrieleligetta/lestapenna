@@ -1,129 +1,128 @@
 import sys
-import whisper
-import argparse
 import os
-import torch
-import warnings
 import json
-import re
-import io
+import argparse
+import logging
+import torch
 
-# Ignora warning inutili di PyTorch/Whisper
-warnings.filterwarnings("ignore")
+# Configura logging su STDERR per non sporcare il JSON su STDOUT
+logging.basicConfig(
+    level=logging.INFO,
+    format='[Python-Whisper] %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger()
 
-def log(message):
-    """Stampa log formattati per Node.js"""
-    # Usiamo sys.__stdout__ per assicurarci di scrivere sul terminale reale
-    # anche se abbiamo reindirizzato stdout altrove
-    print(f"[Python-Whisper] {message}", file=sys.__stdout__, flush=True)
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    logger.error("ERRORE CRITICO: 'faster_whisper' non installato.")
+    sys.exit(1)
 
-class ProgressCapture(io.StringIO):
-    """
-    Classe magica che intercetta l'output 'verbose' di Whisper.
-    Invece di stampare righe di testo, calcola la percentuale e stampa la barra.
-    """
-    def __init__(self, total_duration_secs):
-        super().__init__()
-        self.total_duration_secs = total_duration_secs
-        self.last_percent = -1
-        # Regex per catturare il timestamp finale del segmento: "00:00.000 --> 00:05.000"
-        self.timestamp_pattern = re.compile(r"--> (\d{2}):(\d{2})\.(\d{3})")
+def print_progress(current, total):
+    """Disegna la barra di avanzamento su STDERR"""
+    if total <= 0: return
+    percentage = int((current / total) * 100)
+    if percentage > 100: percentage = 100
 
-    def write(self, text):
-        # Cerca il timestamp nell'output di Whisper
-        match = self.timestamp_pattern.search(text)
-        if match and self.total_duration_secs > 0:
-            minutes = int(match.group(1))
-            seconds = int(match.group(2))
-            current_seconds = (minutes * 60) + seconds
+    bar_length = 20
+    filled_length = int(bar_length * percentage // 100)
+    bar = '█' * filled_length + '░' * (bar_length - filled_length)
 
-            # Calcola percentuale
-            percent = int((current_seconds / self.total_duration_secs) * 100)
-            if percent > 100: percent = 100
+    # \r serve per sovrascrivere la riga (effetto animazione)
+    sys.stderr.write(f"\r[Python-Whisper] ⏳ Elaborazione: [{bar}] {percentage}%")
+    sys.stderr.flush()
 
-            # Aggiorna la barra solo se la % è cambiata (per non intasare i log)
-            if percent > self.last_percent:
-                bar_length = 20
-                filled_length = int(bar_length * percent / 100)
-                bar = '█' * filled_length + '░' * (bar_length - filled_length)
+def transcribe_file(model, audio_path):
+    if not os.path.exists(audio_path):
+        return {"error": f"File not found: {audio_path}"}
 
-                # Stampa la barra sul terminale VERO
-                print(f"[Python-Whisper] ⏳ Trascrizione: [{bar}] {percent}%", file=sys.__stdout__, flush=True)
-                self.last_percent = percent
+    logger.info(f"🗣️  Inizio trascrizione: {os.path.basename(audio_path)}")
 
-    def flush(self):
-        pass
+    try:
+        # beam_size=5 è lo standard per alta qualità
+        segments_generator, info = model.transcribe(audio_path, beam_size=5, language="it")
+
+        duration = info.duration
+        logger.info(f"📏 Durata audio rilevata: {duration:.2f}s")
+
+        segment_list = []
+        full_text = []
+
+        # Iteriamo sul generatore per estrarre i segmenti e aggiornare la barra
+        for segment in segments_generator:
+            segment_data = {
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text.strip()
+            }
+            segment_list.append(segment_data)
+            full_text.append(segment.text.strip())
+
+            # Aggiorna barra
+            print_progress(segment.end, duration)
+
+        # A capo dopo la barra
+        sys.stderr.write("\n")
+        logger.info(f"✅ Completato. Segmenti generati: {len(segment_list)}")
+
+        return {
+            "text": " ".join(full_text),
+            "segments": segment_list,
+            "language": info.language,
+            "duration": info.duration
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Errore durante trascrizione: {e}")
+        return {"error": str(e)}
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("audio_path", help="Path to the audio file")
+    parser.add_argument("audio_path", nargs="?", help="Path to file (optional in daemon mode)")
+    parser.add_argument("--daemon", action="store_true", help="Run in daemon mode")
     parser.add_argument("--model", default="medium", help="Whisper model size")
     args = parser.parse_args()
 
-    audio_path = args.audio_path
-    model_name = args.model
+    # Rilevamento Device Ottimizzato
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
 
-    if not os.path.exists(audio_path):
-        log(f"❌ ERRORE: File non trovato: {audio_path}")
+    logger.info(f"💻 Caricamento modello '{args.model}' su {device.upper()} ({compute_type})...")
+
+    try:
+        model = WhisperModel(args.model, device=device, compute_type=compute_type)
+        logger.info("✅ Modello caricato in memoria.")
+    except Exception as e:
+        logger.error(f"❌ ERRORE CRITICO caricamento modello: {e}")
         sys.exit(1)
 
-    # 1. Calcolo Durata Totale
-    total_duration = 0
-    try:
-        log("🎧 Analisi durata audio...")
-        # Carichiamo solo l'audio leggero per vedere quanto dura
-        audio = whisper.load_audio(audio_path)
-        total_duration = len(audio) / whisper.audio.SAMPLE_RATE
-        m = int(total_duration // 60)
-        s = int(total_duration % 60)
-        log(f"📏 Durata rilevata: {m}m {s}s")
-    except Exception as e:
-        log(f"⚠️ Impossibile calcolare durata: {e}")
+    if args.daemon:
+        logger.info("🚀 Avvio modalità DAEMON. In attesa di input su STDIN...")
+        print("READY", flush=True) # Segnale per Node.js
 
-    # 2. Caricamento Modello
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    log(f"💻 Dispositivo: {device.upper()}")
+        for line in sys.stdin:
+            audio_path = line.strip()
+            if not audio_path: continue
 
-    try:
-        model_path = os.path.expanduser(f"~/.cache/whisper/{model_name}.pt")
-        if not os.path.exists(model_path) and not os.path.exists(f"/root/.cache/whisper/{model_name}.pt"):
-            log(f"⏳ Download modello '{model_name}' in corso (richiede tempo)...")
+            result = transcribe_file(model, audio_path)
 
-        model = whisper.load_model(model_name, device=device)
-        log("✅ Modello caricato in memoria.")
+            # Output JSON puro su STDOUT
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+            logger.info("In attesa del prossimo file...")
+    else:
+        if not args.audio_path:
+            logger.error("Errore: audio_path richiesto se non in modalità daemon")
+            sys.exit(1)
 
-        # 3. Trascrizione con Intercettazione Output
-        log(f"🗣️  Avvio trascrizione...")
-
-        # Salviamo lo stdout originale
-        original_stdout = sys.stdout
-
-        try:
-            # Reindirizziamo stdout alla nostra classe che disegna le barre
-            sys.stdout = ProgressCapture(total_duration)
-
-            # verbose=True è FONDAMENTALE: fa stampare a Whisper i timestamp che noi catturiamo
-            result = model.transcribe(
-                audio_path,
-                verbose=True,
-                fp16=False,
-                language="it"
-            )
-        finally:
-            # Ripristiniamo stdout o non vedremo il JSON finale!
-            sys.stdout = original_stdout
-
-        segment_count = len(result['segments'])
-        log(f"✅ Trascrizione completata! Generati {segment_count} segmenti.")
-
-        # Output JSON finale per Node.js
+        result = transcribe_file(model, args.audio_path)
         print(json.dumps(result, ensure_ascii=False), flush=True)
 
-    except Exception as e:
-        # Ripristina stdout in caso di errore per vedere il log
-        sys.stdout = sys.__stdout__
-        log(f"❌ ERRORE CRITICO WHISPER: {str(e)}")
-        sys.exit(1)
-
 if __name__ == "__main__":
+    # Forza UTF-8 per evitare errori di encoding su log/json
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8')
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr.reconfigure(encoding='utf-8')
+
     main()

@@ -98,10 +98,18 @@ function splitTextInChunks(text: string, chunkSize: number = MAX_CHUNK_SIZE, ove
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
     try {
         return await fn();
-    } catch (err) {
+    } catch (err: any) {
         if (retries <= 0) throw err;
-        console.warn(`[Bardo] ⚠️ Errore API (Tentativi rimasti: ${retries}). Riprovo tra ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+
+        // Gestione base Rate Limit
+        if (err.status === 429) {
+            console.warn(`[Bardo] 🛑 Rate Limit. Attesa forzata di ${(delay * 2) / 1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, delay * 2));
+        } else {
+            console.warn(`[Bardo] ⚠️ Errore API (Tentativi rimasti: ${retries}). Riprovo tra ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
         return withRetry(fn, retries - 1, delay * 2);
     }
 }
@@ -113,7 +121,8 @@ async function processInBatches<T, R>(items: T[], batchSize: number, fn: (item: 
     const results: R[] = [];
     for (let i = 0; i < items.length; i += batchSize) {
         const batch = items.slice(i, i + batchSize);
-        console.log(`[Bardo] ⚙️  Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(items.length/batchSize)} (Size: ${batch.length})`);
+        // Log ridotto per non intasare, ma utile per debug
+        // console.log(`[Bardo] ⚙️  Processing chunk group ${Math.floor(i/batchSize) + 1}/${Math.ceil(items.length/batchSize)}`);
         const batchResults = await Promise.all(batch.map((item, batchIndex) => fn(item, i + batchIndex)));
         results.push(...batchResults);
     }
@@ -431,10 +440,23 @@ export async function askBard(campaignId: number, question: string, history: { r
     }
 }
 
-// --- CORREZIONE TRASCRIZIONE ---
+// --- CORREZIONE TRASCRIZIONE (OTTIMIZZATA: PARALLELA + PROGRESS BAR) ---
 export async function correctTranscription(segments: any[], campaignId?: number): Promise<any[]> {
-    console.log(`[Bardo] 🧹 Inizio correzione trascrizione (${segments.length} segmenti) con ${FAST_MODEL_NAME}...`);
+    const BATCH_SIZE = 20;
 
+    // 1. Prepariamo tutti i batch
+    const allBatches: any[][] = [];
+    for (let i = 0; i < segments.length; i += BATCH_SIZE) {
+        allBatches.push(segments.slice(i, i + BATCH_SIZE));
+    }
+
+    const totalBatches = allBatches.length;
+
+    // LOG DIAGNOSTICO: Importante per capire se Whisper ha allucinato
+    console.log(`[Bardo] 🧹 Inizio correzione: ${segments.length} segmenti totali divisi in ${totalBatches} batch.`);
+    console.log(`[Bardo] 🚀 Modalità Parallela attiva (Concorrenza: ${CONCURRENCY_LIMIT}).`);
+
+    // 2. Costruiamo il contesto
     let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
@@ -454,14 +476,10 @@ export async function correctTranscription(segments: any[], campaignId?: number)
         }
     }
 
-    const BATCH_SIZE = 20;
-    const correctedSegments: any[] = [];
-
-    for (let i = 0; i < segments.length; i += BATCH_SIZE) {
-        const batch = segments.slice(i, i + BATCH_SIZE);
+    // 3. Processamento singolo batch
+    const processBatch = async (batch: any[], index: number) => {
         const batchInput = { segments: batch };
-        const batchJson = JSON.stringify(batchInput);
-
+        // Prompt ottimizzato per JSON mode
         const prompt = `Sei un correttore di bozze esperto per sessioni di D&D.
 ${contextInfo}
 
@@ -480,11 +498,11 @@ IMPORTANTE:
 3. Restituisci un oggetto JSON con la chiave "segments".
 
 Input:
-${batchJson}`;
+${JSON.stringify(batchInput)}`;
 
         try {
             const response = await withRetry(() => openai.chat.completions.create({
-                model: FAST_MODEL_NAME, // USA IL MODELLO VELOCE
+                model: FAST_MODEL_NAME,
                 messages: [
                     { role: "system", content: "Sei un assistente che parla solo JSON valido." },
                     { role: "user", content: prompt }
@@ -496,23 +514,44 @@ ${batchJson}`;
             if (!content) throw new Error("Risposta vuota");
 
             const parsed = JSON.parse(content);
-
             if (parsed.segments && Array.isArray(parsed.segments)) {
-                if (parsed.segments.length !== batch.length) {
-                    console.warn(`[Bardo] ⚠️ Mismatch lunghezza batch ${i} (In: ${batch.length}, Out: ${parsed.segments.length}).`);
-                }
-                correctedSegments.push(...parsed.segments);
+                return parsed.segments;
             } else {
                 throw new Error("Formato JSON non valido (manca chiave 'segments')");
             }
-
         } catch (err) {
-            console.error(`[Bardo] ❌ Errore correzione batch ${i}:`, err);
-            correctedSegments.push(...batch);
+            console.error(`[Bardo] ❌ Errore batch ${index + 1}, fallback su originale.`);
+            return batch; // Fallback: usa originale per non perdere dati
         }
-    }
+    };
 
-    return correctedSegments;
+    // 4. Esecuzione Parallela con Feedback Visivo
+    let completed = 0;
+
+    // Wrapper per aggiornare la progress bar
+    const trackedProcess = async (batch: any[], idx: number) => {
+        const result = await processBatch(batch, idx);
+        completed++;
+
+        // Barra di avanzamento
+        const percent = Math.round((completed / totalBatches) * 100);
+        const filledLen = Math.round((20 * completed) / totalBatches);
+        const bar = '█'.repeat(filledLen) + '░'.repeat(20 - filledLen);
+
+        // Logghiamo sempre se i batch sono pochi, o ogni 5 se sono tanti
+        if (totalBatches < 50 || completed % 5 === 0 || completed === totalBatches) {
+            console.log(`[Bardo] ⏳ Avanzamento: ${completed}/${totalBatches} [${bar}] ${percent}%`);
+        }
+
+        return result;
+    };
+
+    // Usiamo CONCURRENCY_LIMIT (es. 5) per processare 5 batch insieme
+    const results = await processInBatches(allBatches, CONCURRENCY_LIMIT, trackedProcess);
+
+    const finalSegments = results.flat();
+    console.log(`[Bardo] ✅ Correzione completata.`);
+    return finalSegments;
 }
 
 // --- FUNZIONE PRINCIPALE ---

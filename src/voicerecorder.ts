@@ -65,7 +65,7 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     const opusStream = receiver.subscribe(userId, {
         end: {
             behavior: EndBehaviorType.AfterSilence,
-            duration: 2000,
+            duration: 10000,
         },
     });
 

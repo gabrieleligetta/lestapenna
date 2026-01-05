@@ -163,7 +163,7 @@ export function startWorker() {
             host: process.env.REDIS_HOST || 'redis', 
             port: parseInt(process.env.REDIS_PORT || '6379') 
         },
-        concurrency: 6 // Aumentato per modalità Turbo (Macchina 24GB RAM)
+        concurrency: 3 // Aumentato per modalità Turbo (Macchina 24GB RAM)
     });
 
     // --- WORKER 2: CORRECTION PROCESSING ---

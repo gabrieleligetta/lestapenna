@@ -163,7 +163,13 @@ export function startWorker() {
             host: process.env.REDIS_HOST || 'redis', 
             port: parseInt(process.env.REDIS_PORT || '6379') 
         },
-        concurrency: 3 // Aumentato per modalità Turbo (Macchina 24GB RAM)
+        concurrency: 2, // Teniamo basso per la CPU
+        
+        // --- AGGIUNTA FONDAMENTALE PER EVITARE "JOB STALLED" ---
+        lockDuration: 300000, // 5 minuti (tempo in cui il worker può stare in silenzio prima di essere considerato morto)
+        lockRenewTime: 60000, // Rinnova il lock ogni minuto
+        maxStalledCount: 0,   // Non considerare mai il job come stalled se sta lavorando
+        // -------------------------------------------------------
     });
 
     // --- WORKER 2: CORRECTION PROCESSING ---

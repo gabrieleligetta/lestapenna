@@ -1,11 +1,23 @@
 /.env
 .idea
 node_modules
+
+# Recordings
 recordings/*
+!recordings/.gitkeep
+
+# Batch Processing
 batch_processing/*
+!batch_processing/.gitkeep
 batch_process/*
-hf_cache/
-data/
+!batch_process/.gitkeep
+
+# Cache and Data
+hf_cache/*
+!hf_cache/.gitkeep
+data/*
+!data/.gitkeep
+
 /dist/
 /start-ollama.sh
 /stop-ollama.sh

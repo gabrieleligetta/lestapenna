@@ -41,7 +41,7 @@ def transcribe_file(model, audio_path):
 
     try:
         # beam_size=5 è lo standard per alta qualità
-        segments_generator, info = model.transcribe(audio_path, beam_size=5, language="it")
+        segments_generator, info = model.transcribe(audio_path, beam_size=1, language="it")
 
         duration = info.duration
         logger.info(f"📏 Durata audio rilevata: {duration:.2f}s")

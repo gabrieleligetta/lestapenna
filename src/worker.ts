@@ -42,7 +42,7 @@ export function startWorker() {
                             segments: segments,
                             campaignId
                         }, {
-                            jobId: `correct-${fileName}`,
+                            jobId: `correct-${fileName}-${Date.now()}`,
                             attempts: 3,
                             backoff: { type: 'exponential', delay: 2000 },
                             removeOnComplete: true
@@ -133,7 +133,7 @@ export function startWorker() {
                     segments: result.segments,
                     campaignId
                 }, {
-                    jobId: `correct-${fileName}`,
+                    jobId: `correct-${fileName}-${Date.now()}`,
                     attempts: 3,
                     backoff: { type: 'exponential', delay: 2000 },
                     removeOnComplete: true

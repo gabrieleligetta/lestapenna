@@ -533,7 +533,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     // FASE REDUCE: Scrittura finale
     console.log(`[Bardo] ✍️  Fase REDUCE: Scrittura racconto finale...`);
 
-    // Prompt Ricco Ripristinato
+    // Prompt Ricco Ripristinato con NEGATIVE CONSTRAINTS
     const reducePrompt = `Sei un Bardo. ${TONES[tone]}
     ${castContext}
     
@@ -542,7 +542,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
 
     Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
-    Includi un titolo.`;
+    Includi un titolo.
+
+    ISTRUZIONI DI FORMATTAZIONE RIGIDE:
+    1. Non usare preamboli (es. "Ecco il riassunto").
+    2. Non usare chiusure conversazionali (es. "Fammi sapere se...", "Spero ti piaccia").
+    3. Non offrire di convertire il testo in altri formati o chiedere dettagli sul sistema di gioco.
+    4. L'output deve essere SOLO il testo narrativo e i punti richiesti. Nient'altro.
+    5. Termina l'output immediatamente dopo l'ultimo punto del contenuto.;
+    6. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
 
     try {
         const response = await withRetry(() => openai.chat.completions.create({

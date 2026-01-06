@@ -615,10 +615,10 @@ client.on('messageCreate', async (message: Message) => {
         await message.reply({ embeds: [embed] });
     }
 
-    // --- NUOVO: !teststream <URL> ---
+    // --- MODIFICATO: !teststream <URL> ---
     if (command === 'teststream') {
         const url = args[0];
-        if (!url) return await message.reply("Uso: `!teststream <URL_FILE_AUDIO>` (es. link diretto a mp3/wav)");
+        if (!url) return await message.reply("Uso: `!teststream <URL>` (es. YouTube o link diretto mp3)");
 
         const sessionId = `test-direct-${uuidv4().substring(0, 8)}`;
         
@@ -626,7 +626,7 @@ client.on('messageCreate', async (message: Message) => {
         createSession(sessionId, message.guild.id, activeCampaign!.id);
         monitor.startSession(sessionId);
         
-        await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nSto scaricando il file audio...`);
+        await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nAnalisi del link in corso...`);
 
         const recordingsDir = path.join(__dirname, '..', 'recordings');
         if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
@@ -636,18 +636,68 @@ client.on('messageCreate', async (message: Message) => {
         const tempFilePath = path.join(recordingsDir, tempFileName);
 
         try {
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Errore HTTP: ${response.statusText}`);
-            if (!response.body) throw new Error("Nessun contenuto ricevuto");
+            // RILEVAMENTO YOUTUBE (Regex base per domini YT)
+            const isYouTube = /^(https?:\/\/)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\/.+$/.test(url);
 
-            await pipeline(response.body, fs.createWriteStream(tempFilePath));
+            if (isYouTube) {
+                // --- LOGICA YOUTUBE (yt-dlp) ---
+                await (message.channel as TextChannel).send("🎥 Link YouTube rilevato. Avvio download con yt-dlp...");
 
-            console.log(`[TestStream] Download completato: ${tempFilePath}`);
+                // Cerchiamo i cookies nella root (come in player.js)
+                const cookiesPath = path.resolve(__dirname, '..', 'cookies.json');
+                let cookieArg = '';
+                
+                if (fs.existsSync(cookiesPath)) {
+                    const stats = fs.statSync(cookiesPath);
+                    if (stats.isFile() && stats.size > 0) {
+                        cookieArg = ` --cookies "${cookiesPath}"`;
+                        console.log("[TestStream] Cookies trovati e utilizzati per il download.");
+                    }
+                }
+
+                // Costruzione comando: Estrae audio, converte in mp3, forza output sul file target
+                // Nota: Assicurati che 'yt-dlp' sia installato e nel PATH
+                const cmd = `yt-dlp -x --audio-format mp3 --output "${tempFilePath}"${cookieArg} "${url}"`;
+
+                // Esecuzione tramite promise manuale (senza aggiungere import 'util')
+                await new Promise<void>((resolve, reject) => {
+                    exec(cmd, (error, stdout, stderr) => {
+                        if (error) {
+                            console.error(`[yt-dlp error] ${stderr}`);
+                            reject(error);
+                        } else {
+                            console.log(`[yt-dlp output] ${stdout}`);
+                            resolve();
+                        }
+                    });
+                });
+
+                console.log(`[TestStream] Download YouTube completato: ${tempFilePath}`);
+
+            } else {
+                // --- LOGICA LINK DIRETTO (Vecchia logica con fix Content-Type) ---
+                await (message.channel as TextChannel).send("🔗 Link diretto rilevato. Scarico file...");
+
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`Errore HTTP: ${response.statusText}`);
+                
+                // Controllo Content-Type per evitare di scaricare HTML
+                const contentType = response.headers.get('content-type');
+                if (contentType && !contentType.startsWith('audio/') && !contentType.includes('octet-stream')) {
+                     throw new Error(`Il link non è un file audio valido (Rilevato: ${contentType}). Usa un link diretto o YouTube.`);
+                }
+
+                if (!response.body) throw new Error("Nessun contenuto ricevuto");
+
+                await pipeline(response.body, fs.createWriteStream(tempFilePath));
+                console.log(`[TestStream] Download diretto completato: ${tempFilePath}`);
+            }
             
+            // --- PROCEDURA STANDARD (Uguale a prima) ---
             // Registra nel DB come se fosse un file vocale
             addRecording(sessionId, tempFileName, tempFilePath, message.author.id, Date.now());
             
-            // Upload su Oracle (simulato)
+            // Upload su Oracle (simulato o reale)
             try {
                 const uploaded = await uploadToOracle(tempFilePath, tempFileName, sessionId);
                 if (uploaded) {
@@ -675,8 +725,12 @@ client.on('messageCreate', async (message: Message) => {
             await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
 
         } catch (error: any) {
-            console.error(`[TestStream] Errore download: ${error.message}`);
-            await message.reply(`❌ Errore download file: ${error.message}`);
+            console.error(`[TestStream] Errore: ${error.message}`);
+            await message.reply(`❌ Errore durante il processo: ${error.message}`);
+            // Pulizia file parziale se esiste
+            if (fs.existsSync(tempFilePath)) {
+                try { fs.unlinkSync(tempFilePath); } catch(e) {}
+            }
         }
     }
 

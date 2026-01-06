@@ -118,6 +118,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS location_atlas (
     UNIQUE(campaign_id, macro_location, micro_location)
 )`);
 
+// --- TABELLA DOSSIER NPC ---
+db.exec(`CREATE TABLE IF NOT EXISTS npc_dossier (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT, -- Es. "Locandiere", "Guardia", "Villain"
+    description TEXT,
+    status TEXT DEFAULT 'ALIVE', -- ALIVE, DEAD, MISSING
+    last_seen_location TEXT, -- Link opzionale al luogo
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(campaign_id, name)
+)`);
+
 // --- MIGRATIONS ---
 const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
@@ -134,7 +147,11 @@ const migrations = [
     "ALTER TABLE recordings ADD COLUMN macro_location TEXT",
     "ALTER TABLE recordings ADD COLUMN micro_location TEXT",
     "ALTER TABLE knowledge_fragments ADD COLUMN macro_location TEXT",
-    "ALTER TABLE knowledge_fragments ADD COLUMN micro_location TEXT"
+    "ALTER TABLE knowledge_fragments ADD COLUMN micro_location TEXT",
+    "ALTER TABLE knowledge_fragments ADD COLUMN associated_npcs TEXT",
+    "ALTER TABLE location_history ADD COLUMN session_id TEXT",
+    "ALTER TABLE session_notes ADD COLUMN macro_location TEXT",
+    "ALTER TABLE session_notes ADD COLUMN micro_location TEXT"
 ];
 
 for (const m of migrations) {
@@ -151,6 +168,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_history_channel ON chat_history (ch
 db.exec(`CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes (session_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_location_history_campaign ON location_history (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_location_atlas_campaign ON location_atlas (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_dossier_campaign ON npc_dossier (campaign_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -207,6 +225,7 @@ export interface KnowledgeFragment {
     created_at: number;
     macro_location?: string | null;
     micro_location?: string | null;
+    associated_npcs?: string | null;
 }
 
 export interface SessionNote {
@@ -216,11 +235,24 @@ export interface SessionNote {
     content: string;
     timestamp: number;
     created_at: number;
+    macro_location?: string | null;
+    micro_location?: string | null;
 }
 
 export interface LocationState {
     macro: string | null;
     micro: string | null;
+}
+
+export interface NpcEntry {
+    id: number;
+    campaign_id: number;
+    name: string;
+    role: string | null;
+    description: string | null;
+    status: string;
+    last_seen_location: string | null;
+    last_updated: string;
 }
 
 // --- FUNZIONI CONFIGURAZIONE ---
@@ -276,7 +308,7 @@ export const updateCampaignLocation = (guildId: string, location: string): void 
 
 // --- NUOVE FUNZIONI LUOGO (MACRO/MICRO) ---
 
-export const updateLocation = (campaignId: number, macro: string | null, micro: string | null): void => {
+export const updateLocation = (campaignId: number, macro: string | null, micro: string | null, sessionId?: string): void => {
     // 1. Aggiorna lo stato corrente della campagna
     const current = getCampaignLocationById(campaignId);
     
@@ -294,10 +326,10 @@ export const updateLocation = (campaignId: number, macro: string | null, micro: 
 
     // 2. Aggiungi alla cronologia
     const historyStmt = db.prepare(`
-        INSERT INTO location_history (campaign_id, macro_location, micro_location, session_date, timestamp)
-        VALUES (?, ?, ?, date('now'), ?)
+        INSERT INTO location_history (campaign_id, macro_location, micro_location, session_date, timestamp, session_id)
+        VALUES (?, ?, ?, date('now'), ?, ?)
     `);
-    historyStmt.run(campaignId, macro, micro, Date.now());
+    historyStmt.run(campaignId, macro, micro, Date.now(), sessionId || null);
     
     console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
 };
@@ -357,6 +389,50 @@ export const updateAtlasEntry = (campaignId: number, macro: string, micro: strin
     console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
 };
 
+// --- FUNZIONI DOSSIER NPC ---
+
+export const updateNpcEntry = (campaignId: number, name: string, description: string, role?: string, status?: string) => {
+    // Upsert intelligente
+    db.prepare(`
+        INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(campaign_id, name) 
+        DO UPDATE SET 
+            description = CASE WHEN ? IS NOT NULL THEN ? ELSE description END,
+            role = CASE WHEN ? IS NOT NULL THEN ? ELSE role END,
+            status = CASE WHEN ? IS NOT NULL THEN ? ELSE status END,
+            last_updated = CURRENT_TIMESTAMP
+    `).run(campaignId, name, description, role, status, description, description, role, role, status, status);
+    
+    console.log(`[Dossier] 👤 Aggiornato NPC: ${name}`);
+};
+
+export const getNpcEntry = (campaignId: number, name: string): NpcEntry | undefined => {
+    return db.prepare(`
+        SELECT * FROM npc_dossier 
+        WHERE campaign_id = ? AND lower(name) = lower(?)
+    `).get(campaignId, name) as NpcEntry | undefined;
+};
+
+export const listNpcs = (campaignId: number, limit: number = 10): NpcEntry[] => {
+    return db.prepare(`
+        SELECT * FROM npc_dossier 
+        WHERE campaign_id = ? 
+        ORDER BY last_updated DESC 
+        LIMIT ?
+    `).all(campaignId, limit) as NpcEntry[];
+};
+
+export const findNpcDossierByName = (campaignId: number, nameQuery: string): NpcEntry[] => {
+    // Cerca NPC il cui nome è contenuto nella query dell'utente
+    // Es. Query: "Chi è Grog?" -> Trova record con name="Grog"
+    // Usiamo LIKE con % per trovare occorrenze parziali
+    return db.prepare(`
+        SELECT * FROM npc_dossier 
+        WHERE campaign_id = ? AND ? LIKE '%' || name || '%'
+    `).all(campaignId, nameQuery) as NpcEntry[];
+};
+
 // ------------------------------------------
 
 export const getCampaignById = (id: number): Campaign | undefined => {
@@ -378,8 +454,15 @@ export const deleteCampaign = (campaignId: number) => {
         deleteSess.run(s.session_id);
     }
 
-    // 3. Elimina campagna (Cascade farà il resto per characters, knowledge e location_history)
+    // --- NUOVO: PULIZIA MANUALE TABELLE ORFANE ---
+    db.prepare('DELETE FROM location_atlas WHERE campaign_id = ?').run(campaignId);
+    db.prepare('DELETE FROM location_history WHERE campaign_id = ?').run(campaignId);
+    try { db.prepare('DELETE FROM npc_dossier WHERE campaign_id = ?').run(campaignId); } catch(e) {}
+
+    // 3. Elimina campagna (Cascade farà il resto per characters e knowledge, ma meglio essere sicuri sopra)
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
+    
+    console.log(`[DB] Campagna ${campaignId} e tutti i dati correlati (Atlante, Storia, NPC) eliminati.`);
 };
 
 // --- FUNZIONI PERSONAGGI (CONTEXT AWARE) ---
@@ -445,6 +528,19 @@ export const getUnprocessedRecordings = () => {
 };
 
 export const resetSessionData = (sessionId: string): Recording[] => {
+    // 1. PULIZIA RAG (Memoria)
+    db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(sessionId);
+    console.log(`[DB] 🧠 Memoria RAG pulita per sessione ${sessionId}`);
+
+    // 2. PULIZIA STORIA VIAGGI
+    try {
+        db.prepare('DELETE FROM location_history WHERE session_id = ?').run(sessionId);
+        console.log(`[DB] 🗺️ Storia viaggi pulita per sessione ${sessionId}`);
+    } catch (e) {
+        // Ignora se la colonna non esiste ancora
+    }
+
+    // 3. RESET STATO FILE
     db.prepare(`
         UPDATE recordings 
         SET status = 'PENDING', transcription_text = NULL, error_log = NULL 
@@ -579,7 +675,20 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
 // --- FUNZIONI NOTE SESSIONE ---
 
 export const addSessionNote = (sessionId: string, userId: string, content: string, timestamp: number) => {
-    db.prepare('INSERT INTO session_notes (session_id, user_id, content, timestamp, created_at) VALUES (?, ?, ?, ?, ?)').run(sessionId, userId, content, timestamp, Date.now());
+    // Recupera luogo attuale
+    const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as {campaign_id: number};
+    let macro = null, micro = null;
+    
+    if (session) {
+        const loc = getCampaignLocationById(session.campaign_id);
+        macro = loc?.macro;
+        micro = loc?.micro;
+    }
+
+    db.prepare(`
+        INSERT INTO session_notes (session_id, user_id, content, timestamp, created_at, macro_location, micro_location) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(sessionId, userId, content, timestamp, Date.now(), macro, micro);
 };
 
 export const getSessionNotes = (sessionId: string): SessionNote[] => {
@@ -588,11 +697,12 @@ export const getSessionNotes = (sessionId: string): SessionNote[] => {
 
 // --- FUNZIONI KNOWLEDGE BASE (RAG) ---
 
-export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0, macro: string | null = null, micro: string | null = null) => {
+export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0, macro: string | null = null, micro: string | null = null, npcs: string[] = []) => {
+    const npcString = npcs.join(',');
     db.prepare(`
-        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at, macro_location, micro_location)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now(), macro, micro);
+        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at, macro_location, micro_location, associated_npcs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now(), macro, micro, npcString);
 };
 
 export const getKnowledgeFragments = (campaignId: number, model: string): KnowledgeFragment[] => {
@@ -628,7 +738,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM session_notes').run();
     db.prepare('DELETE FROM location_history').run();
     db.prepare('DELETE FROM location_atlas').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas')").run();
+    db.prepare('DELETE FROM npc_dossier').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

@@ -1,6 +1,6 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
@@ -199,7 +199,7 @@ export function startWorker() {
                     
                     if (newMacro !== current?.macro || newMicro !== current?.micro) {
                         console.log(`[Worker] 🗺️ Cambio luogo rilevato: ${newMacro} - ${newMicro}`);
-                        updateLocation(campaignId, newMacro, newMicro);
+                        updateLocation(campaignId, newMacro, newMicro, sessionId);
                     }
                     
                     finalMacro = newMacro;
@@ -214,6 +214,16 @@ export function startWorker() {
                 if (aiResult.atlas_update && finalMacro && finalMicro) {
                     console.log(`[Atlas] ✍️ L'AI ha aggiornato la memoria di: ${finalMicro}`);
                     updateAtlasEntry(campaignId, finalMacro, finalMicro, aiResult.atlas_update);
+                }
+
+                // 3. GESTIONE DOSSIER NPC (Biografo)
+                if (aiResult.npc_updates && Array.isArray(aiResult.npc_updates)) {
+                    for (const npc of aiResult.npc_updates) {
+                        if (npc.name && npc.description) {
+                            console.log(`[Biografo] 👤 Rilevato NPC: ${npc.name}`);
+                            updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status);
+                        }
+                    }
                 }
             }
 

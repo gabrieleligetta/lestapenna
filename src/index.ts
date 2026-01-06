@@ -62,7 +62,10 @@ import {
     getLocationHistory,
     updateLocation,
     getAtlasEntry,
-    updateAtlasEntry
+    updateAtlasEntry,
+    getNpcEntry,
+    updateNpcEntry,
+    listNpcs
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -237,7 +240,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria', 'npc', 'dossier'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -268,6 +271,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo attuale.\n" +
                     "`$viaggi`: Mostra la cronologia degli spostamenti.\n" +
                     "`$atlante [Descrizione]`: Visualizza o aggiorna la memoria del luogo.\n" +
+                    "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
                     "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                     "`$impostasessione <N>`: Imposta numero sessione.\n" +
                     "`$impostasessioneid <ID> <N>`: Corregge il numero." 
@@ -338,6 +342,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$location [Macro | Micro]`: View or update current location.\n" +
                     "`$travels`: Show travel history.\n" +
                     "`$atlas [Description]`: View or update location memory.\n" +
+                    "`$npc [Name]`: View or update NPC dossier.\n" +
                     "`$note <Text>`: Add a manual note to the summary.\n" +
                     "`$setsession <N>`: Manually set session number.\n" +
                     "`$setsessionid <ID> <N>`: Fix session number by ID." 
@@ -407,6 +412,8 @@ client.on('messageCreate', async (message: Message) => {
         // --- NUOVO BLOCCO GESTIONE LUOGO ---
         const locationArg = args.join(' '); // Prende tutto quello che scrivi dopo !ascolta
         
+        const sessionId = uuidv4(); // Generiamo subito l'ID per passarlo a updateLocation
+
         if (locationArg) {
             // Se il DM ha specificato un luogo, lo aggiorniamo subito
             // Supporto sintassi Macro | Micro
@@ -422,7 +429,7 @@ client.on('messageCreate', async (message: Message) => {
                 newMicro = locationArg.trim();
             }
             
-            updateLocation(activeCampaign!.id, newMacro, newMicro);
+            updateLocation(activeCampaign!.id, newMacro, newMicro, sessionId);
             await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
         } else {
             // Altrimenti controlliamo se c'è un luogo in memoria
@@ -464,7 +471,6 @@ client.on('messageCreate', async (message: Message) => {
                 await (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
             }
 
-            const sessionId = uuidv4();
             guildSessions.set(message.guild.id, sessionId);
             
             // CREAZIONE SESSIONE NEL DB
@@ -558,6 +564,7 @@ client.on('messageCreate', async (message: Message) => {
         } else {
             // Setter
             const current = getCampaignLocation(message.guild.id);
+            const sessionId = guildSessions.get(message.guild.id); // Recupera sessione attiva se c'è
             
             let newMacro = current?.macro || null;
             let newMicro = null;
@@ -572,7 +579,7 @@ client.on('messageCreate', async (message: Message) => {
                 newMicro = argsStr.trim();
             }
 
-            updateLocation(activeCampaign!.id, newMacro, newMicro);
+            updateLocation(activeCampaign!.id, newMacro, newMicro, sessionId);
             
             return message.reply(`📍 **Aggiornamento Manuale**\nImpostato su: ${newMacro || '-'} | ${newMicro || '-'}`);
         }
@@ -617,6 +624,46 @@ client.on('messageCreate', async (message: Message) => {
             } else {
                 return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*`);
             }
+        }
+    }
+
+    // --- COMANDO: $npc (Visualizza o Modifica) ---
+    // Uso: $npc -> Lista ultimi NPC
+    // Uso: $npc Mario -> Vedi scheda di Mario
+    // Uso: $npc Mario | È un bravo idraulico -> Aggiorna descrizione
+    if (command === 'npc' || command === 'dossier') {
+        const argsStr = args.join(' ');
+        
+        if (!argsStr) {
+            // LISTA
+            const npcs = listNpcs(activeCampaign!.id);
+            if (npcs.length === 0) return message.reply("L'archivio NPC è vuoto.");
+            
+            const list = npcs.map((n: any) => `👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
+            return message.reply(`**📂 Dossier NPC Recenti**\n${list}`);
+        }
+
+        if (argsStr.includes('|')) {
+            // SETTER: $npc Nome | Descrizione
+            const [name, desc] = argsStr.split('|').map(s => s.trim());
+            updateNpcEntry(activeCampaign!.id, name, desc);
+            return message.reply(`👤 Scheda di **${name}** aggiornata.`);
+        } else {
+            // GETTER: $npc Nome
+            const npc = getNpcEntry(activeCampaign!.id, argsStr);
+            if (!npc) return message.reply("NPC non trovato.");
+            
+            const embed = new EmbedBuilder()
+                .setTitle(`👤 Dossier: ${npc.name}`)
+                .setColor(npc.status === 'DEAD' ? "#FF0000" : "#00FF00")
+                .addFields(
+                    { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
+                    { name: "Stato", value: npc.status || "Vivo", inline: true },
+                    { name: "Note", value: npc.description || "Nessuna nota." }
+                )
+                .setFooter({ text: `Ultimo avvistamento: ${npc.last_updated}` });
+            
+            return message.reply({ embeds: [embed] });
         }
     }
 

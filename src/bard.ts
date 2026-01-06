@@ -15,7 +15,9 @@ import {
     getSessionNotes,
     LocationState,
     getCampaignLocationById,
-    getAtlasEntry
+    getAtlasEntry,
+    findNpcDossierByName,
+    listNpcs
 } from './db';
 
 // --- CONFIGURAZIONE TONI ---
@@ -81,6 +83,12 @@ interface AIResponse {
         confidence: string; // "high" o "low"
     };
     atlas_update?: string; // Nuova descrizione del luogo (se cambiata)
+    npc_updates?: Array<{
+        name: string;
+        description: string;
+        role?: string; // Opzionale
+        status?: string; // Opzionale (es. "DEAD" se muore)
+    }>;
 }
 
 /**
@@ -274,6 +282,10 @@ export async function ingestSessionRaw(sessionId: string) {
 
     lines.sort((a, b) => a.timestamp - b.timestamp);
 
+    // 2b. Recupera lista NPC per tagging
+    const allNpcs = listNpcs(campaignId, 1000); // Recupera tutti gli NPC
+    const npcNames = allNpcs.map(n => n.name);
+
     // 3. Sliding Window Chunking
     const fullText = lines.map(l => l.text).join("\n");
     const CHUNK_SIZE = 1000;
@@ -298,7 +310,10 @@ export async function ingestSessionRaw(sessionId: string) {
         const macro = firstLine?.macro || null;
         const micro = firstLine?.micro || null;
 
-        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro });
+        // Rilevamento NPC nel chunk
+        const detectedNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
+
+        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: detectedNpcs });
         if (end >= fullText.length) break;
         i = end - OVERLAP;
     }
@@ -333,7 +348,8 @@ export async function ingestSessionRaw(sessionId: string) {
                         val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
                         chunk.timestamp,
                         chunk.macro,
-                        chunk.micro
+                        chunk.micro,
+                        chunk.npcs
                     );
                 }
             }
@@ -401,10 +417,25 @@ export async function askBard(campaignId: number, question: string, history: { r
     }
     // -------------------------------------
 
+    // --- RAG SOCIALE: Iniezione Dossier NPC ---
+    const relevantNpcs = findNpcDossierByName(campaignId, question);
+    let socialContext = "";
+    
+    if (relevantNpcs.length > 0) {
+        socialContext = "\n\n[[DOSSIER PERSONAGGI RILEVANTI]]\n";
+        relevantNpcs.forEach((npc: any) => {
+            socialContext += `- NOME: ${npc.name}\n  RUOLO: ${npc.role || 'Sconosciuto'}\n  STATO: ${npc.status}\n  INFO: ${npc.description}\n`;
+        });
+        socialContext += "Usa queste informazioni per arricchire la risposta, ma dai priorità ai fatti accaduti nelle trascrizioni.\n";
+    }
+    // ------------------------------------------
+
     // Prompt Ricco Ripristinato
     const systemPrompt = `${atmosphere}
     Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
     
+    ${socialContext}
+
     ${contextText}
     
     REGOLAMENTO RIGIDO:
@@ -504,6 +535,10 @@ OBIETTIVI:
    - Ci sono nuovi dettagli significativi (nomi NPC, stato della stanza, eventi chiave).
    - O se la descrizione vecchia è obsoleta.
    - Sii conciso ma descrittivo. Se non cambia nulla di rilevante, lascia 'atlas_update' vuoto.
+4. [BIOGRAFO] Rilevare informazioni sugli NPC (Non-Player Characters).
+   - Se viene introdotto un nuovo NPC (es. "Sono il capitano Vane"), estrai nome e ruolo.
+   - Se un NPC subisce un cambiamento drastico (es. muore, si rivela un traditore), aggiorna lo status o la descrizione.
+   - Ignora i Personaggi Giocanti (PG) già noti.
 
 REGOLE CARTOGRAFO:
 - Se rimangono dove sono, NON includere "detected_location" nel JSON.
@@ -520,7 +555,7 @@ ISTRUZIONI SPECIFICHE PER LA CORREZIONE:
 IMPORTANTE:
 1. Non modificare "start" e "end".
 2. Non unire o dividere segmenti. Il numero di oggetti in output deve essere identico all'input.
-3. Restituisci un oggetto JSON con la chiave "segments", opzionalmente "detected_location" e opzionalmente "atlas_update".
+3. Restituisci un oggetto JSON con la chiave "segments", opzionalmente "detected_location", opzionalmente "atlas_update" e opzionalmente "npc_updates".
 
 Input:
 ${JSON.stringify(batchInput)}`;
@@ -538,7 +573,7 @@ ${JSON.stringify(batchInput)}`;
             const content = response.choices[0].message.content;
             if (!content) throw new Error("Empty");
             const parsed = JSON.parse(content);
-            return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update? }
+            return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update?, npc_updates? }
         } catch (err) {
             console.error(`[Bardo] ⚠️ Errore batch ${idx+1}, uso originale.`);
             return { segments: batch };
@@ -551,6 +586,7 @@ ${JSON.stringify(batchInput)}`;
     // Cerchiamo l'ultima location rilevata (se ce ne sono multiple, l'ultima vince)
     let lastDetectedLocation = undefined;
     let lastAtlasUpdate = undefined;
+    const allNpcUpdates: any[] = [];
 
     for (const res of results) {
         if (res.detected_location) {
@@ -559,12 +595,16 @@ ${JSON.stringify(batchInput)}`;
         if (res.atlas_update) {
             lastAtlasUpdate = res.atlas_update;
         }
+        if (res.npc_updates && Array.isArray(res.npc_updates)) {
+            allNpcUpdates.push(...res.npc_updates);
+        }
     }
 
     return {
         segments: allSegments,
         detected_location: lastDetectedLocation,
-        atlas_update: lastAtlasUpdate
+        atlas_update: lastAtlasUpdate,
+        npc_updates: allNpcUpdates
     };
 }
 

@@ -163,7 +163,7 @@ export function startWorker() {
             host: process.env.REDIS_HOST || 'redis', 
             port: parseInt(process.env.REDIS_PORT || '6379') 
         },
-        concurrency: 2, // Teniamo basso per la CPU
+        concurrency: 1, // Teniamo basso per la CPU
         
         // --- AGGIUNTA FONDAMENTALE PER EVITARE "JOB STALLED" ---
         lockDuration: 27200000, // 2 ORE

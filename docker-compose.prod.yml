@@ -11,8 +11,23 @@ services:
       - .env
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - TZ=Europe/Rome  # <--- AGGIUNTA UTILE: Orari log corretti
+
+    deploy:
+      resources:
+        limits:
+          cpus: '3.5'
+          memory: 22G
+
+    # --- AGGIUNTA FONDAMENTALE: SALVA IL DISCO ---
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # ---------------------------------------------
+
     volumes:
-      # Persistenza dati (NON codice sorgente)
       - ./recordings:/app/recordings
       - ./data:/app/data
       - ./batch_processing:/app/batch_processing
@@ -24,6 +39,12 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+    # Anche qui è buona norma mettere i log limitati
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   ollama:
     image: ollama/ollama:latest
@@ -32,21 +53,22 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      # Esposto solo internamente tra i container, ma se vuoi testarlo da fuori scommenta:
-      # - "11434:11434"
       - "11434"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Servizio "One-Shot" per scaricare i modelli all'avvio
   ollama-puller:
     image: ollama/ollama:latest
     container_name: ollama-model-puller
-    restart: "no" # Esegue una volta e si ferma
+    restart: "no"
     depends_on:
       - ollama
     environment:
       - OLLAMA_HOST=ollama:11434
     entrypoint: /bin/sh
-    # Script: Aspetta che Ollama risponda, poi scarica i modelli necessari
     command: -c "echo 'Waiting for Ollama server...'; until ollama list > /dev/null 2>&1; do sleep 2; done; echo 'Ollama is ready. Pulling models...'; ollama pull nomic-embed-text; ollama pull llama3.2; echo 'All models pulled successfully!'"
 
 volumes:

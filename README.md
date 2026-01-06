@@ -52,50 +52,52 @@ Lestapenna è un bot Discord avanzato progettato per registrare, trascrivere e n
 
 ## 📖 Guida ai Comandi
 
-Tutti i comandi iniziano con il prefisso `!`.
+Tutti i comandi iniziano con il prefisso `$`. Molti comandi hanno un alias in inglese.
 
 ### ℹ️ Generale
-*   `!help` (o `!aiuto`): Mostra un messaggio riassuntivo con i comandi principali direttamente su Discord.
+*   `$aiuto`: Mostra un messaggio riassuntivo con i comandi principali in italiano.
+*   `$help`: Shows a summary message with the main commands in English.
 
 ### 🗺️ Gestione Campagne
 Prima di iniziare, devi creare o selezionare una campagna.
 
-*   `!creacampagna <Nome>`: Crea una nuova campagna per il server.
-*   `!selezionacampagna <Nome>` (o `!setcampagna`): Attiva una campagna specifica.
-*   `!listacampagne`: Mostra l'elenco delle campagne disponibili.
+*   `$creacampagna <Nome>` (o `$createcampaign`): Crea una nuova campagna per il server.
+*   `$selezionacampagna <Nome>` (o `$selectcampaign`): Attiva una campagna specifica.
+*   `$listacampagne` (o `$listcampaigns`): Mostra l'elenco delle campagne disponibili.
 
 ### 🎙️ Gestione Sessione
-*   `!ascolta` (o `!listen`): Il bot entra nel canale vocale e inizia a registrare. **Richiede una campagna attiva.**
-*   `!termina` (o `!stoplistening`): Termina la registrazione, avvia la trascrizione e genera il riassunto.
-*   `!impostasessione <N>` (o `!setsession`): Imposta manualmente il numero della sessione corrente.
-*   `!impostasessioneid <ID> <N>`: Corregge il numero di sessione per uno specifico ID sessione.
-*   `!reset <ID>`: Forza la rielaborazione completa di una sessione (utile in caso di errori).
+*   `$ascolta` (o `$listen`): Il bot entra nel canale vocale e inizia a registrare. **Richiede una campagna attiva.**
+*   `$termina` (o `$stoplistening`): Termina la registrazione, avvia la trascrizione e genera il riassunto.
+*   `$impostasessione <N>` (o `$setsession`): Imposta manualmente il numero della sessione corrente.
+*   `$impostasessioneid <ID> <N>`: Corregge il numero di sessione per uno specifico ID sessione.
+*   `$reset <ID>`: Forza la rielaborazione completa di una sessione (utile in caso di errori).
 
 ### 👤 Scheda Personaggio
 Ogni giocatore può definire il proprio personaggio per la campagna attiva. Questo aiuta l'IA a attribuire correttamente le azioni.
 
-*   `!sono <Nome>` (o `!iam`): Imposta il nome del tuo personaggio.
-*   `!miaclasse <Classe>` (o `!myclass`): Imposta la tua classe (es. Barbaro, Mago).
-*   `!miarazza <Razza>` (o `!myrace`): Imposta la tua razza (es. Elfo, Nano).
-*   `!miadesc <Testo>` (o `!mydesc`): Aggiunge una breve descrizione fisica o caratteriale.
-*   `!chisono` (o `!whoami`): Visualizza la tua scheda attuale.
+*   `$sono <Nome>` (o `$iam`): Imposta il nome del tuo personaggio.
+    *   **Nota per il DM**: Usa `$sono DM` o `$sono Dungeon Master` per registrarti come narratore. Il bot ti riconoscerà e tratterà la tua voce con priorità narrativa.
+*   `$miaclasse <Classe>` (o `$myclass`): Imposta la tua classe (es. Barbaro, Mago).
+*   `$miarazza <Razza>` (o `$myrace`): Imposta la tua razza (es. Elfo, Nano).
+*   `$miadesc <Testo>` (o `$mydesc`): Aggiunge una breve descrizione fisica o caratteriale.
+*   `$chisono` (o `$whoami`): Visualizza la tua scheda attuale.
 
 ### 📜 Narrazione e Archivi
-*   `!racconta <ID_SESSIONE> [tono]`: Rigenera il riassunto di una sessione passata.
-*   `!toni`: Mostra l'elenco dei toni narrativi disponibili (es. DM, EPIC, DARK, COMIC).
-*   `!listasessioni`: Mostra le ultime sessioni registrate per la campagna attiva.
-*   `!chiedialbardo <Domanda>` (o `!ask`): Fai una domanda al Bardo sulla storia della campagna (es. "Chi abbiamo incontrato alla taverna?").
-*   `!memorizza <ID>` (o `!ingest`): Forza l'apprendimento degli eventi di una specifica sessione. Utile se il bot non sembra ricordare cosa è successo in una sessione passata o se l'ingestione automatica è fallita. Dopo aver eseguito questo comando, il bot potrà rispondere a domande su quella sessione tramite `!chiedialbardo`.
-*   `!scarica <ID_SESSIONE>` (o `!download`): Richiede il file audio completo della sessione (mixato).
-*   `!scaricatrascrizioni <ID_SESSIONE>` (o `!downloadtxt`): Scarica il file di testo con la trascrizione completa.
+*   `$racconta <ID_SESSIONE> [tono]` (o `$narrate`): Rigenera il riassunto di una sessione passata.
+*   `$toni` (o `$tones`): Mostra l'elenco dei toni narrativi disponibili (es. DM, EPIC, DARK, COMIC).
+*   `$listasessioni` (o `$listsessions`): Mostra le ultime sessioni registrate per la campagna attiva.
+*   `$chiedialbardo <Domanda>` (o `$ask`): Fai una domanda al Bardo sulla storia della campagna (es. "Chi abbiamo incontrato alla taverna?").
+*   `$memorizza <ID>` (o `$ingest`): Forza l'apprendimento degli eventi di una specifica sessione. Utile se il bot non sembra ricordare cosa è successo in una sessione passata o se l'ingestione automatica è fallita. Dopo aver eseguito questo comando, il bot potrà rispondere a domande su quella sessione tramite `$chiedialbardo`.
+*   `$scarica <ID_SESSIONE>` (o `$download`): Richiede il file audio completo della sessione (mixato).
+*   `$scaricatrascrizioni <ID_SESSIONE>` (o `$downloadtxt`): Scarica il file di testo con la trascrizione completa.
 
 ### ⚙️ Configurazione Server
-*   `!setcmd`: Imposta il canale testuale corrente come canale per i comandi del bot.
-*   `!setsummary`: Imposta il canale testuale corrente per la pubblicazione dei riassunti.
+*   `$setcmd`: Imposta il canale testuale corrente come canale per i comandi del bot.
+*   `$setsummary`: Imposta il canale testuale corrente per la pubblicazione dei riassunti.
 
 ### 🧪 Debug e Test
-*   `!teststream <URL>`: Simula una sessione scaricando un file audio da un URL.
-*   `!cleantest`: Rimuove tutte le sessioni di test dal database.
+*   `$teststream <URL>`: Simula una sessione scaricando un file audio da un URL.
+*   `$cleantest`: Rimuove tutte le sessioni di test dal database.
 
 ## 🐳 Docker
 

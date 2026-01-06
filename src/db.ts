@@ -58,6 +58,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     guild_id TEXT,
     campaign_id INTEGER,
     session_number INTEGER,
+    title TEXT,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
 )`);
 
@@ -89,6 +90,7 @@ const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
     "ALTER TABLE sessions ADD COLUMN campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL",
     "ALTER TABLE sessions ADD COLUMN session_number INTEGER",
+    "ALTER TABLE sessions ADD COLUMN title TEXT",
     "ALTER TABLE knowledge_fragments ADD COLUMN start_timestamp INTEGER"
 ];
 
@@ -132,6 +134,7 @@ export interface SessionSummary {
     fragments: number;
     campaign_name?: string;
     session_number?: number;
+    title?: string;
 }
 
 export interface Campaign {
@@ -311,9 +314,9 @@ export const getSessionErrors = (sessionId: string) => {
     `).all(sessionId) as Array<{ filename: string, error_log: string | null }>;
 };
 
-export const getAvailableSessions = (guildId?: string, campaignId?: number): SessionSummary[] => {
+export const getAvailableSessions = (guildId?: string, campaignId?: number, limit: number = 5): SessionSummary[] => {
     let query = `
-        SELECT s.session_id, MIN(r.timestamp) as start_time, COUNT(r.id) as fragments, c.name as campaign_name, s.session_number
+        SELECT s.session_id, MIN(r.timestamp) as start_time, COUNT(r.id) as fragments, c.name as campaign_name, s.session_number, s.title
         FROM sessions s
         JOIN recordings r ON s.session_id = r.session_id
         LEFT JOIN campaigns c ON s.campaign_id = c.id
@@ -335,7 +338,12 @@ export const getAvailableSessions = (guildId?: string, campaignId?: number): Ses
         query += " WHERE " + conditions.join(" AND ");
     }
 
-    query += ` GROUP BY s.session_id ORDER BY start_time DESC LIMIT 5`;
+    query += ` GROUP BY s.session_id ORDER BY start_time DESC`;
+    
+    if (limit > 0) {
+        query += ` LIMIT ?`;
+        params.push(limit);
+    }
 
     return db.prepare(query).all(...params) as SessionSummary[];
 };
@@ -347,6 +355,10 @@ export const getExplicitSessionNumber = (sessionId: string): number | null => {
 
 export const setSessionNumber = (sessionId: string, num: number): void => {
     db.prepare('UPDATE sessions SET session_number = ? WHERE session_id = ?').run(num, sessionId);
+};
+
+export const updateSessionTitle = (sessionId: string, title: string): void => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run(title, sessionId);
 };
 
 export const createSession = (sessionId: string, guildId: string, campaignId: number): void => {

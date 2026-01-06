@@ -51,6 +51,7 @@ import {
     getSessionCampaignId,
     addChatMessage,
     getChatHistory,
+    updateSessionTitle,
     db
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
@@ -77,11 +78,12 @@ const getCmdChannelId = (guildId: string) => getGuildConfig(guildId, 'cmd_channe
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
 
 client.on('messageCreate', async (message: Message) => {
-    if (!message.content.startsWith('!') || message.author.bot) return;
+    // CAMBIO PREFISSO: ! -> $
+    if (!message.content.startsWith('$') || message.author.bot) return;
     if (!message.guild) return;
 
     const allowedChannelId = getCmdChannelId(message.guild.id);
-    const isConfigCommand = message.content.startsWith('!setcmd');
+    const isConfigCommand = message.content.startsWith('$setcmd');
     
     if (allowedChannelId && message.channelId !== allowedChannelId && !isConfigCommand) return;
 
@@ -90,19 +92,19 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- COMANDI GESTIONE CAMPAGNE ---
 
-    if (command === 'creacampagna') {
+    if (command === 'creacampagna' || command === 'createcampaign') {
         const name = args.join(' ');
-        if (!name) return await message.reply("Uso: `!creacampagna <Nome Campagna>`");
+        if (!name) return await message.reply("Uso: `$creacampagna <Nome Campagna>`");
         
         createCampaign(message.guild.id, name);
-        return await message.reply(`✅ Campagna **${name}** creata! Usa \`!selezionacampagna ${name}\` per attivarla.`);
+        return await message.reply(`✅ Campagna **${name}** creata! Usa \`$selezionacampagna ${name}\` per attivarla.`);
     }
 
-    if (command === 'listacampagne') {
+    if (command === 'listacampagne' || command === 'listcampaigns') {
         const campaigns = getCampaigns(message.guild.id);
         const active = getActiveCampaign(message.guild.id);
         
-        if (campaigns.length === 0) return await message.reply("Nessuna campagna trovata. Creane una con `!creacampagna`.");
+        if (campaigns.length === 0) return await message.reply("Nessuna campagna trovata. Creane una con `$creacampagna`.");
 
         const list = campaigns.map(c => 
             `${c.id === active?.id ? '👉 ' : ''}**${c.name}** (ID: ${c.id})`
@@ -116,9 +118,9 @@ client.on('messageCreate', async (message: Message) => {
         return await message.reply({ embeds: [embed] });
     }
 
-    if (command === 'selezionacampagna' || command === 'setcampagna') {
+    if (command === 'selezionacampagna' || command === 'setcampagna' || command === 'selectcampaign' || command === 'setcampaign') {
         const nameOrId = args.join(' ');
-        if (!nameOrId) return await message.reply("Uso: `!selezionacampagna <Nome o ID>`");
+        if (!nameOrId) return await message.reply("Uso: `$selezionacampagna <Nome o ID>`");
 
         const campaigns = getCampaigns(message.guild.id);
         const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
@@ -132,13 +134,14 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'sono', 'miaclasse', 'miarazza', 'miadesc', 'chisono', 'listasessioni', 'chiedialbardo', 'ingest', 'memorizza', 'teststream'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
-        return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `!creacampagna <Nome>` o `!selezionacampagna <Nome>` prima di iniziare.");
+        return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
     }
 
-    if (command === 'help' || command === 'aiuto') {
+    // --- COMANDO AIUTO (ITALIANO) ---
+    if (command === 'aiuto') {
         const helpEmbed = new EmbedBuilder()
             .setTitle("🖋️ Lestapenna - Comandi Disponibili")
             .setColor("#D4AF37")
@@ -147,50 +150,111 @@ client.on('messageCreate', async (message: Message) => {
                 {
                     name: "🗺️ Campagne",
                     value:
-                    "`!creacampagna <Nome>`: Crea nuova campagna.\n" +
-                    "`!selezionacampagna <Nome>`: Attiva una campagna.\n" +
-                    "`!listacampagne`: Mostra le campagne."
+                    "`$creacampagna <Nome>`: Crea nuova campagna.\n" +
+                    "`$selezionacampagna <Nome>`: Attiva una campagna.\n" +
+                    "`$listacampagne`: Mostra le campagne."
                 },
                 { 
                     name: "🎙️ Gestione Sessione", 
                     value: 
-                    "`!ascolta`: Inizia la registrazione (Campagna Attiva).\n" +
-                    "`!termina`: Termina la sessione.\n" +
-                    "`!impostasessione <N>`: Imposta numero sessione.\n" +
-                    "`!impostasessioneid <ID> <N>`: Corregge il numero." 
+                    "`$ascolta`: Inizia la registrazione (Campagna Attiva).\n" +
+                    "`$termina`: Termina la sessione.\n" +
+                    "`$impostasessione <N>`: Imposta numero sessione.\n" +
+                    "`$impostasessioneid <ID> <N>`: Corregge il numero." 
                 },
                 { 
                     name: "📜 Narrazione & Archivi", 
                     value: 
-                    "`!listasessioni`: Ultime 5 sessioni (Campagna Attiva).\n" +
-                    "`!racconta <ID> [tono]`: Rigenera riassunto.\n" +
-                    "`!chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
-                    "`!memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
-                    "`!scarica <ID>`: Scarica audio.\n" +
-                    "`!scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
+                    "`$listasessioni`: Ultime 5 sessioni (Campagna Attiva).\n" +
+                    "`$racconta <ID> [tono]`: Rigenera riassunto.\n" +
+                    "`$modificatitolo <ID> <Titolo>`: Modifica il titolo di una sessione.\n" +
+                    "`$chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
+                    "`$memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
+                    "`$scarica <ID>`: Scarica audio.\n" +
+                    "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
                 },
                 { 
                     name: "👤 Scheda Personaggio (Campagna Attiva)", 
                     value: 
-                    "`!sono <Nome>`: Imposta il tuo nome.\n" +
-                    "`!miaclasse <Classe>`: Imposta la tua classe.\n" +
-                    "`!miarazza <Razza>`: Imposta la tua razza.\n" +
-                    "`!miadesc <Testo>`: Aggiunge dettagli.\n" +
-                    "`!chisono`: Visualizza la tua scheda." 
+                    "`$sono <Nome>`: Imposta il tuo nome.\n" +
+                    "`$miaclasse <Classe>`: Imposta la tua classe.\n" +
+                    "`$miarazza <Razza>`: Imposta la tua razza.\n" +
+                    "`$miadesc <Testo>`: Aggiunge dettagli.\n" +
+                    "`$chisono`: Visualizza la tua scheda." 
                 },
                 { 
                     name: "⚙️ Configurazione", 
                     value: 
-                    "`!setcmd`: Imposta questo canale per i comandi.\n" +
-                    "`!setsummary`: Imposta questo canale per la pubblicazione dei riassunti." 
+                    "`$setcmd`: Imposta questo canale per i comandi.\n" +
+                    "`$setsummary`: Imposta questo canale per la pubblicazione dei riassunti." 
                 },
                 {
                     name: "🧪 Test & Debug",
                     value:
-                    "`!teststream <URL>`: Simula una sessione scaricando un file audio diretto (mp3/wav).\n" +
-                    "`!cleantest`: Rimuove tutte le sessioni di test dal DB."
+                    "`$teststream <URL>`: Simula una sessione scaricando un file audio diretto (mp3/wav).\n" +
+                    "`$cleantest`: Rimuove tutte le sessioni di test dal DB."
                 }
-            );
+            )
+            .setFooter({ text: "Per la versione inglese usa $help" });
+        return await message.reply({ embeds: [helpEmbed] });
+    }
+
+    // --- COMANDO HELP (INGLESE) ---
+    if (command === 'help') {
+        const helpEmbed = new EmbedBuilder()
+            .setTitle("🖋️ Lestapenna - Available Commands")
+            .setColor("#D4AF37")
+            .setDescription("Welcome, adventurers! I am your personal bard and chronicler.")
+            .addFields(
+                {
+                    name: "🗺️ Campaigns",
+                    value:
+                    "`$createcampaign <Name>`: Create a new campaign.\n" +
+                    "`$selectcampaign <Name>`: Activate a campaign.\n" +
+                    "`$listcampaigns`: Show available campaigns."
+                },
+                { 
+                    name: "🎙️ Session Management", 
+                    value: 
+                    "`$listen`: Start recording (Active Campaign).\n" +
+                    "`$stoplistening`: End the session.\n" +
+                    "`$setsession <N>`: Manually set session number.\n" +
+                    "`$setsessionid <ID> <N>`: Fix session number by ID." 
+                },
+                { 
+                    name: "📜 Storytelling & Archives", 
+                    value: 
+                    "`$listsessions`: Last 5 sessions (Active Campaign).\n" +
+                    "`$narrate <ID> [tone]`: Regenerate summary.\n" +
+                    "`$edittitle <ID> <Title>`: Edit session title.\n" +
+                    "`$ask <Question>`: Ask the Bard about the lore.\n" +
+                    "`$ingest <ID>`: Manually index a session into memory.\n" +
+                    "`$download <ID>`: Download audio.\n" +
+                    "`$downloadtxt <ID>`: Download transcriptions (txt)." 
+                },
+                { 
+                    name: "👤 Character Sheet (Active Campaign)", 
+                    value: 
+                    "`$iam <Name>`: Set your character name.\n" +
+                    "`$myclass <Class>`: Set your class.\n" +
+                    "`$myrace <Race>`: Set your race.\n" +
+                    "`$mydesc <Text>`: Add details.\n" +
+                    "`$whoami`: View your current sheet." 
+                },
+                { 
+                    name: "⚙️ Configuration", 
+                    value: 
+                    "`$setcmd`: Set this channel for commands.\n" +
+                    "`$setsummary`: Set this channel for summaries." 
+                },
+                {
+                    name: "🧪 Test & Debug",
+                    value:
+                    "`$teststream <URL>`: Simulate a session via direct audio link.\n" +
+                    "`$cleantest`: Remove all test sessions from DB."
+                }
+            )
+            .setFooter({ text: "Per la versione italiana usa $aiuto" });
         return await message.reply({ embeds: [helpEmbed] });
     }
 
@@ -234,7 +298,7 @@ client.on('messageCreate', async (message: Message) => {
                 return await message.reply(
                     `🛑 **ALT!** Non posso iniziare la cronaca per **${activeCampaign!.name}**.\n` +
                     `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
-                    missingNames.map(n => `- **${n}** (Usa: \`!sono NomePersonaggio\`)`).join('\n')
+                    missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
                 );
             }
             
@@ -290,12 +354,12 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'setsession' || command === 'impostasessione') {
         const sessionId = guildSessions.get(message.guild.id);
         if (!sessionId) {
-            return await message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `!ascolta`.");
+            return await message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `$ascolta`.");
         }
 
         const sessionNum = parseInt(args[0]);
         if (isNaN(sessionNum) || sessionNum <= 0) {
-            return await message.reply("Uso: `!impostasessione <numero>` (es. `!impostasessione 5`)");
+            return await message.reply("Uso: `$impostasessione <numero>` (es. `$impostasessione 5`)");
         }
 
         setSessionNumber(sessionId, sessionNum);
@@ -308,7 +372,7 @@ client.on('messageCreate', async (message: Message) => {
         const sessionNum = parseInt(args[1]);
 
         if (!targetSessionId || isNaN(sessionNum)) {
-            return await message.reply("Uso: `!impostasessioneid <ID_SESSIONE> <NUMERO>`");
+            return await message.reply("Uso: `$impostasessioneid <ID_SESSIONE> <NUMERO>`");
         }
 
         setSessionNumber(targetSessionId, sessionNum);
@@ -319,7 +383,7 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'reset') {
         const targetSessionId = args[0];
         if (!targetSessionId) {
-            return await message.reply("Uso: `!reset <ID_SESSIONE>` - Forza la rielaborazione completa.");
+            return await message.reply("Uso: `$reset <ID_SESSIONE>` - Forza la rielaborazione completa.");
         }
 
         await message.reply(`🔄 **Reset Sessione ${targetSessionId}** avviato...\n1. Pulizia coda...`);
@@ -379,7 +443,7 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'scaricatrascrizioni' || command === 'downloadtxt') {
         const targetSessionId = args[0];
         if (!targetSessionId) {
-            return await message.reply("Uso: `!scaricatrascrizioni <ID>`");
+            return await message.reply("Uso: `$scaricatrascrizioni <ID>`");
         }
 
         const transcripts = getSessionTranscript(targetSessionId);
@@ -425,7 +489,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- MODIFICATO: !racconta <id_sessione> [tono] ---
-    if (command === 'racconta') {
+    if (command === 'racconta' || command === 'narrate' || command === 'summarize') {
         const targetSessionId = args[0];
         const requestedTone = args[1]?.toUpperCase() as ToneKey;
 
@@ -454,7 +518,7 @@ client.on('messageCreate', async (message: Message) => {
             await channel.send("✅ Memoria aggiornata.");
         } catch (ingestErr: any) {
             console.error(`⚠️ Errore ingestione ${targetSessionId}:`, ingestErr);
-            await channel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`!memorizza ${targetSessionId}\`.`);
+            await channel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`$memorizza ${targetSessionId}\`.`);
             // Non blocchiamo il riassunto
         }
 
@@ -462,7 +526,11 @@ client.on('messageCreate', async (message: Message) => {
         try {
             await channel.send("✍️ Inizio stesura del racconto...");
             const result = await generateSummary(targetSessionId, requestedTone || 'DM');
-            await publishSummary(targetSessionId, result.summary, channel, true);
+            
+            // SALVATAGGIO TITOLO
+            updateSessionTitle(targetSessionId, result.title);
+
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title);
 
             const processingTime = Date.now() - startProcessing;
             const transcripts = getSessionTranscript(targetSessionId);
@@ -488,10 +556,23 @@ client.on('messageCreate', async (message: Message) => {
         }
     }
 
+    // --- NUOVO: !modificatitolo <ID> <Titolo> ---
+    if (command === 'modificatitolo' || command === 'edittitle') {
+        const targetSessionId = args[0];
+        const newTitle = args.slice(1).join(' ');
+
+        if (!targetSessionId || !newTitle) {
+            return await message.reply("Uso: `$modificatitolo <ID_SESSIONE> <Nuovo Titolo>`");
+        }
+
+        updateSessionTitle(targetSessionId, newTitle);
+        await message.reply(`✅ Titolo aggiornato per la sessione \`${targetSessionId}\`: **${newTitle}**`);
+    }
+
     // --- NUOVO: !chiedialbardo <Domanda> ---
     if (command === 'chiedialbardo' || command === 'ask') {
         const question = args.join(' ');
-        if (!question) return await message.reply("Uso: `!chiedialbardo <Domanda>`");
+        if (!question) return await message.reply("Uso: `$chiedialbardo <Domanda>`");
 
         // Fix per TS2339: Controllo se il canale supporta sendTyping
         if ('sendTyping' in message.channel) {
@@ -517,7 +598,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- NUOVO: !ingest <session_id> ---
     if (command === 'ingest' || command === 'memorizza') {
         const targetSessionId = args[0];
-        if (!targetSessionId) return await message.reply("Uso: `!ingest <ID_SESSIONE>`");
+        if (!targetSessionId) return await message.reply("Uso: `$ingest <ID_SESSIONE>`");
 
         await message.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${targetSessionId}\`...\nSto leggendo le trascrizioni e creando i vettori.`);
         
@@ -553,7 +634,7 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         if (!targetSessionId) {
-            return await message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `!scarica <ID>`");
+            return await message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `$scarica <ID>`");
         }
 
         await message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
@@ -589,23 +670,89 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: !listasessioni ---
-    if (command === 'listasessioni') {
-        const sessions = getAvailableSessions(message.guild.id, activeCampaign?.id);
+    if (command === 'listasessioni' || command === 'listsessions') {
+        const sessions = getAvailableSessions(message.guild.id, activeCampaign?.id, 0); // 0 = No limit
         if (sessions.length === 0) {
             await message.reply("Nessuna sessione trovata negli archivi per questa campagna.");
         } else {
-            const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
-            const embed = new EmbedBuilder()
-                .setTitle(`📜 Cronache: ${activeCampaign?.name}`)
-                .setColor("#7289DA")
-                .setDescription(list);
-            
-            await message.reply({ embeds: [embed] });
+            const ITEMS_PER_PAGE = 5;
+            const totalPages = Math.ceil(sessions.length / ITEMS_PER_PAGE);
+            let currentPage = 0;
+
+            const generateEmbed = (page: number) => {
+                const start = page * ITEMS_PER_PAGE;
+                const end = start + ITEMS_PER_PAGE;
+                const currentSessions = sessions.slice(start, end);
+
+                const list = currentSessions.map(s => {
+                    const title = s.title ? `📜 **${s.title}**` : "";
+                    return `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)\n${title}`;
+                }).join('\n\n');
+
+                return new EmbedBuilder()
+                    .setTitle(`📜 Cronache: ${activeCampaign?.name}`)
+                    .setColor("#7289DA")
+                    .setDescription(list)
+                    .setFooter({ text: `Pagina ${page + 1} di ${totalPages}` });
+            };
+
+            const generateButtons = (page: number) => {
+                const row = new ActionRowBuilder<ButtonBuilder>();
+                
+                row.addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('prev_page')
+                        .setLabel('⬅️ Precedente')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === 0),
+                    new ButtonBuilder()
+                        .setCustomId('next_page')
+                        .setLabel('Successivo ➡️')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === totalPages - 1)
+                );
+
+                return row;
+            };
+
+            const reply = await message.reply({ 
+                embeds: [generateEmbed(currentPage)], 
+                components: totalPages > 1 ? [generateButtons(currentPage)] : [] 
+            });
+
+            if (totalPages > 1) {
+                const collector = reply.createMessageComponentCollector({ 
+                    componentType: ComponentType.Button, 
+                    time: 60000 
+                });
+
+                collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                    if (interaction.user.id !== message.author.id) {
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        return;
+                    }
+
+                    if (interaction.customId === 'prev_page') {
+                        currentPage--;
+                    } else if (interaction.customId === 'next_page') {
+                        currentPage++;
+                    }
+
+                    await interaction.update({ 
+                        embeds: [generateEmbed(currentPage)], 
+                        components: [generateButtons(currentPage)] 
+                    });
+                });
+
+                collector.on('end', () => {
+                    reply.edit({ components: [] }).catch(() => {});
+                });
+            }
         }
     }
 
     // --- NUOVO: !toni ---
-    if (command === 'toni') {
+    if (command === 'toni' || command === 'tones') {
         const embed = new EmbedBuilder()
             .setTitle("🎭 Toni Narrativi")
             .setColor("#9B59B6")
@@ -618,7 +765,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- MODIFICATO: !teststream <URL> ---
     if (command === 'teststream') {
         const url = args[0];
-        if (!url) return await message.reply("Uso: `!teststream <URL>` (es. YouTube o link diretto mp3)");
+        if (!url) return await message.reply("Uso: `$teststream <URL>` (es. YouTube o link diretto mp3)");
 
         const sessionId = `test-direct-${uuidv4().substring(0, 8)}`;
         
@@ -826,7 +973,7 @@ client.on('messageCreate', async (message: Message) => {
                 updateUserCharacter(message.author.id, activeCampaign!.id, 'character_name', val);
                 await message.reply(`⚔️ Nome aggiornato: **${val}** (Campagna: ${activeCampaign!.name})`);
             }
-        } else await message.reply("Uso: `!sono Nome`");
+        } else await message.reply("Uso: `$sono Nome`");
     }
 
     if (command === 'myclass' || command === 'miaclasse') {
@@ -834,7 +981,7 @@ client.on('messageCreate', async (message: Message) => {
         if (val) {
             updateUserCharacter(message.author.id, activeCampaign!.id, 'class', val);
             await message.reply(`🛡️ Classe aggiornata: **${val}**`);
-        } else await message.reply("Uso: `!miaclasse Barbaro / Mago / Ladro...`");
+        } else await message.reply("Uso: `$miaclasse Barbaro / Mago / Ladro...`");
     }
 
     if (command === 'myrace' || command === 'miarazza') {
@@ -842,7 +989,7 @@ client.on('messageCreate', async (message: Message) => {
         if (val) {
             updateUserCharacter(message.author.id, activeCampaign!.id, 'race', val);
             await message.reply(`🧬 Razza aggiornata: **${val}**`);
-        } else await message.reply("Uso: `!miarazza Umano / Elfo / Nano...`");
+        } else await message.reply("Uso: `$miarazza Umano / Elfo / Nano...`");
     }
 
     if (command === 'mydesc' || command === 'miadesc') {
@@ -850,7 +997,7 @@ client.on('messageCreate', async (message: Message) => {
         if (val) {
             updateUserCharacter(message.author.id, activeCampaign!.id, 'description', val);
             await message.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
-        } else await message.reply("Uso: `!miadesc Breve descrizione del carattere o aspetto`");
+        } else await message.reply("Uso: `$miadesc Breve descrizione del carattere o aspetto`");
     }
 
     if (command === 'whoami' || command === 'chisono') {
@@ -870,7 +1017,7 @@ client.on('messageCreate', async (message: Message) => {
             
             await message.reply({ embeds: [embed] });
         } else {
-            await message.reply("Non ti conosco in questa campagna. Usa `!sono <Nome>` per iniziare la tua leggenda!");
+            await message.reply("Non ti conosco in questa campagna. Usa `$sono <Nome>` per iniziare la tua leggenda!");
         }
     }
 });
@@ -910,7 +1057,7 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                 await discordChannel.send("✅ Memoria aggiornata.");
             } catch (ingestErr: any) {
                 console.error(`⚠️ Errore ingestione ${sessionId}:`, ingestErr);
-                await discordChannel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`!memorizza ${sessionId}\`.`);
+                await discordChannel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`$memorizza ${sessionId}\`.`);
                 // Non blocchiamo il riassunto
             }
 
@@ -919,14 +1066,17 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                 await discordChannel.send("✍️ Inizio stesura del racconto...");
                 const result = await generateSummary(sessionId, 'DM');
                 
+                // SALVATAGGIO TITOLO
+                updateSessionTitle(sessionId, result.title);
+
                 monitor.logSummarizationTime(Date.now() - startSummary);
                 monitor.logTokenUsage(result.tokens);
 
-                await publishSummary(sessionId, result.summary, discordChannel);
+                await publishSummary(sessionId, result.summary, discordChannel, false, result.title);
             } catch (err: any) {
                 console.error(`❌ Errore riassunto finale ${sessionId}:`, err);
                 monitor.logError('Summary', err.message);
-                await discordChannel.send(`⚠️ Errore riassunto. Riprova: \`!racconta ${sessionId}\`.`);
+                await discordChannel.send(`⚠️ Errore riassunto. Riprova: \`$racconta ${sessionId}\`.`);
             }
 
             const metrics = monitor.endSession();
@@ -971,7 +1121,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false) {
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -1036,6 +1186,11 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     }
 
     await targetChannel.send(`\`\`\`diff\n${header}\n\`\`\``);
+    
+    if (title) {
+        await targetChannel.send(`## 📜 ${title}`);
+    }
+
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
 
     const chunks = summary.match(/[\s\S]{1,1900}/g) || [];

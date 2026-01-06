@@ -180,7 +180,7 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 }
 
 // --- FASE 1: MAP ---
-async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<{text: string, tokens: number}> {
+async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<{text: string, title: string, tokens: number}> {
     const mapPrompt = `Sei un analista di D&D.
     ${castContext}
     Estrai un elenco puntato cronologico strutturato esattamente così:
@@ -204,11 +204,12 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
 
         return {
             text: response.choices[0].message.content || "",
+            title: "", // Placeholder, il titolo viene generato nella fase REDUCE
             tokens: response.usage?.total_tokens || 0
         };
     } catch (err) {
         console.error(`[Bardo] ❌ Errore Map chunk ${index + 1}:`, err);
-        return { text: "", tokens: 0 };
+        return { text: "", title: "", tokens: 0 };
     }
 }
 
@@ -454,14 +455,14 @@ ${JSON.stringify(batchInput)}`;
 }
 
 // --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
-export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, tokens: number}> {
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, title: string, tokens: number}> {
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
 
     const transcriptions = getSessionTranscript(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
     const campaignId = getSessionCampaignId(sessionId);
 
-    if (transcriptions.length === 0) return { summary: "Nessuna trascrizione trovata.", tokens: 0 };
+    if (transcriptions.length === 0) return { summary: "Nessuna trascrizione trovata.", title: "Sessione Vuota", tokens: 0 };
 
     const userIds = new Set(transcriptions.map(t => t.user_id));
     let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
@@ -544,15 +545,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
 
     Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
-    Includi un titolo.
-
+    
     ISTRUZIONI DI FORMATTAZIONE RIGIDE:
     1. Non usare preamboli (es. "Ecco il riassunto").
     2. Non usare chiusure conversazionali (es. "Fammi sapere se...", "Spero ti piaccia").
     3. Non offrire di convertire il testo in altri formati o chiedere dettagli sul sistema di gioco.
-    4. L'output deve essere SOLO il testo narrativo e i punti richiesti. Nient'altro.
-    5. Termina l'output immediatamente dopo l'ultimo punto del contenuto.;
-    6. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
+    4. L'output deve essere un oggetto JSON valido con due campi:
+       - "title": Un titolo evocativo per la sessione.
+       - "summary": Il testo narrativo completo.
+    5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
 
     try {
         const response = await withRetry(() => openai.chat.completions.create({
@@ -561,12 +562,25 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                 { role: "system", content: reducePrompt },
                 { role: "user", content: contextForFinalStep }
             ],
+            response_format: { type: "json_object" }
         }));
 
-        const finalSummary = response.choices[0].message.content || "Errore generazione.";
+        const content = response.choices[0].message.content || "{}";
         accumulatedTokens += response.usage?.total_tokens || 0;
 
-        return { summary: finalSummary, tokens: accumulatedTokens };
+        let parsed;
+        try {
+            parsed = JSON.parse(content);
+        } catch (e) {
+            // Fallback se il modello non rispetta il JSON
+            parsed = { title: "Sessione Senza Titolo", summary: content };
+        }
+
+        return { 
+            summary: parsed.summary || "Errore generazione.", 
+            title: parsed.title || "Sessione Senza Titolo",
+            tokens: accumulatedTokens 
+        };
     } catch (err: any) {
         console.error("Errore finale:", err);
         throw err;

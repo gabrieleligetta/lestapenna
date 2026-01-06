@@ -88,6 +88,23 @@ Il bot traccia automaticamente gli spostamenti, ma puoi intervenire manualmente.
     *   Senza argomenti: Mostra la "memoria" che il bot ha del luogo attuale (descrizione, NPC, atmosfera).
     *   Con argomenti: Aggiorna manualmente la descrizione del luogo attuale nell'Atlante (es. `$atlante La locanda è bruciata`).
 
+### 👥 NPC e Dossier
+Il bot tiene traccia di chi incontrate.
+
+*   `$npc` (o `$dossier`):
+    *   Senza argomenti: Mostra la lista degli ultimi NPC incontrati.
+    *   Con nome: `$npc Grog` mostra la scheda dettagliata (Ruolo, Stato, Note).
+    *   Aggiornamento: `$npc Grog | È un traditore` aggiorna le note.
+*   `$presenze`: Mostra un elenco rapido degli NPC rilevati nella sessione corrente (utile per il DM per verificare se l'AI sta ascoltando bene).
+
+### 🎒 Inventario e Quest
+*   `$quest` (o `$obiettivi`): Visualizza le quest attive.
+    *   `$quest add <Titolo>`: Aggiunge manualmente una quest.
+    *   `$quest done <Titolo>`: Segna una quest come completata.
+*   `$inventario` (o `$loot`): Visualizza l'inventario del gruppo.
+    *   `$loot add <Oggetto>`: Aggiunge un oggetto.
+    *   `$loot use <Oggetto>`: Rimuove o usa un oggetto.
+
 ### 👤 Scheda Personaggio
 Ogni giocatore può definire il proprio personaggio per la campagna attiva. Questo aiuta l'IA a attribuire correttamente le azioni.
 

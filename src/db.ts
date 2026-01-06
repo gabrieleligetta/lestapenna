@@ -95,13 +95,23 @@ db.exec(`CREATE TABLE IF NOT EXISTS chat_history (
     timestamp INTEGER
 )`);
 
+// --- TABELLA STORICO LUOGHI ---
+db.exec(`CREATE TABLE IF NOT EXISTS location_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    location TEXT NOT NULL,
+    timestamp INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
 // --- MIGRATIONS ---
 const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
     "ALTER TABLE sessions ADD COLUMN campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL",
     "ALTER TABLE sessions ADD COLUMN session_number INTEGER",
     "ALTER TABLE sessions ADD COLUMN title TEXT",
-    "ALTER TABLE knowledge_fragments ADD COLUMN start_timestamp INTEGER"
+    "ALTER TABLE knowledge_fragments ADD COLUMN start_timestamp INTEGER",
+    "ALTER TABLE campaigns ADD COLUMN current_location TEXT"
 ];
 
 for (const m of migrations) {
@@ -116,6 +126,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions (campaign_
 db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_campaign_model ON knowledge_fragments (campaign_id, embedding_model)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_history_channel ON chat_history (channel_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes (session_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_location_history_campaign ON location_history (campaign_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -153,6 +164,7 @@ export interface Campaign {
     guild_id: string;
     name: string;
     is_active: number;
+    current_location?: string;
 }
 
 export interface KnowledgeFragment {
@@ -217,6 +229,27 @@ export const setActiveCampaign = (guildId: string, campaignId: number): void => 
     })();
 };
 
+export const updateCampaignLocation = (guildId: string, location: string): void => {
+    const campaign = getActiveCampaign(guildId);
+    if (campaign) {
+        db.transaction(() => {
+            db.prepare('UPDATE campaigns SET current_location = ? WHERE id = ?').run(location, campaign.id);
+            db.prepare('INSERT INTO location_history (campaign_id, location, timestamp) VALUES (?, ?, ?)').run(campaign.id, location, Date.now());
+        })();
+    }
+};
+
+export const getCampaignLocation = (guildId: string): string | null => {
+    const row = db.prepare('SELECT current_location FROM campaigns WHERE guild_id = ? AND is_active = 1').get(guildId) as { current_location: string } | undefined;
+    return row ? row.current_location : null;
+};
+
+export const getLocationHistory = (guildId: string, limit: number = 5): { location: string, timestamp: number }[] => {
+    const campaign = getActiveCampaign(guildId);
+    if (!campaign) return [];
+    return db.prepare('SELECT location, timestamp FROM location_history WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT ?').all(campaign.id, limit) as { location: string, timestamp: number }[];
+};
+
 export const getCampaignById = (id: number): Campaign | undefined => {
     return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as Campaign | undefined;
 };
@@ -236,7 +269,7 @@ export const deleteCampaign = (campaignId: number) => {
         deleteSess.run(s.session_id);
     }
 
-    // 3. Elimina campagna (Cascade farà il resto per characters e knowledge)
+    // 3. Elimina campagna (Cascade farà il resto per characters, knowledge e location_history)
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
 };
 
@@ -484,7 +517,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM knowledge_fragments').run();
     db.prepare('DELETE FROM chat_history').run();
     db.prepare('DELETE FROM session_notes').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes')").run();
+    db.prepare('DELETE FROM location_history').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

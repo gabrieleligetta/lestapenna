@@ -384,6 +384,14 @@ export async function correctTranscription(segments: any[], campaignId?: number)
         const campaign = getCampaignById(campaignId);
         if (campaign) {
             contextInfo += `\nCampagna: "${campaign.name}".`;
+            
+            // --- INIEZIONE LUOGO ---
+            const loc = (campaign as any).current_location; 
+            if (loc) {
+                contextInfo += `\nLUOGO ATTUALE: "${loc}". (Usa questo nome per correggere riferimenti all'ambiente).`;
+            }
+            // -----------------------
+
             const characters = getCampaignCharacters(campaignId);
             if (characters.length > 0) {
                 contextInfo += "\nPersonaggi Giocanti (PG):";

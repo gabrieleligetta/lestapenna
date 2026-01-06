@@ -56,7 +56,10 @@ import {
     addSessionNote,
     getCampaignCharacters,
     deleteUserCharacter,
-    deleteCampaign
+    deleteCampaign,
+    updateCampaignLocation,
+    getCampaignLocation,
+    getLocationHistory
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -231,7 +234,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -255,10 +258,11 @@ client.on('messageCreate', async (message: Message) => {
                 { 
                     name: "🎙️ Gestione Sessione", 
                     value: 
-                    "`$ascolta`: Inizia la registrazione (Campagna Attiva).\n" +
+                    "`$ascolta [Luogo]`: Inizia la registrazione (Campagna Attiva).\n" +
                     "`$termina`: Termina la sessione.\n" +
                     "`$pausa`: Sospende la registrazione.\n" +
                     "`$riprendi`: Riprende la registrazione.\n" +
+                    "`$luogo [Nome]`: Visualizza o aggiorna il luogo attuale.\n" +
                     "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                     "`$impostasessione <N>`: Imposta numero sessione.\n" +
                     "`$impostasessioneid <ID> <N>`: Corregge il numero." 
@@ -322,10 +326,11 @@ client.on('messageCreate', async (message: Message) => {
                 { 
                     name: "🎙️ Session Management", 
                     value: 
-                    "`$listen`: Start recording (Active Campaign).\n" +
+                    "`$listen [Location]`: Start recording (Active Campaign).\n" +
                     "`$stoplistening`: End the session.\n" +
                     "`$pause`: Pause recording.\n" +
                     "`$resume`: Resume recording.\n" +
+                    "`$location [Name]`: View or update current location.\n" +
                     "`$note <Text>`: Add a manual note to the summary.\n" +
                     "`$setsession <N>`: Manually set session number.\n" +
                     "`$setsessionid <ID> <N>`: Fix session number by ID." 
@@ -391,6 +396,25 @@ client.on('messageCreate', async (message: Message) => {
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
     if (command === 'listen' || command === 'ascolta') {
         const member = message.member;
+        
+        // --- NUOVO BLOCCO GESTIONE LUOGO ---
+        const locationArg = args.join(' '); // Prende tutto quello che scrivi dopo !ascolta
+        
+        if (locationArg) {
+            // Se il DM ha specificato un luogo, lo aggiorniamo subito
+            updateCampaignLocation(message.guild.id, locationArg);
+            await message.reply(`📍 Posizione tracciata: **${locationArg}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
+        } else {
+            // Altrimenti controlliamo se c'è un luogo in memoria
+            const currentLoc = getCampaignLocation(message.guild.id);
+            if (currentLoc) {
+                await message.reply(`📍 Luogo attuale: **${currentLoc}** (Se è cambiato, usa \`$ascolta Nuovo Luogo\`)`);
+            } else {
+                await message.reply(`⚠️ **Luogo Sconosciuto.**\nConsiglio: scrivi \`$ascolta <Nome Luogo>\` per aiutare il Bardo a capire meglio i nomi e l'atmosfera.`);
+            }
+        }
+        // -----------------------------------
+
         if (member?.voice.channel) {
             const voiceChannel = member.voice.channel;
 
@@ -498,6 +522,33 @@ client.on('messageCreate', async (message: Message) => {
 
         addSessionNote(sessionId, message.author.id, noteContent, Date.now());
         await message.reply("📝 Nota aggiunta al diario della sessione.");
+    }
+
+    // --- NUOVO: !luogo <Nome> ---
+    if (command === 'luogo' || command === 'location') {
+        const locationArg = args.join(' ');
+        
+        if (locationArg) {
+            updateCampaignLocation(message.guild.id, locationArg);
+            await message.reply(`📍 Posizione aggiornata: **${locationArg}**.\nIl Bardo userà questo contesto per le prossime trascrizioni.`);
+        } else {
+            const currentLoc = getCampaignLocation(message.guild.id);
+            const history = getLocationHistory(message.guild.id, 3);
+            
+            let msg = "";
+            if (currentLoc) {
+                msg = `📍 Luogo attuale: **${currentLoc}**`;
+            } else {
+                msg = `⚠️ Luogo sconosciuto.`;
+            }
+
+            if (history.length > 0) {
+                msg += `\n\n📜 **Ultimi spostamenti:**\n` + history.map(h => `- ${h.location} (${new Date(h.timestamp).toLocaleTimeString()})`).join('\n');
+            }
+
+            msg += `\n\nUsa \`$luogo <Nome>\` per aggiornare la posizione.`;
+            await message.reply(msg);
+        }
     }
 
     // --- NUOVO: !stato ---

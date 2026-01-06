@@ -10,6 +10,7 @@ Lestapenna è un bot Discord avanzato progettato per registrare, trascrivere e n
 *   **Gestione Campagne**: Supporta multiple campagne e profili personaggio per ogni server.
 *   **Memoria a Lungo Termine**: Indicizza gli eventi passati per rispondere a domande sulla storia ("Cosa è successo a Waterdeep?").
 *   **Archivio Cloud**: Backup automatico delle registrazioni su Oracle Cloud Object Storage.
+*   **Tracciamento Luoghi (Atlas)**: Mantiene memoria dei luoghi visitati e adatta la narrazione all'ambiente.
 
 ## 🛠️ Installazione e Configurazione
 
@@ -67,7 +68,7 @@ Prima di iniziare, devi creare o selezionare una campagna.
 *   `$eliminacampagna <Nome>` (o `$deletecampaign`): Elimina definitivamente una campagna e tutti i suoi dati.
 
 ### 🎙️ Gestione Sessione
-*   `$ascolta` (o `$listen`): Il bot entra nel canale vocale e inizia a registrare. **Richiede una campagna attiva.**
+*   `$ascolta [Luogo]` (o `$listen`): Il bot entra nel canale vocale e inizia a registrare. Puoi specificare opzionalmente il luogo di partenza (es. `$ascolta Neverwinter | Locanda`). **Richiede una campagna attiva.**
 *   `$termina` (o `$stoplistening`): Termina la registrazione, avvia la trascrizione e genera il riassunto.
 *   `$pausa` (o `$pause`): Sospende temporaneamente la registrazione (utile per pause off-game).
 *   `$riprendi` (o `$resume`): Riprende la registrazione dopo una pausa.
@@ -75,6 +76,17 @@ Prima di iniziare, devi creare o selezionare una campagna.
 *   `$impostasessione <N>` (o `$setsession`): Imposta manualmente il numero della sessione corrente.
 *   `$impostasessioneid <ID> <N>`: Corregge il numero di sessione per uno specifico ID sessione.
 *   `$reset <ID>`: Forza la rielaborazione completa di una sessione (utile in caso di errori).
+
+### 📍 Luoghi e Atlante
+Il bot traccia automaticamente gli spostamenti, ma puoi intervenire manualmente.
+
+*   `$luogo [Macro | Micro]` (o `$location`): 
+    *   Senza argomenti: Mostra dove si trova il gruppo attualmente.
+    *   Con argomenti: Aggiorna la posizione (es. `$luogo Waterdeep | Porto` oppure solo `$luogo Cripta` per cambiare stanza).
+*   `$viaggi` (o `$travels`): Mostra la cronologia degli ultimi spostamenti.
+*   `$atlante [Descrizione]` (o `$atlas`):
+    *   Senza argomenti: Mostra la "memoria" che il bot ha del luogo attuale (descrizione, NPC, atmosfera).
+    *   Con argomenti: Aggiorna manualmente la descrizione del luogo attuale nell'Atlante (es. `$atlante La locanda è bruciata`).
 
 ### 👤 Scheda Personaggio
 Ogni giocatore può definire il proprio personaggio per la campagna attiva. Questo aiuta l'IA a attribuire correttamente le azioni.

@@ -637,8 +637,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
 
     allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
 
-    let lastMacro: string | null = null;
-    let lastMicro: string | null = null;
+    let lastMacro: string | null | undefined = null;
+    let lastMicro: string | null | undefined = null;
 
     let fullDialogue = allFragments.map(f => {
         const minutes = Math.floor((f.absoluteTime - startTime) / 60000);

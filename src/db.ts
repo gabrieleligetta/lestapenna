@@ -62,6 +62,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
 )`);
 
+// --- TABELLA NOTE SESSIONE ---
+db.exec(`CREATE TABLE IF NOT EXISTS session_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    user_id TEXT,
+    content TEXT NOT NULL,
+    timestamp INTEGER,
+    created_at INTEGER
+)`);
+
 // --- TABELLA MEMORIA A LUNGO TERMINE (RAG) ---
 db.exec(`CREATE TABLE IF NOT EXISTS knowledge_fragments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,6 +115,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_campaigns_guild ON campaigns (guild_id)`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_campaign_model ON knowledge_fragments (campaign_id, embedding_model)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_history_channel ON chat_history (channel_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes (session_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -156,6 +167,15 @@ export interface KnowledgeFragment {
     created_at: number;
 }
 
+export interface SessionNote {
+    id: number;
+    session_id: string;
+    user_id: string;
+    content: string;
+    timestamp: number;
+    created_at: number;
+}
+
 // --- FUNZIONI CONFIGURAZIONE ---
 
 const setConfig = (key: string, value: string): void => {
@@ -201,6 +221,25 @@ export const getCampaignById = (id: number): Campaign | undefined => {
     return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as Campaign | undefined;
 };
 
+export const deleteCampaign = (campaignId: number) => {
+    // 1. Trova sessioni
+    const sessions = db.prepare('SELECT session_id FROM sessions WHERE campaign_id = ?').all(campaignId) as { session_id: string }[];
+    
+    // 2. Elimina registrazioni e sessioni
+    const deleteRec = db.prepare('DELETE FROM recordings WHERE session_id = ?');
+    const deleteSess = db.prepare('DELETE FROM sessions WHERE session_id = ?');
+    const deleteNotes = db.prepare('DELETE FROM session_notes WHERE session_id = ?');
+    
+    for (const s of sessions) {
+        deleteRec.run(s.session_id);
+        deleteNotes.run(s.session_id);
+        deleteSess.run(s.session_id);
+    }
+
+    // 3. Elimina campagna (Cascade farà il resto per characters e knowledge)
+    db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
+};
+
 // --- FUNZIONI PERSONAGGI (CONTEXT AWARE) ---
 
 export const getUserProfile = (userId: string, campaignId: number): UserProfile => {
@@ -213,8 +252,8 @@ export const getUserName = (userId: string, campaignId: number): string | null =
     return p.character_name;
 };
 
-export const getCampaignCharacters = (campaignId: number): UserProfile[] => {
-    return db.prepare('SELECT character_name, race, class, description FROM characters WHERE campaign_id = ?').all(campaignId) as UserProfile[];
+export const getCampaignCharacters = (campaignId: number): UserProfile[] & { user_id: string }[] => {
+    return db.prepare('SELECT user_id, character_name, race, class, description FROM characters WHERE campaign_id = ?').all(campaignId) as UserProfile[] & { user_id: string }[];
 };
 
 export const updateUserCharacter = (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
@@ -226,6 +265,10 @@ export const updateUserCharacter = (userId: string, campaignId: number, field: '
         db.prepare('INSERT INTO characters (user_id, campaign_id) VALUES (?, ?)').run(userId, campaignId);
         db.prepare(`UPDATE characters SET ${field} = ? WHERE user_id = ? AND campaign_id = ?`).run(value, userId, campaignId);
     }
+};
+
+export const deleteUserCharacter = (userId: string, campaignId: number) => {
+    db.prepare('DELETE FROM characters WHERE user_id = ? AND campaign_id = ?').run(userId, campaignId);
 };
 
 // --- FUNZIONI REGISTRAZIONI ---
@@ -391,6 +434,16 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
     return row ? row.session_id : null;
 };
 
+// --- FUNZIONI NOTE SESSIONE ---
+
+export const addSessionNote = (sessionId: string, userId: string, content: string, timestamp: number) => {
+    db.prepare('INSERT INTO session_notes (session_id, user_id, content, timestamp, created_at) VALUES (?, ?, ?, ?, ?)').run(sessionId, userId, content, timestamp, Date.now());
+};
+
+export const getSessionNotes = (sessionId: string): SessionNote[] => {
+    return db.prepare('SELECT * FROM session_notes WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId) as SessionNote[];
+};
+
 // --- FUNZIONI KNOWLEDGE BASE (RAG) ---
 
 export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0) => {
@@ -430,7 +483,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM characters').run();
     db.prepare('DELETE FROM knowledge_fragments').run();
     db.prepare('DELETE FROM chat_history').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history')").run();
+    db.prepare('DELETE FROM session_notes').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

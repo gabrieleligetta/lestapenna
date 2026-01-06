@@ -64,10 +64,14 @@ Prima di iniziare, devi creare o selezionare una campagna.
 *   `$creacampagna <Nome>` (o `$createcampaign`): Crea una nuova campagna per il server.
 *   `$selezionacampagna <Nome>` (o `$selectcampaign`): Attiva una campagna specifica.
 *   `$listacampagne` (o `$listcampaigns`): Mostra l'elenco delle campagne disponibili.
+*   `$eliminacampagna <Nome>` (o `$deletecampaign`): Elimina definitivamente una campagna e tutti i suoi dati.
 
 ### 🎙️ Gestione Sessione
 *   `$ascolta` (o `$listen`): Il bot entra nel canale vocale e inizia a registrare. **Richiede una campagna attiva.**
 *   `$termina` (o `$stoplistening`): Termina la registrazione, avvia la trascrizione e genera il riassunto.
+*   `$pausa` (o `$pause`): Sospende temporaneamente la registrazione (utile per pause off-game).
+*   `$riprendi` (o `$resume`): Riprende la registrazione dopo una pausa.
+*   `$nota <Testo>` (o `$note`): Inserisce una nota testuale manuale nel diario della sessione (es. "Trovata spada magica").
 *   `$impostasessione <N>` (o `$setsession`): Imposta manualmente il numero della sessione corrente.
 *   `$impostasessioneid <ID> <N>`: Corregge il numero di sessione per uno specifico ID sessione.
 *   `$reset <ID>`: Forza la rielaborazione completa di una sessione (utile in caso di errori).
@@ -81,19 +85,23 @@ Ogni giocatore può definire il proprio personaggio per la campagna attiva. Ques
 *   `$miarazza <Razza>` (o `$myrace`): Imposta la tua razza (es. Elfo, Nano).
 *   `$miadesc <Testo>` (o `$mydesc`): Aggiunge una breve descrizione fisica o caratteriale.
 *   `$chisono` (o `$whoami`): Visualizza la tua scheda attuale.
+*   `$party` (o `$compagni`): Visualizza l'elenco di tutti i personaggi registrati nella campagna.
+*   `$resetpg` (o `$clearchara`): Cancella la tua scheda personaggio per la campagna attiva.
 
 ### 📜 Narrazione e Archivi
 *   `$racconta <ID_SESSIONE> [tono]` (o `$narrate`): Rigenera il riassunto di una sessione passata.
 *   `$toni` (o `$tones`): Mostra l'elenco dei toni narrativi disponibili (es. DM, EPIC, DARK, COMIC).
 *   `$listasessioni` (o `$listsessions`): Mostra le ultime sessioni registrate per la campagna attiva.
 *   `$chiedialbardo <Domanda>` (o `$ask`): Fai una domanda al Bardo sulla storia della campagna (es. "Chi abbiamo incontrato alla taverna?").
+*   `$wiki <Termine>` (o `$lore`): Cerca frammenti di testo esatti negli archivi della memoria (senza elaborazione AI).
 *   `$memorizza <ID>` (o `$ingest`): Forza l'apprendimento degli eventi di una specifica sessione. Utile se il bot non sembra ricordare cosa è successo in una sessione passata o se l'ingestione automatica è fallita. Dopo aver eseguito questo comando, il bot potrà rispondere a domande su quella sessione tramite `$chiedialbardo`.
 *   `$scarica <ID_SESSIONE>` (o `$download`): Richiede il file audio completo della sessione (mixato).
 *   `$scaricatrascrizioni <ID_SESSIONE>` (o `$downloadtxt`): Scarica il file di testo con la trascrizione completa.
 
-### ⚙️ Configurazione Server
+### ⚙️ Configurazione e Manutenzione
 *   `$setcmd`: Imposta il canale testuale corrente come canale per i comandi del bot.
 *   `$setsummary`: Imposta il canale testuale corrente per la pubblicazione dei riassunti.
+*   `$stato` (o `$status`): Mostra lo stato delle code di elaborazione (audio e correzione).
 
 ### 🧪 Debug e Test
 *   `$teststream <URL>`: Simula una sessione scaricando un file audio da un URL.

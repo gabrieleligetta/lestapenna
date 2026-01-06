@@ -25,11 +25,40 @@ interface ActiveStream {
 // Mappa aggiornata: UserId -> Dati Stream
 const activeStreams = new Map<string, ActiveStream>();
 const connectionErrors = new Map<string, number>();
+const pausedGuilds = new Set<string>();
+
+export function pauseRecording(guildId: string) {
+    pausedGuilds.add(guildId);
+    console.log(`[Recorder] ⏸️ Registrazione in PAUSA per Guild ${guildId}`);
+    
+    // Chiudiamo forzatamente gli stream attivi per evitare di registrare durante la pausa
+    for (const [key, stream] of activeStreams) {
+        if (key.startsWith(`${guildId}-`)) {
+            try {
+                stream.out.end();
+            } catch (e) {}
+            activeStreams.delete(key);
+        }
+    }
+}
+
+export function resumeRecording(guildId: string) {
+    pausedGuilds.delete(guildId);
+    console.log(`[Recorder] ▶️ Registrazione RIPRESA per Guild ${guildId}`);
+}
+
+export function isRecordingPaused(guildId: string): boolean {
+    return pausedGuilds.has(guildId);
+}
 
 export async function connectToChannel(channel: VoiceBasedChannel, sessionId: string) {
     if (!channel.guild) return;
 
     const guildId = channel.guild.id;
+    
+    // Reset stato pausa alla connessione
+    pausedGuilds.delete(guildId);
+
     const connection: VoiceConnection = joinVoiceChannel({
         channelId: channel.id,
         guildId: guildId,
@@ -41,6 +70,11 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
 
     connection.receiver.speaking.on('start', (userId: string) => {
+        // --- CHECK PAUSA ---
+        if (pausedGuilds.has(guildId)) {
+            return;
+        }
+
         // --- FILTRO BOT ---
         // Recuperiamo l'utente dalla cache del client (se disponibile)
         // Nota: In un contesto reale, 'channel.client' è accessibile.

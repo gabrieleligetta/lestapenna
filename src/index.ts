@@ -17,7 +17,7 @@ import {
     ComponentType,
     MessageComponentInteraction
 } from 'discord.js';
-import { connectToChannel, disconnect, wipeLocalFiles } from './voicerecorder';
+import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRecording, isRecordingPaused } from './voicerecorder';
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
@@ -52,7 +52,11 @@ import {
     addChatMessage,
     getChatHistory,
     updateSessionTitle,
-    db
+    db,
+    addSessionNote,
+    getCampaignCharacters,
+    deleteUserCharacter,
+    deleteCampaign
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -104,18 +108,82 @@ client.on('messageCreate', async (message: Message) => {
         const campaigns = getCampaigns(message.guild.id);
         const active = getActiveCampaign(message.guild.id);
         
-        if (campaigns.length === 0) return await message.reply("Nessuna campagna trovata. Creane una con `$creacampagna`.");
+        if (campaigns.length === 0) {
+            return await message.reply("Nessuna campagna trovata. Creane una con `$creacampagna`.");
+        }
 
-        const list = campaigns.map(c => 
-            `${c.id === active?.id ? '👉 ' : ''}**${c.name}** (ID: ${c.id})`
-        ).join('\n');
+        const ITEMS_PER_PAGE = 5;
+        const totalPages = Math.ceil(campaigns.length / ITEMS_PER_PAGE);
+        let currentPage = 0;
 
-        const embed = new EmbedBuilder()
-            .setTitle("🗺️ Campagne di questo Server")
-            .setDescription(list)
-            .setColor("#E67E22");
-        
-        return await message.reply({ embeds: [embed] });
+        const generateEmbed = (page: number) => {
+            const start = page * ITEMS_PER_PAGE;
+            const end = start + ITEMS_PER_PAGE;
+            const currentCampaigns = campaigns.slice(start, end);
+
+            const list = currentCampaigns.map(c => 
+                `${c.id === active?.id ? '👉 ' : ''}**${c.name}** (ID: ${c.id})`
+            ).join('\n');
+
+            return new EmbedBuilder()
+                .setTitle("🗺️ Campagne di questo Server")
+                .setDescription(list)
+                .setColor("#E67E22")
+                .setFooter({ text: `Pagina ${page + 1} di ${totalPages}` });
+        };
+
+        const generateButtons = (page: number) => {
+            const row = new ActionRowBuilder<ButtonBuilder>();
+            
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_page_camp')
+                    .setLabel('⬅️ Precedente')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('next_page_camp')
+                    .setLabel('Successivo ➡️')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+
+            return row;
+        };
+
+        const reply = await message.reply({ 
+            embeds: [generateEmbed(currentPage)], 
+            components: totalPages > 1 ? [generateButtons(currentPage)] : [] 
+        });
+
+        if (totalPages > 1) {
+            const collector = reply.createMessageComponentCollector({ 
+                componentType: ComponentType.Button, 
+                time: 60000 
+            });
+
+            collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                if (interaction.user.id !== message.author.id) {
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    return;
+                }
+
+                if (interaction.customId === 'prev_page_camp') {
+                    currentPage--;
+                } else if (interaction.customId === 'next_page_camp') {
+                    currentPage++;
+                }
+
+                await interaction.update({ 
+                    embeds: [generateEmbed(currentPage)], 
+                    components: [generateButtons(currentPage)] 
+                });
+            });
+
+            collector.on('end', () => {
+                reply.edit({ components: [] }).catch(() => {});
+            });
+        }
     }
 
     if (command === 'selezionacampagna' || command === 'setcampagna' || command === 'selectcampaign' || command === 'setcampaign') {
@@ -131,10 +199,39 @@ client.on('messageCreate', async (message: Message) => {
         return await message.reply(`✅ Campagna attiva impostata su: **${target.name}**.`);
     }
 
+    if (command === 'eliminacampagna' || command === 'deletecampaign') {
+        const nameOrId = args.join(' ');
+        if (!nameOrId) return await message.reply("Uso: `$eliminacampagna <Nome o ID>`");
+
+        const campaigns = getCampaigns(message.guild.id);
+        const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
+
+        if (!target) return await message.reply("⚠️ Campagna non trovata.");
+
+        // Chiedi conferma
+        await message.reply(`⚠️ **ATTENZIONE**: Stai per eliminare la campagna **${target.name}** e TUTTE le sue sessioni, registrazioni e memorie. Questa azione è irreversibile.\nScrivi \`CONFERMO\` per procedere.`);
+        
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                deleteCampaign(target.id);
+                await message.reply(`🗑️ Campagna **${target.name}** eliminata definitivamente.`);
+            }
+        } catch (e) {
+            await message.reply("⌛ Tempo scaduto. Eliminazione annullata.");
+        }
+    }
+
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -152,13 +249,17 @@ client.on('messageCreate', async (message: Message) => {
                     value:
                     "`$creacampagna <Nome>`: Crea nuova campagna.\n" +
                     "`$selezionacampagna <Nome>`: Attiva una campagna.\n" +
-                    "`$listacampagne`: Mostra le campagne."
+                    "`$listacampagne`: Mostra le campagne.\n" +
+                    "`$eliminacampagna <Nome>`: Elimina una campagna."
                 },
                 { 
                     name: "🎙️ Gestione Sessione", 
                     value: 
                     "`$ascolta`: Inizia la registrazione (Campagna Attiva).\n" +
                     "`$termina`: Termina la sessione.\n" +
+                    "`$pausa`: Sospende la registrazione.\n" +
+                    "`$riprendi`: Riprende la registrazione.\n" +
+                    "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                     "`$impostasessione <N>`: Imposta numero sessione.\n" +
                     "`$impostasessioneid <ID> <N>`: Corregge il numero." 
                 },
@@ -169,6 +270,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$racconta <ID> [tono]`: Rigenera riassunto.\n" +
                     "`$modificatitolo <ID> <Titolo>`: Modifica il titolo di una sessione.\n" +
                     "`$chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
+                    "`$wiki <Termine>`: Cerca frammenti di lore esatti.\n" +
                     "`$memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
                     "`$scarica <ID>`: Scarica audio.\n" +
                     "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
@@ -180,13 +282,16 @@ client.on('messageCreate', async (message: Message) => {
                     "`$miaclasse <Classe>`: Imposta la tua classe.\n" +
                     "`$miarazza <Razza>`: Imposta la tua razza.\n" +
                     "`$miadesc <Testo>`: Aggiunge dettagli.\n" +
-                    "`$chisono`: Visualizza la tua scheda." 
+                    "`$chisono`: Visualizza la tua scheda.\n" +
+                    "`$party`: Visualizza tutti i personaggi.\n" +
+                    "`$resetpg`: Resetta la tua scheda." 
                 },
                 { 
-                    name: "⚙️ Configurazione", 
+                    name: "⚙️ Configurazione & Status", 
                     value: 
                     "`$setcmd`: Imposta questo canale per i comandi.\n" +
-                    "`$setsummary`: Imposta questo canale per la pubblicazione dei riassunti." 
+                    "`$setsummary`: Imposta questo canale per la pubblicazione dei riassunti.\n" +
+                    "`$stato`: Mostra lo stato delle code di elaborazione." 
                 },
                 {
                     name: "🧪 Test & Debug",
@@ -211,13 +316,17 @@ client.on('messageCreate', async (message: Message) => {
                     value:
                     "`$createcampaign <Name>`: Create a new campaign.\n" +
                     "`$selectcampaign <Name>`: Activate a campaign.\n" +
-                    "`$listcampaigns`: Show available campaigns."
+                    "`$listcampaigns`: Show available campaigns.\n" +
+                    "`$deletecampaign <Name>`: Delete a campaign."
                 },
                 { 
                     name: "🎙️ Session Management", 
                     value: 
                     "`$listen`: Start recording (Active Campaign).\n" +
                     "`$stoplistening`: End the session.\n" +
+                    "`$pause`: Pause recording.\n" +
+                    "`$resume`: Resume recording.\n" +
+                    "`$note <Text>`: Add a manual note to the summary.\n" +
                     "`$setsession <N>`: Manually set session number.\n" +
                     "`$setsessionid <ID> <N>`: Fix session number by ID." 
                 },
@@ -228,6 +337,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$narrate <ID> [tone]`: Regenerate summary.\n" +
                     "`$edittitle <ID> <Title>`: Edit session title.\n" +
                     "`$ask <Question>`: Ask the Bard about the lore.\n" +
+                    "`$lore <Term>`: Search exact lore fragments.\n" +
                     "`$ingest <ID>`: Manually index a session into memory.\n" +
                     "`$download <ID>`: Download audio.\n" +
                     "`$downloadtxt <ID>`: Download transcriptions (txt)." 
@@ -239,13 +349,16 @@ client.on('messageCreate', async (message: Message) => {
                     "`$myclass <Class>`: Set your class.\n" +
                     "`$myrace <Race>`: Set your race.\n" +
                     "`$mydesc <Text>`: Add details.\n" +
-                    "`$whoami`: View your current sheet." 
+                    "`$whoami`: View your current sheet.\n" +
+                    "`$party`: View all characters.\n" +
+                    "`$clearchara`: Reset your sheet." 
                 },
                 { 
-                    name: "⚙️ Configuration", 
+                    name: "⚙️ Configuration & Status", 
                     value: 
                     "`$setcmd`: Set this channel for commands.\n" +
-                    "`$setsummary`: Set this channel for summaries." 
+                    "`$setsummary`: Set this channel for summaries.\n" +
+                    "`$status`: Show processing queue status." 
                 },
                 {
                     name: "🧪 Test & Debug",
@@ -348,6 +461,60 @@ client.on('messageCreate', async (message: Message) => {
 
         // 3. Monitoraggio
         await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
+    }
+
+    // --- NUOVO: !pausa / !riprendi ---
+    if (command === 'pausa' || command === 'pause') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("Nessuna sessione attiva.");
+        
+        if (isRecordingPaused(message.guild.id)) {
+            return await message.reply("La registrazione è già in pausa.");
+        }
+
+        pauseRecording(message.guild.id);
+        await message.reply("⏸️ **Registrazione in Pausa**. Il Bardo si riposa.");
+    }
+
+    if (command === 'riprendi' || command === 'resume') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("Nessuna sessione attiva.");
+
+        if (!isRecordingPaused(message.guild.id)) {
+            return await message.reply("La registrazione è già attiva.");
+        }
+
+        resumeRecording(message.guild.id);
+        await message.reply("▶️ **Registrazione Ripresa**. Il Bardo torna ad ascoltare.");
+    }
+
+    // --- NUOVO: !nota <Testo> ---
+    if (command === 'nota' || command === 'note') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `$ascolta`.");
+
+        const noteContent = args.join(' ');
+        if (!noteContent) return await message.reply("Uso: `$nota <Testo della nota>`");
+
+        addSessionNote(sessionId, message.author.id, noteContent, Date.now());
+        await message.reply("📝 Nota aggiunta al diario della sessione.");
+    }
+
+    // --- NUOVO: !stato ---
+    if (command === 'stato' || command === 'status') {
+        const audioCounts = await audioQueue.getJobCounts();
+        const correctionCounts = await correctionQueue.getJobCounts();
+        
+        const embed = new EmbedBuilder()
+            .setTitle("⚙️ Stato del Sistema")
+            .setColor("#2ECC71")
+            .addFields(
+                { name: "🎙️ Coda Audio", value: `In attesa: ${audioCounts.waiting}\nAttivi: ${audioCounts.active}\nCompletati: ${audioCounts.completed}\nFalliti: ${audioCounts.failed}`, inline: true },
+                { name: "🧠 Coda Correzione", value: `In attesa: ${correctionCounts.waiting}\nAttivi: ${correctionCounts.active}\nCompletati: ${correctionCounts.completed}\nFalliti: ${correctionCounts.failed}`, inline: true }
+            )
+            .setTimestamp();
+        
+        await message.reply({ embeds: [embed] });
     }
 
     // --- NUOVO: !setsession <numero> ---
@@ -592,6 +759,37 @@ client.on('messageCreate', async (message: Message) => {
         } catch (err) {
             console.error("Errore chiedialbardo:", err);
             await message.reply("Il Bardo ha un vuoto di memoria...");
+        }
+    }
+
+    // --- NUOVO: !wiki <Termine> ---
+    if (command === 'wiki' || command === 'lore') {
+        const term = args.join(' ');
+        if (!term) return await message.reply("Uso: `$wiki <Termine>`");
+
+        // Fix per TS2339: Controllo se il canale supporta sendTyping
+        if ('sendTyping' in message.channel) {
+            await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
+        }
+
+        try {
+            // Usa searchKnowledge ma restituisce i risultati raw
+            const { searchKnowledge } = require('./bard'); // Import dinamico per evitare cicli se necessario, o usa import statico
+            const fragments = await searchKnowledge(activeCampaign!.id, term, 3);
+            
+            if (fragments.length === 0) {
+                return await message.reply("Non ho trovato nulla negli archivi su questo argomento.");
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle(`📚 Archivi: ${term}`)
+                .setColor("#F1C40F")
+                .setDescription(fragments.map((f: string, i: number) => `**Frammento ${i+1}:**\n${f}`).join('\n\n'));
+
+            await message.reply({ embeds: [embed] });
+        } catch (err) {
+            console.error("Errore wiki:", err);
+            await message.reply("Errore durante la consultazione degli archivi.");
         }
     }
 
@@ -1019,6 +1217,34 @@ client.on('messageCreate', async (message: Message) => {
         } else {
             await message.reply("Non ti conosco in questa campagna. Usa `$sono <Nome>` per iniziare la tua leggenda!");
         }
+    }
+
+    // --- NUOVO: !party ---
+    if (command === 'party' || command === 'compagni') {
+        const characters = getCampaignCharacters(activeCampaign!.id);
+        
+        if (characters.length === 0) {
+            return await message.reply("Nessun avventuriero registrato in questa campagna.");
+        }
+
+        const list = characters.map(c => {
+            const name = c.character_name || "Sconosciuto";
+            const details = [c.race, c.class].filter(Boolean).join(' - ');
+            return `**${name}**${details ? ` (${details})` : ''}`;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🛡️ Party: ${activeCampaign!.name}`)
+            .setColor("#9B59B6")
+            .setDescription(list);
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !resetpg ---
+    if (command === 'resetpg' || command === 'clearchara') {
+        deleteUserCharacter(message.author.id, activeCampaign!.id);
+        await message.reply("🗑️ Scheda personaggio resettata. Ora sei un'anima errante.");
     }
 });
 

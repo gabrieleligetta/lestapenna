@@ -11,7 +11,8 @@ import {
     insertKnowledgeFragment,
     getKnowledgeFragments,
     deleteSessionKnowledge,
-    KnowledgeFragment
+    KnowledgeFragment,
+    getSessionNotes
 } from './db';
 
 // --- CONFIGURAZIONE TONI ---
@@ -459,10 +460,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
 
     const transcriptions = getSessionTranscript(sessionId);
+    const notes = getSessionNotes(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
     const campaignId = getSessionCampaignId(sessionId);
 
-    if (transcriptions.length === 0) return { summary: "Nessuna trascrizione trovata.", title: "Sessione Vuota", tokens: 0 };
+    if (transcriptions.length === 0 && notes.length === 0) return { summary: "Nessuna trascrizione trovata.", title: "Sessione Vuota", tokens: 0 };
 
     const userIds = new Set(transcriptions.map(t => t.user_id));
     let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
@@ -497,19 +499,33 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                     allFragments.push({
                         absoluteTime: t.timestamp + (seg.start * 1000),
                         character: t.character_name || "Sconosciuto",
-                        text: seg.text
+                        text: seg.text,
+                        type: 'audio'
                     });
                 }
             }
         } catch (e) {}
     }
+
+    // Aggiunta Note
+    for (const n of notes) {
+        const p = getUserProfile(n.user_id, campaignId || 0);
+        allFragments.push({
+            absoluteTime: n.timestamp,
+            character: p.character_name || "Giocatore",
+            text: `[NOTA UTENTE] ${n.content}`,
+            type: 'note'
+        });
+    }
+
     allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
 
     let fullDialogue = allFragments.map(f => {
         const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
         const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
         const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-        return `[${timeStr}] ${f.character}: ${f.text}`;
+        const prefix = f.type === 'note' ? '📝 ' : '';
+        return `${prefix}[${timeStr}] ${f.character}: ${f.text}`;
     }).join("\n");
 
     let contextForFinalStep = "";
@@ -543,6 +559,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
     - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
     - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
+    - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori. Usale come punti fermi della narrazione, hanno priorità sull'audio trascritto.
 
     Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
     

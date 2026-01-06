@@ -1,6 +1,6 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
@@ -179,12 +179,50 @@ export function startWorker() {
         console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`);
         
         try {
-            const correctedSegments = await correctTranscription(segments, campaignId);
+            const aiResult = await correctTranscription(segments, campaignId);
+            const correctedSegments = aiResult.segments;
+            
+            let finalMacro = null;
+            let finalMicro = null;
+
+            // Logica Aggiornamento Luogo
+            if (campaignId) {
+                const current = getCampaignLocationById(campaignId);
+                
+                if (aiResult.detected_location) {
+                    const loc = aiResult.detected_location;
+                    
+                    // Logica di merge: se l'AI manda null, manteniamo il vecchio MACRO, 
+                    // ma il MICRO spesso cambia totalmente, quindi se è null potrebbe significare "fuori"
+                    const newMacro = loc.macro || current?.macro || null;
+                    const newMicro = loc.micro || null; // Se l'AI dice cambio scena ma micro è null, siamo "in giro" nel macro
+                    
+                    if (newMacro !== current?.macro || newMicro !== current?.micro) {
+                        console.log(`[Worker] 🗺️ Cambio luogo rilevato: ${newMacro} - ${newMicro}`);
+                        updateLocation(campaignId, newMacro, newMicro);
+                    }
+                    
+                    finalMacro = newMacro;
+                    finalMicro = newMicro;
+                } else {
+                    // Se l'AI non rileva nulla, usiamo il luogo corrente della campagna
+                    finalMacro = current?.macro || null;
+                    finalMicro = current?.micro || null;
+                }
+
+                // 2. GESTIONE ATLANTE (Storico)
+                if (aiResult.atlas_update && finalMacro && finalMicro) {
+                    console.log(`[Atlas] ✍️ L'AI ha aggiornato la memoria di: ${finalMicro}`);
+                    updateAtlasEntry(campaignId, finalMacro, finalMicro, aiResult.atlas_update);
+                }
+            }
+
             const jsonStr = JSON.stringify(correctedSegments);
             const flatText = correctedSegments.map((s: any) => s.text).join(" ");
             
-            updateRecordingStatus(fileName, 'PROCESSED', jsonStr);
-            console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..."`);
+            // Salviamo anche i metadati di luogo nel record
+            updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro);
+            console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..." [Luogo: ${finalMacro}|${finalMicro}]`);
             
             return { status: 'ok', segments: correctedSegments };
 

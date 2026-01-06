@@ -12,7 +12,10 @@ import {
     getKnowledgeFragments,
     deleteSessionKnowledge,
     KnowledgeFragment,
-    getSessionNotes
+    getSessionNotes,
+    LocationState,
+    getCampaignLocationById,
+    getAtlasEntry
 } from './db';
 
 // --- CONFIGURAZIONE TONI ---
@@ -68,6 +71,17 @@ const ollamaEmbedClient = new OpenAI({
 
 const EMBEDDING_MODEL_OPENAI = "text-embedding-3-small";
 const EMBEDDING_MODEL_OLLAMA = "nomic-embed-text";
+
+// Interfaccia per la risposta dell'AI
+interface AIResponse {
+    segments: any[];
+    detected_location?: {
+        macro?: string; // Es. "Città di Neverwinter"
+        micro?: string; // Es. "Locanda del Drago"
+        confidence: string; // "high" o "low"
+    };
+    atlas_update?: string; // Nuova descrizione del luogo (se cambiata)
+}
 
 /**
  * Divide il testo in chunk
@@ -234,7 +248,7 @@ export async function ingestSessionRaw(sessionId: string) {
 
     const startTime = getSessionStartTime(sessionId) || 0;
 
-    interface DialogueLine { timestamp: number; text: string; }
+    interface DialogueLine { timestamp: number; text: string; macro?: string | null; micro?: string | null; }
     const lines: DialogueLine[] = [];
 
     for (const t of transcriptions) {
@@ -247,7 +261,12 @@ export async function ingestSessionRaw(sessionId: string) {
                     const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
                     const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
                     const charName = t.character_name || "Sconosciuto";
-                    lines.push({ timestamp: absTime, text: `[${timeStr}] ${charName}: ${seg.text}` });
+                    lines.push({ 
+                        timestamp: absTime, 
+                        text: `[${timeStr}] ${charName}: ${seg.text}`,
+                        macro: t.macro_location,
+                        micro: t.micro_location
+                    });
                 }
             }
         } catch (e) { /* Ignora errori parsing */ }
@@ -273,7 +292,13 @@ export async function ingestSessionRaw(sessionId: string) {
         const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
         if (timeMatch) chunkTimestamp = startTime + (parseInt(timeMatch[1]) * 60000) + (parseInt(timeMatch[2]) * 1000);
 
-        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp });
+        // Recuperiamo il luogo dal primo segmento del chunk (approssimazione accettabile)
+        // Cerchiamo la riga corrispondente nel array originale
+        const firstLine = lines.find(l => l.text.includes(chunkText.substring(0, 50)));
+        const macro = firstLine?.macro || null;
+        const micro = firstLine?.micro || null;
+
+        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro });
         if (end >= fullText.length) break;
         i = end - OVERLAP;
     }
@@ -306,7 +331,9 @@ export async function ingestSessionRaw(sessionId: string) {
                     insertKnowledgeFragment(
                         campaignId, sessionId, chunk.text, val.data,
                         val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
-                        chunk.timestamp
+                        chunk.timestamp,
+                        chunk.macro,
+                        chunk.micro
                     );
                 }
             }
@@ -350,8 +377,33 @@ export async function askBard(campaignId: number, question: string, history: { r
         ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
         : "Nessuna memoria specifica trovata.";
 
+    // --- GENIUS LOCI: Adattamento Tono ---
+    const loc = getCampaignLocationById(campaignId);
+    let atmosphere = "Sei il Bardo della campagna. Rispondi in modo neutrale ma evocativo.";
+
+    if (loc) {
+        const micro = (loc.micro || "").toLowerCase();
+        const macro = (loc.macro || "").toLowerCase();
+
+        if (micro.includes('taverna') || micro.includes('locanda') || micro.includes('pub')) {
+            atmosphere = "Sei un bardo allegro e un po' brillo. Usi slang da taverna, fai battute e c'è rumore di boccali in sottofondo.";
+        } else if (micro.includes('cripta') || micro.includes('dungeon') || micro.includes('grotta') || micro.includes('tomba')) {
+            atmosphere = "Parli sottovoce, sei teso e spaventato. Descrivi i suoni inquietanti dell'ambiente oscuro. Sei molto cauto.";
+        } else if (micro.includes('tempio') || micro.includes('chiesa') || micro.includes('santuario')) {
+            atmosphere = "Usi un tono solenne, rispettoso e quasi religioso. Parli con voce calma e misurata.";
+        } else if (macro.includes('corte') || macro.includes('castello') || macro.includes('palazzo')) {
+            atmosphere = "Usi un linguaggio aulico, formale e molto rispettoso. Sei un cronista di corte attento all'etichetta.";
+        } else if (micro.includes('bosco') || micro.includes('foresta') || micro.includes('giungla')) {
+            atmosphere = "Sei un bardo naturalista. Parli con meraviglia della natura, noti i suoni degli animali e il fruscio delle foglie.";
+        }
+        
+        atmosphere += `\nLUOGO ATTUALE: ${loc.macro || "Sconosciuto"} - ${loc.micro || "Sconosciuto"}.`;
+    }
+    // -------------------------------------
+
     // Prompt Ricco Ripristinato
-    const systemPrompt = `Sei il Bardo della campagna. Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
+    const systemPrompt = `${atmosphere}
+    Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
     
     ${contextText}
     
@@ -377,20 +429,40 @@ export async function askBard(campaignId: number, question: string, history: { r
 }
 
 // --- CORREZIONE TRASCRIZIONE ---
-export async function correctTranscription(segments: any[], campaignId?: number): Promise<any[]> {
+export async function correctTranscription(segments: any[], campaignId?: number): Promise<AIResponse> {
     // 1. Costruzione Contesto (una tantum)
     let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
+    let currentLocationMsg = "Luogo attuale: Sconosciuto.";
+    let atlasContext = "";
+    let currentMacro = "";
+    let currentMicro = "";
+
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
         if (campaign) {
             contextInfo += `\nCampagna: "${campaign.name}".`;
             
-            // --- INIEZIONE LUOGO ---
-            const loc = (campaign as any).current_location; 
-            if (loc) {
-                contextInfo += `\nLUOGO ATTUALE: "${loc}". (Usa questo nome per correggere riferimenti all'ambiente).`;
+            // @ts-ignore (se TS si lamenta dei campi nuovi non ancora nell'interfaccia type Campaign)
+            const loc: LocationState = { macro: campaign.current_macro_location, micro: campaign.current_micro_location };
+            
+            if (loc.macro || loc.micro) {
+                currentMacro = loc.macro || "";
+                currentMicro = loc.micro || "";
+                
+                currentLocationMsg = `LUOGO ATTUALE CONOSCIUTO:
+                - Macro-Regione/Città: "${loc.macro || 'Non specificato'}"
+                - Micro-Luogo (Stanza/Edificio): "${loc.micro || 'Non specificato'}"`;
+
+                // RECUPERO MEMORIA ATLANTE
+                if (currentMacro && currentMicro) {
+                    const lore = getAtlasEntry(campaignId, currentMacro, currentMicro);
+                    if (lore) {
+                        atlasContext = `\n\n[[MEMORIA DEL LUOGO (ATLANTE)]]\nEcco cosa sappiamo già di questo posto:\n"${lore}"\nUsa queste info per riconoscere nomi e contesto.`;
+                    } else {
+                        atlasContext = `\n\n[[MEMORIA DEL LUOGO (ATLANTE)]]\nNon abbiamo ancora informazioni su questo luogo. Se vengono descritti dettagli importanti (NPC, atmosfera, oggetti chiave), annotali.`;
+                    }
+                }
             }
-            // -----------------------
 
             const characters = getCampaignCharacters(campaignId);
             if (characters.length > 0) {
@@ -418,13 +490,27 @@ export async function correctTranscription(segments: any[], campaignId?: number)
         const batchInput = { segments: batch };
 
         // Prompt Ricco Ripristinato
-        const prompt = `Sei un correttore di bozze esperto per sessioni di D&D.
+        const prompt = `Sei l'assistente ufficiale di trascrizione per una campagna di D&D.
 ${contextInfo}
+${currentLocationMsg}
+${atlasContext}
 
-Analizza il seguente array di segmenti di trascrizione audio.
-Il tuo compito è correggere il testo ("text") per dare senso compiuto alle frasi.
+OBIETTIVI:
+1. Correggere la trascrizione fornita (nomi propri, incantesimi, punteggiatura).
+2. [CARTOGRAFO] Rilevare se i personaggi si SPOSTANO fisicamente in un nuovo luogo.
+   - **Macro-Luogo**: Cambia solo se viaggiano tra città, regioni o piani (es. da "Neverwinter" a "Waterdeep").
+   - **Micro-Luogo**: Cambia se entrano in un edificio, una stanza o un'area specifica (es. da "Strada" a "Taverna").
+3. [STORICO] Aggiorna la descrizione del luogo ATTUALE nell'Atlante SE:
+   - Ci sono nuovi dettagli significativi (nomi NPC, stato della stanza, eventi chiave).
+   - O se la descrizione vecchia è obsoleta.
+   - Sii conciso ma descrittivo. Se non cambia nulla di rilevante, lascia 'atlas_update' vuoto.
 
-ISTRUZIONI SPECIFICHE:
+REGOLE CARTOGRAFO:
+- Se rimangono dove sono, NON includere "detected_location" nel JSON.
+- Se si spostano, cerca di dedurre sia il Macro che il Micro. Se il Macro non cambia, ripeti quello attuale o lascialo null.
+- Sii conservativo: cambia luogo solo se i giocatori dicono esplicitamente "Andiamo alla Taverna", "Entriamo nel dungeon", etc.
+
+ISTRUZIONI SPECIFICHE PER LA CORREZIONE:
 1. Rimuovi riempitivi verbali come "ehm", "uhm", "cioè", ripetizioni inutili e balbettii.
 2. Correggi i termini tecnici di D&D (es. incantesimi, mostri) usando la grafia corretta (es. "Dardo Incantato" invece di "dardo incantato").
 3. Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature.
@@ -434,7 +520,7 @@ ISTRUZIONI SPECIFICHE:
 IMPORTANTE:
 1. Non modificare "start" e "end".
 2. Non unire o dividere segmenti. Il numero di oggetti in output deve essere identico all'input.
-3. Restituisci un oggetto JSON con la chiave "segments".
+3. Restituisci un oggetto JSON con la chiave "segments", opzionalmente "detected_location" e opzionalmente "atlas_update".
 
 Input:
 ${JSON.stringify(batchInput)}`;
@@ -452,15 +538,34 @@ ${JSON.stringify(batchInput)}`;
             const content = response.choices[0].message.content;
             if (!content) throw new Error("Empty");
             const parsed = JSON.parse(content);
-            return parsed.segments || batch; // Ritorna i segmenti corretti o l'originale se fallisce il parsing
+            return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update? }
         } catch (err) {
             console.error(`[Bardo] ⚠️ Errore batch ${idx+1}, uso originale.`);
-            return batch;
+            return { segments: batch };
         }
     }, "Correzione Trascrizione");
 
-    // Appiattiamo il risultato (array di array -> array unico)
-    return results.flat();
+    // Appiattiamo il risultato (array di oggetti -> array unico di segmenti e merge location)
+    const allSegments = results.flatMap(r => r.segments || []);
+    
+    // Cerchiamo l'ultima location rilevata (se ce ne sono multiple, l'ultima vince)
+    let lastDetectedLocation = undefined;
+    let lastAtlasUpdate = undefined;
+
+    for (const res of results) {
+        if (res.detected_location) {
+            lastDetectedLocation = res.detected_location;
+        }
+        if (res.atlas_update) {
+            lastAtlasUpdate = res.atlas_update;
+        }
+    }
+
+    return {
+        segments: allSegments,
+        detected_location: lastDetectedLocation,
+        atlas_update: lastAtlasUpdate
+    };
 }
 
 // --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
@@ -508,7 +613,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                         absoluteTime: t.timestamp + (seg.start * 1000),
                         character: t.character_name || "Sconosciuto",
                         text: seg.text,
-                        type: 'audio'
+                        type: 'audio',
+                        macro: t.macro_location,
+                        micro: t.micro_location
                     });
                 }
             }
@@ -522,18 +629,34 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
             absoluteTime: n.timestamp,
             character: p.character_name || "Giocatore",
             text: `[NOTA UTENTE] ${n.content}`,
-            type: 'note'
+            type: 'note',
+            macro: null,
+            micro: null
         });
     }
 
     allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
+
+    let lastMacro: string | null = null;
+    let lastMicro: string | null = null;
 
     let fullDialogue = allFragments.map(f => {
         const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
         const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
         const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
         const prefix = f.type === 'note' ? '📝 ' : '';
-        return `${prefix}[${timeStr}] ${f.character}: ${f.text}`;
+        
+        // Inserimento Marker di Scena
+        let sceneMarker = "";
+        if (f.type === 'audio' && (f.macro !== lastMacro || f.micro !== lastMicro)) {
+            if (f.macro || f.micro) {
+                sceneMarker = `\n--- CAMBIO SCENA: [${f.macro || "Invariato"}] - [${f.micro || "Invariato"}] ---\n`;
+                lastMacro = f.macro;
+                lastMicro = f.micro;
+            }
+        }
+
+        return `${sceneMarker}${prefix}[${timeStr}] ${f.character}: ${f.text}`;
     }).join("\n");
 
     let contextForFinalStep = "";
@@ -568,6 +691,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
     - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
     - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori. Usale come punti fermi della narrazione, hanno priorità sull'audio trascritto.
+    - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il riassunto in capitoli o paragrafi distinti basati sui luoghi.
 
     Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
     

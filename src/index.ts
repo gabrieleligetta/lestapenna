@@ -59,7 +59,10 @@ import {
     deleteCampaign,
     updateCampaignLocation,
     getCampaignLocation,
-    getLocationHistory
+    getLocationHistory,
+    updateLocation,
+    getAtlasEntry,
+    updateAtlasEntry
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -234,7 +237,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -262,7 +265,9 @@ client.on('messageCreate', async (message: Message) => {
                     "`$termina`: Termina la sessione.\n" +
                     "`$pausa`: Sospende la registrazione.\n" +
                     "`$riprendi`: Riprende la registrazione.\n" +
-                    "`$luogo [Nome]`: Visualizza o aggiorna il luogo attuale.\n" +
+                    "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo attuale.\n" +
+                    "`$viaggi`: Mostra la cronologia degli spostamenti.\n" +
+                    "`$atlante [Descrizione]`: Visualizza o aggiorna la memoria del luogo.\n" +
                     "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                     "`$impostasessione <N>`: Imposta numero sessione.\n" +
                     "`$impostasessioneid <ID> <N>`: Corregge il numero." 
@@ -330,7 +335,9 @@ client.on('messageCreate', async (message: Message) => {
                     "`$stoplistening`: End the session.\n" +
                     "`$pause`: Pause recording.\n" +
                     "`$resume`: Resume recording.\n" +
-                    "`$location [Name]`: View or update current location.\n" +
+                    "`$location [Macro | Micro]`: View or update current location.\n" +
+                    "`$travels`: Show travel history.\n" +
+                    "`$atlas [Description]`: View or update location memory.\n" +
                     "`$note <Text>`: Add a manual note to the summary.\n" +
                     "`$setsession <N>`: Manually set session number.\n" +
                     "`$setsessionid <ID> <N>`: Fix session number by ID." 
@@ -402,15 +409,28 @@ client.on('messageCreate', async (message: Message) => {
         
         if (locationArg) {
             // Se il DM ha specificato un luogo, lo aggiorniamo subito
-            updateCampaignLocation(message.guild.id, locationArg);
-            await message.reply(`📍 Posizione tracciata: **${locationArg}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
+            // Supporto sintassi Macro | Micro
+            let newMacro = null;
+            let newMicro = null;
+
+            if (locationArg.includes('|')) {
+                const parts = locationArg.split('|').map(s => s.trim());
+                newMacro = parts[0];
+                newMicro = parts[1];
+            } else {
+                // Sintassi semplice: assume sia un cambio di Micro-luogo (stanza/edificio)
+                newMicro = locationArg.trim();
+            }
+            
+            updateLocation(activeCampaign!.id, newMacro, newMicro);
+            await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
         } else {
             // Altrimenti controlliamo se c'è un luogo in memoria
             const currentLoc = getCampaignLocation(message.guild.id);
-            if (currentLoc) {
-                await message.reply(`📍 Luogo attuale: **${currentLoc}** (Se è cambiato, usa \`$ascolta Nuovo Luogo\`)`);
+            if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
+                await message.reply(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`$ascolta Macro | Micro\`)`);
             } else {
-                await message.reply(`⚠️ **Luogo Sconosciuto.**\nConsiglio: scrivi \`$ascolta <Nome Luogo>\` per aiutare il Bardo a capire meglio i nomi e l'atmosfera.`);
+                await message.reply(`⚠️ **Luogo Sconosciuto.**\nConsiglio: scrivi \`$ascolta <Città> | <Luogo>\` per aiutare il Bardo a capire meglio i nomi e l'atmosfera.`);
             }
         }
         // -----------------------------------
@@ -524,30 +544,79 @@ client.on('messageCreate', async (message: Message) => {
         await message.reply("📝 Nota aggiunta al diario della sessione.");
     }
 
-    // --- NUOVO: !luogo <Nome> ---
+    // --- NUOVO: !luogo <Macro | Micro> ---
     if (command === 'luogo' || command === 'location') {
-        const locationArg = args.join(' ');
+        const argsStr = args.join(' ');
         
-        if (locationArg) {
-            updateCampaignLocation(message.guild.id, locationArg);
-            await message.reply(`📍 Posizione aggiornata: **${locationArg}**.\nIl Bardo userà questo contesto per le prossime trascrizioni.`);
+        if (!argsStr) {
+            // Getter
+            const loc = getCampaignLocation(message.guild.id);
+            if (!loc || (!loc.macro && !loc.micro)) {
+                return message.reply("🗺️ Non so dove siete! Usa `$luogo <Città> | <Luogo>` per impostarlo.");
+            }
+            return message.reply(`📍 **Posizione Attuale**\n🌍 Regione: **${loc.macro || "Sconosciuto"}**\n🏠 Luogo: **${loc.micro || "Generico"}**`);
         } else {
-            const currentLoc = getCampaignLocation(message.guild.id);
-            const history = getLocationHistory(message.guild.id, 3);
+            // Setter
+            const current = getCampaignLocation(message.guild.id);
             
-            let msg = "";
-            if (currentLoc) {
-                msg = `📍 Luogo attuale: **${currentLoc}**`;
+            let newMacro = current?.macro || null;
+            let newMicro = null;
+
+            if (argsStr.includes('|')) {
+                // Sintassi esplicita: Macro | Micro
+                const parts = argsStr.split('|').map(s => s.trim());
+                newMacro = parts[0];
+                newMicro = parts[1];
             } else {
-                msg = `⚠️ Luogo sconosciuto.`;
+                // Sintassi semplice: assume sia un cambio di Micro-luogo (stanza/edificio)
+                newMicro = argsStr.trim();
             }
 
-            if (history.length > 0) {
-                msg += `\n\n📜 **Ultimi spostamenti:**\n` + history.map(h => `- ${h.location} (${new Date(h.timestamp).toLocaleTimeString()})`).join('\n');
-            }
+            updateLocation(activeCampaign!.id, newMacro, newMicro);
+            
+            return message.reply(`📍 **Aggiornamento Manuale**\nImpostato su: ${newMacro || '-'} | ${newMicro || '-'}`);
+        }
+    }
 
-            msg += `\n\nUsa \`$luogo <Nome>\` per aggiornare la posizione.`;
-            await message.reply(msg);
+    // --- NUOVO: !viaggi (Cronologia) ---
+    if (command === 'viaggi' || command === 'storia' || command === 'travels') {
+        const history = getLocationHistory(message.guild.id);
+        
+        if (history.length === 0) return message.reply("Il diario di viaggio è vuoto.");
+
+        let msg = "**📜 Diario di Viaggio (Ultimi spostamenti):**\n";
+        
+        // Raggruppamento semplice
+        history.forEach((h: any) => {
+            const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            msg += `\`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+        });
+
+        return message.reply(msg);
+    }
+
+    // --- NUOVO: !atlante (Memoria Luoghi) ---
+    if (command === 'atlante' || command === 'memoria' || command === 'atlas') {
+        const loc = getCampaignLocation(message.guild.id);
+        
+        if (!loc || !loc.macro || !loc.micro) {
+            return message.reply("⚠️ Non so dove siete. Imposta prima il luogo con `$luogo`.");
+        }
+
+        const newDesc = args.join(' ');
+        
+        if (newDesc) {
+            // SETTER MANUALE
+            updateAtlasEntry(activeCampaign!.id, loc.macro, loc.micro, newDesc);
+            return message.reply(`📖 **Atlante Aggiornato** per *${loc.micro}*:\n"${newDesc}"`);
+        } else {
+            // GETTER
+            const lore = getAtlasEntry(activeCampaign!.id, loc.macro, loc.micro);
+            if (lore) {
+                return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n_${lore}_`);
+            } else {
+                return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*`);
+            }
         }
     }
 

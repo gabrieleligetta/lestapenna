@@ -99,9 +99,23 @@ db.exec(`CREATE TABLE IF NOT EXISTS chat_history (
 db.exec(`CREATE TABLE IF NOT EXISTS location_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL,
-    location TEXT NOT NULL,
+    location TEXT,
+    macro_location TEXT,
+    micro_location TEXT,
+    session_date TEXT,
     timestamp INTEGER,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
+// --- TABELLA ATLANTE (MEMORIA LUOGHI) ---
+db.exec(`CREATE TABLE IF NOT EXISTS location_atlas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    macro_location TEXT NOT NULL,
+    micro_location TEXT NOT NULL,
+    description TEXT,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(campaign_id, macro_location, micro_location)
 )`);
 
 // --- MIGRATIONS ---
@@ -111,7 +125,16 @@ const migrations = [
     "ALTER TABLE sessions ADD COLUMN session_number INTEGER",
     "ALTER TABLE sessions ADD COLUMN title TEXT",
     "ALTER TABLE knowledge_fragments ADD COLUMN start_timestamp INTEGER",
-    "ALTER TABLE campaigns ADD COLUMN current_location TEXT"
+    "ALTER TABLE campaigns ADD COLUMN current_location TEXT",
+    "ALTER TABLE campaigns ADD COLUMN current_macro_location TEXT",
+    "ALTER TABLE campaigns ADD COLUMN current_micro_location TEXT",
+    "ALTER TABLE location_history ADD COLUMN macro_location TEXT",
+    "ALTER TABLE location_history ADD COLUMN micro_location TEXT",
+    "ALTER TABLE location_history ADD COLUMN session_date TEXT",
+    "ALTER TABLE recordings ADD COLUMN macro_location TEXT",
+    "ALTER TABLE recordings ADD COLUMN micro_location TEXT",
+    "ALTER TABLE knowledge_fragments ADD COLUMN macro_location TEXT",
+    "ALTER TABLE knowledge_fragments ADD COLUMN micro_location TEXT"
 ];
 
 for (const m of migrations) {
@@ -127,6 +150,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_campaign_model ON knowledge_fr
 db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_history_channel ON chat_history (channel_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes (session_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_location_history_campaign ON location_history (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_location_atlas_campaign ON location_atlas (campaign_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -148,6 +172,8 @@ export interface Recording {
     timestamp: number;
     status: string;
     transcription_text: string | null;
+    macro_location?: string | null;
+    micro_location?: string | null;
 }
 
 export interface SessionSummary {
@@ -165,6 +191,8 @@ export interface Campaign {
     name: string;
     is_active: number;
     current_location?: string;
+    current_macro_location?: string;
+    current_micro_location?: string;
 }
 
 export interface KnowledgeFragment {
@@ -177,6 +205,8 @@ export interface KnowledgeFragment {
     vector_dimension: number;
     start_timestamp: number;
     created_at: number;
+    macro_location?: string | null;
+    micro_location?: string | null;
 }
 
 export interface SessionNote {
@@ -186,6 +216,11 @@ export interface SessionNote {
     content: string;
     timestamp: number;
     created_at: number;
+}
+
+export interface LocationState {
+    macro: string | null;
+    micro: string | null;
 }
 
 // --- FUNZIONI CONFIGURAZIONE ---
@@ -239,16 +274,90 @@ export const updateCampaignLocation = (guildId: string, location: string): void 
     }
 };
 
-export const getCampaignLocation = (guildId: string): string | null => {
-    const row = db.prepare('SELECT current_location FROM campaigns WHERE guild_id = ? AND is_active = 1').get(guildId) as { current_location: string } | undefined;
-    return row ? row.current_location : null;
+// --- NUOVE FUNZIONI LUOGO (MACRO/MICRO) ---
+
+export const updateLocation = (campaignId: number, macro: string | null, micro: string | null): void => {
+    // 1. Aggiorna lo stato corrente della campagna
+    const current = getCampaignLocationById(campaignId);
+    
+    // Se è identico, non facciamo nulla (evita spam nella history)
+    if (current && current.macro === macro && current.micro === micro) return;
+
+    const stmt = db.prepare(`
+        UPDATE campaigns 
+        SET current_macro_location = COALESCE(?, current_macro_location), 
+            current_micro_location = ? 
+        WHERE id = ?
+    `);
+    // Nota: Micro può essere resettato, Macro tendiamo a mantenerlo se non specificato
+    stmt.run(macro, micro, campaignId);
+
+    // 2. Aggiungi alla cronologia
+    const historyStmt = db.prepare(`
+        INSERT INTO location_history (campaign_id, macro_location, micro_location, session_date, timestamp)
+        VALUES (?, ?, ?, date('now'), ?)
+    `);
+    historyStmt.run(campaignId, macro, micro, Date.now());
+    
+    console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
 };
 
-export const getLocationHistory = (guildId: string, limit: number = 5): { location: string, timestamp: number }[] => {
-    const campaign = getActiveCampaign(guildId);
-    if (!campaign) return [];
-    return db.prepare('SELECT location, timestamp FROM location_history WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT ?').all(campaign.id, limit) as { location: string, timestamp: number }[];
+export const getCampaignLocation = (guildId: string): LocationState | null => {
+    const row = db.prepare(`
+        SELECT current_macro_location as macro, current_micro_location as micro 
+        FROM campaigns 
+        WHERE guild_id = ? AND is_active = 1
+    `).get(guildId) as LocationState | undefined;
+    return row || null;
 };
+
+export const getCampaignLocationById = (campaignId: number): LocationState | null => {
+    const row = db.prepare(`
+        SELECT current_macro_location as macro, current_micro_location as micro 
+        FROM campaigns 
+        WHERE id = ?
+    `).get(campaignId) as LocationState | undefined;
+    return row || null;
+};
+
+export const getLocationHistory = (guildId: string) => {
+    return db.prepare(`
+        SELECT h.macro_location, h.micro_location, h.timestamp, h.session_date 
+        FROM location_history h
+        JOIN campaigns c ON h.campaign_id = c.id
+        WHERE c.guild_id = ? AND c.is_active = 1
+        ORDER BY h.timestamp DESC
+        LIMIT 20
+    `).all();
+};
+
+// --- FUNZIONI ATLANTE (MEMORIA LUOGHI) ---
+
+export const getAtlasEntry = (campaignId: number, macro: string, micro: string): string | null => {
+    // Normalizziamo le stringhe per evitare duplicati "Taverna" vs "taverna"
+    const row = db.prepare(`
+        SELECT description FROM location_atlas 
+        WHERE campaign_id = ? 
+        AND lower(macro_location) = lower(?) 
+        AND lower(micro_location) = lower(?)
+    `).get(campaignId, macro, micro) as { description: string } | undefined;
+
+    return row ? row.description : null;
+};
+
+export const updateAtlasEntry = (campaignId: number, macro: string, micro: string, newDescription: string) => {
+    // Upsert: Inserisci o Aggiorna se esiste
+    db.prepare(`
+        INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(campaign_id, macro_location, micro_location) 
+        DO UPDATE SET description = ?, last_updated = CURRENT_TIMESTAMP
+    `).run(campaignId, macro, micro, newDescription, newDescription); // Nota: newDescription passato due volte (insert e update)
+    
+    console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
+};
+
+// ------------------------------------------
 
 export const getCampaignById = (id: number): Campaign | undefined => {
     return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as Campaign | undefined;
@@ -318,9 +427,9 @@ export const getRecording = (filename: string): Recording | undefined => {
     return db.prepare('SELECT * FROM recordings WHERE filename = ?').get(filename) as Recording | undefined;
 };
 
-export const updateRecordingStatus = (filename: string, status: string, text: string | null = null, error: string | null = null) => {
+export const updateRecordingStatus = (filename: string, status: string, text: string | null = null, error: string | null = null, macro: string | null = null, micro: string | null = null) => {
     if (text !== null) {
-        db.prepare('UPDATE recordings SET status = ?, transcription_text = ? WHERE filename = ?').run(status, text, filename);
+        db.prepare('UPDATE recordings SET status = ?, transcription_text = ?, macro_location = ?, micro_location = ? WHERE filename = ?').run(status, text, macro, micro, filename);
     } else if (error !== null) {
         db.prepare('UPDATE recordings SET status = ?, error_log = ? WHERE filename = ?').run(status, error, filename);
     } else {
@@ -365,20 +474,20 @@ export const getSessionTranscript = (sessionId: string) => {
     
     if (!session) {
         return db.prepare(`
-            SELECT r.transcription_text, r.user_id, r.timestamp, NULL as character_name
+            SELECT r.transcription_text, r.user_id, r.timestamp, NULL as character_name, r.macro_location, r.micro_location
             FROM recordings r
             WHERE r.session_id = ? AND r.status = 'PROCESSED'
             ORDER BY r.timestamp ASC
-        `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
+        `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null, macro_location: string | null, micro_location: string | null }>;
     }
 
     const rows = db.prepare(`
-        SELECT r.transcription_text, r.user_id, r.timestamp, c.character_name 
+        SELECT r.transcription_text, r.user_id, r.timestamp, c.character_name, r.macro_location, r.micro_location
         FROM recordings r
         LEFT JOIN characters c ON r.user_id = c.user_id AND c.campaign_id = ?
         WHERE r.session_id = ? AND r.status = 'PROCESSED'
         ORDER BY r.timestamp ASC
-    `).all(session.campaign_id, sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null }>;
+    `).all(session.campaign_id, sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null, macro_location: string | null, micro_location: string | null }>;
 
     return rows;
 };
@@ -479,11 +588,11 @@ export const getSessionNotes = (sessionId: string): SessionNote[] => {
 
 // --- FUNZIONI KNOWLEDGE BASE (RAG) ---
 
-export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0) => {
+export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0, macro: string | null = null, micro: string | null = null) => {
     db.prepare(`
-        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now());
+        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at, macro_location, micro_location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now(), macro, micro);
 };
 
 export const getKnowledgeFragments = (campaignId: number, model: string): KnowledgeFragment[] => {
@@ -518,7 +627,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM chat_history').run();
     db.prepare('DELETE FROM session_notes').run();
     db.prepare('DELETE FROM location_history').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history')").run();
+    db.prepare('DELETE FROM location_atlas').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

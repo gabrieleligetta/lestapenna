@@ -184,7 +184,7 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
     const mapPrompt = `Sei un analista di D&D.
     ${castContext}
     Estrai un elenco puntato cronologico strutturato esattamente così:
-    1. Nomi di NPC incontrati;
+    1. Nomi di NPC incontrati e le frasi chiave che hanno pronunciato (anche se lette dalla voce del DM);
     2. Luoghi visitati;
     3. Oggetti ottenuti (Loot) con dettagli;
     4. Numeri/Danni rilevanti;
@@ -419,6 +419,7 @@ ISTRUZIONI SPECIFICHE:
 2. Correggi i termini tecnici di D&D (es. incantesimi, mostri) usando la grafia corretta (es. "Dardo Incantato" invece di "dardo incantato").
 3. Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature.
 4. Mantieni il tono colloquiale ma rendilo leggibile.
+5. Se il testo contiene un chiaro cambio di interlocutore (es. il DM parla in prima persona come un NPC), inserisci il nome dell'NPC tra parentesi quadre all'inizio della frase. Esempio: "[Locandiere] Benvenuti!".
 
 IMPORTANTE:
 1. Non modificare "start" e "end".
@@ -540,6 +541,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     ISTRUZIONI DI STILE:
     - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
     - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
+    - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
 
     Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
     Includi un titolo.

@@ -13,7 +13,7 @@ export const audioQueue = new Queue('audio-processing', { connection });
 export const correctionQueue = new Queue('correction-processing', { connection });
 
 /**
- * Rimuove tutti i job in attesa associati a una specifica sessione da entrambe le code.
+ * Rimuove TUTTI i job (anche attivi) associati a una specifica sessione da entrambe le code.
  */
 export async function removeSessionJobs(sessionId: string) {
     let removedCount = 0;
@@ -21,15 +21,21 @@ export async function removeSessionJobs(sessionId: string) {
     const queues = [audioQueue, correctionQueue];
 
     for (const queue of queues) {
+        // Recuperiamo tutti i job in qualsiasi stato
         const jobs = await queue.getJobs(['waiting', 'delayed', 'active', 'failed', 'completed']);
+        
         for (const job of jobs) {
             if (job.data && job.data.sessionId === sessionId) {
                 try {
                     const state = await job.getState();
+                    
+                    // Se è attivo, lo rimuoviamo comunque per garantire un reset pulito.
+                    // Il worker potrebbe continuare a lavorare "a vuoto", ma il risultato sarà ignorato/non salvato correttamente
+                    // o sovrascritto dal nuovo job riaccodato.
                     if (state === 'active') {
-                        console.log(`[Queue] Job ${job.id} (${job.queueName}) è in elaborazione, non lo rimuovo.`);
-                        continue;
+                        console.warn(`[Queue] ⚠️ Rimozione forzata job ATTIVO ${job.id} (${job.queueName}) per sessione ${sessionId}.`);
                     }
+
                     await job.remove();
                     removedCount++;
                 } catch (err: any) {
@@ -54,6 +60,7 @@ export async function clearQueue() {
         await queue.drain(true);
         await queue.clean(0, 1000, 'completed');
         await queue.clean(0, 1000, 'failed');
+        await queue.resume(); // Importante riprendere dopo il drain se vogliamo che la coda torni usabile
     }
     
     console.log("[Queue] ✅ Code svuotate.");

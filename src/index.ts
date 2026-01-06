@@ -886,8 +886,8 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
         const audioJobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
         const correctionJobs = await correctionQueue.getJobs(['waiting', 'active', 'delayed']);
         
-        const sessionAudioJobs = audioJobs.filter(j => j.data && j.data.sessionId === sessionId);
-        const sessionCorrectionJobs = correctionJobs.filter(j => j.data && j.data.sessionId === sessionId);
+        const sessionAudioJobs = audioJobs.filter(j => !!j && j.data && j.data.sessionId === sessionId);
+        const sessionCorrectionJobs = correctionJobs.filter(j => !!j && j.data && j.data.sessionId === sessionId);
         
         const totalPending = sessionAudioJobs.length + sessionCorrectionJobs.length;
 

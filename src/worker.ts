@@ -166,7 +166,7 @@ export function startWorker() {
         concurrency: 2, // Teniamo basso per la CPU
         
         // --- AGGIUNTA FONDAMENTALE PER EVITARE "JOB STALLED" ---
-        lockDuration: 300000, // 5 minuti (tempo in cui il worker può stare in silenzio prima di essere considerato morto)
+        lockDuration: 27200000, // 2 ORE
         lockRenewTime: 60000, // Rinnova il lock ogni minuto
         maxStalledCount: 0,   // Non considerare mai il job come stalled se sta lavorando
         // -------------------------------------------------------

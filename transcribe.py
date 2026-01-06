@@ -3,6 +3,7 @@ import os
 import json
 import argparse
 import logging
+import platform
 
 # Configura logging su STDERR per non sporcare il JSON su STDOUT
 logging.basicConfig(
@@ -84,23 +85,58 @@ def main():
     parser.add_argument("--model", default="medium", help="Whisper model size")
     args = parser.parse_args()
 
-    # Rilevamento Device con metodo "Try-Catch" (Non serve torch)
-    logger.info(f"Tentativo caricamento modello '{args.model}' su GPU...")
+    # Rilevamento Architettura
+    arch = platform.machine()
+    is_arm = "aarch64" in arch or "arm" in arch
+    
+    logger.info(f"🖥️  Architettura rilevata: {arch}")
+    
+    device = "cpu"
+    compute_type = "int8"
+    
+    # Se siamo su ARM (es. Apple Silicon o Oracle Ampere), evitiamo proprio di provare CUDA
+    # per non generare warning inutili.
+    if is_arm:
+        logger.info("ℹ️  Sistema ARM rilevato. Utilizzo CPU ottimizzata (No CUDA).")
+    else:
+        # Su x86, proviamo CUDA se disponibile
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device = "cuda"
+                compute_type = "float16"
+                logger.info("✅ GPU NVIDIA rilevata. Abilito modalità Turbo (CUDA).")
+            else:
+                logger.info("ℹ️  Nessuna GPU NVIDIA rilevata. Utilizzo CPU.")
+        except ImportError:
+            # Se torch non c'è (come nel nostro Dockerfile leggero), assumiamo CPU
+            # a meno che non vogliamo provare il try-catch su WhisperModel
+            pass
 
     model = None
     try:
-        # 1. Proviamo a forzare CUDA e float16 (Massima velocità)
-        model = WhisperModel(args.model, device="cuda", compute_type="float16")
-        logger.info("✅ Modello caricato su GPU (CUDA) - Modalità Turbo.")
+        # Tentativo principale con i parametri decisi
+        if device == "cuda":
+             model = WhisperModel(args.model, device="cuda", compute_type="float16", cpu_threads=3)
+        else:
+             # Fallback o scelta diretta CPU
+             model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=3)
+             
+        logger.info(f"✅ Modello '{args.model}' caricato su {device.upper()} (Threads: 3).")
+        
     except Exception as e:
-        logger.warning(f"⚠️ Impossibile usare GPU: {e}")
-        logger.info("🔄 Passaggio a CPU (int8)...")
-        try:
-            # 2. Fallback su CPU e int8 (Compatibilità totale)
-            model = WhisperModel(args.model, device="cpu", compute_type="int8")
-            logger.info("✅ Modello caricato su CPU.")
-        except Exception as e_cpu:
-            logger.error(f"❌ ERRORE CRITICO caricamento modello: {e_cpu}")
+        # Se il tentativo CUDA fallisce (es. librerie mancanti), fallback silenzioso su CPU
+        if device == "cuda":
+            logger.warning(f"⚠️ Fallimento inizializzazione GPU: {e}")
+            logger.info("🔄 Passaggio forzato a CPU...")
+            try:
+                model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=3)
+                logger.info("✅ Modello caricato su CPU.")
+            except Exception as e_cpu:
+                logger.error(f"❌ ERRORE CRITICO: {e_cpu}")
+                sys.exit(1)
+        else:
+            logger.error(f"❌ ERRORE CRITICO: {e}")
             sys.exit(1)
 
     if args.daemon:

@@ -103,6 +103,29 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     const { out, filepath, filename } = getNewFile();
     const startTime = Date.now();
 
+    // GESTIONE ERRORI PIPELINE (Prevenzione Crash)
+    const handleError = (err: Error, source: string) => {
+        // Ignoriamo errori comuni di stream chiusi prematuramente
+        if (err.message === 'Premature close') return;
+        
+        console.warn(`⚠️ Errore Audio (${source}) per utente ${userId}: ${err.message}`);
+        
+        // Se l'errore è critico, chiudiamo lo stream per evitare loop o file corrotti
+        if (activeStreams.has(streamKey)) {
+            activeStreams.delete(streamKey);
+            try { opusStream.destroy(); } catch {}
+            try { decoder.destroy(); } catch {}
+            try { encoder.destroy(); } catch {}
+            try { out.end(); } catch {}
+        }
+        connectionErrors.set(streamKey, Date.now());
+    };
+
+    decoder.on('error', (e) => handleError(e, 'Decoder'));
+    encoder.on('error', (e) => handleError(e, 'Encoder'));
+    out.on('error', (e) => handleError(e, 'FileWrite'));
+    opusStream.on('error', (e: Error) => handleError(e, 'OpusStream'));
+
     // PIPELINE: Discord (Opus) -> PCM -> Normalizzazione -> MP3 -> File
     opusStream.pipe(decoder).pipe(encoder).pipe(out);
 
@@ -121,12 +144,6 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     opusStream.on('end', async () => {
         // La pipeline chiuderà 'out' automaticamente
         // Non serve fare altro qui, il lavoro sporco lo fa out.on('finish')
-    });
-
-    opusStream.on('error', (err: Error) => {
-        console.error(`Errore stream ${userId} (Guild: ${guildId}):`, err.message);
-        activeStreams.delete(streamKey);
-        connectionErrors.set(streamKey, Date.now());
     });
 }
 

@@ -240,7 +240,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria', 'npc', 'dossier'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria', 'npc', 'dossier', 'presenze'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -272,6 +272,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$viaggi`: Mostra la cronologia degli spostamenti.\n" +
                     "`$atlante [Descrizione]`: Visualizza o aggiorna la memoria del luogo.\n" +
                     "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
+                    "`$presenze`: Mostra gli NPC incontrati nella sessione corrente.\n" +
                     "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                     "`$impostasessione <N>`: Imposta numero sessione.\n" +
                     "`$impostasessioneid <ID> <N>`: Corregge il numero." 
@@ -343,6 +344,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$travels`: Show travel history.\n" +
                     "`$atlas [Description]`: View or update location memory.\n" +
                     "`$npc [Name]`: View or update NPC dossier.\n" +
+                    "`$presenze`: Show NPCs encountered in current session.\n" +
                     "`$note <Text>`: Add a manual note to the summary.\n" +
                     "`$setsession <N>`: Manually set session number.\n" +
                     "`$setsessionid <ID> <N>`: Fix session number by ID." 
@@ -665,6 +667,32 @@ client.on('messageCreate', async (message: Message) => {
             
             return message.reply({ embeds: [embed] });
         }
+    }
+
+    // --- NUOVO: $presenze (Debug) ---
+    if (command === 'presenze') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("⚠️ Nessuna sessione attiva.");
+
+        // Recupera tutti gli NPC univoci visti nelle registrazioni della sessione
+        const rows = db.prepare(`
+            SELECT DISTINCT present_npcs 
+            FROM recordings 
+            WHERE session_id = ? AND present_npcs IS NOT NULL
+        `).all(sessionId) as { present_npcs: string }[];
+        
+        // Unisci e pulisci le stringhe (es. "Grog,Mario" e "Mario,Luigi")
+        const allNpcs = new Set<string>();
+        rows.forEach(r => r.present_npcs.split(',').forEach(n => {
+            const trimmed = n.trim();
+            if (trimmed) allNpcs.add(trimmed);
+        }));
+        
+        if (allNpcs.size === 0) {
+            return message.reply(`👥 **NPC Incontrati:** Nessuno rilevato finora.`);
+        }
+
+        return message.reply(`👥 **NPC Incontrati in questa sessione:**\n${Array.from(allNpcs).join(', ')}`);
     }
 
     // --- NUOVO: !stato ---

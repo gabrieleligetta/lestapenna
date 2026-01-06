@@ -151,7 +151,9 @@ const migrations = [
     "ALTER TABLE knowledge_fragments ADD COLUMN associated_npcs TEXT",
     "ALTER TABLE location_history ADD COLUMN session_id TEXT",
     "ALTER TABLE session_notes ADD COLUMN macro_location TEXT",
-    "ALTER TABLE session_notes ADD COLUMN micro_location TEXT"
+    "ALTER TABLE session_notes ADD COLUMN micro_location TEXT",
+    "ALTER TABLE recordings ADD COLUMN present_npcs TEXT",
+    "ALTER TABLE recordings ADD COLUMN character_name_snapshot TEXT"
 ];
 
 for (const m of migrations) {
@@ -192,6 +194,8 @@ export interface Recording {
     transcription_text: string | null;
     macro_location?: string | null;
     micro_location?: string | null;
+    present_npcs?: string | null;
+    character_name_snapshot?: string | null;
 }
 
 export interface SessionSummary {
@@ -510,9 +514,10 @@ export const getRecording = (filename: string): Recording | undefined => {
     return db.prepare('SELECT * FROM recordings WHERE filename = ?').get(filename) as Recording | undefined;
 };
 
-export const updateRecordingStatus = (filename: string, status: string, text: string | null = null, error: string | null = null, macro: string | null = null, micro: string | null = null) => {
+export const updateRecordingStatus = (filename: string, status: string, text: string | null = null, error: string | null = null, macro: string | null = null, micro: string | null = null, npcs: string[] = [], characterNameSnapshot: string | null = null) => {
     if (text !== null) {
-        db.prepare('UPDATE recordings SET status = ?, transcription_text = ?, macro_location = ?, micro_location = ? WHERE filename = ?').run(status, text, macro, micro, filename);
+        const npcString = npcs.length > 0 ? npcs.join(',') : null;
+        db.prepare('UPDATE recordings SET status = ?, transcription_text = ?, macro_location = ?, micro_location = ?, present_npcs = ?, character_name_snapshot = ? WHERE filename = ?').run(status, text, macro, micro, npcString, characterNameSnapshot, filename);
     } else if (error !== null) {
         db.prepare('UPDATE recordings SET status = ?, error_log = ? WHERE filename = ?').run(status, error, filename);
     } else {
@@ -570,20 +575,20 @@ export const getSessionTranscript = (sessionId: string) => {
     
     if (!session) {
         return db.prepare(`
-            SELECT r.transcription_text, r.user_id, r.timestamp, NULL as character_name, r.macro_location, r.micro_location
+            SELECT r.transcription_text, r.user_id, r.timestamp, COALESCE(r.character_name_snapshot, 'Sconosciuto') as character_name, r.macro_location, r.micro_location, r.present_npcs
             FROM recordings r
             WHERE r.session_id = ? AND r.status = 'PROCESSED'
             ORDER BY r.timestamp ASC
-        `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null, macro_location: string | null, micro_location: string | null }>;
+        `).all(sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null, macro_location: string | null, micro_location: string | null, present_npcs: string | null }>;
     }
 
     const rows = db.prepare(`
-        SELECT r.transcription_text, r.user_id, r.timestamp, c.character_name, r.macro_location, r.micro_location
+        SELECT r.transcription_text, r.user_id, r.timestamp, COALESCE(r.character_name_snapshot, c.character_name) as character_name, r.macro_location, r.micro_location, r.present_npcs
         FROM recordings r
         LEFT JOIN characters c ON r.user_id = c.user_id AND c.campaign_id = ?
         WHERE r.session_id = ? AND r.status = 'PROCESSED'
         ORDER BY r.timestamp ASC
-    `).all(session.campaign_id, sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null, macro_location: string | null, micro_location: string | null }>;
+    `).all(session.campaign_id, sessionId) as Array<{ transcription_text: string, user_id: string, timestamp: number, character_name: string | null, macro_location: string | null, micro_location: string | null, present_npcs: string | null }>;
 
     return rows;
 };
@@ -709,6 +714,7 @@ export const getKnowledgeFragments = (campaignId: number, model: string): Knowle
     return db.prepare(`
         SELECT * FROM knowledge_fragments
         WHERE campaign_id = ? AND embedding_model = ?
+        ORDER BY start_timestamp ASC
     `).all(campaignId, model) as KnowledgeFragment[];
 };
 

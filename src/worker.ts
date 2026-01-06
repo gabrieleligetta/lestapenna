@@ -1,6 +1,6 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry, getUserProfile } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
@@ -40,7 +40,8 @@ export function startWorker() {
                             sessionId,
                             fileName,
                             segments: segments,
-                            campaignId
+                            campaignId,
+                            userId // Passiamo userId per recuperare lo snapshot nel correction worker
                         }, {
                             jobId: `correct-${fileName}-${Date.now()}`,
                             attempts: 3,
@@ -131,7 +132,8 @@ export function startWorker() {
                     sessionId,
                     fileName,
                     segments: result.segments,
-                    campaignId
+                    campaignId,
+                    userId // Passiamo userId per recuperare lo snapshot nel correction worker
                 }, {
                     jobId: `correct-${fileName}-${Date.now()}`,
                     attempts: 3,
@@ -174,7 +176,7 @@ export function startWorker() {
 
     // --- WORKER 2: CORRECTION PROCESSING ---
     const correctionWorker = new Worker('correction-processing', async job => {
-        const { sessionId, fileName, segments, campaignId } = job.data;
+        const { sessionId, fileName, segments, campaignId, userId } = job.data;
         
         console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`);
         
@@ -231,8 +233,20 @@ export function startWorker() {
             const flatText = correctedSegments.map((s: any) => s.text).join(" ");
             
             // Salviamo anche i metadati di luogo nel record
-            updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro);
-            console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..." [Luogo: ${finalMacro}|${finalMicro}]`);
+            // E ora anche la lista degli NPC presenti!
+            const presentNpcs = aiResult.present_npcs || [];
+
+            // --- SNAPSHOT IDENTITÀ ---
+            let frozenCharName = null;
+            if (userId && campaignId) {
+                const profile = getUserProfile(userId, campaignId);
+                frozenCharName = profile.character_name || null;
+            }
+            // -------------------------
+
+            updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro, presentNpcs, frozenCharName);
+            
+            console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..." [Luogo: ${finalMacro}|${finalMicro}] [NPC: ${presentNpcs.length}] [PG: ${frozenCharName}]`);
             
             return { status: 'ok', segments: correctedSegments };
 

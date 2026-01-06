@@ -89,6 +89,16 @@ interface AIResponse {
         role?: string; // Opzionale
         status?: string; // Opzionale (es. "DEAD" se muore)
     }>;
+    present_npcs?: string[]; // Lista semplice di NPC presenti nella scena
+}
+
+// Interfaccia per il riassunto strutturato
+interface SummaryResponse {
+    summary: string;
+    title: string;
+    tokens: number;
+    loot?: string[];
+    quests?: string[];
 }
 
 /**
@@ -256,24 +266,31 @@ export async function ingestSessionRaw(sessionId: string) {
 
     const startTime = getSessionStartTime(sessionId) || 0;
 
-    interface DialogueLine { timestamp: number; text: string; macro?: string | null; micro?: string | null; }
+    interface DialogueLine { timestamp: number; text: string; macro?: string | null; micro?: string | null; present_npcs?: string[] }
     const lines: DialogueLine[] = [];
 
     for (const t of transcriptions) {
         try {
             const segments = JSON.parse(t.transcription_text);
+            const npcs = t.present_npcs ? t.present_npcs.split(',') : [];
+            
+            // NOTA: t.character_name è già il risultato di COALESCE(snapshot, current) dalla query SQL in db.ts
+            // Quindi qui stiamo usando correttamente l'identità storica se disponibile.
+            const charName = t.character_name || "Sconosciuto";
+
             if (Array.isArray(segments)) {
                 for (const seg of segments) {
                     const absTime = t.timestamp + (seg.start * 1000);
                     const mins = Math.floor((absTime - startTime) / 60000);
                     const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
                     const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-                    const charName = t.character_name || "Sconosciuto";
+                    
                     lines.push({ 
                         timestamp: absTime, 
                         text: `[${timeStr}] ${charName}: ${seg.text}`,
                         macro: t.macro_location,
-                        micro: t.micro_location
+                        micro: t.micro_location,
+                        present_npcs: npcs
                     });
                 }
             }
@@ -282,7 +299,7 @@ export async function ingestSessionRaw(sessionId: string) {
 
     lines.sort((a, b) => a.timestamp - b.timestamp);
 
-    // 2b. Recupera lista NPC per tagging
+    // 2b. Recupera lista NPC per tagging (fallback se present_npcs è vuoto)
     const allNpcs = listNpcs(campaignId, 1000); // Recupera tutti gli NPC
     const npcNames = allNpcs.map(n => n.name);
 
@@ -304,16 +321,19 @@ export async function ingestSessionRaw(sessionId: string) {
         const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
         if (timeMatch) chunkTimestamp = startTime + (parseInt(timeMatch[1]) * 60000) + (parseInt(timeMatch[2]) * 1000);
 
-        // Recuperiamo il luogo dal primo segmento del chunk (approssimazione accettabile)
+        // Recuperiamo il luogo e gli NPC dal primo segmento del chunk (approssimazione accettabile)
         // Cerchiamo la riga corrispondente nel array originale
         const firstLine = lines.find(l => l.text.includes(chunkText.substring(0, 50)));
         const macro = firstLine?.macro || null;
         const micro = firstLine?.micro || null;
+        
+        // MERGE INTELLIGENTE NPC:
+        // Uniamo gli NPC esplicitamente taggati nel DB (present_npcs) con quelli trovati nel testo
+        const dbNpcs = firstLine?.present_npcs || [];
+        const textNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
+        const mergedNpcs = Array.from(new Set([...dbNpcs, ...textNpcs]));
 
-        // Rilevamento NPC nel chunk
-        const detectedNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
-
-        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: detectedNpcs });
+        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: mergedNpcs });
         if (end >= fullText.length) break;
         i = end - OVERLAP;
     }
@@ -367,19 +387,92 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
     console.log(`[RAG] 🔍 Ricerca con modello: ${model} (${provider})`);
 
     try {
+        // 1. Calcolo Embedding Query
         const resp = await client.embeddings.create({ model: model, input: query });
         const queryVector = resp.data[0].embedding;
-        const fragments = getKnowledgeFragments(campaignId, model);
-
+        
+        // 2. Recupero Frammenti (già ordinati per timestamp ASC dal DB)
+        let fragments = getKnowledgeFragments(campaignId, model);
         if (fragments.length === 0) return [];
 
-        const scored = fragments.map(f => {
+        // --- RAG INVESTIGATIVO (Cross-Ref) ---
+        // Identifichiamo se la query menziona NPC specifici per filtrare i risultati
+        const allNpcs = listNpcs(campaignId, 1000);
+        const mentionedNpcs = allNpcs.filter(npc => query.toLowerCase().includes(npc.name.toLowerCase()));
+        
+        if (mentionedNpcs.length > 0) {
+            console.log(`[RAG] 🕵️ Rilevati NPC nella query: ${mentionedNpcs.map(n => n.name).join(', ')}. Attivo filtro investigativo.`);
+            
+            // Filtriamo i frammenti: teniamo solo quelli che hanno ALMENO UNO degli NPC menzionati
+            // nella colonna associated_npcs
+            const filteredFragments = fragments.filter(f => {
+                if (!f.associated_npcs) return false;
+                const fragmentNpcs = f.associated_npcs.split(',').map(n => n.toLowerCase());
+                return mentionedNpcs.some(mn => fragmentNpcs.includes(mn.name.toLowerCase()));
+            });
+
+            // Se il filtro è troppo aggressivo (0 risultati), torniamo al set completo (fallback)
+            if (filteredFragments.length > 0) {
+                console.log(`[RAG] 📉 Filtro applicato: da ${fragments.length} a ${filteredFragments.length} frammenti.`);
+                fragments = filteredFragments;
+            } else {
+                console.log(`[RAG] ⚠️ Filtro investigativo ha prodotto 0 risultati. Fallback su ricerca completa.`);
+            }
+        }
+        // -------------------------------------
+
+        // 3. Recupero Contesto Attuale (per Boosting)
+        const currentLocation = getCampaignLocationById(campaignId);
+        const currentMacro = currentLocation?.macro || "";
+        const currentMicro = currentLocation?.micro || "";
+
+        // 4. Scoring & Boosting
+        const scored = fragments.map((f, index) => {
             const vector = JSON.parse(f.embedding_json);
-            return { content: f.content, score: cosineSimilarity(queryVector, vector) };
+            let score = cosineSimilarity(queryVector, vector);
+
+            // Boost Contestuale: Se il ricordo è avvenuto nel luogo dove sono ora, aumento la rilevanza
+            if (currentMacro && f.macro_location === currentMacro) score += 0.05;
+            if (currentMicro && f.micro_location === currentMicro) score += 0.10;
+
+            return { ...f, score, originalIndex: index };
         });
 
+        // 5. Ordinamento per Rilevanza
         scored.sort((a, b) => b.score - a.score);
-        return scored.slice(0, limit).map(s => s.content);
+
+        // 6. Selezione Top K + Espansione Temporale ("Cosa succede prima e dopo?")
+        const topK = scored.slice(0, limit);
+        const finalIndices = new Set<number>();
+
+        topK.forEach(item => {
+            finalIndices.add(item.originalIndex);
+            
+            // Espansione CAUSALE (Prima) - Solo se stessa sessione
+            if (item.originalIndex - 1 >= 0) {
+                const prev = fragments[item.originalIndex - 1];
+                if (prev.session_id === item.session_id) {
+                    finalIndices.add(item.originalIndex - 1);
+                }
+            }
+
+            // Espansione CONSEGUENZIALE (Dopo) - Solo se stessa sessione
+            if (item.originalIndex + 1 < fragments.length) {
+                const next = fragments[item.originalIndex + 1];
+                if (next.session_id === item.session_id) {
+                    finalIndices.add(item.originalIndex + 1);
+                }
+            }
+        });
+
+        // 7. Recupero Finale Ordinato Cronologicamente
+        // È cruciale che l'AI legga la storia in ordine temporale, non di rilevanza
+        const finalFragments = Array.from(finalIndices)
+            .sort((a, b) => a - b) // Ordina per indice (che corrisponde al timestamp)
+            .map(idx => fragments[idx].content);
+
+        return finalFragments;
+
     } catch (e) {
         console.error("[RAG] ❌ Errore ricerca:", e);
         return [];
@@ -389,9 +482,17 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 // --- RAG: ASK BARD ---
 export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
     const context = await searchKnowledge(campaignId, question, 5);
-    const contextText = context.length > 0
+    
+    // SAFETY CHECK: Troncatura contesto per evitare overflow token
+    let contextText = context.length > 0
         ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
         : "Nessuna memoria specifica trovata.";
+
+    const MAX_CONTEXT_CHARS = 12000;
+    if (contextText.length > MAX_CONTEXT_CHARS) {
+        console.warn(`[Bardo] ⚠️ Contesto troppo lungo (${contextText.length} chars). Troncatura di sicurezza.`);
+        contextText = contextText.substring(0, MAX_CONTEXT_CHARS) + "\n... [TESTO TRONCATO PER LIMITI DI MEMORIA]";
+    }
 
     // --- GENIUS LOCI: Adattamento Tono ---
     const loc = getCampaignLocationById(campaignId);
@@ -539,6 +640,8 @@ OBIETTIVI:
    - Se viene introdotto un nuovo NPC (es. "Sono il capitano Vane"), estrai nome e ruolo.
    - Se un NPC subisce un cambiamento drastico (es. muore, si rivela un traditore), aggiorna lo status o la descrizione.
    - Ignora i Personaggi Giocanti (PG) già noti.
+5. [OSSERVATORE] Elenca TUTTI gli NPC presenti nella scena (anche se non parlano ma vengono nominati come presenti).
+   - Restituisci una lista semplice di nomi in "present_npcs".
 
 REGOLE CARTOGRAFO:
 - Se rimangono dove sono, NON includere "detected_location" nel JSON.
@@ -555,7 +658,7 @@ ISTRUZIONI SPECIFICHE PER LA CORREZIONE:
 IMPORTANTE:
 1. Non modificare "start" e "end".
 2. Non unire o dividere segmenti. Il numero di oggetti in output deve essere identico all'input.
-3. Restituisci un oggetto JSON con la chiave "segments", opzionalmente "detected_location", opzionalmente "atlas_update" e opzionalmente "npc_updates".
+3. Restituisci un oggetto JSON con la chiave "segments", opzionalmente "detected_location", opzionalmente "atlas_update", opzionalmente "npc_updates" e opzionalmente "present_npcs".
 
 Input:
 ${JSON.stringify(batchInput)}`;
@@ -573,7 +676,7 @@ ${JSON.stringify(batchInput)}`;
             const content = response.choices[0].message.content;
             if (!content) throw new Error("Empty");
             const parsed = JSON.parse(content);
-            return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update?, npc_updates? }
+            return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update?, npc_updates?, present_npcs? }
         } catch (err) {
             console.error(`[Bardo] ⚠️ Errore batch ${idx+1}, uso originale.`);
             return { segments: batch };
@@ -587,6 +690,7 @@ ${JSON.stringify(batchInput)}`;
     let lastDetectedLocation = undefined;
     let lastAtlasUpdate = undefined;
     const allNpcUpdates: any[] = [];
+    const allPresentNpcs: Set<string> = new Set();
 
     for (const res of results) {
         if (res.detected_location) {
@@ -598,18 +702,22 @@ ${JSON.stringify(batchInput)}`;
         if (res.npc_updates && Array.isArray(res.npc_updates)) {
             allNpcUpdates.push(...res.npc_updates);
         }
+        if (res.present_npcs && Array.isArray(res.present_npcs)) {
+            res.present_npcs.forEach((n: string) => allPresentNpcs.add(n));
+        }
     }
 
     return {
         segments: allSegments,
         detected_location: lastDetectedLocation,
         atlas_update: lastAtlasUpdate,
-        npc_updates: allNpcUpdates
+        npc_updates: allNpcUpdates,
+        present_npcs: Array.from(allPresentNpcs)
     };
 }
 
 // --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
-export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<{summary: string, title: string, tokens: number}> {
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<SummaryResponse> {
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
 
     const transcriptions = getSessionTranscript(sessionId);
@@ -647,11 +755,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     for (const t of transcriptions) {
         try {
             const segments = JSON.parse(t.transcription_text);
+            // NOTA: t.character_name è già il risultato di COALESCE(snapshot, current) dalla query SQL in db.ts
+            const charName = t.character_name || "Sconosciuto";
+
             if (Array.isArray(segments)) {
                 for (const seg of segments) {
                     allFragments.push({
                         absoluteTime: t.timestamp + (seg.start * 1000),
-                        character: t.character_name || "Sconosciuto",
+                        character: charName,
                         text: seg.text,
                         type: 'audio',
                         macro: t.macro_location,
@@ -720,29 +831,59 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     }
 
     // FASE REDUCE: Scrittura finale
-    console.log(`[Bardo] ✍️  Fase REDUCE: Scrittura racconto finale...`);
+    console.log(`[Bardo] ✍️  Fase REDUCE: Scrittura racconto finale (${tone})...`);
 
-    // Prompt Ricco Ripristinato con NEGATIVE CONSTRAINTS
-    const reducePrompt = `Sei un Bardo. ${TONES[tone]}
-    ${castContext}
-    
-    ISTRUZIONI DI STILE:
-    - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
-    - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
-    - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
-    - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori. Usale come punti fermi della narrazione, hanno priorità sull'audio trascritto.
-    - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il riassunto in capitoli o paragrafi distinti basati sui luoghi.
+    let reducePrompt = "";
 
-    Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
-    
-    ISTRUZIONI DI FORMATTAZIONE RIGIDE:
-    1. Non usare preamboli (es. "Ecco il riassunto").
-    2. Non usare chiusure conversazionali (es. "Fammi sapere se...", "Spero ti piaccia").
-    3. Non offrire di convertire il testo in altri formati o chiedere dettagli sul sistema di gioco.
-    4. L'output deve essere un oggetto JSON valido con due campi:
-       - "title": Un titolo evocativo per la sessione.
-       - "summary": Il testo narrativo completo.
-    5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
+    if (tone === 'DM') {
+        // --- PROMPT "CHIRURGICO" PER IL DM ---
+        reducePrompt = `Sei un verbalizzatore tecnico per sessioni di D&D.
+Il tuo obiettivo è creare un LOG degli eventi chiaro, conciso e privo di stile narrativo.
+
+CONTESTO:
+${castContext}
+
+REGOLE DI SCRITTURA (DM MODE):
+1. **Stile Asettico**: Usa un linguaggio clinico/giornalistico. Niente "eroicamente", "paurosamente". Solo fatti.
+2. **Struttura**: Usa elenchi puntati per ogni scena.
+3. **Format Riga**: [TIMESTAMP approssimativo o LUOGO] Soggetto -> Azione -> Esito.
+4. **Focus**: Riporta SOLO: spostamenti, incontri NPC (nomi), combattimenti (esito), loot acquisito e decisioni chiave.
+5. **No Filler**: Rimuovi battute, descrizioni atmosferiche e chiacchiere off-game.
+6. Le note marcate con 📝 hanno priorità assoluta come fatti certi.
+
+OUTPUT JSON RICHIESTO:
+{
+  "title": "Log Sessione [Data]",
+  "summary": "Il testo del log formattato come elenco...",
+  "loot": ["Item 1", "Item 2"],
+  "quests": ["Quest A (Nuova)", "Quest B (Aggiornata)"]
+}`;
+
+    } else {
+        // --- PROMPT NARRATIVO (BARDO) ---
+        reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
+        ${castContext}
+        
+        ISTRUZIONI DI STILE:
+        - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
+        - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
+        - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
+        - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori. Usale come punti fermi della narrazione, hanno priorità sull'audio trascritto.
+        - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il riassunto in capitoli o paragrafi distinti basati sui luoghi.
+
+        Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
+        
+        ISTRUZIONI DI FORMATTAZIONE RIGIDE:
+        1. Non usare preamboli (es. "Ecco il riassunto").
+        2. Non usare chiusure conversazionali (es. "Fammi sapere se...", "Spero ti piaccia").
+        3. Non offrire di convertire il testo in altri formati o chiedere dettagli sul sistema di gioco.
+        4. L'output deve essere un oggetto JSON valido con le seguenti chiavi:
+           - "title": Un titolo evocativo per la sessione.
+           - "summary": Il testo narrativo completo.
+           - "loot": Array di stringhe contenente gli oggetti ottenuti (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
+           - "quests": Array di stringhe contenente le missioni accettate, aggiornate o concluse. Se nessuna, array vuoto.
+        5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
+    }
 
     try {
         const response = await withRetry(() => openai.chat.completions.create({
@@ -762,13 +903,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
             parsed = JSON.parse(content);
         } catch (e) {
             // Fallback se il modello non rispetta il JSON
-            parsed = { title: "Sessione Senza Titolo", summary: content };
+            parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], quests: [] };
         }
 
         return { 
             summary: parsed.summary || "Errore generazione.", 
             title: parsed.title || "Sessione Senza Titolo",
-            tokens: accumulatedTokens 
+            tokens: accumulatedTokens,
+            loot: Array.isArray(parsed.loot) ? parsed.loot : [],
+            quests: Array.isArray(parsed.quests) ? parsed.quests : []
         };
     } catch (err: any) {
         console.error("Errore finale:", err);

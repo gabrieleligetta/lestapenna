@@ -65,13 +65,19 @@ import {
     updateAtlasEntry,
     getNpcEntry,
     updateNpcEntry,
-    listNpcs
+    listNpcs,
+    addQuest,
+    updateQuestStatus,
+    getOpenQuests,
+    addLoot,
+    removeLoot,
+    getInventory
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
 import { monitor, SessionMetrics } from './monitor';
-import { processSessionReport, sendTestEmail } from './reporter';
+import { processSessionReport, sendTestEmail, sendSessionRecap } from './reporter';
 import { exec } from 'child_process';
 import { pipeline } from 'stream/promises';
 
@@ -240,7 +246,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria', 'npc', 'dossier', 'presenze'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -288,6 +294,16 @@ client.on('messageCreate', async (message: Message) => {
                     "`$memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
                     "`$scarica <ID>`: Scarica audio.\n" +
                     "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
+                },
+                {
+                    name: "🎒 Inventario & Quest",
+                    value:
+                    "`$quest`: Visualizza quest attive.\n" +
+                    "`$quest add <Titolo>`: Aggiunge una quest.\n" +
+                    "`$quest done <Titolo>`: Completa una quest.\n" +
+                    "`$inventario`: Visualizza inventario.\n" +
+                    "`$loot add <Oggetto>`: Aggiunge un oggetto.\n" +
+                    "`$loot use <Oggetto>`: Rimuove/Usa un oggetto."
                 },
                 { 
                     name: "👤 Scheda Personaggio (Campagna Attiva)", 
@@ -360,6 +376,16 @@ client.on('messageCreate', async (message: Message) => {
                     "`$ingest <ID>`: Manually index a session into memory.\n" +
                     "`$download <ID>`: Download audio.\n" +
                     "`$downloadtxt <ID>`: Download transcriptions (txt)." 
+                },
+                {
+                    name: "🎒 Inventory & Quests",
+                    value:
+                    "`$quest`: View active quests.\n" +
+                    "`$quest add <Title>`: Add a quest.\n" +
+                    "`$quest done <Title>`: Complete a quest.\n" +
+                    "`$inventory`: View inventory.\n" +
+                    "`$loot add <Item>`: Add an item.\n" +
+                    "`$loot use <Item>`: Remove/Use an item."
                 },
                 { 
                     name: "👤 Character Sheet (Active Campaign)", 
@@ -695,6 +721,55 @@ client.on('messageCreate', async (message: Message) => {
         return message.reply(`👥 **NPC Incontrati in questa sessione:**\n${Array.from(allNpcs).join(', ')}`);
     }
 
+    // --- NUOVO: $quest ---
+    if (command === 'quest' || command === 'obiettivi') {
+        const arg = args.join(' ');
+
+        // Sottocomandi manuali: $quest add Titolo / $quest done Titolo
+        if (arg.toLowerCase().startsWith('add ')) {
+            const title = arg.substring(4);
+            addQuest(activeCampaign!.id, title);
+            return message.reply(`🗺️ Quest aggiunta: **${title}**`);
+        }
+        if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
+            const search = arg.split(' ').slice(1).join(' '); // Rimuove 'done'
+            updateQuestStatus(activeCampaign!.id, search, 'COMPLETED');
+            return message.reply(`✅ Quest aggiornata come completata (ricerca: "${search}")`);
+        }
+
+        // Visualizzazione
+        const quests = getOpenQuests(activeCampaign!.id);
+        if (quests.length === 0) return message.reply("Nessuna quest attiva al momento.");
+
+        const list = quests.map((q: any) => `🔹 **${q.title}**`).join('\n');
+        return message.reply(`**🗺️ Quest Attive (${activeCampaign?.name})**\n\n${list}`);
+    }
+
+    // --- NUOVO: $inventario ---
+    if (command === 'inventario' || command === 'loot' || command === 'bag') {
+        const arg = args.join(' ');
+
+        // Sottocomandi manuali: $loot add Pozione / $loot use Pozione
+        if (arg.toLowerCase().startsWith('add ')) {
+            const item = arg.substring(4);
+            addLoot(activeCampaign!.id, item, 1);
+            return message.reply(`💰 Aggiunto: **${item}**`);
+        }
+        if (arg.toLowerCase().startsWith('use ') || arg.toLowerCase().startsWith('usa ') || arg.toLowerCase().startsWith('remove ')) {
+            const item = arg.split(' ').slice(1).join(' ');
+            const removed = removeLoot(activeCampaign!.id, item, 1);
+            if (removed) return message.reply(`📉 Rimosso/Usato: **${item}**`);
+            else return message.reply(`⚠️ Oggetto "${item}" non trovato nell'inventario.`);
+        }
+
+        // Visualizzazione
+        const items = getInventory(activeCampaign!.id);
+        if (items.length === 0) return message.reply("Lo zaino è vuoto.");
+
+        const list = items.map((i: any) => `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}`).join('\n');
+        return message.reply(`**💰 Inventario di Gruppo (${activeCampaign?.name})**\n\n${list}`);
+    }
+
     // --- NUOVO: !stato ---
     if (command === 'stato' || command === 'status') {
         const audioCounts = await audioQueue.getJobCounts();
@@ -892,7 +967,23 @@ client.on('messageCreate', async (message: Message) => {
             // SALVATAGGIO TITOLO
             updateSessionTitle(targetSessionId, result.title);
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title);
+            // --- AUTOMAZIONE DB: LOOT & QUEST ---
+            const activeCampaignId = activeCampaign!.id;
+
+            if (result.loot && result.loot.length > 0) {
+                result.loot.forEach((item: string) => addLoot(activeCampaignId, item));
+            }
+
+            if (result.loot_removed && result.loot_removed.length > 0) {
+                result.loot_removed.forEach((item: string) => removeLoot(activeCampaignId, item));
+            }
+
+            if (result.quests && result.quests.length > 0) {
+                result.quests.forEach((q: string) => addQuest(activeCampaignId, q));
+            }
+            // ------------------------------------
+
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests);
 
             const processingTime = Date.now() - startProcessing;
             const transcripts = getSessionTranscript(targetSessionId);
@@ -1490,10 +1581,43 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                 // SALVATAGGIO TITOLO
                 updateSessionTitle(sessionId, result.title);
 
+                // --- AUTOMAZIONE DB: LOOT & QUEST ---
+                const activeCampaignId = getSessionCampaignId(sessionId);
+                if (activeCampaignId) {
+                    if (result.loot && result.loot.length > 0) {
+                        result.loot.forEach((item: string) => addLoot(activeCampaignId, item));
+                    }
+                    
+                    if (result.loot_removed && result.loot_removed.length > 0) {
+                        result.loot_removed.forEach((item: string) => removeLoot(activeCampaignId, item));
+                    }
+
+                    if (result.quests && result.quests.length > 0) {
+                        result.quests.forEach((q: string) => addQuest(activeCampaignId, q));
+                    }
+                }
+                // ------------------------------------
+
                 monitor.logSummarizationTime(Date.now() - startSummary);
                 monitor.logTokenUsage(result.tokens);
 
-                await publishSummary(sessionId, result.summary, discordChannel, false, result.title);
+                await publishSummary(sessionId, result.summary, discordChannel, false, result.title, result.loot, result.quests);
+                
+                // --- INVIO EMAIL DM ---
+                if (activeCampaignId) {
+                    // Inviamo l'email in background senza bloccare il bot
+                    sendSessionRecap(
+                        sessionId, 
+                        activeCampaignId, 
+                        result.summary, 
+                        result.loot, 
+                        result.loot_removed
+                    ).catch(e => console.error("Errore async email:", e));
+                    
+                    await discordChannel.send("📧 Ho inviato una pergamena (email) di riepilogo al Dungeon Master.");
+                }
+                // ---------------------
+
             } catch (err: any) {
                 console.error(`❌ Errore riassunto finale ${sessionId}:`, err);
                 monitor.logError('Summary', err.message);
@@ -1542,7 +1666,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string) {
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[]) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -1618,6 +1742,24 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     for (const chunk of chunks) {
         await targetChannel.send(chunk);
     }
+
+    // --- VISUALIZZAZIONE LOOT & QUEST ---
+    if ((loot && loot.length > 0) || (quests && quests.length > 0)) {
+        const embed = new EmbedBuilder()
+            .setColor("#F1C40F")
+            .setTitle("🎒 Riepilogo Tecnico");
+        
+        if (loot && loot.length > 0) {
+            embed.addFields({ name: "💰 Bottino (Loot)", value: loot.map(i => `• ${i}`).join('\n') });
+        }
+        
+        if (quests && quests.length > 0) {
+            embed.addFields({ name: "🗺️ Missioni (Quests)", value: quests.map(q => `• ${q}`).join('\n') });
+        }
+
+        await targetChannel.send({ embeds: [embed] });
+    }
+    // ------------------------------------
 
     if (targetChannel.id !== defaultChannel.id) {
         await defaultChannel.send(`✅ Riassunto della sessione \`${sessionId}\` inviato in <#${targetChannel.id}>`);

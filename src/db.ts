@@ -131,6 +131,28 @@ db.exec(`CREATE TABLE IF NOT EXISTS npc_dossier (
     UNIQUE(campaign_id, name)
 )`);
 
+// --- TABELLA QUESTS ---
+db.exec(`CREATE TABLE IF NOT EXISTS quests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT DEFAULT 'OPEN', -- OPEN, COMPLETED, FAILED
+    created_at INTEGER,
+    last_updated INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
+// --- TABELLA INVENTORY ---
+db.exec(`CREATE TABLE IF NOT EXISTS inventory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    quantity INTEGER DEFAULT 1,
+    acquired_at INTEGER,
+    last_updated INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
 // --- MIGRATIONS ---
 const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
@@ -171,6 +193,8 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes (
 db.exec(`CREATE INDEX IF NOT EXISTS idx_location_history_campaign ON location_history (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_location_atlas_campaign ON location_atlas (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_dossier_campaign ON npc_dossier (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_quests_campaign ON quests (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_campaign ON inventory (campaign_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -257,6 +281,24 @@ export interface NpcEntry {
     status: string;
     last_seen_location: string | null;
     last_updated: string;
+}
+
+export interface Quest {
+    id: number;
+    campaign_id: number;
+    title: string;
+    status: 'OPEN' | 'COMPLETED' | 'FAILED';
+    created_at: number;
+    last_updated: number;
+}
+
+export interface InventoryItem {
+    id: number;
+    campaign_id: number;
+    item_name: string;
+    quantity: number;
+    acquired_at: number;
+    last_updated: number;
 }
 
 // --- FUNZIONI CONFIGURAZIONE ---
@@ -437,6 +479,60 @@ export const findNpcDossierByName = (campaignId: number, nameQuery: string): Npc
     `).all(campaignId, nameQuery) as NpcEntry[];
 };
 
+// --- FUNZIONI QUESTS ---
+
+export const addQuest = (campaignId: number, title: string) => {
+    // Evitiamo duplicati identici
+    const exists = db.prepare("SELECT id FROM quests WHERE campaign_id = ? AND title = ?").get(campaignId, title);
+    if (!exists) {
+        db.prepare("INSERT INTO quests (campaign_id, title, status, created_at, last_updated) VALUES (?, ?, 'OPEN', ?, ?)").run(campaignId, title, Date.now(), Date.now());
+        console.log(`[Quest] 🗺️ Nuova quest aggiunta: ${title}`);
+    }
+};
+
+export const updateQuestStatus = (campaignId: number, titlePart: string, status: 'COMPLETED' | 'FAILED' | 'OPEN') => {
+    db.prepare("UPDATE quests SET status = ?, last_updated = ? WHERE campaign_id = ? AND title LIKE ?").run(status, Date.now(), campaignId, `%${titlePart}%`);
+    console.log(`[Quest] 📝 Stato aggiornato a ${status} per quest simile a: ${titlePart}`);
+};
+
+export const getOpenQuests = (campaignId: number): Quest[] => {
+    return db.prepare("SELECT * FROM quests WHERE campaign_id = ? AND status = 'OPEN' ORDER BY created_at DESC").all(campaignId) as Quest[];
+};
+
+// --- FUNZIONI INVENTORY ---
+
+export const addLoot = (campaignId: number, itemName: string, qty: number = 1) => {
+    // Cerca se esiste già (case insensitive)
+    const existing = db.prepare("SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)").get(campaignId, itemName) as {id: number, quantity: number} | undefined;
+    
+    if (existing) {
+        db.prepare("UPDATE inventory SET quantity = quantity + ?, last_updated = ? WHERE id = ?").run(qty, Date.now(), existing.id);
+    } else {
+        db.prepare("INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated) VALUES (?, ?, ?, ?, ?)").run(campaignId, itemName, qty, Date.now(), Date.now());
+    }
+    console.log(`[Loot] 💰 Aggiunto: ${itemName} (x${qty})`);
+};
+
+export const removeLoot = (campaignId: number, itemName: string, qty: number = 1) => {
+    const existing = db.prepare("SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) LIKE lower(?)").get(campaignId, `%${itemName}%`) as {id: number, quantity: number} | undefined;
+    
+    if (existing) {
+        const newQty = existing.quantity - qty;
+        if (newQty <= 0) {
+            db.prepare("DELETE FROM inventory WHERE id = ?").run(existing.id);
+        } else {
+            db.prepare("UPDATE inventory SET quantity = ?, last_updated = ? WHERE id = ?").run(newQty, Date.now(), existing.id);
+        }
+        console.log(`[Loot] 📉 Rimosso: ${itemName} (x${qty})`);
+        return true;
+    }
+    return false;
+};
+
+export const getInventory = (campaignId: number): InventoryItem[] => {
+    return db.prepare("SELECT * FROM inventory WHERE campaign_id = ? ORDER BY item_name ASC").all(campaignId) as InventoryItem[];
+};
+
 // ------------------------------------------
 
 export const getCampaignById = (id: number): Campaign | undefined => {
@@ -462,11 +558,13 @@ export const deleteCampaign = (campaignId: number) => {
     db.prepare('DELETE FROM location_atlas WHERE campaign_id = ?').run(campaignId);
     db.prepare('DELETE FROM location_history WHERE campaign_id = ?').run(campaignId);
     try { db.prepare('DELETE FROM npc_dossier WHERE campaign_id = ?').run(campaignId); } catch(e) {}
+    try { db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId); } catch(e) {}
+    try { db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId); } catch(e) {}
 
     // 3. Elimina campagna (Cascade farà il resto per characters e knowledge, ma meglio essere sicuri sopra)
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
     
-    console.log(`[DB] Campagna ${campaignId} e tutti i dati correlati (Atlante, Storia, NPC) eliminati.`);
+    console.log(`[DB] Campagna ${campaignId} e tutti i dati correlati (Atlante, Storia, NPC, Quest, Loot) eliminati.`);
 };
 
 // --- FUNZIONI PERSONAGGI (CONTEXT AWARE) ---
@@ -745,9 +843,59 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM location_history').run();
     db.prepare('DELETE FROM location_atlas').run();
     db.prepare('DELETE FROM npc_dossier').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier')").run();
+    db.prepare('DELETE FROM quests').run();
+    db.prepare('DELETE FROM inventory').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier', 'quests', 'inventory')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
+};
+
+// --- REPORTING HELPERS ---
+
+export const getSessionTravelLog = (sessionId: string) => {
+    return db.prepare(`
+        SELECT macro_location, micro_location, timestamp 
+        FROM location_history 
+        WHERE session_id = ? 
+        ORDER BY timestamp ASC
+    `).all(sessionId) as { macro_location: string, micro_location: string, timestamp: number }[];
+};
+
+export const getSessionEncounteredNPCs = (sessionId: string) => {
+    // 1. Estrai tutte le stringhe grezze 'present_npcs' dalle registrazioni
+    const rows = db.prepare(`
+        SELECT DISTINCT present_npcs 
+        FROM recordings 
+        WHERE session_id = ? AND present_npcs IS NOT NULL
+    `).all(sessionId) as { present_npcs: string }[];
+
+    // 2. Unisci e pulisci i nomi
+    const uniqueNames = new Set<string>();
+    rows.forEach(row => {
+        if (row.present_npcs) {
+            row.present_npcs.split(',').forEach(n => {
+                const clean = n.trim();
+                if (clean) uniqueNames.add(clean);
+            });
+        }
+    });
+
+    if (uniqueNames.size === 0) return [];
+
+    // 3. Recupera i dettagli dal Dossier per questi nomi (case insensitive)
+    const namesArray = Array.from(uniqueNames);
+    const placeholders = namesArray.map(() => 'lower(name) = lower(?)').join(' OR ');
+    
+    if (!placeholders) return [];
+
+    const details = db.prepare(`
+        SELECT name, role, description, status 
+        FROM npc_dossier 
+        WHERE campaign_id = (SELECT campaign_id FROM sessions WHERE session_id = ?)
+        AND (${placeholders})
+    `).all(sessionId, ...namesArray) as { name: string, role: string, description: string, status: string }[];
+
+    return details;
 };
 
 export { db };

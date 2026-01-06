@@ -93,11 +93,12 @@ interface AIResponse {
 }
 
 // Interfaccia per il riassunto strutturato
-interface SummaryResponse {
+export interface SummaryResponse {
     summary: string;
     title: string;
     tokens: number;
     loot?: string[];
+    loot_removed?: string[]; // NUOVO: Oggetti consumati/persi
     quests?: string[];
 }
 
@@ -856,6 +857,7 @@ OUTPUT JSON RICHIESTO:
   "title": "Log Sessione [Data]",
   "summary": "Il testo del log formattato come elenco...",
   "loot": ["Item 1", "Item 2"],
+  "loot_removed": ["Item Consumato 1", "Item Perso 2"],
   "quests": ["Quest A (Nuova)", "Quest B (Aggiornata)"]
 }`;
 
@@ -881,6 +883,7 @@ OUTPUT JSON RICHIESTO:
            - "title": Un titolo evocativo per la sessione.
            - "summary": Il testo narrativo completo.
            - "loot": Array di stringhe contenente gli oggetti ottenuti (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
+           - "loot_removed": Array di stringhe contenente gli oggetti consumati, persi o venduti. Se nessuno, array vuoto.
            - "quests": Array di stringhe contenente le missioni accettate, aggiornate o concluse. Se nessuna, array vuoto.
         5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
     }
@@ -903,7 +906,7 @@ OUTPUT JSON RICHIESTO:
             parsed = JSON.parse(content);
         } catch (e) {
             // Fallback se il modello non rispetta il JSON
-            parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], quests: [] };
+            parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], loot_removed: [], quests: [] };
         }
 
         return { 
@@ -911,6 +914,7 @@ OUTPUT JSON RICHIESTO:
             title: parsed.title || "Sessione Senza Titolo",
             tokens: accumulatedTokens,
             loot: Array.isArray(parsed.loot) ? parsed.loot : [],
+            loot_removed: Array.isArray(parsed.loot_removed) ? parsed.loot_removed : [],
             quests: Array.isArray(parsed.quests) ? parsed.quests : []
         };
     } catch (err: any) {

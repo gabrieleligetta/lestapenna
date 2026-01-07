@@ -1,6 +1,12 @@
-import { spawn, ChildProcess } from 'child_process';
+import { execFile } from 'child_process';
 import * as fs from 'fs';
-import { EventEmitter } from 'events';
+import * as path from 'path';
+import { promisify } from 'util';
+
+// We cannot use promisify directly if we want access to stderr on error
+// const execFileAsync = promisify(execFile); 
+const unlinkAsync = promisify(fs.unlink);
+const readFileAsync = promisify(fs.readFile);
 
 export interface TranscriptionSegment {
     start: number;
@@ -12,124 +18,131 @@ export interface TranscriptionResult {
     text?: string;
     segments?: TranscriptionSegment[];
     error?: string;
+    language?: string;
 }
 
-class WhisperWorker extends EventEmitter {
-    private process: ChildProcess | null = null;
-    private ready = false;
-    private currentResolve: ((value: TranscriptionResult) => void) | null = null;
-    private currentReject: ((reason: any) => void) | null = null;
-    private queue: { path: string, resolve: (value: TranscriptionResult) => void, reject: (reason: any) => void }[] = [];
+// Paths inside container
+const WHISPER_BIN = '/app/whisper/main';
+const WHISPER_MODEL = '/app/whisper/model.bin';
 
-    constructor() {
-        super();
-        this.init();
-    }
+export class WhisperCppService {
 
-    private init() {
-        console.log("[Whisper] Avvio demone Python...");
-        this.process = spawn('python3', ['transcribe.py', '--daemon']);
-        
-        let buffer = '';
-        this.process.stdout?.on('data', (data) => {
-            const str = data.toString();
-            // console.log("[Whisper stdout]", str);
-            
-            if (str.includes("READY") && !this.ready) {
-                this.ready = true;
-                console.log("[Whisper] Demone pronto.");
-                this.emit('ready');
-                this.processNext();
-                return;
-            }
-            
-            buffer += str;
-            if (buffer.includes('\n')) {
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    if (line.trim() && this.currentResolve) {
-                        try {
-                            const json = JSON.parse(line);
-                            this.currentResolve(json);
-                        } catch (e) {
-                            this.currentResolve({ text: line });
-                        }
-                        this.currentResolve = null;
-                        this.currentReject = null;
-                        this.processNext();
+    async transcribe(audioPath: string): Promise<TranscriptionResult> {
+        const jsonOutputPath = audioPath + '.json';
+
+        try {
+            if (!fs.existsSync(WHISPER_BIN)) throw new Error(`Whisper binary missing: ${WHISPER_BIN}`);
+
+            const args = [
+                '-n', '10',
+                WHISPER_BIN,
+                '-m', WHISPER_MODEL,
+                '-f', audioPath,
+                '-l', 'it',
+                '-t', '3',
+                '-oj',
+                '-osrt', 'false'
+            ];
+
+            // Manually wrap execFile to capture stdout and stderr even on error
+            await new Promise<void>((resolve, reject) => {
+                execFile('/usr/bin/nice', args, (error, stdout, stderr) => {
+                    if (error) {
+                        // Log the full stderr from the process
+                        console.error(`[WhisperCpp] Process execution failed.`);
+                        console.error(`[WhisperCpp] CMD: /usr/bin/nice ${args.join(' ')}`);
+                        console.error(`[WhisperCpp] STDERR: ${stderr}`); 
+                        console.error(`[WhisperCpp] STDOUT: ${stdout}`); // Sometimes error info is here
+                        console.error(`[WhisperCpp] ERROR OBJ: ${error.message}`);
+                        
+                        // Pass the stderr as part of the error message for better visibility
+                        reject(new Error(`Whisper failed: ${stderr || error.message}`));
+                    } else {
+                        resolve();
                     }
-                }
+                });
+            });
+
+            if (!fs.existsSync(jsonOutputPath)) {
+                throw new Error("JSON output file not found. Whisper failed?");
             }
-        });
 
-        this.process.stderr?.on('data', (data) => {
-            console.error("[Whisper stderr]", data.toString());
-        });
+            const rawData = await readFileAsync(jsonOutputPath, 'utf-8');
+            const result = JSON.parse(rawData);
 
-        this.process.on('close', (code) => {
-            this.ready = false;
-            console.warn(`[Whisper] Processo terminato (code ${code}). Riavvio tra 5s...`);
-            if (this.currentReject) {
-                this.currentReject(new Error("Processo Whisper terminato inaspettatamente"));
-            }
-            setTimeout(() => this.init(), 5000);
-        });
-    }
+            await unlinkAsync(jsonOutputPath).catch(() => {});
 
-    private processNext() {
-        if (!this.ready || this.currentResolve || this.queue.length === 0) return;
-        
-        const next = this.queue.shift();
-        if (next) {
-            this.currentResolve = next.resolve;
-            this.currentReject = next.reject;
-            this.process?.stdin?.write(next.path + '\n');
+            return this.mapToResult(result);
+
+        } catch (e: any) {
+            // Enhanced logging in the catch block
+            console.error("[WhisperCpp] Transcription EXCEPTION:", e.message);
+            
+            if (fs.existsSync(jsonOutputPath)) await unlinkAsync(jsonOutputPath).catch(() => {});
+            return { error: e.message || "Unknown Error" };
         }
     }
 
-    async transcribe(audioPath: string): Promise<TranscriptionResult> {
-        return new Promise((resolve, reject) => {
-            this.queue.push({ path: audioPath, resolve, reject });
-            this.processNext();
+    private mapToResult(cppJson: any): TranscriptionResult {
+        const segments: TranscriptionSegment[] = (cppJson.transcription || []).map((s: any) => {
+            let start = 0;
+            let end = 0;
+
+            if (s.offsets) {
+                start = s.offsets.from / 1000;
+                end = s.offsets.to / 1000;
+            } else if (s.timestamps) {
+                start = this.parseTime(s.timestamps.from);
+                end = this.parseTime(s.timestamps.to);
+            }
+
+            return {
+                start,
+                end,
+                text: s.text?.trim() || ""
+            };
         });
+
+        const fullText = segments.map(s => s.text).join(" ");
+
+        return {
+            text: fullText,
+            segments: segments,
+            language: "it"
+        };
+    }
+
+    private parseTime(val: any): number {
+        if (typeof val === 'number') return val;
+        return 0; 
     }
 }
 
-const whisperWorker = new WhisperWorker();
+const whisperService = new WhisperCppService();
 
 export function convertPcmToWav(input: string, output: string): Promise<void> {
     return new Promise((resolve, reject) => {
-        // OTTIMIZZAZIONE:
-        // -ar 16000: Campionamento a 16kHz (quello che vuole Whisper)
-        // -ac 1: Mono (Whisper mixa comunque a mono internamente)
-        // -af silenceremove: Rimuove i silenzi > 1s (-30dB) per ridurre la durata del file
+        const { spawn } = require('child_process');
         const ffmpeg = spawn('ffmpeg', [
             '-f', 's16le',
-            '-ar', '48000', // Input rate (PCM raw di Discord è 48k)
-            '-ac', '2',     // Input channels
+            '-ar', '48000', 
+            '-ac', '2',
             '-i', input,
-            '-ar', '16000', // OUTPUT rate
-            '-ac', '1',     // OUTPUT channels
-            '-af', 'silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-30dB', // Rimuove silenzi
+            '-ar', '16000', 
+            '-ac', '1',
+            '-af', 'silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-30dB', 
             output,
             '-y'
         ]);
 
-        ffmpeg.on('close', (code, signal) => {
+        ffmpeg.on('close', (code: number) => {
             if (code === 0) resolve();
-            else {
-                const errorMsg = code === null 
-                    ? `ffmpeg killed by signal ${signal}` 
-                    : `ffmpeg exited with code ${code}`;
-                reject(new Error(errorMsg));
-            }
+            else reject(new Error(`ffmpeg exited with code ${code}`));
         });
-
-        ffmpeg.on('error', (err) => reject(err));
+        ffmpeg.on('error', (err: Error) => reject(err));
     });
 }
 
 export function transcribeLocal(audioPath: string): Promise<TranscriptionResult> {
-    return whisperWorker.transcribe(audioPath);
+    return whisperService.transcribe(audioPath);
 }

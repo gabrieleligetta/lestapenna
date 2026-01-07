@@ -8,7 +8,8 @@ import platform
 # Configura logging su STDERR per non sporcare il JSON su STDOUT
 logging.basicConfig(
     level=logging.INFO,
-    format='[Python-Whisper] %(message)s',
+    format='[Python-Whisper] %(asctime)s - %(message)s',
+    datefmt='%H:%M:%S',
     stream=sys.stderr
 )
 logger = logging.getLogger()
@@ -36,16 +37,24 @@ def print_progress(current, total):
 
 def transcribe_file(model, audio_path):
     if not os.path.exists(audio_path):
+        logger.error(f"❌ File non trovato: {audio_path}")
         return {"error": f"File not found: {audio_path}"}
 
-    logger.info(f"🗣️  Inizio trascrizione: {os.path.basename(audio_path)}")
+    try:
+        file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+    except Exception:
+        file_size_mb = 0
+
+    logger.info(f"🗣️  Richiesta trascrizione: {os.path.basename(audio_path)} (Size: {file_size_mb:.2f} MB)")
+    logger.info(f"📂 Path completo: {audio_path}")
 
     try:
+        logger.info("⚙️  Avvio inferenza modello (beam_size=1)...")
         # beam_size=5 è lo standard per alta qualità
         segments_generator, info = model.transcribe(audio_path, beam_size=1, language="it")
 
         duration = info.duration
-        logger.info(f"📏 Durata audio rilevata: {duration:.2f}s")
+        logger.info(f"📏 Durata audio rilevata: {duration:.2f}s - Lingua: {info.language}")
 
         segment_list = []
         full_text = []
@@ -75,7 +84,7 @@ def transcribe_file(model, audio_path):
         }
 
     except Exception as e:
-        logger.error(f"❌ Errore durante trascrizione: {e}")
+        logger.error(f"❌ Errore durante trascrizione: {e}", exc_info=True)
         return {"error": str(e)}
 
 def main():
@@ -84,6 +93,8 @@ def main():
     parser.add_argument("--daemon", action="store_true", help="Run in daemon mode")
     parser.add_argument("--model", default="medium", help="Whisper model size")
     args = parser.parse_args()
+
+    logger.info(f"🏁 Avvio script Python. Args: {args}")
 
     # Rilevamento Architettura
     arch = platform.machine()
@@ -115,6 +126,7 @@ def main():
 
     model = None
     try:
+        logger.info(f"🔄 Caricamento modello '{args.model}' su {device.upper()}...")
         # Tentativo principale con i parametri decisi
         if device == "cuda":
              model = WhisperModel(args.model, device="cuda", compute_type="float16", cpu_threads=3)
@@ -122,7 +134,7 @@ def main():
              # Fallback o scelta diretta CPU
              model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=3)
              
-        logger.info(f"✅ Modello '{args.model}' caricato su {device.upper()} (Threads: 3).")
+        logger.info(f"✅ Modello caricato con successo.")
         
     except Exception as e:
         # Se il tentativo CUDA fallisce (es. librerie mancanti), fallback silenzioso su CPU
@@ -133,7 +145,7 @@ def main():
                 model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=3)
                 logger.info("✅ Modello caricato su CPU.")
             except Exception as e_cpu:
-                logger.error(f"❌ ERRORE CRITICO: {e_cpu}")
+                logger.error(f"❌ ERRORE CRITICO (CPU Fallback): {e_cpu}")
                 sys.exit(1)
         else:
             logger.error(f"❌ ERRORE CRITICO: {e}")
@@ -144,14 +156,16 @@ def main():
         print("READY", flush=True) # Segnale per Node.js
 
         for line in sys.stdin:
-            audio_path = line.strip()
-            if not audio_path: continue
-
-            result = transcribe_file(model, audio_path)
+            line = line.strip()
+            if not line: continue
+            
+            logger.info(f"📥 [Daemon] Ricevuto comando: '{line}'")
+            
+            result = transcribe_file(model, line)
 
             # Output JSON puro su STDOUT
             print(json.dumps(result, ensure_ascii=False), flush=True)
-            logger.info("In attesa del prossimo file...")
+            logger.info("💤 In attesa del prossimo file...")
     else:
         if not args.audio_path:
             logger.error("Errore: audio_path richiesto se non in modalità daemon")

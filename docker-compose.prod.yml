@@ -11,21 +11,19 @@ services:
       - .env
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
-      - TZ=Europe/Rome  # <--- AGGIUNTA UTILE: Orari log corretti
+      - TZ=Europe/Rome
 
     deploy:
       resources:
         limits:
-          cpus: '3.5'
+          # Rimosso limite CPU per permettere la gestione interna tramite 'nice' e '-t 3'
           memory: 22G
 
-    # --- AGGIUNTA FONDAMENTALE: SALVA IL DISCO ---
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    # ---------------------------------------------
 
     volumes:
       - ./recordings:/app/recordings
@@ -39,7 +37,6 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
-    # Anche qui è buona norma mettere i log limitati
     logging:
       driver: "json-file"
       options:

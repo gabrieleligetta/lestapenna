@@ -371,11 +371,16 @@ export const updateLocation = (campaignId: number, macro: string | null, micro: 
     stmt.run(macro, micro, campaignId);
 
     // 2. Aggiungi alla cronologia
+    let legacyLocation = "Sconosciuto";
+    if (macro && micro) legacyLocation = `${macro} | ${micro}`;
+    else if (macro) legacyLocation = macro;
+    else if (micro) legacyLocation = micro;
+
     const historyStmt = db.prepare(`
-        INSERT INTO location_history (campaign_id, macro_location, micro_location, session_date, timestamp, session_id)
-        VALUES (?, ?, ?, date('now'), ?, ?)
+        INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_date, timestamp, session_id)
+        VALUES (?, ?, ?, ?, date('now'), ?, ?)
     `);
-    historyStmt.run(campaignId, macro, micro, Date.now(), sessionId || null);
+    historyStmt.run(campaignId, legacyLocation, macro, micro, Date.now(), sessionId || null);
     
     console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
 };

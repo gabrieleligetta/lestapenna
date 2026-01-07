@@ -1,43 +1,73 @@
-# --- STAGE 1: BUILDER ---
-FROM node:22-slim AS builder
+# --- STAGE 1: NODE BUILDER ---
+FROM node:22-bullseye AS builder
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y python3 python3-pip make g++ && rm -rf /var/lib/apt/lists/*
+# Tool di base
+RUN apt-get update && apt-get install -y build-essential git python3 && rm -rf /var/lib/apt/lists/*
 
 COPY package.json yarn.lock ./
-RUN yarn install
+RUN yarn install --frozen-lockfile
 
 COPY . .
-RUN yarn tsc
+RUN yarn build
 
-# --- STAGE 2: RUNNER (Produzione) ---
-FROM node:22-slim
+# --- STAGE 2: WHISPER COMPILER (ARM OPTIMIZED) ---
+FROM debian:bullseye-slim AS whisper-builder
+WORKDIR /build
+
+# AGGIUNTO 'cmake': Richiesto per la compilazione delle nuove versioni di whisper.cpp
+RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
+
+# Clona e compila whisper.cpp (Rileva automaticamente ARM NEON su Oracle Cloud)
+RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
+    cmake -B build && \
+    cmake --build build --config Release
+
+# Scarica il modello MEDIUM
+RUN bash ./models/download-ggml-model.sh medium
+
+# --- STAGE 3: PRODUCTION RUNNER ---
+FROM node:22-bullseye-slim
 WORKDIR /app
 
-# Dipendenze runtime (ffmpeg, python per Whisper, yt-dlp per test)
-RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip && rm -rf /var/lib/apt/lists/*
-RUN pip3 install faster-whisper yt-dlp --break-system-packages
+# Installiamo dipendenze runtime
+# - ffmpeg: audio processing
+# - python3: runtime per yt-dlp
+# - curl: download tool
+# - procps: monitoraggio processi (htop/top)
+# - libgomp1: NECESSARIO per OpenMP (whisper.cpp crasha senza questo)
+# - ca-certificates: NECESSARIO per HTTPS (Discord, YouTube, Oracle)
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    python3 \
+    curl \
+    procps \
+    libgomp1 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Scarica il modello Whisper 'medium' durante la build per averlo nella cache
-RUN python3 -c "from faster_whisper import download_model; download_model('medium')"
+# Installiamo yt-dlp standalone
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
-# Copia solo il necessario dalla build
+ENV NODE_ENV=production
+
+# Copia App Node
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-# Copiamo transcribe.py perché serve a runtime
-COPY transcribe.py ./
 
-# Crea le cartelle necessarie
-RUN mkdir recordings batch_processing data
+# Copia Whisper
+RUN mkdir -p /app/whisper
+# FIX: Copiamo 'whisper-cli' (il nuovo binario) ma lo salviamo come 'main'
+# per mantenere la compatibilità con il codice TypeScript esistente.
+COPY --from=whisper-builder /build/build/bin/whisper-cli /app/whisper/main
+COPY --from=whisper-builder /build/models/ggml-medium.bin /app/whisper/model.bin
 
-ENV NODE_ENV=production
-# ENV per collegarsi a Ollama nel container separato
-ENV OLLAMA_BASE_URL=http://ollama:11434/v1
-ENV AI_PROVIDER=ollama
+# Assicuriamo i permessi di esecuzione
+RUN chmod +x /app/whisper/main
 
-# Forza Python a non bufferizzare l'output (per vedere i log subito)
-ENV PYTHONUNBUFFERED=1
+# Cartelle dati
+RUN mkdir -p recordings batch_processing data
 
-# Comando di avvio produzione
 CMD ["node", "dist/index.js"]

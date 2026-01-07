@@ -117,6 +117,17 @@ Ogni giocatore può definire il proprio personaggio per la campagna attiva. Ques
 *   `$party` (o `$compagni`): Visualizza l'elenco di tutti i personaggi registrati nella campagna.
 *   `$resetpg` (o `$clearchara`): Cancella la tua scheda personaggio per la campagna attiva.
 
+### ⏳ Tempo e Storia
+Gestisci lo scorrere del tempo e gli eventi storici della tua campagna.
+
+*   `$anno0 <Descrizione>` (o `$year0`): Imposta l'evento fondante della campagna (Anno 0). Es. `$anno0 La Caduta dell'Impero`.
+*   `$data <Anno>` (o `$date`, `$anno`): Imposta l'anno corrente della campagna. Es. `$data 100` (100 D.E.) o `$data -50` (50 P.E.).
+*   `$timeline` (o `$cronologia`):
+    *   Senza argomenti: Mostra la cronologia degli eventi mondiali registrati.
+    *   Con `add`: Aggiunge un evento storico. Sintassi: `$timeline add <Anno> | <Tipo> | <Descrizione>`.
+    *   Esempio: `$timeline add -500 | WAR | La Grande Guerra dei Draghi`.
+    *   Tipi supportati: `WAR`, `POLITICS`, `DISCOVERY`, `CALAMITY`, `SUPERNATURAL`, `GENERIC`.
+
 ### 📜 Narrazione e Archivi
 *   `$racconta <ID_SESSIONE> [tono]` (o `$narrate`): Rigenera il riassunto di una sessione passata.
 *   `$toni` (o `$tones`): Mostra l'elenco dei toni narrativi disponibili (es. DM, EPIC, DARK, COMIC).

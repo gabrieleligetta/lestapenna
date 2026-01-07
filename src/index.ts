@@ -250,8 +250,8 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
-    const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0'];
+    let activeCampaign = getActiveCampaign(message.guild.id);
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0'];
 
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -461,7 +461,13 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
-    if (command === 'listen' || command === 'ascolta') {
+    if (command === 'listen' || command === 'ascolta' || command === 'testscolta') {
+        if (command === 'testscolta') {
+             const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
+             if (setupCamp) activeCampaign = setupCamp;
+             else return;
+        }
+
         const member = message.member;
 
         // --- CHECK ANNO CAMPAGNA ---
@@ -1471,6 +1477,10 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- MODIFICATO: !teststream <URL> ---
     if (command === 'teststream') {
+        const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
+        if (setupCamp) activeCampaign = setupCamp;
+        else return;
+
         const url = args[0];
         if (!url) return await message.reply("Uso: `$teststream <URL>` (es. YouTube o link diretto mp3)");
 
@@ -2164,6 +2174,58 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
             autoLeaveTimers.delete(guildId);
         }
     }
+}
+
+async function ensureTestEnvironment(guildId: string, userId: string, message: Message) {
+    let campaign = getActiveCampaign(guildId);
+
+    if (!campaign) {
+        const campaigns = getCampaigns(guildId);
+        const testCampaignName = "Campagna di Test";
+        let testCampaign = campaigns.find(c => c.name === testCampaignName);
+
+        if (!testCampaign) {
+            createCampaign(guildId, testCampaignName);
+            testCampaign = getCampaigns(guildId).find(c => c.name === testCampaignName);
+            await message.reply(`🧪 Creata campagna automatica: **${testCampaignName}**`);
+        }
+
+        if (testCampaign) {
+            setActiveCampaign(guildId, testCampaign.id);
+            campaign = getActiveCampaign(guildId);
+            await message.reply(`🧪 Campagna attiva impostata su: **${testCampaignName}**`);
+        }
+    }
+
+    if (!campaign) {
+        await message.reply("❌ Errore critico: Impossibile creare o recuperare la campagna di test.");
+        return null;
+    }
+
+    // Check Year
+    if (campaign.current_year === undefined || campaign.current_year === null) {
+        setCampaignYear(campaign.id, 1000);
+        campaign.current_year = 1000;
+        await message.reply(`🧪 Anno impostato a **1000**.`);
+    }
+
+    // Check Location
+    const loc = getCampaignLocation(guildId);
+    if (!loc || (!loc.macro && !loc.micro)) {
+        updateLocation(campaign.id, "Laboratorio", "Stanza dei Test", "SETUP");
+        await message.reply(`🧪 Luogo impostato: **Laboratorio | Stanza dei Test**`);
+    }
+
+    // Check Character
+    const profile = getUserProfile(userId, campaign.id);
+    if (!profile.character_name) {
+        updateUserCharacter(userId, campaign.id, 'character_name', 'Test Subject');
+        updateUserCharacter(userId, campaign.id, 'class', 'Tester');
+        updateUserCharacter(userId, campaign.id, 'race', 'Construct');
+        await message.reply(`🧪 Personaggio creato: **Test Subject** (Tester/Construct)`);
+    }
+
+    return campaign;
 }
 
 client.once('ready', async () => {

@@ -4,7 +4,7 @@ import { uploadToOracle } from './backupService';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById } from './db';
+import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime } from './db';
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -215,7 +215,8 @@ export async function sendSessionRecap(
     campaignId: number, 
     summaryText: string,
     lootGained: string[] = [],
-    lootLost: string[] = []
+    lootLost: string[] = [],
+    narrative?: string // NUOVO PARAMETRO
 ) {
     const campaign = getCampaignById(campaignId);
     const campaignName = campaign ? campaign.name : "Sconosciuta";
@@ -223,15 +224,35 @@ export async function sendSessionRecap(
     // 1. Recupera Dati DB
     const travels = getSessionTravelLog(sessionId);
     const npcs = getSessionEncounteredNPCs(sessionId);
+    const startTime = getSessionStartTime(sessionId);
     
+    // Formatta la data
+    const sessionDate = startTime 
+        ? new Date(startTime).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+        : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
     // 2. Costruisci HTML
     let htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
         <h1 style="color: #d35400;">📜 Report Sessione: ${campaignName}</h1>
-        <p style="font-style: italic;">ID Sessione: ${sessionId}</p>
+        <p style="font-style: italic; margin-bottom: 5px;">ID Sessione: ${sessionId}</p>
+        <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
         <hr style="border: 1px solid #d35400;">
+    `;
 
-        <h2>📝 Riassunto Eventi</h2>
+    // --- SEZIONE RACCONTO ---
+    if (narrative && narrative.length > 10) {
+        htmlContent += `
+        <h2>📖 Racconto</h2>
+        <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">
+            ${narrative}
+        </div>
+        `;
+    }
+    // ------------------------
+
+    htmlContent += `
+        <h2>📝 Riassunto Eventi (Log)</h2>
         <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-line;">
             ${summaryText}
         </div>
@@ -290,7 +311,7 @@ export async function sendSessionRecap(
         await transporter.sendMail({
             from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
             to: recipient,
-            subject: `[D&D Report] ${campaignName} - ${new Date().toLocaleDateString()}`,
+            subject: `[D&D Report] ${campaignName} - ${sessionDate}`,
             html: htmlContent
         });
         console.log(`[Reporter] 📧 Email di report inviata a ${recipient}`);

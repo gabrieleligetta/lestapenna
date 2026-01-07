@@ -411,7 +411,7 @@ export const getLocationHistory = (guildId: string) => {
         WHERE c.guild_id = ? AND c.is_active = 1
         ORDER BY h.timestamp DESC
         LIMIT 20
-    `).all();
+    `).all(guildId);
 };
 
 // --- FUNZIONI ATLANTE (MEMORIA LUOGHI) ---

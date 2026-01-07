@@ -746,7 +746,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: $inventario ---
-    if (command === 'inventario' || command === 'loot' || command === 'bag') {
+    if (command === 'inventario' || command === 'loot' || command === 'bag' || command === 'inventory') {
         const arg = args.join(' ');
 
         // Sottocomandi manuali: $loot add Pozione / $loot use Pozione
@@ -983,7 +983,7 @@ client.on('messageCreate', async (message: Message) => {
             }
             // ------------------------------------
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests);
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
 
             const processingTime = Date.now() - startProcessing;
             const transcripts = getSessionTranscript(targetSessionId);
@@ -1601,7 +1601,7 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                 monitor.logSummarizationTime(Date.now() - startSummary);
                 monitor.logTokenUsage(result.tokens);
 
-                await publishSummary(sessionId, result.summary, discordChannel, false, result.title, result.loot, result.quests);
+                await publishSummary(sessionId, result.summary, discordChannel, false, result.title, result.loot, result.quests, result.narrative);
                 
                 // --- INVIO EMAIL DM ---
                 if (activeCampaignId) {
@@ -1611,7 +1611,8 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                         activeCampaignId, 
                         result.summary, 
                         result.loot, 
-                        result.loot_removed
+                        result.loot_removed,
+                        result.narrative // NUOVO PARAMETRO
                     ).catch(e => console.error("Errore async email:", e));
                     
                     await discordChannel.send("📧 Ho inviato una pergamena (email) di riepilogo al Dungeon Master.");
@@ -1666,7 +1667,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[]) {
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -1737,6 +1738,17 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     }
 
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
+
+    // --- NUOVO: RACCONTO NARRATIVO ---
+    if (narrative && narrative.length > 10) {
+        await targetChannel.send(`### 📖 Racconto`);
+        const narrativeChunks = narrative.match(/[\s\S]{1,1900}/g) || [];
+        for (const chunk of narrativeChunks) {
+            await targetChannel.send(chunk);
+        }
+        await targetChannel.send(`---\n`); // Separatore
+    }
+    // ---------------------------------
 
     const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
     for (const chunk of chunks) {

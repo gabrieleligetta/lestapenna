@@ -100,6 +100,8 @@ export interface SummaryResponse {
     loot?: string[];
     loot_removed?: string[]; // NUOVO: Oggetti consumati/persi
     quests?: string[];
+    narrative?: string; // NUOVO: Racconto narrativo
+    log?: string[]; // NUOVO: Log schematico
 }
 
 /**
@@ -837,29 +839,32 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     let reducePrompt = "";
 
     if (tone === 'DM') {
-        // --- PROMPT "CHIRURGICO" PER IL DM ---
-        reducePrompt = `Sei un verbalizzatore tecnico per sessioni di D&D.
-Il tuo obiettivo è creare un LOG degli eventi chiaro, conciso e privo di stile narrativo.
+        // --- PROMPT IBRIDO (LOG + NARRATIVA) ---
+        reducePrompt = `Sei un assistente esperto di D&D (Dungeons & Dragons). 
+Analizza la seguente trascrizione grezza di una sessione di gioco.
+Il tuo compito è estrarre informazioni strutturate E scrivere un riassunto narrativo.
 
 CONTESTO:
 ${castContext}
 
-REGOLE DI SCRITTURA (DM MODE):
-1. **Stile Asettico**: Usa un linguaggio clinico/giornalistico. Niente "eroicamente", "paurosamente". Solo fatti.
-2. **Struttura**: Usa elenchi puntati per ogni scena.
-3. **Format Riga**: [TIMESTAMP approssimativo o LUOGO] Soggetto -> Azione -> Esito.
-4. **Focus**: Riporta SOLO: spostamenti, incontri NPC (nomi), combattimenti (esito), loot acquisito e decisioni chiave.
-5. **No Filler**: Rimuovi battute, descrizioni atmosferiche e chiacchiere off-game.
-6. Le note marcate con 📝 hanno priorità assoluta come fatti certi.
-
-OUTPUT JSON RICHIESTO:
+Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esatto:
 {
-  "title": "Log Sessione [Data]",
-  "summary": "Il testo del log formattato come elenco...",
-  "loot": ["Item 1", "Item 2"],
-  "loot_removed": ["Item Consumato 1", "Item Perso 2"],
-  "quests": ["Quest A (Nuova)", "Quest B (Aggiornata)"]
-}`;
+  "title": "Titolo evocativo della sessione",
+  "narrative": "Scrivi qui un riassunto discorsivo e coinvolgente degli eventi, scritto come un racconto in terza persona al passato (es: 'Il gruppo è arrivato alla zona Ovest...'). Usa un tono epico ma conciso. Includi i colpi di scena e le interazioni principali.",
+  "loot": ["lista", "degli", "oggetti", "trovati"],
+  "loot_removed": ["lista", "oggetti", "persi/usati"],
+  "quests": ["lista", "missioni", "accettate/completate"],
+  "log": [
+    "[luogo - stanza] Chi -> Azione -> Risultato"
+  ]
+}
+
+REGOLE IMPORTANTI:
+1. "narrative": Deve essere un testo fluido, non un elenco. Racconta la storia della sessione.
+2. "loot": Solo oggetti di valore, monete o oggetti magici.
+3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
+4. Rispondi SEMPRE in ITALIANO.
+`;
 
     } else {
         // --- PROMPT NARRATIVO (BARDO) ---
@@ -909,13 +914,26 @@ OUTPUT JSON RICHIESTO:
             parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], loot_removed: [], quests: [] };
         }
 
+        // MAPPING INTELLIGENTE PER RETROCOMPATIBILITÀ
+        // Se il prompt ha generato "log" (nuovo formato DM), lo usiamo come "summary" (che è il campo principale visualizzato)
+        // E "narrative" lo passiamo come campo extra.
+        let finalSummary = parsed.summary;
+        if (Array.isArray(parsed.log)) {
+            finalSummary = parsed.log.join('\n');
+        } else if (!finalSummary && parsed.narrative) {
+            // Fallback se manca summary ma c'è narrative
+            finalSummary = parsed.narrative;
+        }
+
         return { 
-            summary: parsed.summary || "Errore generazione.", 
+            summary: finalSummary || "Errore generazione.", 
             title: parsed.title || "Sessione Senza Titolo",
             tokens: accumulatedTokens,
             loot: Array.isArray(parsed.loot) ? parsed.loot : [],
             loot_removed: Array.isArray(parsed.loot_removed) ? parsed.loot_removed : [],
-            quests: Array.isArray(parsed.quests) ? parsed.quests : []
+            quests: Array.isArray(parsed.quests) ? parsed.quests : [],
+            narrative: parsed.narrative, // NUOVO CAMPO
+            log: Array.isArray(parsed.log) ? parsed.log : [] // NUOVO CAMPO
         };
     } catch (err: any) {
         console.error("Errore finale:", err);

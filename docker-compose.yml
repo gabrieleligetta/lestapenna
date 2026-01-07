@@ -17,7 +17,6 @@ services:
       - ./package.json:/app/package.json
       - ./tsconfig.json:/app/tsconfig.json
       - ./yarn.lock:/app/yarn.lock
-      # transcribe.py rimosso perché non più usato
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
       - ./data:/app/data

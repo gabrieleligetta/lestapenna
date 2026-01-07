@@ -19,8 +19,9 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
 
 # Clona e compila whisper.cpp (Rileva automaticamente ARM NEON su Oracle Cloud)
+# NOTA: Aggiunto -DBUILD_SHARED_LIBS=OFF per includere la libreria nell'eseguibile
 RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
-    cmake -B build && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release
 
 # Scarica il modello MEDIUM

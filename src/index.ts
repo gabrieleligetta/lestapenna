@@ -461,8 +461,8 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
-    if (command === 'listen' || command === 'ascolta' || command === 'testscolta') {
-        if (command === 'testscolta') {
+    if (command === 'listen' || command === 'ascolta' || command === 'testascolta') {
+        if (command === 'testascolta') {
              const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
              if (setupCamp) activeCampaign = setupCamp;
              else return;

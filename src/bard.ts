@@ -776,59 +776,42 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     if (campaignId) {
         console.log(`[Bardo] 🧠 Avvio Total Recall per campagna ${campaignId}...`);
         
-        // 1. Recupero Snapshot Statico (DB)
+        // Chiamiamo la funzione che ora restituisce l'oggetto strutturato
         const snapshot = getCampaignSnapshot(campaignId);
         
-        // 2. Recupero Memoria Semantica (RAG) - Parallelo
-        const activeCharNames = snapshot.characters.map((c: any) => c.character_name).filter(Boolean) as string[];
+        // Estraiamo i dati per il RAG
+        const activeCharNames = snapshot.characters.map((c: any) => c.character_name).filter(Boolean);
         const activeQuestTitles = snapshot.quests.map((q: any) => q.title);
-        const locationQuery = snapshot.location ? `${snapshot.location.macro} ${snapshot.location.micro}` : "";
+        const locationQuery = snapshot.location ? `${snapshot.location.macro || ''} ${snapshot.location.micro || ''}`.trim() : "";
 
-        // Costruiamo le query per il RAG
         const promises = [];
         
-        // A. Memoria Luogo
+        // A. Ricerca Luogo
         if (locationQuery) {
-            promises.push(searchKnowledge(campaignId, `Eventi accaduti a ${locationQuery}`, 3).then(res => ({ type: 'LOCATION', data: res })));
+            promises.push(searchKnowledge(campaignId, `Eventi passati a ${locationQuery}`, 3).then(res => ({ type: 'LUOGO', data: res })));
         }
         
-        // B. Memoria Personaggi (Batch o singolo importante? Facciamo una query unica aggregata per ora)
+        // B. Ricerca Personaggi
         if (activeCharNames.length > 0) {
-            const charQuery = `Fatti recenti su ${activeCharNames.join(', ')}`;
-            promises.push(searchKnowledge(campaignId, charQuery, 3).then(res => ({ type: 'CHARACTERS', data: res })));
+            promises.push(searchKnowledge(campaignId, `Fatti su ${activeCharNames.join(', ')}`, 3).then(res => ({ type: 'PERSONAGGI', data: res })));
         }
 
-        // C. Memoria Quest
+        // C. Ricerca Quest
         if (activeQuestTitles.length > 0) {
-            const questQuery = `Dettagli sulle quest: ${activeQuestTitles.join(', ')}`;
-            promises.push(searchKnowledge(campaignId, questQuery, 3).then(res => ({ type: 'QUESTS', data: res })));
+            promises.push(searchKnowledge(campaignId, `Dettagli quest: ${activeQuestTitles.join(', ')}`, 3).then(res => ({ type: 'MISSIONI', data: res })));
         }
-
-        // D. Memoria NPC (Nuovo)
-        // Cerchiamo NPC menzionati nelle note o trascrizioni recenti (euristica semplice)
-        // Per ora usiamo una query generica sugli NPC se non abbiamo un target specifico
-        promises.push(searchKnowledge(campaignId, "NPC importanti incontrati di recente", 2).then(res => ({ type: 'NPCS', data: res })));
-
 
         const ragResults = await Promise.all(promises);
 
-        // 3. Costruzione Stringa di Contesto
-        memoryContext = `\n[[MEMORIA ATTIVA & CONTESTO]]\n`;
-        
-        // Stato Fisico
-        if (snapshot.location) {
-            memoryContext += `LUOGO: ${snapshot.location.macro || '?'} - ${snapshot.location.micro || '?'}\n`;
-            if (snapshot.atlasDesc) memoryContext += `DESCRIZIONE LUOGO: "${snapshot.atlasDesc}"\n`;
-        }
-        
-        if (snapshot.quests.length > 0) {
-            memoryContext += `QUEST ATTIVE: ${snapshot.quests.map((q: any) => q.title).join(', ')}\n`;
-        }
+        // Costruiamo la stringa finale che andrà nel prompt
+        memoryContext = `\n[[MEMORIA DEL MONDO]]\n`;
+        memoryContext += `📍 LUOGO: ${snapshot.location_context}\n`;
+        if (snapshot.atlasDesc) memoryContext += `📖 DESCRIZIONE AMBIENTE: ${snapshot.atlasDesc}\n`;
+        memoryContext += `⚔️ MISSIONI ATTIVE: ${snapshot.quest_context}\n`;
 
-        // Memorie RAG
         ragResults.forEach(res => {
             if (res.data && res.data.length > 0) {
-                memoryContext += `\nMEMORIA (${res.type}):\n${res.data.map(s => `- ${s}`).join('\n')}`;
+                memoryContext += `\nRICORDI (${res.type}):\n${res.data.map(s => `- ${s}`).join('\n')}\n`;
             }
         });
         

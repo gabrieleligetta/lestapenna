@@ -1710,11 +1710,11 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
              const details = [];
              if (sessionAudioJobs.length > 0) details.push(`${sessionAudioJobs.length} audio`);
              if (sessionCorrectionJobs.length > 0) details.push(`${sessionCorrectionJobs.length} correction`);
-             
+
             console.log(`[Monitor] Sessione ${sessionId}: ancora ${totalPending} file... (${details.join(', ')})`);
         } else {
+            process.stdout.write(`\n✅ [Monitor] Sessione ${sessionId}: Elaborazione completata.\n`);
             clearInterval(checkInterval);
-            console.log(`✅ Sessione ${sessionId}: Tutti i file processati. Generazione Riassunto...`);
             
             const startSummary = Date.now();
             

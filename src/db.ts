@@ -339,6 +339,18 @@ export interface InventoryItem {
     last_updated: number;
 }
 
+// Definiamo bene cosa contiene lo snapshot
+export interface CampaignSnapshot {
+    characters: any[];
+    quests: any[];
+    location: { macro: string | null; micro: string | null } | null;
+    atlasDesc: string | null;
+    // Queste restano per compatibilità o per uso rapido nel prompt
+    pc_context: string;
+    quest_context: string;
+    location_context: string;
+}
+
 // --- FUNZIONI CONFIGURAZIONE ---
 
 const setConfig = (key: string, value: string): void => {
@@ -638,25 +650,36 @@ export const getWorldTimeline = (campaignId: number): { description: string, eve
 
 // --- FUNZIONI SNAPSHOT (TOTAL RECALL) ---
 
-export const getCampaignSnapshot = (campaignId: number) => {
-    // 1. Personaggi
+export const getCampaignSnapshot = (campaignId: number): CampaignSnapshot => {
+    // 1. Recupera i Personaggi
     const characters = getCampaignCharacters(campaignId);
+    const pc_context = characters.map(c => `- ${c.character_name} (${c.class})`).join('\n');
+
+    // 2. Recupera le Quest aperte
+    const quests = db.prepare(`SELECT title FROM quests WHERE campaign_id = ? AND status = 'OPEN'`).all(campaignId) as any[];
+    const quest_context = quests.map(q => q.title).join(', ');
+
+    // 3. Recupera Luogo e descrizione Atlante
+    const locRow = db.prepare(`SELECT macro_location as macro, micro_location as micro FROM campaign_location WHERE campaign_id = ?`).get(campaignId) as any;
     
-    // 2. Quest Aperte
-    const quests = getOpenQuests(campaignId);
-    
-    // 3. Luogo Attuale
-    const location = getCampaignLocationById(campaignId);
     let atlasDesc = null;
-    if (location && location.macro && location.micro) {
-        atlasDesc = getAtlasEntry(campaignId, location.macro, location.micro);
+    let location_context = "Sconosciuto.";
+    
+    if (locRow) {
+        const atlas = db.prepare(`SELECT description FROM atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?`)
+            .get(campaignId, locRow.macro, locRow.micro) as any;
+        atlasDesc = atlas?.description || null;
+        location_context = `${locRow.macro || '?'} - ${locRow.micro || '?'}`;
     }
 
     return {
         characters,
         quests,
-        location,
-        atlasDesc
+        location: locRow ? { macro: locRow.macro, micro: locRow.micro } : null,
+        atlasDesc,
+        pc_context,
+        quest_context,
+        location_context
     };
 };
 

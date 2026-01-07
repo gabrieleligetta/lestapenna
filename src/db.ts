@@ -636,6 +636,30 @@ export const getWorldTimeline = (campaignId: number): { description: string, eve
     `).all(campaignId) as any[];
 };
 
+// --- FUNZIONI SNAPSHOT (TOTAL RECALL) ---
+
+export const getCampaignSnapshot = (campaignId: number) => {
+    // 1. Personaggi
+    const characters = getCampaignCharacters(campaignId);
+    
+    // 2. Quest Aperte
+    const quests = getOpenQuests(campaignId);
+    
+    // 3. Luogo Attuale
+    const location = getCampaignLocationById(campaignId);
+    let atlasDesc = null;
+    if (location && location.macro && location.micro) {
+        atlasDesc = getAtlasEntry(campaignId, location.macro, location.micro);
+    }
+
+    return {
+        characters,
+        quests,
+        location,
+        atlasDesc
+    };
+};
+
 // ------------------------------------------
 
 export const getCampaignById = (id: number): Campaign | undefined => {

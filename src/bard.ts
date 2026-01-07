@@ -1027,9 +1027,14 @@ REGOLE PER 'world_events':
 
         let parsed;
         try {
-            parsed = JSON.parse(content);
+            // SANITIZZAZIONE: Rimuove i backtick del markdown se presenti (```json ... ```)
+            const cleanContent = content.replace(/```json\n?|```/g, '').trim();
+            parsed = JSON.parse(cleanContent);
         } catch (e) {
-            // Fallback se il modello non rispetta il JSON
+            console.error("[Bardo] ⚠️ Errore parsing JSON:", e);
+            console.error("[Bardo] Content ricevuto:", content); // Utile per debug
+            
+            // Fallback: proviamo a salvare il contenuto come summary testuale
             parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], loot_removed: [], quests: [] };
         }
 

@@ -21,7 +21,7 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import { 
     getAvailableSessions, 
@@ -72,7 +72,10 @@ import {
     addLoot,
     removeLoot,
     getInventory,
-    addCharacterEvent
+    addCharacterEvent,
+    addNpcEvent,
+    addWorldEvent,
+    getWorldTimeline
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -247,7 +250,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -278,11 +281,16 @@ client.on('messageCreate', async (message: Message) => {
                     "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo attuale.\n" +
                     "`$viaggi`: Mostra la cronologia degli spostamenti.\n" +
                     "`$atlante [Descrizione]`: Visualizza o aggiorna la memoria del luogo.\n" +
-                    "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
-                    "`$presenze`: Mostra gli NPC incontrati nella sessione corrente.\n" +
                     "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                     "`$impostasessione <N>`: Imposta numero sessione.\n" +
-                    "`$impostasessioneid <ID> <N>`: Corregge il numero." 
+                    "`$impostasessioneid <ID> <N>`: Corregge il numero.\n" +
+                    "`$reset <ID>`: Forza la rielaborazione di una sessione."
+                },
+                {
+                    name: "👥 NPC & Dossier",
+                    value:
+                    "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
+                    "`$presenze`: Mostra gli NPC incontrati nella sessione corrente."
                 },
                 { 
                     name: "📜 Narrazione & Archivi", 
@@ -292,7 +300,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$modificatitolo <ID> <Titolo>`: Modifica il titolo di una sessione.\n" +
                     "`$chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
                     "`$wiki <Termine>`: Cerca frammenti di lore esatti.\n" +
-                    "`$storia <NomePG>`: Genera la biografia evolutiva di un personaggio.\n" +
+                    "`$timeline`: Mostra la cronologia degli eventi mondiali.\n" +
                     "`$memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
                     "`$scarica <ID>`: Scarica audio.\n" +
                     "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
@@ -316,6 +324,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$miadesc <Testo>`: Aggiunge dettagli.\n" +
                     "`$chisono`: Visualizza la tua scheda.\n" +
                     "`$party`: Visualizza tutti i personaggi.\n" +
+                    "`$storia <Nome>`: Genera la biografia evolutiva (PG o NPC).\n" +
                     "`$resetpg`: Resetta la tua scheda." 
                 },
                 { 
@@ -328,7 +337,7 @@ client.on('messageCreate', async (message: Message) => {
                 {
                     name: "🧪 Test & Debug",
                     value:
-                    "`$teststream <URL>`: Simula una sessione scaricando un file audio diretto (mp3/wav).\n" +
+                    "`$teststream <URL>`: Simula una sessione via link audio.\n" +
                     "`$cleantest`: Rimuove tutte le sessioni di test dal DB."
                 }
             )
@@ -361,11 +370,16 @@ client.on('messageCreate', async (message: Message) => {
                     "`$location [Macro | Micro]`: View or update current location.\n" +
                     "`$travels`: Show travel history.\n" +
                     "`$atlas [Description]`: View or update location memory.\n" +
-                    "`$npc [Name]`: View or update NPC dossier.\n" +
-                    "`$presenze`: Show NPCs encountered in current session.\n" +
                     "`$note <Text>`: Add a manual note to the summary.\n" +
                     "`$setsession <N>`: Manually set session number.\n" +
-                    "`$setsessionid <ID> <N>`: Fix session number by ID." 
+                    "`$setsessionid <ID> <N>`: Fix session number by ID.\n" +
+                    "`$reset <ID>`: Force re-processing of a session."
+                },
+                {
+                    name: "👥 NPC & Dossier",
+                    value:
+                    "`$npc [Name]`: View or update NPC dossier.\n" +
+                    "`$presenze`: Show NPCs encountered in current session."
                 },
                 { 
                     name: "📜 Storytelling & Archives", 
@@ -375,7 +389,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$edittitle <ID> <Title>`: Edit session title.\n" +
                     "`$ask <Question>`: Ask the Bard about the lore.\n" +
                     "`$lore <Term>`: Search exact lore fragments.\n" +
-                    "`$story <CharName>`: Generate character biography.\n" +
+                    "`$timeline`: Show world history timeline.\n" +
                     "`$ingest <ID>`: Manually index a session into memory.\n" +
                     "`$download <ID>`: Download audio.\n" +
                     "`$downloadtxt <ID>`: Download transcriptions (txt)." 
@@ -399,6 +413,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$mydesc <Text>`: Add details.\n" +
                     "`$whoami`: View your current sheet.\n" +
                     "`$party`: View all characters.\n" +
+                    "`$story <CharName>`: Generate character biography.\n" +
                     "`$clearchara`: Reset your sheet." 
                 },
                 { 
@@ -595,7 +610,7 @@ client.on('messageCreate', async (message: Message) => {
         } else {
             // Setter
             const current = getCampaignLocation(message.guild.id);
-            const sessionId = guildSessions.get(message.guild.id); // Recupera sessione attiva se c'è
+            const sessionId = guildSessions.get(message.guild.id); // Recupera sessione attiva se cè
             
             let newMacro = current?.macro || null;
             let newMicro = null;
@@ -1008,6 +1023,48 @@ client.on('messageCreate', async (message: Message) => {
             }
             // ----------------------------
 
+            // --- GESTIONE EVENTI NPC ---
+            if (result.npc_events && Array.isArray(result.npc_events)) {
+                // Recuperiamo l'ID campagna (sicurezza)
+                const currentSessionId = targetSessionId;
+                const currentCampaignId = getSessionCampaignId(currentSessionId) || activeCampaign?.id;
+
+                if (currentCampaignId) {
+                    for (const evt of result.npc_events) {
+                        if (evt.name && evt.event) {
+                            // 1. STORIA NARRATIVA NPC
+                            addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type || 'GENERIC');
+
+                            // 2. INTEGRAZIONE RAG (Così il Bardo sa cosa ha fatto l'NPC)
+                            ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type || 'GENERIC')
+                                .catch(err => console.error(`Errore ingestione bio NPC ${evt.name}:`, err));
+                        }
+                    }
+                }
+            }
+            // ---------------------------
+
+            // --- GESTIONE EVENTI MONDO ---
+            if (result.world_events && Array.isArray(result.world_events)) {
+                // Recupero ID campagna (sicurezza)
+                const currentSessionId = targetSessionId;
+                const currentCampaignId = getSessionCampaignId(currentSessionId) || activeCampaign?.id;
+
+                if (currentCampaignId) {
+                    for (const w of result.world_events) {
+                        if (w.event) {
+                            // 1. TIMELINE CRONOLOGICA
+                            addWorldEvent(currentCampaignId, currentSessionId, w.event, w.type || 'GENERIC');
+
+                            // 2. RAG (Lore Generale)
+                            ingestWorldEvent(currentCampaignId, currentSessionId, w.event, w.type || 'GENERIC')
+                                .catch(err => console.error(`Errore ingestione mondo:`, err));
+                        }
+                    }
+                }
+            }
+            // -----------------------------
+
             await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
 
             const processingTime = Date.now() - startProcessing;
@@ -1104,30 +1161,75 @@ client.on('messageCreate', async (message: Message) => {
         }
     }
 
-    // --- NUOVO: $storia <NomePG> ---
+    // --- MODIFICATO: $storia (PG o NPC) ---
     if (command === 'storia' || command === 'story') {
-        const charName = args.join(' ');
-        if (!charName) return await message.reply("Uso: `$storia <NomePersonaggio>`");
+        const targetName = args.join(' ');
+        if (!targetName) return await message.reply("Uso: `$storia <Nome>` (Cerca sia tra i PG che tra gli NPC)");
 
-        // 1. Recupera info statiche
-        const targetChar = db.prepare('SELECT race, class FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(activeCampaign!.id, charName) as any;
-
-        if (!targetChar) {
-            return await message.reply(`Non trovo nessun personaggio chiamato **${charName}** in questa campagna.`);
+        const campaignId = activeCampaign!.id;
+        
+        // Fix per TS2339: Controllo se il canale supporta sendTyping
+        if ('sendTyping' in message.channel) {
+            await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
         }
 
-        await message.reply(`📖 Il Bardo sta consultando le cronache per scrivere la saga di **${charName}**...`);
+        // 1. Cerca tra i PG (Personaggi Giocanti)
+        // Nota: Assumiamo di avere una funzione veloce o usiamo db.prepare
+        const targetPG = db.prepare('SELECT race, class FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
 
-        // 2. Genera Biografia
-        const biography = await generateCharacterBiography(
-            activeCampaign!.id, 
-            charName, 
-            targetChar.class || "Eroe", 
-            targetChar.race || "Misterioso"
-        );
+        if (targetPG) {
+            await message.reply(`📖 **Saga dell'Eroe: ${targetName}**\nIl Bardo sta scrivendo...`);
+            const bio = await generateCharacterBiography(campaignId, targetName, targetPG.class || "Eroe", targetPG.race || "Ignoto");
+            const chunks = bio.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) await (message.channel as TextChannel).send(chunk);
+            return;
+        }
 
-        // 3. Invia (gestendo la lunghezza)
-        const chunks = biography.match(/[\s\S]{1,1900}/g) || [];
+        // 2. Se non è un PG, cerca tra gli NPC (Dossier)
+        const targetNPC = getNpcEntry(campaignId, targetName);
+
+        if (targetNPC) {
+            await message.reply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
+            const bio = await generateNpcBiography(campaignId, targetNPC.name, targetNPC.role || "Sconosciuto", targetNPC.description || "Nessuna nota precedente.");
+            const chunks = bio.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) await (message.channel as TextChannel).send(chunk);
+            return;
+        }
+
+        // 3. Nessun risultato
+        await message.reply(`❌ Non ho trovato nessun PG o NPC chiamato "**${targetName}**" negli archivi di questa campagna.`);
+    }
+
+    // --- NUOVO: $timeline ---
+    if (command === 'timeline' || command === 'cronologia') {
+        const events = getWorldTimeline(activeCampaign!.id);
+        
+        if (events.length === 0) {
+            return await message.reply("📜 La cronologia mondiale è ancora bianca. Nessun grande evento registrato.");
+        }
+
+        // Costruiamo un messaggio formattato
+        let msg = `🌍 **Cronologia del Mondo: ${activeCampaign!.name}**\n\n`;
+        
+        // Icone per tipo
+        const icons: Record<string, string> = {
+            'WAR': '⚔️',
+            'POLITICS': '👑',
+            'DISCOVERY': '💎',
+            'CALAMITY': '🌋',
+            'SUPERNATURAL': '🔮',
+            'GENERIC': '🔹'
+        };
+
+        events.forEach((e: any) => {
+            const icon = icons[e.event_type] || '🔹';
+            const sessionLabel = e.session_number ? `Sessione ${e.session_number}` : (e.session_id ? `Ref: ${e.session_id.substring(0,4)}` : 'Antichità');
+            
+            msg += `${icon} **[${sessionLabel}]** ${e.description}\n`;
+        });
+
+        // Gestione lunghezza messaggio (split se necessario)
+        const chunks = msg.match(/[\s\S]{1,1900}/g) || [];
         for (const chunk of chunks) {
             await (message.channel as TextChannel).send(chunk);
         }
@@ -1666,6 +1768,36 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                         }
                     }
                     // ----------------------------
+
+                    // --- GESTIONE EVENTI NPC ---
+                    if (result.npc_events && Array.isArray(result.npc_events)) {
+                        for (const evt of result.npc_events) {
+                            if (evt.name && evt.event) {
+                                // 1. STORIA NARRATIVA NPC
+                                addNpcEvent(activeCampaignId, evt.name, sessionId, evt.event, evt.type || 'GENERIC');
+
+                                // 2. INTEGRAZIONE RAG (Così il Bardo sa cosa ha fatto l'NPC)
+                                ingestBioEvent(activeCampaignId, sessionId, evt.name, evt.event, evt.type || 'GENERIC')
+                                    .catch(err => console.error(`Errore ingestione bio NPC ${evt.name}:`, err));
+                            }
+                        }
+                    }
+                    // ---------------------------
+
+                    // --- GESTIONE EVENTI MONDO ---
+                    if (result.world_events && Array.isArray(result.world_events)) {
+                        for (const w of result.world_events) {
+                            if (w.event) {
+                                // 1. TIMELINE CRONOLOGICA
+                                addWorldEvent(activeCampaignId, sessionId, w.event, w.type || 'GENERIC');
+
+                                // 2. RAG (Lore Generale)
+                                ingestWorldEvent(activeCampaignId, sessionId, w.event, w.type || 'GENERIC')
+                                    .catch(err => console.error(`Errore ingestione mondo:`, err));
+                            }
+                        }
+                    }
+                    // -----------------------------
                 }
                 // ------------------------------------
 

@@ -18,7 +18,8 @@ import {
     getAtlasEntry,
     findNpcDossierByName,
     listNpcs,
-    getCharacterHistory
+    getCharacterHistory,
+    getNpcHistory
 } from './db';
 
 // --- CONFIGURAZIONE TONI ---
@@ -108,6 +109,15 @@ export interface SummaryResponse {
         name: string;
         event: string;
         type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
+    }>;
+    npc_events?: Array<{
+        name: string;
+        event: string;
+        type: 'REVELATION' | 'BETRAYAL' | 'DEATH' | 'ALLIANCE' | 'STATUS_CHANGE' | 'GENERIC';
+    }>;
+    world_events?: Array<{
+        event: string;
+        type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
     }>;
 }
 
@@ -868,6 +878,19 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
         "type": "TRAUMA" 
     }
   ],
+  "npc_events": [
+      {
+          "name": "Nome NPC",
+          "event": "Descrizione dell'evento chiave",
+          "type": "ALLIANCE"
+      }
+  ],
+  "world_events": [
+      {
+          "event": "Descrizione dell'evento globale",
+          "type": "POLITICS"
+      }
+  ],
   "log": [
     "[luogo - stanza] Chi -> Azione -> Risultato"
   ]
@@ -888,6 +911,26 @@ REGOLE IMPORTANTI PER 'character_growth':
   - 'ACHIEVEMENT' (Grandi successi personali, non solo uccidere mostri).
   - 'GOAL_CHANGE' (Cambia obiettivo di vita).
 - IGNORA: Danni in combattimento, acquisti, battute, interazioni minori. Vogliamo la "Storia", non la cronaca.
+
+REGOLE PER 'npc_events':
+- Registra eventi importanti che riguardano gli NPC (Non Giocanti).
+- Tipi validi:
+  - 'REVELATION' (Si scopre un segreto su di lui).
+  - 'BETRAYAL' (Tradisce il party o qualcuno).
+  - 'DEATH' (Muore).
+  - 'ALLIANCE' (Si allea con il party).
+  - 'STATUS_CHANGE' (Diventa Re, viene arrestato, cambia lavoro).
+- Ignora semplici interazioni commerciali o chiacchiere.
+
+REGOLE PER 'world_events':
+- Estrai SOLO eventi che cambiano il mondo di gioco o la regione.
+- Tipi validi:
+  - 'WAR' (Inizio/Fine guerre, battaglie campali).
+  - 'POLITICS' (Incoronazioni, leggi, alleanze tra nazioni).
+  - 'DISCOVERY' (Scoperta di nuove terre, antiche rovine, artefatti leggendari).
+  - 'CALAMITY' (Terremoti, piaghe, distruzioni di città).
+  - 'SUPERNATURAL' (Intervento di divinità, rottura del velo magico).
+- Non includere le azioni dei giocatori a meno che non abbiano conseguenze su scala regionale/globale.
 `;
 
     } else {
@@ -897,7 +940,7 @@ REGOLE IMPORTANTI PER 'character_growth':
         
         ISTRUZIONI DI STILE:
         - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
-        - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità a ciò che è accaduto realmente nella sessione.
+        - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità ai fatti accaduti nelle sessioni.
         - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
         - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori. Usale come punti fermi della narrazione, hanno priorità sull'audio trascritto.
         - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il riassunto in capitoli o paragrafi distinti basati sui luoghi.
@@ -959,7 +1002,9 @@ REGOLE IMPORTANTI PER 'character_growth':
             quests: Array.isArray(parsed.quests) ? parsed.quests : [],
             narrative: parsed.narrative, // NUOVO CAMPO
             log: Array.isArray(parsed.log) ? parsed.log : [], // NUOVO CAMPO
-            character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [] // NUOVO CAMPO
+            character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [], // NUOVO CAMPO
+            npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [], // NUOVO CAMPO
+            world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [] // NUOVO CAMPO
         };
     } catch (err: any) {
         console.error("Errore finale:", err);
@@ -1002,6 +1047,42 @@ export async function generateCharacterBiography(campaignId: number, charName: s
     }
 }
 
+// --- GENERATORE BIOGRAFIA NPC ---
+export async function generateNpcBiography(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
+    const history = getNpcHistory(campaignId, npcName);
+
+    // Combiniamo i dati statici (Dossier) con quelli storici (History)
+    const historyText = history.length > 0 
+        ? history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n')
+        : "Nessun evento storico registrato.";
+
+    const prompt = `Sei un biografo fantasy.
+    Scrivi la storia dell'NPC: **${npcName}**.
+    
+    RUOLO ATTUALE: ${role}
+    DESCRIZIONE GENERALE: ${staticDesc}
+    
+    CRONOLOGIA EVENTI (Apparsi nelle sessioni):
+    ${historyText}
+    
+    ISTRUZIONI:
+    1. Unisci la descrizione generale con gli eventi cronologici per creare un profilo completo.
+    2. Se ci sono eventi storici, usali per spiegare come è arrivato alla situazione attuale.
+    3. Se non ci sono eventi storici, basati sulla descrizione generale espandendola leggermente.
+    4. Usa un tono descrittivo, come una voce di enciclopedia o un dossier segreto.`;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: MODEL_NAME,
+            messages: [{ role: "user", content: prompt }]
+        });
+        return response.choices[0].message.content || "Impossibile scrivere il dossier.";
+    } catch (e) {
+        console.error("Errore generazione bio NPC:", e);
+        return "Il dossier è bruciato.";
+    }
+}
+
 // --- RAG: INGESTIONE BIOGRAFIA ---
 export async function ingestBioEvent(campaignId: number, sessionId: string, charName: string, event: string, type: string) {
     const content = `[BIOGRAFIA: ${charName}] TIPO: ${type}. EVENTO: ${event}`;
@@ -1032,5 +1113,36 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
         );
     } catch (e) {
         console.error(`[RAG] ❌ Errore ingestione bio ${charName}:`, e);
+    }
+}
+
+// --- RAG: INGESTIONE CRONACA MONDIALE ---
+export async function ingestWorldEvent(campaignId: number, sessionId: string, event: string, type: string) {
+    const content = `[STORIA DEL MONDO] TIPO: ${type}. EVENTO: ${event}`;
+    console.log(`[RAG] 🌍 Indicizzazione evento globale...`);
+
+    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
+    const isOllama = provider === 'ollama';
+    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
+    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+
+    try {
+        const resp = await client.embeddings.create({ model: model, input: content });
+        const vector = resp.data[0].embedding;
+
+        // Inseriamo nel DB (macro/micro null perché è un evento storico generale)
+        insertKnowledgeFragment(
+            campaignId, 
+            sessionId, 
+            content, 
+            vector, 
+            model, 
+            0, 
+            null, 
+            null, 
+            ['MONDO', 'LORE', 'STORIA'] // Tag generici
+        );
+    } catch (e) {
+        console.error(`[RAG] ❌ Errore ingestione mondo:`, e);
     }
 }

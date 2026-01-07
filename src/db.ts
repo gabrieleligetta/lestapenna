@@ -51,6 +51,29 @@ db.exec(`CREATE TABLE IF NOT EXISTS character_history (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
+// --- TABELLA STORIA NPC ---
+db.exec(`CREATE TABLE IF NOT EXISTS npc_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    npc_name TEXT NOT NULL,
+    session_id TEXT,
+    event_type TEXT, -- 'REVELATION', 'BETRAYAL', 'DEATH', 'ALLIANCE', 'STATUS_CHANGE'
+    description TEXT NOT NULL,
+    timestamp INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
+// --- TABELLA STORIA DEL MONDO (TIMELINE) ---
+db.exec(`CREATE TABLE IF NOT EXISTS world_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    session_id TEXT,
+    event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC'
+    description TEXT NOT NULL,
+    timestamp INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
 // --- TABELLA REGISTRAZIONI ---
 db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,6 +231,8 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_dossier_campaign ON npc_dossier (cam
 db.exec(`CREATE INDEX IF NOT EXISTS idx_quests_campaign ON quests (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_campaign ON inventory (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_char_history_name ON character_history (campaign_id, character_name)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_history_name ON npc_history (campaign_id, npc_name)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_campaign ON world_history (campaign_id)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -571,6 +596,46 @@ export const getCharacterHistory = (campaignId: number, charName: string): { des
     `).all(campaignId, charName) as any[];
 };
 
+// --- FUNZIONI STORIA NPC ---
+
+export const addNpcEvent = (campaignId: number, npcName: string, sessionId: string, description: string, type: string) => {
+    db.prepare(`
+        INSERT INTO npc_history (campaign_id, npc_name, session_id, event_type, description, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(campaignId, npcName, sessionId, type, description, Date.now());
+    console.log(`[Bio NPC] 📜 Aggiunto evento per ${npcName}: [${type}]`);
+};
+
+export const getNpcHistory = (campaignId: number, npcName: string): { description: string, event_type: string, session_id: string }[] => {
+    return db.prepare(`
+        SELECT description, event_type, session_id 
+        FROM npc_history 
+        WHERE campaign_id = ? AND lower(npc_name) = lower(?)
+        ORDER BY id ASC
+    `).all(campaignId, npcName) as any[];
+};
+
+// --- FUNZIONI STORIA DEL MONDO ---
+
+export const addWorldEvent = (campaignId: number, sessionId: string, description: string, type: string) => {
+    db.prepare(`
+        INSERT INTO world_history (campaign_id, session_id, event_type, description, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    `).run(campaignId, sessionId, type, description, Date.now());
+    console.log(`[World] 🌍 Aggiunto evento globale: [${type}]`);
+};
+
+export const getWorldTimeline = (campaignId: number): { description: string, event_type: string, session_id: string, session_number?: number }[] => {
+    // Join con la tabella sessions per avere il numero sessione se disponibile
+    return db.prepare(`
+        SELECT w.description, w.event_type, w.session_id, s.session_number
+        FROM world_history w
+        LEFT JOIN sessions s ON w.session_id = s.session_id
+        WHERE w.campaign_id = ?
+        ORDER BY w.id ASC
+    `).all(campaignId) as any[];
+};
+
 // ------------------------------------------
 
 export const getCampaignById = (id: number): Campaign | undefined => {
@@ -599,6 +664,8 @@ export const deleteCampaign = (campaignId: number) => {
     try { db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId); } catch(e) {}
     try { db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId); } catch(e) {}
     try { db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId); } catch(e) {}
+    try { db.prepare('DELETE FROM npc_history WHERE campaign_id = ?').run(campaignId); } catch(e) {}
+    try { db.prepare('DELETE FROM world_history WHERE campaign_id = ?').run(campaignId); } catch(e) {}
 
     // 3. Elimina campagna (Cascade farà il resto per characters e knowledge, ma meglio essere sicuri sopra)
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
@@ -885,7 +952,9 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM quests').run();
     db.prepare('DELETE FROM inventory').run();
     db.prepare('DELETE FROM character_history').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier', 'quests', 'inventory', 'character_history')").run();
+    db.prepare('DELETE FROM npc_history').run();
+    db.prepare('DELETE FROM world_history').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier', 'quests', 'inventory', 'character_history', 'npc_history', 'world_history')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

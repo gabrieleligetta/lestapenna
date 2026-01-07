@@ -210,7 +210,10 @@ const migrations = [
     "ALTER TABLE session_notes ADD COLUMN macro_location TEXT",
     "ALTER TABLE session_notes ADD COLUMN micro_location TEXT",
     "ALTER TABLE recordings ADD COLUMN present_npcs TEXT",
-    "ALTER TABLE recordings ADD COLUMN character_name_snapshot TEXT"
+    "ALTER TABLE recordings ADD COLUMN character_name_snapshot TEXT",
+    // NUOVE COLONNE PER TIMELINE
+    "ALTER TABLE campaigns ADD COLUMN current_year INTEGER",
+    "ALTER TABLE world_history ADD COLUMN year INTEGER"
 ];
 
 for (const m of migrations) {
@@ -233,6 +236,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_campaign ON inventory (campaig
 db.exec(`CREATE INDEX IF NOT EXISTS idx_char_history_name ON character_history (campaign_id, character_name)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_history_name ON npc_history (campaign_id, npc_name)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_campaign ON world_history (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_year ON world_history (year)`); // Nuovo indice per ordinamento
 
 db.pragma('journal_mode = WAL');
 
@@ -277,6 +281,7 @@ export interface Campaign {
     current_location?: string;
     current_macro_location?: string;
     current_micro_location?: string;
+    current_year?: number; // NUOVO
 }
 
 export interface KnowledgeFragment {
@@ -400,6 +405,11 @@ export const updateCampaignLocation = (guildId: string, location: string): void 
             db.prepare('INSERT INTO location_history (campaign_id, location, timestamp) VALUES (?, ?, ?)').run(campaign.id, location, Date.now());
         })();
     }
+};
+
+export const setCampaignYear = (campaignId: number, year: number): void => {
+    db.prepare('UPDATE campaigns SET current_year = ? WHERE id = ?').run(year, campaignId);
+    console.log(`[DB] 📅 Anno campagna ${campaignId} impostato a: ${year}`);
 };
 
 // --- NUOVE FUNZIONI LUOGO (MACRO/MICRO) ---
@@ -629,22 +639,30 @@ export const getNpcHistory = (campaignId: number, npcName: string): { descriptio
 
 // --- FUNZIONI STORIA DEL MONDO ---
 
-export const addWorldEvent = (campaignId: number, sessionId: string, description: string, type: string) => {
+export const addWorldEvent = (campaignId: number, sessionId: string | null, description: string, type: string, year?: number) => {
+    // Se l'anno non è passato, prova a prendere quello corrente della campagna
+    let eventYear = year;
+    if (eventYear === undefined) {
+        const camp = getCampaignById(campaignId);
+        eventYear = camp?.current_year || 0;
+    }
+
     db.prepare(`
-        INSERT INTO world_history (campaign_id, session_id, event_type, description, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-    `).run(campaignId, sessionId, type, description, Date.now());
-    console.log(`[World] 🌍 Aggiunto evento globale: [${type}]`);
+        INSERT INTO world_history (campaign_id, session_id, event_type, description, timestamp, year)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(campaignId, sessionId, type, description, Date.now(), eventYear);
+    console.log(`[World] 🌍 Aggiunto evento globale: [${type}] Anno: ${eventYear}`);
 };
 
-export const getWorldTimeline = (campaignId: number): { description: string, event_type: string, session_id: string, session_number?: number }[] => {
+export const getWorldTimeline = (campaignId: number): { description: string, event_type: string, session_id: string, session_number?: number, year: number }[] => {
     // Join con la tabella sessions per avere il numero sessione se disponibile
+    // ORDINAMENTO PER ANNO (year)
     return db.prepare(`
-        SELECT w.description, w.event_type, w.session_id, s.session_number
+        SELECT w.description, w.event_type, w.session_id, w.year, s.session_number
         FROM world_history w
         LEFT JOIN sessions s ON w.session_id = s.session_id
         WHERE w.campaign_id = ?
-        ORDER BY w.id ASC
+        ORDER BY w.year ASC, w.id ASC
     `).all(campaignId) as any[];
 };
 

@@ -660,13 +660,13 @@ export const getCampaignSnapshot = (campaignId: number): CampaignSnapshot => {
     const quest_context = quests.map(q => q.title).join(', ');
 
     // 3. Recupera Luogo e descrizione Atlante
-    const locRow = db.prepare(`SELECT macro_location as macro, micro_location as micro FROM campaign_location WHERE campaign_id = ?`).get(campaignId) as any;
+    const locRow = db.prepare(`SELECT current_macro_location as macro, current_micro_location as micro FROM campaigns WHERE id = ?`).get(campaignId) as any;
     
     let atlasDesc = null;
     let location_context = "Sconosciuto.";
     
     if (locRow) {
-        const atlas = db.prepare(`SELECT description FROM atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?`)
+        const atlas = db.prepare(`SELECT description FROM location_atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?`)
             .get(campaignId, locRow.macro, locRow.micro) as any;
         atlasDesc = atlas?.description || null;
         location_context = `${locRow.macro || '?'} - ${locRow.micro || '?'}`;

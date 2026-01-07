@@ -489,13 +489,16 @@ export const getAtlasEntry = (campaignId: number, macro: string, micro: string):
 };
 
 export const updateAtlasEntry = (campaignId: number, macro: string, micro: string, newDescription: string) => {
+    // Sanitize: Force string if object is passed (AI hallucination fix)
+    const safeDesc = (typeof newDescription === 'object') ? JSON.stringify(newDescription) : String(newDescription);
+
     // Upsert: Inserisci o Aggiorna se esiste
     db.prepare(`
         INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP)
         ON CONFLICT(campaign_id, macro_location, micro_location) 
-        DO UPDATE SET description = ?, last_updated = CURRENT_TIMESTAMP
-    `).run(campaignId, macro, micro, newDescription, newDescription); // Nota: newDescription passato due volte (insert e update)
+        DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP
+    `).run({ campaignId, macro, micro, desc: safeDesc });
     
     console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
 };
@@ -503,17 +506,20 @@ export const updateAtlasEntry = (campaignId: number, macro: string, micro: strin
 // --- FUNZIONI DOSSIER NPC ---
 
 export const updateNpcEntry = (campaignId: number, name: string, description: string, role?: string, status?: string) => {
+    // Sanitize: Force string if object is passed
+    const safeDesc = (typeof description === 'object') ? JSON.stringify(description) : String(description);
+
     // Upsert intelligente
     db.prepare(`
         INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated)
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP)
         ON CONFLICT(campaign_id, name) 
         DO UPDATE SET 
-            description = CASE WHEN ? IS NOT NULL THEN ? ELSE description END,
-            role = CASE WHEN ? IS NOT NULL THEN ? ELSE role END,
-            status = CASE WHEN ? IS NOT NULL THEN ? ELSE status END,
+            description = CASE WHEN $description IS NOT NULL THEN $description ELSE description END,
+            role = CASE WHEN $role IS NOT NULL THEN $role ELSE role END,
+            status = CASE WHEN $status IS NOT NULL THEN $status ELSE status END,
             last_updated = CURRENT_TIMESTAMP
-    `).run(campaignId, name, description, role, status, description, description, role, role, status, status);
+    `).run({ campaignId, name, description: safeDesc, role: role || null, status: status || null });
     
     console.log(`[Dossier] 👤 Aggiornato NPC: ${name}`);
 };

@@ -21,7 +21,7 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import { 
     getAvailableSessions, 
@@ -71,7 +71,8 @@ import {
     getOpenQuests,
     addLoot,
     removeLoot,
-    getInventory
+    getInventory,
+    addCharacterEvent
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -246,7 +247,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     const activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'teststream', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag'];
     
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -291,6 +292,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$modificatitolo <ID> <Titolo>`: Modifica il titolo di una sessione.\n" +
                     "`$chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
                     "`$wiki <Termine>`: Cerca frammenti di lore esatti.\n" +
+                    "`$storia <NomePG>`: Genera la biografia evolutiva di un personaggio.\n" +
                     "`$memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
                     "`$scarica <ID>`: Scarica audio.\n" +
                     "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)." 
@@ -373,6 +375,7 @@ client.on('messageCreate', async (message: Message) => {
                     "`$edittitle <ID> <Title>`: Edit session title.\n" +
                     "`$ask <Question>`: Ask the Bard about the lore.\n" +
                     "`$lore <Term>`: Search exact lore fragments.\n" +
+                    "`$story <CharName>`: Generate character biography.\n" +
                     "`$ingest <ID>`: Manually index a session into memory.\n" +
                     "`$download <ID>`: Download audio.\n" +
                     "`$downloadtxt <ID>`: Download transcriptions (txt)." 
@@ -614,7 +617,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: !viaggi (Cronologia) ---
-    if (command === 'viaggi' || command === 'storia' || command === 'travels') {
+    if (command === 'viaggi' || command === 'travels') {
         const history = getLocationHistory(message.guild.id);
         
         if (history.length === 0) return message.reply("Il diario di viaggio è vuoto.");
@@ -983,6 +986,28 @@ client.on('messageCreate', async (message: Message) => {
             }
             // ------------------------------------
 
+            // --- GESTIONE CRESCITA PG ---
+            if (result.character_growth && Array.isArray(result.character_growth)) {
+                // Recuperiamo l'ID campagna (sicurezza, funziona sia in $racconta che nel monitor)
+                // Usa targetSessionId se sei nel comando $racconta, altrimenti sessionId
+                const currentSessionId = targetSessionId;
+                const currentCampaignId = getSessionCampaignId(currentSessionId) || activeCampaign?.id;
+
+                if (currentCampaignId) {
+                    for (const growth of result.character_growth) {
+                        if (growth.name && growth.event) {
+                            // 1. STORIA NARRATIVA ($storia)
+                            addCharacterEvent(currentCampaignId, growth.name, currentSessionId, growth.event, growth.type || 'GENERIC');
+
+                            // 2. INTEGRAZIONE RAG ($chiedialbardo)
+                            ingestBioEvent(currentCampaignId, currentSessionId, growth.name, growth.event, growth.type || 'GENERIC')
+                                .catch(err => console.error(`Errore ingestione bio per ${growth.name}:`, err));
+                        }
+                    }
+                }
+            }
+            // ----------------------------
+
             await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
 
             const processingTime = Date.now() - startProcessing;
@@ -1076,6 +1101,35 @@ client.on('messageCreate', async (message: Message) => {
         } catch (err) {
             console.error("Errore wiki:", err);
             await message.reply("Errore durante la consultazione degli archivi.");
+        }
+    }
+
+    // --- NUOVO: $storia <NomePG> ---
+    if (command === 'storia' || command === 'story') {
+        const charName = args.join(' ');
+        if (!charName) return await message.reply("Uso: `$storia <NomePersonaggio>`");
+
+        // 1. Recupera info statiche
+        const targetChar = db.prepare('SELECT race, class FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(activeCampaign!.id, charName) as any;
+
+        if (!targetChar) {
+            return await message.reply(`Non trovo nessun personaggio chiamato **${charName}** in questa campagna.`);
+        }
+
+        await message.reply(`📖 Il Bardo sta consultando le cronache per scrivere la saga di **${charName}**...`);
+
+        // 2. Genera Biografia
+        const biography = await generateCharacterBiography(
+            activeCampaign!.id, 
+            charName, 
+            targetChar.class || "Eroe", 
+            targetChar.race || "Misterioso"
+        );
+
+        // 3. Invia (gestendo la lunghezza)
+        const chunks = biography.match(/[\s\S]{1,1900}/g) || [];
+        for (const chunk of chunks) {
+            await (message.channel as TextChannel).send(chunk);
         }
     }
 
@@ -1595,6 +1649,23 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                     if (result.quests && result.quests.length > 0) {
                         result.quests.forEach((q: string) => addQuest(activeCampaignId, q));
                     }
+
+                    // --- GESTIONE CRESCITA PG ---
+                    if (result.character_growth && Array.isArray(result.character_growth)) {
+                        for (const growth of result.character_growth) {
+                            if (growth.name && growth.event) {
+                                // 1. Salva nella tabella storica dedicata
+                                addCharacterEvent(activeCampaignId, growth.name, sessionId, growth.event, growth.type || 'GENERIC');
+
+                                // 2. INTEGRAZIONE RAG (Per il comando $chiedialbardo) [ORA IMPLEMENTATO]
+                                // Vettorializza l'evento così il Bardo "capisce" e "ricorda" i cambiamenti psicologici
+                                // Lo eseguiamo senza await per non bloccare l'invio del riassunto in chat
+                                ingestBioEvent(activeCampaignId, sessionId, growth.name, growth.event, growth.type || 'GENERIC')
+                                    .catch(err => console.error(`Errore ingestione bio per ${growth.name}:`, err));
+                            }
+                        }
+                    }
+                    // ----------------------------
                 }
                 // ------------------------------------
 

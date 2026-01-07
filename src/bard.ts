@@ -17,15 +17,16 @@ import {
     getCampaignLocationById,
     getAtlasEntry,
     findNpcDossierByName,
-    listNpcs
+    listNpcs,
+    getCharacterHistory
 } from './db';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
-    EPICO: "Sei un cantastorie epico. Usa un linguaggio arcaico, solenne, enfatizza l'eroismo e il destino.",
+    EPICO: "Sei un cantastorie epico. Usa un linguaggio epico, solenne, enfatizza l'eroismo e il destino.",
     DIVERTENTE: "Sei un bardo ubriaco e sarcastico. Prendi in giro i fallimenti dei personaggi.",
     OSCURO: "Sei un cronista di un mondo Lovecraftiano. Tono cupo e disperato.",
-    CONCISO: "Sei un segretario efficiente. Elenco puntato, solo fatti.",
+    CONCISO: "Sei un segretario efficiente. solo fatti narrazione in terza persona.",
     DM: "Sei un assistente per il Dungeon Master. Punti salienti, loot e NPC."
 };
 
@@ -102,6 +103,12 @@ export interface SummaryResponse {
     quests?: string[];
     narrative?: string; // NUOVO: Racconto narrativo
     log?: string[]; // NUOVO: Log schematico
+    // NUOVO CAMPO
+    character_growth?: Array<{
+        name: string;
+        event: string;
+        type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
+    }>;
 }
 
 /**
@@ -854,6 +861,13 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
   "loot": ["lista", "degli", "oggetti", "trovati"],
   "loot_removed": ["lista", "oggetti", "persi/usati"],
   "quests": ["lista", "missioni", "accettate/completate"],
+  "character_growth": [
+    { 
+        "name": "Nome PG", 
+        "event": "Descrizione dell'evento significativo", 
+        "type": "TRAUMA" 
+    }
+  ],
   "log": [
     "[luogo - stanza] Chi -> Azione -> Risultato"
   ]
@@ -864,6 +878,16 @@ REGOLE IMPORTANTI:
 2. "loot": Solo oggetti di valore, monete o oggetti magici.
 3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
 4. Rispondi SEMPRE in ITALIANO.
+
+REGOLE IMPORTANTI PER 'character_growth':
+- Estrai SOLO eventi che cambiano la vita o la personalità del personaggio.
+- Tipi validi: 
+  - 'BACKGROUND' (Rivelazioni sul passato, es. 'Incontra il padre perduto').
+  - 'TRAUMA' (Eventi emotivi negativi forti, es. 'Uccide un innocente per sbaglio', 'Perde un braccio').
+  - 'RELATIONSHIP' (Cambiamenti nelle relazioni chiave, es. 'Si innamora di X', 'Tradisce Y').
+  - 'ACHIEVEMENT' (Grandi successi personali, non solo uccidere mostri).
+  - 'GOAL_CHANGE' (Cambia obiettivo di vita).
+- IGNORA: Danni in combattimento, acquisti, battute, interazioni minori. Vogliamo la "Storia", non la cronaca.
 `;
 
     } else {
@@ -890,6 +914,7 @@ REGOLE IMPORTANTI:
            - "loot": Array di stringhe contenente gli oggetti ottenuti (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
            - "loot_removed": Array di stringhe contenente gli oggetti consumati, persi o venduti. Se nessuno, array vuoto.
            - "quests": Array di stringhe contenente le missioni accettate, aggiornate o concluse. Se nessuna, array vuoto.
+           - "character_growth": Array di oggetti {name, event, type} per eventi significativi dei personaggi.
         5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
     }
 
@@ -933,10 +958,79 @@ REGOLE IMPORTANTI:
             loot_removed: Array.isArray(parsed.loot_removed) ? parsed.loot_removed : [],
             quests: Array.isArray(parsed.quests) ? parsed.quests : [],
             narrative: parsed.narrative, // NUOVO CAMPO
-            log: Array.isArray(parsed.log) ? parsed.log : [] // NUOVO CAMPO
+            log: Array.isArray(parsed.log) ? parsed.log : [], // NUOVO CAMPO
+            character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [] // NUOVO CAMPO
         };
     } catch (err: any) {
         console.error("Errore finale:", err);
         throw err;
+    }
+}
+
+// --- GENERATORE BIOGRAFIA ---
+export async function generateCharacterBiography(campaignId: number, charName: string, charClass: string, charRace: string): Promise<string> {
+    const history = getCharacterHistory(campaignId, charName);
+
+    if (history.length === 0) {
+        return `Non c'è ancora abbastanza storia scritta su ${charName}.`;
+    }
+
+    const eventsText = history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n');
+
+    const prompt = `Sei un biografo fantasy epico.
+    Scrivi la "Storia finora" del personaggio ${charName} (${charRace} ${charClass}).
+    
+    Usa la seguente cronologia di eventi significativi raccolti durante le sessioni:
+    ${eventsText}
+    
+    ISTRUZIONI:
+    1. Unisci gli eventi in un racconto fluido e coinvolgente.
+    2. Evidenzia l'evoluzione psicologica del personaggio (es. come i traumi lo hanno cambiato).
+    3. Non fare un elenco puntato, scrivi in prosa.
+    4. Usa un tono solenne e introspettivo.
+    5. Concludi con una frase sullo stato attuale del personaggio.`;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: MODEL_NAME, // Usa un modello intelligente per la scrittura
+            messages: [{ role: "user", content: prompt }]
+        });
+        return response.choices[0].message.content || "Impossibile scrivere la biografia.";
+    } catch (e) {
+        console.error("Errore generazione bio:", e);
+        return "Il biografo ha finito l'inchiostro.";
+    }
+}
+
+// --- RAG: INGESTIONE BIOGRAFIA ---
+export async function ingestBioEvent(campaignId: number, sessionId: string, charName: string, event: string, type: string) {
+    const content = `[BIOGRAFIA: ${charName}] TIPO: ${type}. EVENTO: ${event}`;
+    console.log(`[RAG] 🧠 Indicizzazione evento bio per ${charName}...`);
+
+    // Determina provider e client (riutilizza la logica esistente in bard.ts)
+    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
+    const isOllama = provider === 'ollama';
+    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
+    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+
+    try {
+        const resp = await client.embeddings.create({ model: model, input: content });
+        const vector = resp.data[0].embedding;
+
+        // Inseriamo nel DB come frammento di conoscenza
+        // Nota: Usiamo macro/micro null perché è un evento legato alla persona, non al luogo
+        insertKnowledgeFragment(
+            campaignId, 
+            sessionId, 
+            content, 
+            vector, 
+            model, 
+            0, // timestamp fittizio
+            null, // macro
+            null, // micro
+            [charName] // associamo esplicitamente l'NPC/PG
+        );
+    } catch (e) {
+        console.error(`[RAG] ❌ Errore ingestione bio ${charName}:`, e);
     }
 }

@@ -39,6 +39,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS characters (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
+// --- TABELLA STORIA PERSONAGGI (BIOGRAFIA) ---
+db.exec(`CREATE TABLE IF NOT EXISTS character_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    character_name TEXT NOT NULL,
+    session_id TEXT,
+    event_type TEXT, -- 'BACKGROUND', 'TRAUMA', 'RELATIONSHIP', 'ACHIEVEMENT', 'GOAL_CHANGE'
+    description TEXT NOT NULL,
+    timestamp INTEGER,
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+
 // --- TABELLA REGISTRAZIONI ---
 db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,6 +207,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_location_atlas_campaign ON location_atla
 db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_dossier_campaign ON npc_dossier (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_quests_campaign ON quests (campaign_id)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_campaign ON inventory (campaign_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_char_history_name ON character_history (campaign_id, character_name)`);
 
 db.pragma('journal_mode = WAL');
 
@@ -538,6 +551,26 @@ export const getInventory = (campaignId: number): InventoryItem[] => {
     return db.prepare("SELECT * FROM inventory WHERE campaign_id = ? ORDER BY item_name ASC").all(campaignId) as InventoryItem[];
 };
 
+// --- FUNZIONI STORIA PERSONAGGI ---
+
+export const addCharacterEvent = (campaignId: number, charName: string, sessionId: string, description: string, type: string) => {
+    db.prepare(`
+        INSERT INTO character_history (campaign_id, character_name, session_id, event_type, description, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(campaignId, charName, sessionId, type, description, Date.now());
+    console.log(`[Bio] 📜 Aggiunto evento per ${charName}: [${type}]`);
+};
+
+export const getCharacterHistory = (campaignId: number, charName: string): { description: string, event_type: string, session_id: string }[] => {
+    // Recupera la storia in ordine cronologico (basato sull'ID inserimento che segue la cronologia sessioni)
+    return db.prepare(`
+        SELECT description, event_type, session_id 
+        FROM character_history 
+        WHERE campaign_id = ? AND lower(character_name) = lower(?)
+        ORDER BY id ASC
+    `).all(campaignId, charName) as any[];
+};
+
 // ------------------------------------------
 
 export const getCampaignById = (id: number): Campaign | undefined => {
@@ -565,6 +598,7 @@ export const deleteCampaign = (campaignId: number) => {
     try { db.prepare('DELETE FROM npc_dossier WHERE campaign_id = ?').run(campaignId); } catch(e) {}
     try { db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId); } catch(e) {}
     try { db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId); } catch(e) {}
+    try { db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId); } catch(e) {}
 
     // 3. Elimina campagna (Cascade farà il resto per characters e knowledge, ma meglio essere sicuri sopra)
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
@@ -850,7 +884,8 @@ export const wipeDatabase = () => {
     db.prepare('DELETE FROM npc_dossier').run();
     db.prepare('DELETE FROM quests').run();
     db.prepare('DELETE FROM inventory').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier', 'quests', 'inventory')").run();
+    db.prepare('DELETE FROM character_history').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier', 'quests', 'inventory', 'character_history')").run();
     db.exec('VACUUM');
     console.log("[DB] ✅ Database sessioni svuotato.");
 };

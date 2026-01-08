@@ -110,19 +110,26 @@ export async function handleSessionCommands(message: Message, command: string, a
     if (command === 'stoplistening' || command === 'termina') {
         const sessionId = guildSessions.get(message.guild!.id);
         if (!sessionId) {
-            await disconnect(message.guild!.id);
+            disconnect(message.guild!.id).catch(console.error);
             await message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
             return;
         }
 
-        await disconnect(message.guild!.id);
+        // Risposta immediata all'utente
+        await message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo in background...`);
+
+        // Rimozione sessione attiva
         guildSessions.delete(message.guild!.id);
 
-        await message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
-        await audioQueue.resume();
-        console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
+        // Processo in background: Disconnessione -> Resume Coda -> Summarize
+        disconnect(message.guild!.id)
+            .then(async () => {
+                await audioQueue.resume();
+                console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
+                await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
+            })
+            .catch(err => console.error(`[Background] Errore stop sessione ${sessionId}:`, err));
 
-        await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
         return;
     }
 

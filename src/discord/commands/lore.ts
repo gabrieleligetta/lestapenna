@@ -1,6 +1,6 @@
 import { Message, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { getActiveCampaign, listNpcs, updateNpcEntry, getNpcEntry, db, addQuest, updateQuestStatus, getOpenQuests, addLoot, removeLoot, getInventory, setCampaignYear, addWorldEvent, getWorldTimeline, getChatHistory, addChatMessage } from '../../db';
-import { askBard, searchKnowledge, ingestWorldEvent, ingestNpcDossier } from '../../bard';
+import { askBard, searchKnowledge } from '../../bard';
 import { guildSessions } from '../state';
 
 export async function handleLoreCommands(message: Message, command: string, args: string[]) {
@@ -22,12 +22,7 @@ export async function handleLoreCommands(message: Message, command: string, args
         if (argsStr.includes('|')) {
             const [name, desc] = argsStr.split('|').map(s => s.trim());
             updateNpcEntry(activeCampaign.id, name, desc);
-            
-            // Ingestione Vettoriale Automatica
-            ingestNpcDossier(activeCampaign.id, name, desc, "Sconosciuto", "Vivo")
-                .catch(e => console.error(`Errore ingestione NPC ${name}:`, e));
-
-            return message.reply(`👤 Scheda di **${name}** aggiornata e indicizzata.`);
+            return message.reply(`👤 Scheda di **${name}** aggiornata.`);
         } else {
             const npc = getNpcEntry(activeCampaign.id, argsStr);
             if (!npc) return message.reply("NPC non trovato.");
@@ -124,10 +119,6 @@ export async function handleLoreCommands(message: Message, command: string, args
 
         setCampaignYear(activeCampaign.id, 0);
         addWorldEvent(activeCampaign.id, null, desc, 'GENERIC', 0);
-        
-        // Ingestione Vettoriale
-        ingestWorldEvent(activeCampaign.id, null, desc, 'GENERIC')
-            .catch(e => console.error(`Errore ingestione Anno 0:`, e));
 
         return await message.reply(`📅 **Anno 0 Stabilito!**\nEvento: *${desc}*\nOra puoi usare \`$data <Anno>\` per impostare la data corrente.`);
     }
@@ -167,11 +158,6 @@ export async function handleLoreCommands(message: Message, command: string, args
             if (isNaN(year)) return await message.reply("L'anno deve essere un numero.");
 
             addWorldEvent(activeCampaign.id, null, desc, type, year);
-            
-            // Ingestione Vettoriale
-            ingestWorldEvent(activeCampaign.id, null, desc, type)
-                .catch(e => console.error(`Errore ingestione timeline:`, e));
-
             return await message.reply(`📜 Evento storico aggiunto nell'anno **${year}**.`);
         }
 

@@ -13,18 +13,25 @@ import { downloadFromOracle, uploadToOracle, getPresignedUrl } from '../../backu
 import { ingestSessionRaw, generateSummary, ingestBioEvent, ingestWorldEvent, TONES, ToneKey } from '../../bard';
 import { mixSessionAudio } from '../../sessionMixer';
 import { processSessionReport, sendSessionRecap } from '../../reporter';
+import { ensureTestEnvironment } from '../../services/recoveryService';
 
 export async function handleSessionCommands(message: Message, command: string, args: string[]) {
-    const activeCampaign = getActiveCampaign(message.guild!.id);
+    let activeCampaign = getActiveCampaign(message.guild!.id);
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
-    if (command === 'listen' || command === 'ascolta') {
-        if (!activeCampaign) return await message.reply("⚠️ **Nessuna campagna attiva!**");
-
+    if (command === 'listen' || command === 'ascolta' || command === 'testascolta') {
         const member = message.member;
         if (!member?.voice.channel) {
             return await message.reply("Devi essere in un canale vocale per evocare il Bardo!");
         }
+
+        if (command === 'testascolta') {
+             const setupCamp = await ensureTestEnvironment(message.guild!.id, message.author.id, message);
+             if (setupCamp) activeCampaign = setupCamp;
+             else return;
+        }
+
+        if (!activeCampaign) return await message.reply("⚠️ **Nessuna campagna attiva!**");
 
         if (activeCampaign.current_year === undefined || activeCampaign.current_year === null) {
             return await message.reply(
@@ -67,7 +74,7 @@ export async function handleSessionCommands(message: Message, command: string, a
 
         const missingNames: string[] = [];
         humanMembers.forEach(m => {
-            const profile = getUserProfile(m.id, activeCampaign.id);
+            const profile = getUserProfile(m.id, activeCampaign!.id);
             if (!profile.character_name) {
                 missingNames.push(m.displayName);
             }
@@ -358,7 +365,13 @@ export async function handleSessionCommands(message: Message, command: string, a
         }).join('\n');
 
         const fileName = `transcript-${targetSessionId}.txt`;
-        const filePath = path.join(__dirname, '..', '..', 'recordings', fileName); // Adjusted path
+        const recordingsDir = path.join(__dirname, '..', '..', 'recordings');
+        
+        if (!fs.existsSync(recordingsDir)) {
+            fs.mkdirSync(recordingsDir, { recursive: true });
+        }
+        
+        const filePath = path.join(recordingsDir, fileName);
 
         fs.writeFileSync(filePath, formattedText);
 

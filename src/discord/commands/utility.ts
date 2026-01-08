@@ -1,5 +1,5 @@
 import { Message, EmbedBuilder, TextChannel, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
-import { getGuildConfig, setGuildConfig, wipeDatabase, getActiveCampaign } from '../../db';
+import { getGuildConfig, setGuildConfig, wipeDatabase, getActiveCampaign, setCampaignYear, addWorldEvent } from '../../db';
 import { audioQueue, correctionQueue, clearQueue } from '../../queue';
 import { wipeBucket } from '../../backupService';
 import { wipeLocalFiles } from '../../voicerecorder';
@@ -243,23 +243,13 @@ export async function handleUtilityCommands(message: Message, command: string, a
 
     // --- TEST STREAM ---
     if (command === 'teststream') {
-        const setupCamp = await ensureTestEnvironment(message.guild!.id, message.author.id, message);
-        if (!setupCamp) return;
-        // Nota: La logica di teststream è complessa e richiede exec/pipeline. 
-        // Per ora la lasciamo in index.ts o la spostiamo in un modulo dedicato se necessario.
-        // Per semplicità, la logica di teststream è stata spostata in index.ts per ora, 
-        // ma idealmente dovrebbe stare qui o in un service.
-        // Dato che richiede exec e pipeline, meglio lasciarla in index.ts o spostarla in recoveryService.
-        // Ho spostato ensureTestEnvironment in recoveryService, ma la logica di download è ancora in index.ts.
-        // Per ora non gestiamo teststream qui per evitare duplicazioni complesse.
+        // La logica è gestita in index.ts
         return; 
     }
 
     // --- CLEAN TEST ---
     if (command === 'cleantest') {
-        if (!message.member?.permissions.has('Administrator')) return;
-        // Logica spostata in index.ts o recoveryService?
-        // Per ora non implementata qui.
+        // La logica è gestita in index.ts
         return;
     }
 
@@ -312,5 +302,43 @@ export async function handleUtilityCommands(message: Message, command: string, a
             await message.reply("❌ Errore durante l'invio. Controlla i log della console.");
         }
         return;
+    }
+
+    // --- NUOVO: $anno0 <Descrizione> ---
+    if (command === 'anno0' || command === 'year0') {
+        const activeCampaign = getActiveCampaign(message.guild!.id);
+        if (!activeCampaign) return await message.reply("⚠️ **Nessuna campagna attiva!**");
+
+        const desc = args.join(' ');
+        if (!desc) return await message.reply("Uso: `$anno0 <Descrizione Evento Cardine>` (es. 'La Caduta dell'Impero')");
+
+        setCampaignYear(activeCampaign.id, 0);
+        addWorldEvent(activeCampaign.id, null, desc, 'GENERIC', 0);
+
+        return await message.reply(`📅 **Anno 0 Stabilito!**\nEvento: *${desc}*\nOra puoi usare \`$data <Anno>\` per impostare la data corrente.`);
+    }
+
+    // --- NUOVO: $data <Anno> ---
+    if (command === 'data' || command === 'date' || command === 'anno' || command === 'year') {
+        const activeCampaign = getActiveCampaign(message.guild!.id);
+        if (!activeCampaign) return await message.reply("⚠️ **Nessuna campagna attiva!**");
+
+        const yearStr = args[0];
+        if (!yearStr) {
+            const current = activeCampaign.current_year;
+            const label = current === undefined ? "Non impostata" : (current === 0 ? "Anno 0" : (current > 0 ? `${current} D.E.` : `${Math.abs(current)} P.E.`));
+            return await message.reply(`📅 **Data Attuale:** ${label}`);
+        }
+
+        const year = parseInt(yearStr);
+        if (isNaN(year)) return await message.reply("Uso: `$data <Numero Anno>` (es. 100 o -50)");
+
+        setCampaignYear(activeCampaign.id, year);
+        const label = year === 0 ? "Anno 0" : (year > 0 ? `${year} D.E.` : `${Math.abs(year)} P.E.`);
+        
+        // Aggiorna anche l'anno corrente in memoria per le registrazioni attive
+        activeCampaign.current_year = year;
+        
+        return await message.reply(`📅 Data campagna aggiornata a: **${label}**`);
     }
 }

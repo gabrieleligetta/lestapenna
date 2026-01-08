@@ -1,6 +1,7 @@
 import { Message, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { getActiveCampaign, listNpcs, updateNpcEntry, getNpcEntry, db, addQuest, updateQuestStatus, getOpenQuests, addLoot, removeLoot, getInventory, setCampaignYear, addWorldEvent, getWorldTimeline, getChatHistory, addChatMessage } from '../../db';
 import { askBard, searchKnowledge } from '../../bard';
+import { guildSessions } from '../state';
 
 export async function handleLoreCommands(message: Message, command: string, args: string[]) {
     const activeCampaign = getActiveCampaign(message.guild!.id);
@@ -42,13 +43,28 @@ export async function handleLoreCommands(message: Message, command: string, args
 
     // --- PRESENZE ---
     if (command === 'presenze') {
-        // Nota: Questo comando richiede una sessione attiva, ma per ora lo lasciamo qui
-        // Se non c'è sessione attiva, non funzionerà come previsto, ma non romperà nulla
-        // Idealmente dovrebbe stare in session.ts, ma è legato agli NPC
-        // Per semplicità lo lasciamo qui o lo spostiamo se necessario
-        // ... (Logica presenze richiede sessionId, che non abbiamo qui facilmente senza importare guildSessions)
-        // Lo lascio in index.ts o lo sposto in session.ts? Meglio session.ts.
-        // Rimuovo da qui.
+        const sessionId = guildSessions.get(message.guild!.id);
+        if (!sessionId) return await message.reply("⚠️ Nessuna sessione attiva.");
+
+        // Recupera tutti gli NPC univoci visti nelle registrazioni della sessione
+        const rows = db.prepare(`
+            SELECT DISTINCT present_npcs 
+            FROM recordings 
+            WHERE session_id = ? AND present_npcs IS NOT NULL
+        `).all(sessionId) as { present_npcs: string }[];
+
+        // Unisci e pulisci le stringhe (es. "Grog,Mario" e "Mario,Luigi")
+        const allNpcs = new Set<string>();
+        rows.forEach(r => r.present_npcs.split(',').forEach(n => {
+            const trimmed = n.trim();
+            if (trimmed) allNpcs.add(trimmed);
+        }));
+
+        if (allNpcs.size === 0) {
+            return message.reply(`👥 **NPC Incontrati:** Nessuno rilevato finora.`);
+        }
+
+        return message.reply(`👥 **NPC Incontrati in questa sessione:**\n${Array.from(allNpcs).join(', ')}`);
     }
 
     // --- QUEST ---

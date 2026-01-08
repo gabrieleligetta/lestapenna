@@ -5,6 +5,7 @@ import { updateSessionTitle, getSessionCampaignId, addLoot, removeLoot, addQuest
 import { monitor } from '../monitor';
 import { processSessionReport, sendSessionRecap } from '../reporter';
 import { client } from '../discord/state';
+import { mixSessionAudio } from '../sessionMixer';
 
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
 
@@ -32,6 +33,15 @@ export async function waitForCompletionAndSummarize(sessionId: string, discordCh
         } else {
             process.stdout.write(`\n✅ [Monitor] Sessione ${sessionId}: Elaborazione completata.\n`);
             clearInterval(checkInterval);
+
+            // --- AGGIUNTA: GENERAZIONE MIX AUDIO ---
+            try {
+                console.log("🎛️ Avvio generazione Master Audio...");
+                await mixSessionAudio(sessionId);
+            } catch (mixErr: any) {
+                console.error(`❌ Errore mixaggio audio ${sessionId}:`, mixErr);
+            }
+            // ---------------------------------------
 
             const startSummary = Date.now();
 

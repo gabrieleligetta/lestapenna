@@ -340,31 +340,43 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
     const content = `[BIOGRAFIA: ${charName}] TIPO: ${type}. EVENTO: ${event}`;
     console.log(`[RAG] 🧠 Indicizzazione evento bio per ${charName}...`);
 
-    // Determina provider e client (riutilizza la logica esistente in bard.ts)
-    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
-    const isOllama = provider === 'ollama';
-    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
-    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+    const promises = [];
 
-    try {
-        const resp = await client.embeddings.create({ model: model, input: content });
-        const vector = resp.data[0].embedding;
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OPENAI, input: content })
+            .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'openai', error: err.message }))
+    );
 
-        // Inseriamo nel DB come frammento di conoscenza
-        // Nota: Usiamo macro/micro null perché è un evento legato alla persona, non al luogo
-        insertKnowledgeFragment(
-            campaignId, 
-            sessionId, 
-            content, 
-            vector, 
-            model, 
-            0, // timestamp fittizio
-            null, // macro
-            null, // micro
-            [charName] // associamo esplicitamente l'NPC/PG
-        );
-    } catch (e) {
-        console.error(`[RAG] ❌ Errore ingestione bio ${charName}:`, e);
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OLLAMA, input: content })
+            .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'ollama', error: err.message }))
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, 
+                    sessionId, 
+                    content, 
+                    val.data, 
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
+                    0, // timestamp fittizio
+                    null, // macro
+                    null, // micro
+                    [charName] // associamo esplicitamente l'NPC/PG
+                );
+            } else {
+                console.warn(`[RAG] ⚠️ Errore ingestione bio (${val.provider}): ${val.error}`);
+            }
+        }
     }
 }
 
@@ -373,28 +385,42 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
     const content = `[STORIA DEL MONDO] TIPO: ${type}. EVENTO: ${event}`;
     console.log(`[RAG] 🌍 Indicizzazione evento globale...`);
 
-    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
-    const isOllama = provider === 'ollama';
-    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
-    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+    const promises = [];
 
-    try {
-        const resp = await client.embeddings.create({ model: model, input: content });
-        const vector = resp.data[0].embedding;
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OPENAI, input: content })
+            .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'openai', error: err.message }))
+    );
 
-        // Inseriamo nel DB (macro/micro null perché è un evento storico generale)
-        insertKnowledgeFragment(
-            campaignId, 
-            sessionId, 
-            content, 
-            vector, 
-            model, 
-            0, 
-            null, 
-            null, 
-            ['MONDO', 'LORE', 'STORIA'] // Tag generici
-        );
-    } catch (e) {
-        console.error(`[RAG] ❌ Errore ingestione mondo:`, e);
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OLLAMA, input: content })
+            .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'ollama', error: err.message }))
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, 
+                    sessionId, 
+                    content, 
+                    val.data, 
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
+                    0, 
+                    null, 
+                    null, 
+                    ['MONDO', 'LORE', 'STORIA'] // Tag generici
+                );
+            } else {
+                console.warn(`[RAG] ⚠️ Errore ingestione mondo (${val.provider}): ${val.error}`);
+            }
+        }
     }
 }

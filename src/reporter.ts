@@ -4,7 +4,7 @@ import { uploadToOracle, getPresignedUrl } from './backupService';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime } from './db';
+import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript } from './db';
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -210,13 +210,61 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
     }
 }
 
+async function generateAndUploadTranscript(sessionId: string): Promise<string | null> {
+    try {
+        const transcripts = getSessionTranscript(sessionId);
+        if (!transcripts || transcripts.length === 0) return null;
+
+        const startTime = getSessionStartTime(sessionId) || 0;
+
+        const formattedText = transcripts.map(t => {
+            let text = "";
+            try {
+                const segments = JSON.parse(t.transcription_text);
+                if (Array.isArray(segments)) {
+                    text = segments.map(s => {
+                        if (typeof s.start !== 'number' || !s.text) return "";
+                        const absTime = t.timestamp + (s.start * 1000);
+                        const mins = Math.floor((absTime - startTime) / 60000);
+                        const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
+                        return `[${mins}:${secs.toString().padStart(2, '0')}] ${s.text}`;
+                    }).filter(line => line !== "").join('\n');
+                } else {
+                    text = t.transcription_text;
+                }
+            } catch (e) {
+                text = t.transcription_text;
+            }
+            return `--- ${t.character_name || 'Sconosciuto'} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}\n`;
+        }).join('\n');
+
+        const fileName = `transcript-${sessionId}.txt`;
+        const recordingsDir = path.join(__dirname, '..', 'recordings');
+        if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+        
+        const filePath = path.join(recordingsDir, fileName);
+        fs.writeFileSync(filePath, formattedText);
+
+        const customKey = `recordings/${sessionId}/transcript/${fileName}`;
+        await uploadToOracle(filePath, fileName, sessionId, customKey);
+        
+        try { fs.unlinkSync(filePath); } catch (e) {}
+
+        // URL valido per 7 giorni
+        return await getPresignedUrl(fileName, sessionId, 604800);
+    } catch (e) {
+        console.error(`[Reporter] ❌ Errore generazione transcript per email:`, e);
+        return null;
+    }
+}
+
 export async function sendSessionRecap(
     sessionId: string, 
     campaignId: number, 
     summaryText: string,
     lootGained: string[] = [],
     lootLost: string[] = [],
-    narrative?: string // NUOVO PARAMETRO
+    narrative?: string
 ) {
     const campaign = getCampaignById(campaignId);
     const campaignName = campaign ? campaign.name : "Sconosciuta";
@@ -232,22 +280,31 @@ export async function sendSessionRecap(
         : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
     // 2. Genera Link Download Audio (Master)
-    let downloadLinkHtml = "";
+    let downloadLinksHtml = "";
+    
+    // Audio Link
+    let audioUrl = "";
     try {
         const masterFileName = `MASTER-${sessionId}.mp3`;
-        // URL valido per 7 giorni (604800 secondi)
-        const url = await getPresignedUrl(masterFileName, sessionId, 604800);
-        if (url) {
-            downloadLinkHtml = `
-            <div style="margin: 20px 0; padding: 15px; background-color: #e8f6f3; border: 1px solid #1abc9c; border-radius: 5px; text-align: center;">
-                <p style="margin: 0 0 10px 0; font-weight: bold; color: #16a085;">🎧 Registrazione Audio Completa</p>
-                <a href="${url}" style="background-color: #1abc9c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Scarica MP3 (Master Mix)</a>
-                <p style="margin: 5px 0 0 0; font-size: 12px; color: #7f8c8d;">Link valido per 7 giorni</p>
-            </div>
-            `;
-        }
+        audioUrl = await getPresignedUrl(masterFileName, sessionId, 604800) || "";
     } catch (e) {
         console.warn("[Reporter] Impossibile generare link audio per email:", e);
+    }
+
+    // Transcript Link
+    let transcriptUrl = await generateAndUploadTranscript(sessionId);
+
+    if (audioUrl || transcriptUrl) {
+        downloadLinksHtml = `
+        <div style="margin: 20px 0; padding: 15px; background-color: #e8f6f3; border: 1px solid #1abc9c; border-radius: 5px; text-align: center;">
+            <p style="margin: 0 0 10px 0; font-weight: bold; color: #16a085;">📥 Download Materiali Sessione</p>
+            <div style="display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
+                ${audioUrl ? `<a href="${audioUrl}" style="background-color: #1abc9c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">🎧 Scarica Audio (MP3)</a>` : ''}
+                ${transcriptUrl ? `<a href="${transcriptUrl}" style="background-color: #3498db; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">📜 Scarica Trascrizione (TXT)</a>` : ''}
+            </div>
+            <p style="margin: 10px 0 0 0; font-size: 12px; color: #7f8c8d;">Link validi per 7 giorni</p>
+        </div>
+        `;
     }
 
     // 3. Costruisci HTML
@@ -258,7 +315,7 @@ export async function sendSessionRecap(
         <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
         <hr style="border: 1px solid #d35400;">
         
-        ${downloadLinkHtml}
+        ${downloadLinksHtml}
     `;
 
     // --- SEZIONE RACCONTO ---

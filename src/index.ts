@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import { exec } from 'child_process';
 import { pipeline } from 'stream/promises';
 import { waitForCompletionAndSummarize } from './services/sessionService';
+import { disconnect } from './voicerecorder';
 
 const getCmdChannelId = (guildId: string) => getGuildConfig(guildId, 'cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
 
@@ -176,6 +177,32 @@ client.once('ready', async () => {
     await checkUnprocessedJobs();
     startWorker();
 });
+
+// --- GESTIONE GRACEFUL SHUTDOWN ---
+const gracefulShutdown = async (signal: string) => {
+    console.log(`\n🛑 Ricevuto segnale ${signal}. Chiusura controllata...`);
+    
+    // Itera su tutte le gilde dove il bot è presente
+    const promises = client.guilds.cache.map(async (guild) => {
+        // La funzione disconnect di voicerecorder chiude gli stream,
+        // salva i file su disco e fa l'upload dei backup parziali.
+        await disconnect(guild.id); 
+    });
+
+    try {
+        await Promise.all(promises);
+        console.log('✅ Tutti gli stream audio sono stati chiusi e salvati.');
+    } catch (error) {
+        console.error('❌ Errore durante la chiusura degli stream:', error);
+    }
+
+    client.destroy();
+    process.exit(0);
+};
+
+// Intercetta CTRL+C (locale) e STOP (Docker/Kubernetes)
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 (async () => {
     await sodium.ready;

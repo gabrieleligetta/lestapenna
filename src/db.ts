@@ -94,6 +94,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     campaign_id INTEGER,
     session_number INTEGER,
     title TEXT,
+    start_time INTEGER,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
 )`);
 
@@ -215,7 +216,9 @@ const migrations = [
     "ALTER TABLE campaigns ADD COLUMN current_year INTEGER",
     "ALTER TABLE world_history ADD COLUMN year INTEGER",
     // NUOVA COLONNA PER ANNO REGISTRAZIONE
-    "ALTER TABLE recordings ADD COLUMN year INTEGER"
+    "ALTER TABLE recordings ADD COLUMN year INTEGER",
+    // NUOVA COLONNA PER START TIME SESSIONE
+    "ALTER TABLE sessions ADD COLUMN start_time INTEGER"
 ];
 
 for (const m of migrations) {
@@ -880,9 +883,9 @@ export const getSessionErrors = (sessionId: string) => {
 
 export const getAvailableSessions = (guildId?: string, campaignId?: number, limit: number = 5): SessionSummary[] => {
     let query = `
-        SELECT s.session_id, MIN(r.timestamp) as start_time, COUNT(r.id) as fragments, c.name as campaign_name, s.session_number, s.title
+        SELECT s.session_id, COALESCE(s.start_time, MIN(r.timestamp)) as start_time, COUNT(r.id) as fragments, c.name as campaign_name, s.session_number, s.title
         FROM sessions s
-        JOIN recordings r ON s.session_id = r.session_id
+        LEFT JOIN recordings r ON s.session_id = r.session_id
         LEFT JOIN campaigns c ON s.campaign_id = c.id
     `;
     
@@ -925,8 +928,8 @@ export const updateSessionTitle = (sessionId: string, title: string): void => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run(title, sessionId);
 };
 
-export const createSession = (sessionId: string, guildId: string, campaignId: number): void => {
-    db.prepare('INSERT INTO sessions (session_id, guild_id, campaign_id) VALUES (?, ?, ?)').run(sessionId, guildId, campaignId);
+export const createSession = (sessionId: string, guildId: string, campaignId: number | null, startTime?: number): void => {
+    db.prepare('INSERT INTO sessions (session_id, guild_id, campaign_id, start_time) VALUES (?, ?, ?, ?)').run(sessionId, guildId, campaignId, startTime || null);
 };
 
 export const getSessionAuthor = (sessionId: string): string | null => {
@@ -935,6 +938,11 @@ export const getSessionAuthor = (sessionId: string): string | null => {
 };
 
 export const getSessionStartTime = (sessionId: string): number | null => {
+    // Prima prova a prendere lo start_time esplicito dalla tabella sessions
+    const sessionRow = db.prepare('SELECT start_time FROM sessions WHERE session_id = ?').get(sessionId) as { start_time: number } | undefined;
+    if (sessionRow && sessionRow.start_time) return sessionRow.start_time;
+
+    // Fallback: prendi il timestamp della prima registrazione
     const row = db.prepare('SELECT MIN(timestamp) as start_time FROM recordings WHERE session_id = ?').get(sessionId) as { start_time: number } | undefined;
     return row ? row.start_time : null;
 };

@@ -11,9 +11,10 @@ import * as path from 'path';
 import { Transform } from 'stream';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign } from './db';
+import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign, createSession, getSessionStartTime } from './db';
 import { audioQueue } from './queue';
 import { uploadToOracle } from './backupService';
+import { mixSessionAudio } from './sessionMixer';
 
 const execAsync = promisify(exec);
 
@@ -67,19 +68,9 @@ interface ActiveStream {
     chunks: string[]; // Lista dei file parziali generati
 }
 
-interface SessionFile {
-    path: string;
-    startTime: number;
-    userId: string;
-}
-
 const activeStreams = new Map<string, ActiveStream>();
 const connectionErrors = new Map<string, number>();
 const pausedGuilds = new Set<string>();
-
-// Mappe per Master Mix
-const sessionStartTimes = new Map<string, number>(); // SessionId -> Timestamp (Time Zero)
-const completedSessionFiles = new Map<string, SessionFile[]>(); // SessionId -> Files
 
 const CHUNK_DURATION_MS = 5 * 60 * 1000; // 5 Minuti
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minuti
@@ -124,9 +115,11 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     pausedGuilds.delete(guildId);
 
     // 1. Gestione Time Zero
-    if (!sessionStartTimes.has(sessionId)) {
-        sessionStartTimes.set(sessionId, Date.now());
-        console.log(`[Recorder] 🕒 Tempo Zero fissato per sessione ${sessionId}: ${sessionStartTimes.get(sessionId)}`);
+    const existingStart = getSessionStartTime(sessionId);
+    if (!existingStart) {
+        const campaign = getActiveCampaign(guildId);
+        createSession(sessionId, guildId, campaign ? campaign.id : null, Date.now());
+        console.log(`[Recorder] 🕒 Tempo Zero fissato per sessione ${sessionId}`);
     }
 
     const connection: VoiceConnection = joinVoiceChannel({
@@ -321,16 +314,6 @@ async function mergeAndUploadSession(userId: string, chunks: string[], sessionId
 
         console.log(`[Recorder] ✅ Merge e Normalizzazione completati: ${outputFilename}`);
 
-        // Aggiungi alla lista per il Master Mix
-        if (!completedSessionFiles.has(sessionId)) {
-            completedSessionFiles.set(sessionId, []);
-        }
-        completedSessionFiles.get(sessionId)?.push({
-            path: outputPath,
-            startTime: startTime,
-            userId: userId
-        });
-
         // Processa il file (DB, Upload, Trascrizione)
         await processFinalFile(userId, outputPath, outputFilename, sessionId, guildId);
 
@@ -373,62 +356,6 @@ async function processFinalFile(userId: string, filePath: string, fileName: stri
     console.log(`[Recorder] 🚀 Sessione completa inviata alla trascrizione: ${fileName}`);
 }
 
-// --- MASTER MIX LOGIC ---
-
-async function createMasterMix(sessionId: string) {
-    const files = completedSessionFiles.get(sessionId);
-    const sessionStart = sessionStartTimes.get(sessionId);
-
-    if (!files || files.length === 0 || !sessionStart) {
-        console.log(`[MasterMix] ⚠️ Nessun file o sessionStart mancante per ${sessionId}. Skip.`);
-        return;
-    }
-
-    console.log(`[MasterMix] 🎛️ Avvio creazione Master Mix per sessione ${sessionId} (${files.length} tracce)...`);
-
-    // Ordina per startTime
-    files.sort((a, b) => a.startTime - b.startTime);
-
-    const inputs: string[] = [];
-    const delays: string[] = [];
-    
-    files.forEach((file, index) => {
-        inputs.push(`-i "${file.path}"`);
-        // Calcola delay in ms
-        const delay = Math.max(0, file.startTime - sessionStart);
-        delays.push(`[${index}]adelay=${delay}|${delay}[s${index}]`);
-    });
-
-    const outputFilename = `MASTER-${sessionId}.mp3`;
-    const outputPath = path.join(__dirname, '..', 'recordings', outputFilename);
-
-    // Costruzione filtro complesso
-    // [0]adelay=...[s0];[1]adelay=...[s1];...[s0][s1]...amix=inputs=N:dropout_transition=0:normalize=0[mixed];[mixed]loudnorm=...[out]
-    const inputTags = files.map((_, i) => `[s${i}]`).join('');
-    const filterComplex = `"${delays.join(';')};${inputTags}amix=inputs=${files.length}:dropout_transition=0:normalize=0[mixed];[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[out]"`;
-
-    const command = `ffmpeg ${inputs.join(' ')} -filter_complex ${filterComplex} -map "[out]" -c:a libmp3lame -b:a 128k -y "${outputPath}"`;
-
-    try {
-        await execAsync(command);
-        console.log(`[MasterMix] 🎹 Master Mix creato con successo: ${outputFilename}`);
-
-        // Upload Master
-        const customKey = `recordings/${sessionId}/master/${outputFilename}`;
-        await uploadToOracle(outputPath, outputFilename, sessionId, customKey);
-        
-        // Cleanup locale dei fragment (opzionale, se vogliamo risparmiare spazio subito)
-        // files.forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
-        
-        // Cleanup mappe
-        completedSessionFiles.delete(sessionId);
-        sessionStartTimes.delete(sessionId);
-
-    } catch (error) {
-        console.error(`[MasterMix] ❌ Errore creazione Master Mix:`, error);
-    }
-}
-
 export async function disconnect(guildId: string): Promise<boolean> {
     const connection = getVoiceConnection(guildId);
     if (connection) {
@@ -455,7 +382,15 @@ export async function disconnect(guildId: string): Promise<boolean> {
 
         // Genera Master Mix
         if (sessionId) {
-            await createMasterMix(sessionId);
+            try {
+                const masterPath = await mixSessionAudio(sessionId);
+                const outputFilename = path.basename(masterPath);
+                const customKey = `recordings/${sessionId}/master/${outputFilename}`;
+                await uploadToOracle(masterPath, outputFilename, sessionId, customKey);
+                console.log(`[Recorder] 🎹 Master Mix caricato su Oracle: ${outputFilename}`);
+            } catch (e) {
+                console.error(`[Recorder] ❌ Errore creazione/upload Master Mix:`, e);
+            }
         }
 
         connection.destroy();

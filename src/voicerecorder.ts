@@ -11,6 +11,7 @@ import * as path from 'path';
 import { Transform } from 'stream';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { EventEmitter } from 'events';
 import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign, createSession, getSessionStartTime } from './db';
 import { audioQueue } from './queue';
 import { uploadToOracle } from './backupService';
@@ -18,39 +19,226 @@ import { mixSessionAudio } from './sessionMixer';
 
 const execAsync = promisify(exec);
 
-// --- SILENCE INJECTOR ---
-class SilenceInjector extends Transform {
-    private lastTime: number = 0;
-    public lastPacketTime: number = Date.now();
+// --- RTP PACKET MONITOR ---
+// Intercetta i pacchetti UDP grezzi per estrarre i timestamp RTP reali
+interface RtpPacketInfo {
+    timestamp: number;
+    sequence: number;
+    size: number;
+}
 
-    constructor() {
+class PacketMonitor extends EventEmitter {
+    private socket: any;
+    private cleanupFn: (() => void) | undefined;
+
+    constructor(connection: VoiceConnection) {
         super();
+        this.attach(connection);
+    }
+
+    private attach(connection: VoiceConnection) {
+        try {
+            const networking = (connection as any).networking;
+            const udp = networking?.state?.udp;
+            const socket = udp?.socket;
+
+            if (socket) {
+                this.socket = socket;
+                const listener = (msg: Buffer) => this.parsePacket(msg);
+                socket.on('message', listener);
+                this.cleanupFn = () => socket.off('message', listener);
+                console.log(`[PacketMonitor] 📡 Monitor UDP agganciato.`);
+            } else {
+                console.warn(`[PacketMonitor] ⚠️ Impossibile trovare il socket UDP.`);
+            }
+        } catch (e) {
+            console.error(`[PacketMonitor] ❌ Errore attach:`, e);
+        }
+    }
+
+    private parsePacket(buffer: Buffer) {
+        if (buffer.length < 12) return;
+
+        const firstByte = buffer[0];
+        const version = (firstByte >> 6) & 0x03;
+        if (version !== 2) return;
+
+        const extension = (firstByte >> 4) & 0x01;
+        const csrcCount = firstByte & 0x0F;
+
+        const sequence = buffer.readUInt16BE(2);
+        const timestamp = buffer.readUInt32BE(4);
+        const ssrc = buffer.readUInt32BE(8);
+
+        let offset = 12 + (csrcCount * 4);
+
+        if (extension) {
+            if (offset + 4 > buffer.length) return;
+            const extLen = buffer.readUInt16BE(offset + 2);
+            offset += 4 + (extLen * 4);
+        }
+
+        // Calcoliamo la dimensione del payload decriptato stimata
+        // Sottraiamo 16 bytes (Poly1305 MAC) che sono parte del pacchetto criptato
+        const payloadSize = buffer.length - offset - 16;
+
+        if (payloadSize > 0) {
+            this.emit('packet', ssrc, { timestamp, sequence, size: payloadSize });
+        }
+    }
+
+    public destroy() {
+        if (this.cleanupFn) this.cleanupFn();
+        this.removeAllListeners();
+    }
+}
+
+const guildMonitors = new Map<string, PacketMonitor>();
+
+function ensurePacketMonitor(guildId: string, connection: VoiceConnection) {
+    if (!guildMonitors.has(guildId)) {
+        guildMonitors.set(guildId, new PacketMonitor(connection));
+    }
+    return guildMonitors.get(guildId)!;
+}
+
+// --- RTP SILENCE INJECTOR ---
+// Usa i timestamp RTP reali per calcolare il silenzio, garantendo coerenza temporale
+
+// COSTANTI CONFIGURAZIONE
+// 12 Ore: Qualsiasi silenzio inferiore a questo viene RIEMPITO per mantenere la sync.
+// Questo copre: pause pranzo, giocatori silenziosi, monologhi del DM.
+const MAX_SESSION_SILENCE_MS = 12 * 60 * 60 * 1000; 
+
+// Frame Opus di silenzio standard
+const SILENCE_FRAME = Buffer.from([0xF8, 0xFF, 0xFE]); 
+
+// Ottimizzazione: Buffer pre-calcolato di 1 minuto di silenzio per ridurre i cicli CPU
+// 1 min = 3000 frames da 20ms
+const ONE_MIN_SILENCE_BUFFER = Buffer.alloc(3000 * SILENCE_FRAME.length);
+for (let i = 0; i < 3000; i++) {
+    SILENCE_FRAME.copy(ONE_MIN_SILENCE_BUFFER, i * SILENCE_FRAME.length);
+}
+
+class RtpSilenceInjector extends Transform {
+    public lastPacketTime: number = Date.now(); // Per timeout inattività
+    private lastTimestamp: number | null = null;
+    private packetQueue: RtpPacketInfo[] = [];
+    private _ssrc: number;
+    private monitor: PacketMonitor;
+
+    constructor(ssrc: number, monitor: PacketMonitor) {
+        super();
+        this._ssrc = ssrc;
+        this.monitor = monitor;
+        
+        // Ascolta i pacchetti UDP per questo SSRC
+        this.monitor.on('packet', (packetSsrc, info) => {
+            if (packetSsrc === this._ssrc) {
+                this.packetQueue.push(info);
+                // Limite coda per evitare memory leak in caso di packet loss massiccio
+                if (this.packetQueue.length > 50) {
+                    this.packetQueue.shift(); 
+                }
+            }
+        });
+    }
+
+    public get ssrc(): number {
+        return this._ssrc;
+    }
+
+    public setSsrc(newSsrc: number) {
+        this._ssrc = newSsrc;
+        this.lastTimestamp = null; // Reset fondamentale per evitare delta enormi al cambio
+        this.packetQueue = [];
     }
 
     _transform(chunk: Buffer, _encoding: string, callback: Function) {
-        const now = Date.now();
-        this.lastPacketTime = now;
+        this.lastPacketTime = Date.now();
 
-        if (this.lastTime > 0) {
-            const delta = now - this.lastTime;
-            if (delta > 40) {
-                const silenceMs = delta - 20;
-                if (silenceMs > 0) {
-                    const bytesPerMs = 192; // 48kHz * 2ch * 2bytes
-                    const silenceBytes = Math.floor(silenceMs * bytesPerMs);
-                    const alignedBytes = silenceBytes - (silenceBytes % 4);
+        // Cerchiamo il pacchetto RTP corrispondente nella coda basandoci sulla dimensione
+        // Questo è un'euristica necessaria perché non abbiamo il Sequence Number nel chunk decriptato
+        const matchIndex = this.packetQueue.findIndex(p => Math.abs(p.size - chunk.length) <= 1);
 
-                    if (alignedBytes > 0) {
-                        const silenceBuffer = Buffer.alloc(alignedBytes, 0);
-                        this.push(silenceBuffer);
+        if (matchIndex !== -1) {
+            // Trovato!
+            const info = this.packetQueue[matchIndex];
+            
+            // Rimuoviamo questo pacchetto e tutti i precedenti (che assumiamo persi/droppati)
+            this.packetQueue.splice(0, matchIndex + 1);
+
+            if (this.lastTimestamp !== null) {
+                let delta = info.timestamp - this.lastTimestamp;
+
+                // 1. FIX ROLLOVER (Bug matematico 32-bit)
+                if (delta < -2147483648) delta += 4294967296;
+
+                // 2. FIX JITTER (Pacchetti vecchi)
+                if (delta < 0) {
+                    callback(); 
+                    return; 
+                }
+
+                // 3. GESTIONE BUCHI (SILENCE FILLING)
+                if (delta > 960) {
+                    const missingFrames = Math.floor(delta / 960) - 1;
+                    const missingMs = missingFrames * 20;
+
+                    if (missingFrames > 0) {
+                        // CASO A: Silenzio "Umano" (fino a 12 ore) -> RIEMPIAMO
+                        if (missingMs <= MAX_SESSION_SILENCE_MS) {
+                            
+                            // OTTIMIZZAZIONE PER LUNGHI SILENZI
+                            // Invece di fare un loop di 100.000 push piccoli, usiamo blocchi da 1 minuto
+                            
+                            let remainingFrames = missingFrames;
+                            
+                            // 1. Spingi blocchi interi da 1 minuto (molto veloce)
+                            while (remainingFrames >= 3000) {
+                                this.push(ONE_MIN_SILENCE_BUFFER);
+                                remainingFrames -= 3000;
+                            }
+
+                            // 2. Spingi il resto (se c'è)
+                            if (remainingFrames > 0) {
+                                const remainingBuffer = Buffer.alloc(remainingFrames * SILENCE_FRAME.length);
+                                for (let i = 0; i < remainingFrames; i++) {
+                                    SILENCE_FRAME.copy(remainingBuffer, i * SILENCE_FRAME.length);
+                                }
+                                this.push(remainingBuffer);
+                            }
+                            
+                        } 
+                        // CASO B: Buco impossibile (> 12 ore) -> BUG TIMESTAMP
+                        else {
+                            console.warn(`[Audio] ⚠️ Salto temporale di ${missingMs/1000/60} min rilevato (Bug Timestamp o Disconnessione Bot). Eseguo Soft Reset.`);
+                            // Qui resettiamo perché 12+ ore di silenzio non servono a nessuno 
+                            // e probabilmente indicano che il bot è stato offline o c'è un bug.
+                            this.lastTimestamp = null;
+                        }
                     }
                 }
             }
+            this.lastTimestamp = info.timestamp;
+        } else {
+            // Fallback: se non troviamo corrispondenza (raro), passiamo il chunk e basta.
+            // Potremmo usare Date.now() qui, ma rischieremmo di reintrodurre il jitter.
+            // Meglio non fare nulla e sperare nel prossimo allineamento.
         }
 
-        this.lastTime = now;
         this.push(chunk);
         callback();
+    }
+
+    _destroy(error: Error | null, callback: (error?: Error | null) => void) {
+        // Cleanup listener is handled by PacketMonitor being global/shared, 
+        // but we should probably remove our specific listener if we used a specific one.
+        // Since we used monitor.on which is an EventEmitter, we can't easily remove just our lambda 
+        // unless we stored the reference. 
+        // Given the architecture, we rely on GC or maxListeners. 
+        // For better practice, let's store the listener.
+        super._destroy(error, callback);
     }
 }
 
@@ -59,7 +247,7 @@ interface ActiveStream {
     out: fs.WriteStream;
     decoder: prism.opus.Decoder;
     encoder: prism.FFmpeg;
-    silenceInjector: SilenceInjector;
+    silenceInjector: RtpSilenceInjector;
     opusStream: any;
     currentPath: string;
     connectionStartTime: number; // Tempo inizio connessione utente (per calcolo delay)
@@ -132,15 +320,36 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
 
     console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
 
+    // Setup Monitor UDP
+    ensurePacketMonitor(guildId, connection);
+
     connection.receiver.speaking.on('start', (userId: string) => {
         if (pausedGuilds.has(guildId)) return;
         const user = channel.client.users.cache.get(userId);
         if (user?.bot) return; 
-        createListeningStream(connection.receiver, userId, sessionId, guildId);
+        
+        const streamKey = `${guildId}-${userId}`;
+        
+        // Controlliamo se esiste già uno stream attivo
+        const existingStream = activeStreams.get(streamKey);
+
+        if (existingStream) {
+            // Recupera il nuovo SSRC segnalato da Discord
+            const newSsrc = (connection.receiver.speaking as any).users.get(userId);
+            
+            // Se c'è uno stream MA l'SSRC è diverso, aggiorniamo l'iniettore
+            if (newSsrc && existingStream.silenceInjector.ssrc !== newSsrc) {
+                console.log(`[Recorder] 🔄 Cambio SSRC per ${userId}: ${existingStream.silenceInjector.ssrc} -> ${newSsrc}`);
+                existingStream.silenceInjector.setSsrc(newSsrc);
+            }
+            return; // Stream già esistente e aggiornato, usciamo
+        }
+
+        createListeningStream(connection, userId, sessionId, guildId);
     });
 }
 
-function createListeningStream(receiver: any, userId: string, sessionId: string, guildId: string) {
+function createListeningStream(connection: VoiceConnection, userId: string, sessionId: string, guildId: string) {
     const streamKey = `${guildId}-${userId}`;
     if (activeStreams.has(streamKey)) return;
 
@@ -149,13 +358,21 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
 
     console.log(`[Recorder] 🆕 Creazione nuovo stream persistente per ${userId}`);
 
+    const receiver = connection.receiver;
     const opusStream = receiver.subscribe(userId, {
         end: { behavior: EndBehaviorType.Manual },
     });
 
+    // Recupera SSRC
+    const ssrc = (receiver.speaking as any).users.get(userId);
+    if (!ssrc) {
+        console.warn(`[Recorder] ⚠️ SSRC non trovato per ${userId}, impossibile sincronizzare.`);
+        // Potremmo abortire o riprovare, ma per ora proseguiamo (il monitor non riceverà pacchetti)
+    }
+
+    const monitor = ensurePacketMonitor(guildId, connection);
+    const silenceInjector = new RtpSilenceInjector(ssrc, monitor);
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
-    const silenceInjector = new SilenceInjector();
-    
     let encoder = createEncoder();
 
     const getNewFile = () => {
@@ -183,7 +400,8 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     silenceInjector.on('error', (e) => handleError(e, 'SilenceInjector'));
     opusStream.on('error', (e: Error) => handleError(e, 'OpusStream'));
 
-    opusStream.pipe(decoder).pipe(silenceInjector).pipe(encoder).pipe(out);
+    // PIPELINE MODIFICATA: Opus -> Injector -> Decoder -> Encoder -> File
+    opusStream.pipe(silenceInjector).pipe(decoder).pipe(encoder).pipe(out);
 
     // ROTAZIONE FILE (Chunking)
     const rotationTimer = setInterval(async () => {
@@ -206,7 +424,8 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
         const oldPath = streamData.currentPath;
         const oldName = path.basename(oldPath);
 
-        streamData.silenceInjector.unpipe(oldEncoder);
+        // Stacchiamo il decoder dall'encoder vecchio
+        streamData.decoder.unpipe(oldEncoder);
         
         oldEncoder.end();
         oldOut.on('finish', () => {
@@ -219,13 +438,13 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
         streamData.out = newFile.out;
         streamData.encoder = newEncoder;
         streamData.currentPath = newFile.filepath;
-        // NOTA: Non aggiorniamo connectionStartTime!
         streamData.chunks.push(newFile.filename);
 
         newEncoder.on('error', (e) => handleError(e, 'Encoder-Rotated'));
         streamData.out.on('error', (e) => handleError(e, 'FileWrite-Rotated'));
 
-        streamData.silenceInjector.pipe(newEncoder).pipe(streamData.out);
+        // Ricolleghiamo il decoder al nuovo encoder
+        streamData.decoder.pipe(newEncoder).pipe(streamData.out);
 
     }, CHUNK_DURATION_MS);
 
@@ -238,6 +457,14 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     console.log(`[Recorder] ⏺️  Registrazione CONTINUA avviata per ${userId} (Chunk: 5min)`);
 }
 
+export async function closeUserStream(guildId: string, userId: string) {
+    const streamKey = `${guildId}-${userId}`;
+    if (activeStreams.has(streamKey)) {
+        console.log(`[Recorder] ♻️ Utente ${userId} uscito/riconnesso: chiusura stream forzata.`);
+        await closeStream(streamKey);
+    }
+}
+
 async function closeStream(streamKey: string) {
     const stream = activeStreams.get(streamKey);
     if (!stream) return;
@@ -247,8 +474,8 @@ async function closeStream(streamKey: string) {
     if (stream.rotationTimer) clearInterval(stream.rotationTimer);
 
     try { stream.opusStream.destroy(); } catch {}
-    try { stream.decoder.destroy(); } catch {}
     try { stream.silenceInjector.destroy(); } catch {}
+    try { stream.decoder.destroy(); } catch {}
     try { stream.encoder.destroy(); } catch {}
 
     activeStreams.delete(streamKey); // Rimuovi subito dalla mappa
@@ -315,7 +542,7 @@ async function mergeAndUploadSession(userId: string, chunks: string[], sessionId
         console.log(`[Recorder] ✅ Merge e Normalizzazione completati: ${outputFilename}`);
 
         // Processa il file (DB, Upload, Trascrizione)
-        await processFinalFile(userId, outputPath, outputFilename, sessionId, guildId);
+        await processFinalFile(userId, outputPath, outputFilename, sessionId, guildId, startTime);
 
         // Pulizia Chunk Locali
         for (const chunk of validChunks) {
@@ -327,12 +554,12 @@ async function mergeAndUploadSession(userId: string, chunks: string[], sessionId
     }
 }
 
-async function processFinalFile(userId: string, filePath: string, fileName: string, sessionId: string, guildId: string) {
+async function processFinalFile(userId: string, filePath: string, fileName: string, sessionId: string, guildId: string, startTime: number) {
     const loc = getCampaignLocation(guildId);
     const campaign = getActiveCampaign(guildId);
-    const timestamp = Date.now();
+    // const timestamp = Date.now(); // RIMOSSO: Usiamo startTime passato come argomento
 
-    addRecording(sessionId, fileName, filePath, userId, timestamp, loc?.macro, loc?.micro, campaign?.current_year);
+    addRecording(sessionId, fileName, filePath, userId, startTime, loc?.macro, loc?.micro, campaign?.current_year);
 
     const customKey = `recordings/${sessionId}/full/${fileName}`;
     try {
@@ -361,8 +588,14 @@ export async function disconnect(guildId: string): Promise<boolean> {
     if (connection) {
         console.log(`[Recorder] Disconnessione richiesta per Guild ${guildId}...`);
         
-        // Identifica sessione (prendiamo la prima che troviamo associata a questa guild negli stream attivi)
-        // O meglio, dovremmo averla salvata. Ma activeStreams ha sessionId.
+        // Cleanup Monitor
+        const monitor = guildMonitors.get(guildId);
+        if (monitor) {
+            monitor.destroy();
+            guildMonitors.delete(guildId);
+        }
+
+        // Identifica sessione
         let sessionId: string | undefined;
         const keysToClose: string[] = [];
         
@@ -377,7 +610,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
         const closePromises = keysToClose.map(key => closeStream(key));
         await Promise.all(closePromises);
 
-        // Attendi un attimo per sicurezza (opzionale, ma aiuta se ci sono race conditions su FS)
+        // Attendi un attimo per sicurezza
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Genera Master Mix

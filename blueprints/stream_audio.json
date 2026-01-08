@@ -2,9 +2,9 @@
   "meta": {
     "project": "Discord Voice Recorder Bot",
     "module": "Audio Engine (Phase 2)",
-    "version": "2.0.0",
+    "version": "2.2.0",
     "type": "Architecture Contract",
-    "last_updated": "Integrated Session Mixer & DB Persistence"
+    "last_updated": "RTP Timestamp Synchronization & Packet Monitoring"
   },
   "global_settings": {
     "audio": {
@@ -19,8 +19,8 @@
     "timings": {
       "chunk_duration_ms": 300000,
       "idle_timeout_ms": 900000,
-      "silence_threshold_ms": 40,
-      "silence_packet_deduction_ms": 20
+      "silence_threshold_ticks": 960,
+      "rtp_clock_rate": 48000
     }
   },
   "data_structures": {
@@ -32,26 +32,42 @@
           "out": "fs.WriteStream",
           "decoder": "prism.opus.Decoder",
           "encoder": "prism.FFmpeg",
-          "silenceInjector": "SilenceInjector",
+          "silenceInjector": "RtpSilenceInjector",
           "currentPath": "string",
           "connectionStartTime": "number",
           "sessionId": "string",
           "chunks": "string[]"
+        }
+      },
+      {
+        "name": "RtpPacketInfo",
+        "description": "Metadata extracted from raw UDP packets.",
+        "fields": {
+          "timestamp": "number",
+          "sequence": "number",
+          "size": "number"
         }
       }
     ],
     "state_maps": {
       "activeStreams": "Map<string, ActiveStream>",
       "connectionErrors": "Map<string, number>",
-      "pausedGuilds": "Set<string>"
+      "pausedGuilds": "Set<string>",
+      "guildMonitors": "Map<string, PacketMonitor>"
     }
   },
   "components": {
-    "silence_injector": {
-      "class_name": "SilenceInjector",
+    "packet_monitor": {
+      "class_name": "PacketMonitor",
+      "extends": "EventEmitter",
+      "logic": "Sniffs UDP socket for RTP packets, parses headers (including 0x90 extension), emits 'packet' event with timestamp/seq.",
+      "purpose": "Provide ground-truth timing data independent of network jitter."
+    },
+    "rtp_silence_injector": {
+      "class_name": "RtpSilenceInjector",
       "extends": "Transform",
-      "logic": "Injects zero-byte buffers when delta between packets > silence_threshold_ms.",
-      "calculation": "silenceBytes = floor((delta - 20) * (48000 * 2ch * 2bytes / 1000)). Aligned to 4 bytes."
+      "logic": "Matches decrypted Opus chunks with RTP packet metadata. Injects Opus silence frames (0xF8, 0xFF, 0xFE) when RTP timestamp delta > 960.",
+      "calculation": "missingFrames = floor(delta / 960) - 1"
     },
     "session_mixer": {
       "module": "sessionMixer.ts",
@@ -68,16 +84,16 @@
   "workflows": {
     "connect_session": {
       "trigger": "Bot joins channel",
-      "action": "Check DB for session start time. If missing, createSession(sessionId, now) in DB."
+      "action": "Check DB for session start time. If missing, createSession(sessionId, now) in DB. Attach PacketMonitor."
     },
     "stream_rotation": {
       "trigger": "Every 5 minutes OR Idle Timeout",
       "actions": [
-        "Unpipe SilenceInjector from OldEncoder",
+        "Unpipe Decoder from OldEncoder",
         "End OldEncoder",
         "On OldOut finish -> Upload to Oracle /chunks/",
         "Create NewEncoder & NewFile",
-        "Pipe SilenceInjector -> NewEncoder -> NewFile"
+        "Pipe Decoder -> NewEncoder -> NewFile"
       ]
     },
     "fragment_merge": {

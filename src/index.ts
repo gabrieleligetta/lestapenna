@@ -17,7 +17,7 @@ import {
     ComponentType,
     MessageComponentInteraction
 } from 'discord.js';
-import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRecording, isRecordingPaused } from './voicerecorder';
+import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRecording, isRecordingPaused, closeUserStream } from './voicerecorder';
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
@@ -1175,12 +1175,23 @@ client.on('messageCreate', async (message: Message) => {
                 return await message.reply("Non ho trovato nulla negli archivi su questo argomento.");
             }
 
-            const embed = new EmbedBuilder()
-                .setTitle(`📚 Archivi: ${term}`)
-                .setColor("#F1C40F")
-                .setDescription(fragments.map((f: string, i: number) => `**Frammento ${i+1}:**\n${f}`).join('\n\n'));
+            // MODIFICA: Invio frammenti separati per evitare limiti di lunghezza Discord (4096 chars)
+            await message.reply(`📚 **Archivi: ${term}**\nHo trovato ${fragments.length} frammenti pertinenti.`);
 
-            await message.reply({ embeds: [embed] });
+            for (let i = 0; i < fragments.length; i++) {
+                const fragment = fragments[i];
+                
+                // Troncatura di sicurezza per singolo frammento (anche se raramente superano i 4000)
+                const safeFragment = fragment.length > 4000 ? fragment.substring(0, 4000) + "..." : fragment;
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`Frammento ${i + 1}`)
+                    .setColor("#F1C40F")
+                    .setDescription(safeFragment);
+
+                await message.channel.send({ embeds: [embed] });
+            }
+
         } catch (err) {
             console.error("Errore wiki:", err);
             await message.reply("Errore durante la consultazione degli archivi.");
@@ -2158,12 +2169,28 @@ async function recoverOrphanedFiles() {
     }
 }
 
-client.on('voiceStateUpdate', (oldState, newState) => {
+client.on('voiceStateUpdate', async (oldState, newState) => {
     const guild = newState.guild || oldState.guild;
     if (!guild) return;
+
     const botMember = guild.members.cache.get(client.user!.id);
-    if (!botMember?.voice.channel) return;
-    checkAutoLeave(botMember.voice.channel);
+    const botChannelId = botMember?.voice.channelId;
+
+    // 1. Gestione Auto-Leave del Bot (Esistente)
+    if (botMember?.voice.channel) {
+        checkAutoLeave(botMember.voice.channel);
+    }
+
+    // 2. NUOVO: Gestione Disconnessione Utente (Fix Riconnessione)
+    // Se un utente (non bot) lascia il canale dove si trova il bot
+    // ORA: Copre sia disconnessione totale che spostamento in altro canale
+    if (
+        oldState.member && !oldState.member.user.bot && // Non è un bot
+        oldState.channelId === botChannelId &&          // Era nel canale del bot
+        newState.channelId !== botChannelId             // Non è più nel canale del bot
+    ) {
+        await closeUserStream(guild.id, oldState.member.id);
+    }
 });
 
 function checkAutoLeave(channel: VoiceBasedChannel) {

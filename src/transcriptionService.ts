@@ -8,12 +8,20 @@ const WHISPER_MODEL = process.env.WHISPER_MODEL || '/app/whisper/models/ggml-med
 
 // Lista delle allucinazioni (Invariata - va benissimo)
 const WHISPER_HALLUCINATIONS = [
+    // Standard Whisper Hallucinations
     "Sottotitoli creati dalla comunità", "Sottotitoli a cura di", "Sottotitoli e revisione",
-    "Traduzione a cura di", "Sottotitolato da", "Sottotitoli di", "Tastiera:", "Regia:",
-    "Amara.org", "Subtitle by", "Subtitles by", "Translated by", "Thanks for watching",
-    "Thank you for watching", "Please subscribe", "Copyright", "All rights reserved",
-    "MBC", "Al Jazeera", "(Musica)", "(Music)", "(Applausi)", "(Applause)",
-    "(Silenzio)", "(Silence)", "..."
+    "Traduzione a cura di", "Sottotitolato da", "Sottotitoli di",
+    "Amara.org", "QTSS", "Luca Gardella", // Trovati nel tuo file
+    "Subtitle by", "Subtitles by", "Translated by",
+
+    // YouTube / TV Hallucinations
+    "Thanks for watching", "Thank you for watching", "Please subscribe",
+    "Iscrivetevi al canale", "Copyright", "All rights reserved",
+    "MBC", "Al Jazeera",
+
+    // Audio descriptions (Testuale)
+    "Musica", "Applausi", "Silenzio", "Sussurro", "Sigla",
+    "Music", "Applause", "Silence"
 ];
 
 export interface TranscriptionSegment {

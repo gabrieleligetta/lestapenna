@@ -1,9 +1,9 @@
-# 🎙️ Stream Audio Architecture & Requirements (v2.1)
+# 🎙️ Stream Audio Architecture & Requirements (v2.5)
 
 > **Project:** Lestapenna (Discord D&D Bot)  
 > **Module:** Audio Engine & Storage  
 > **Status:** Implemented  
-> **Last Update:** Integrated Session Mixer & DB Persistence
+> **Last Update:** Enhanced Silence Handling for RPG Sessions
 
 Questo documento definisce l'architettura tecnica per la cattura, l'elaborazione e l'archiviazione dei flussi audio provenienti da Discord. Il sistema è progettato per garantire **zero data loss**, **sincronizzazione perfetta** tra le tracce e **resilienza** ai crash.
 
@@ -12,10 +12,11 @@ Questo documento definisce l'architettura tecnica per la cattura, l'elaborazione
 ## 1. Obiettivi Architetturali
 
 1.  **Robustezza (Zero Data Loss):** Nessun pacchetto audio deve andare perso, anche in caso di crash del bot o riavvio del server.
-2.  **Sincronia Temporale:** Le tracce di utenti diversi devono essere perfettamente allineate nel mix finale, rispettando i silenzi e i ritardi di ingresso.
+2.  **Sincronia Temporale Assoluta:** Le tracce di utenti diversi devono essere perfettamente allineate nel mix finale, utilizzando i timestamp RTP originali per eliminare il jitter di rete.
 3.  **Efficienza Storage:** Gestione intelligente dello spazio su disco locale (pulizia aggressiva) e uso gerarchico del Cloud (Oracle Object Storage).
 4.  **Qualità Audio:** Normalizzazione standard (EBU R128) per garantire livelli di volume costanti tra utenti diversi.
 5.  **Resilienza Cloud-First:** Il mixaggio finale è in grado di recuperare automaticamente i file mancanti dal cloud se non presenti localmente.
+6.  **Supporto Lunghi Silenzi (RPG-Ready):** Gestione ottimizzata per sessioni di gioco di ruolo dove un utente può rimanere in silenzio per ore (fino a 12h) senza perdere la sincronizzazione.
 
 ---
 
@@ -23,13 +24,21 @@ Questo documento definisce l'architettura tecnica per la cattura, l'elaborazione
 
 ### A. The Pipeline (Per User)
 Ogni utente che parla attiva una pipeline dedicata:
-1.  **Opus Stream:** Flusso grezzo da Discord.
-2.  **Decoder (prism-media):** Decodifica Opus in PCM (Signed 16-bit LE, 48kHz, 2ch).
-3.  **Silence Injector (Custom Transform):**
-    *   Monitora il delta temporale tra i pacchetti.
-    *   Se `delta > 40ms`, inietta buffer di zeri (silenzio digitale) per mantenere il clock audio allineato al clock reale.
-    *   *Cruciale per la sincronizzazione.*
-4.  **Rotary Encoder (FFmpeg):**
+1.  **Packet Monitor (UDP Sniffer):**
+    *   Intercetta i pacchetti UDP grezzi dal socket di Discord.
+    *   Parsa l'header RTP (inclusi header extension 0x90).
+    *   Estrae `Timestamp` e `Sequence Number` reali.
+2.  **Opus Stream:** Flusso decriptato da Discord (via `@discordjs/voice`).
+3.  **RTP Silence Injector (Custom Transform):**
+    *   Correlaziona i chunk Opus decriptati con i pacchetti RTP originali (via SSRC e dimensione payload).
+    *   Calcola i "buchi" temporali basandosi sulla differenza dei Timestamp RTP ($Delta > 960$ ticks).
+    *   **Silence Filling Intelligente:**
+        *   Se il buco è < 12 ore (`MAX_SESSION_SILENCE_MS`), inietta frame di silenzio Opus (`0xF8, 0xFF, 0xFE`) per mantenere la sincronia.
+        *   Utilizza un buffer pre-calcolato (`ONE_MIN_SILENCE_BUFFER`) per iniettare blocchi da 1 minuto, riducendo drasticamente il carico CPU.
+        *   Se il buco è > 12 ore, esegue un "Soft Reset" (assume bug timestamp o disconnessione bot).
+    *   Gestisce il rollover dei timestamp RTP (32-bit) e ignora i pacchetti vecchi (Jitter).
+4.  **Decoder (prism-media):** Decodifica Opus (incluso il silenzio iniettato) in PCM.
+5.  **Rotary Encoder (FFmpeg):**
     *   Codifica il PCM in MP3 (64kbps per i chunk).
     *   Viene riavviato ogni 5 minuti (Rotazione) senza interrompere il flusso a monte.
 
@@ -38,6 +47,7 @@ Ogni utente che parla attiva una pipeline dedicata:
 *   Se non esiste, viene creata (`createSession`) salvando il timestamp corrente come `start_time`.
 *   Questo timestamp persiste nel DB (SQLite) ed è la fonte di verità per tutti i calcoli di ritardo (`adelay`), garantendo coerenza anche se il bot si riavvia.
 *   Formula: `Delay = UserConnectionStart - SessionStartTime`.
+*   **Nota Critica:** Il timestamp salvato nel DB per ogni registrazione utente (`recordings` table) deve essere il `connectionStartTime` originale, NON il momento in cui il file viene salvato su disco.
 
 ---
 
@@ -58,15 +68,21 @@ Il sistema utilizza una strategia a tre livelli per salvare i file su Oracle Clo
 ### 🔄 Workflow 1: Rotazione & Backup (Ogni 5 min)
 Garantisce che, se il server esplode, perdiamo al massimo 5 minuti di audio.
 1.  Timer scatta.
-2.  `SilenceInjector` viene scollegato (`unpipe`) dal vecchio Encoder.
+2.  `Decoder` viene scollegato (`unpipe`) dal vecchio Encoder.
 3.  Vecchio Encoder chiuso -> File salvato su disco.
 4.  **Upload Immediato** su Oracle (`/chunks/`).
 5.  Nuovo Encoder creato.
-6.  `SilenceInjector` ricollegato (`pipe`) al nuovo Encoder.
+6.  `Decoder` ricollegato (`pipe`) al nuovo Encoder.
 7.  *Nessun pacchetto perso durante lo switch.*
 
 ### 🔗 Workflow 2: User Disconnect (Fragment Creation)
 Quando un utente esce o il bot si ferma.
+**Trigger:**
+*   Disconnessione totale dell'utente.
+*   Spostamento dell'utente in un altro canale vocale (es. AFK).
+*   Chiusura forzata dello stream (es. comando `$termina`).
+
+**Steps:**
 1.  Recupero di tutti i **Chunk** locali appartenenti a quella specifica connessione utente.
 2.  Generazione file lista per FFmpeg.
 3.  **FFmpeg Merge:**
@@ -74,7 +90,7 @@ Quando un utente esce o il bot si ferma.
     *   Applica filtro `loudnorm` (Normalizzazione Audio).
 4.  **Upload** del file risultante (`FULL-userId-timestamp.mp3`) su Oracle (`/full/`).
 5.  Invio alla coda di trascrizione (`audioQueue`).
-6.  Registrazione del file nel DB (`recordings` table) con il suo `timestamp` preciso.
+6.  Registrazione del file nel DB (`recordings` table) con il `connectionStartTime` originale.
 7.  **Pulizia:** Cancellazione locale dei chunk.
 
 ### 🎛️ Workflow 3: Session End (Master Mix via SessionMixer)

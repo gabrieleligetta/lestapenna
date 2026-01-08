@@ -1,9 +1,9 @@
-# 🎙️ Stream Audio Architecture & Requirements (v2.0)
+# 🎙️ Stream Audio Architecture & Requirements (v2.1)
 
 > **Project:** Lestapenna (Discord D&D Bot)  
 > **Module:** Audio Engine & Storage  
 > **Status:** Implemented  
-> **Last Update:** Current
+> **Last Update:** Integrated Session Mixer & DB Persistence
 
 Questo documento definisce l'architettura tecnica per la cattura, l'elaborazione e l'archiviazione dei flussi audio provenienti da Discord. Il sistema è progettato per garantire **zero data loss**, **sincronizzazione perfetta** tra le tracce e **resilienza** ai crash.
 
@@ -15,6 +15,7 @@ Questo documento definisce l'architettura tecnica per la cattura, l'elaborazione
 2.  **Sincronia Temporale:** Le tracce di utenti diversi devono essere perfettamente allineate nel mix finale, rispettando i silenzi e i ritardi di ingresso.
 3.  **Efficienza Storage:** Gestione intelligente dello spazio su disco locale (pulizia aggressiva) e uso gerarchico del Cloud (Oracle Object Storage).
 4.  **Qualità Audio:** Normalizzazione standard (EBU R128) per garantire livelli di volume costanti tra utenti diversi.
+5.  **Resilienza Cloud-First:** Il mixaggio finale è in grado di recuperare automaticamente i file mancanti dal cloud se non presenti localmente.
 
 ---
 
@@ -32,10 +33,11 @@ Ogni utente che parla attiva una pipeline dedicata:
     *   Codifica il PCM in MP3 (64kbps per i chunk).
     *   Viene riavviato ogni 5 minuti (Rotazione) senza interrompere il flusso a monte.
 
-### B. Time Zero (Synchronization)
-*   Al momento della connessione del Bot al canale, viene fissato un timestamp immutabile: `sessionStartTimes[sessionId]`.
-*   Tutti i calcoli di ritardo (`adelay`) per il mixaggio finale sono relativi a questo Tempo Zero.
-*   Formula: `Delay = UserConnectionStart - SessionStart`.
+### B. Time Zero (Synchronization & Persistence)
+*   Al momento della connessione del Bot al canale, viene verificato se esiste già una sessione nel DB.
+*   Se non esiste, viene creata (`createSession`) salvando il timestamp corrente come `start_time`.
+*   Questo timestamp persiste nel DB (SQLite) ed è la fonte di verità per tutti i calcoli di ritardo (`adelay`), garantendo coerenza anche se il bot si riavvia.
+*   Formula: `Delay = UserConnectionStart - SessionStartTime`.
 
 ---
 
@@ -72,18 +74,19 @@ Quando un utente esce o il bot si ferma.
     *   Applica filtro `loudnorm` (Normalizzazione Audio).
 4.  **Upload** del file risultante (`FULL-userId-timestamp.mp3`) su Oracle (`/full/`).
 5.  Invio alla coda di trascrizione (`audioQueue`).
-6.  Registrazione del file in `completedSessionFiles` con il suo `startTime` preciso.
+6.  Registrazione del file nel DB (`recordings` table) con il suo `timestamp` preciso.
 7.  **Pulizia:** Cancellazione locale dei chunk.
 
-### 🎛️ Workflow 3: Session End (Master Mix)
+### 🎛️ Workflow 3: Session End (Master Mix via SessionMixer)
 Quando il comando `$termina` viene invocato.
 1.  Attesa chiusura di tutti gli stream attivi (Promise.all).
-2.  Recupero lista `completedSessionFiles` per la sessione.
-3.  Calcolo `adelay` per ogni traccia: `Math.max(0, file.startTime - sessionStart)`.
-4.  **FFmpeg Complex Mix:**
-    *   Input: N file Fragment.
-    *   Filtri: `[i]adelay=X|X[s i]; ... amix=inputs=N:normalize=0`.
-    *   Post-Processing: `loudnorm=I=-16:TP=-1.5:LRA=11` (Standard Podcast/Broadcast).
+2.  Chiamata a `mixSessionAudio(sessionId)` (modulo `sessionMixer.ts`).
+3.  **Logica Mixer:**
+    *   Recupera lista registrazioni dal DB.
+    *   Verifica presenza file locali. Se mancano, li scarica da Oracle (`/full/`).
+    *   Processa i file a batch (es. 50 alla volta) accumulando in un file WAV temporaneo.
+    *   Applica delay corretti basati su `SessionStartTime` dal DB.
+4.  **Conversione Finale:** WAV -> MP3 (128k) con Normalizzazione EBU R128.
 5.  **Upload** del `MASTER-{sessionId}.mp3` su Oracle (`/master/`).
 6.  Generazione Link Presigned per l'email di report.
 
@@ -125,4 +128,4 @@ Se il file Master non viene generato automaticamente (es. crash durante il mix):
 *   **Processing:** `ffmpeg` (static binary via Docker/System)
 *   **Storage:** AWS SDK v3 (S3 Client compatible with Oracle Cloud)
 *   **Queue:** BullMQ (Redis)
-*   **AI:** Whisper.cpp (Transcription), OpenAI/Ollama (Summarization)
+*   **Database:** SQLite (Better-SQLite3) per persistenza sessioni e metadati.

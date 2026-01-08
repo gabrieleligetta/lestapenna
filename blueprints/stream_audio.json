@@ -1,10 +1,10 @@
 {
   "meta": {
     "project": "Discord Voice Recorder Bot",
-    "module": "Audio Engine (Phase 1)",
-    "version": "1.0.1",
+    "module": "Audio Engine (Phase 2)",
+    "version": "2.0.0",
     "type": "Architecture Contract",
-    "last_updated": "Refined Normalization Strategy"
+    "last_updated": "Integrated Session Mixer & DB Persistence"
   },
   "global_settings": {
     "audio": {
@@ -26,15 +26,6 @@
   "data_structures": {
     "typescript_interfaces": [
       {
-        "name": "SessionFile",
-        "description": "Represents a finalized, continuous audio fragment from a single user connection session.",
-        "fields": {
-          "path": "string",
-          "startTime": "number (Unix Timestamp)",
-          "userId": "string"
-        }
-      },
-      {
         "name": "ActiveStream",
         "description": "State of a currently recording stream.",
         "fields": {
@@ -43,15 +34,16 @@
           "encoder": "prism.FFmpeg",
           "silenceInjector": "SilenceInjector",
           "currentPath": "string",
-          "startTime": "number",
+          "connectionStartTime": "number",
           "sessionId": "string",
           "chunks": "string[]"
         }
       }
     ],
     "state_maps": {
-      "sessionStartTimes": "Map<string, number>",
-      "completedSessionFiles": "Map<string, SessionFile[]>"
+      "activeStreams": "Map<string, ActiveStream>",
+      "connectionErrors": "Map<string, number>",
+      "pausedGuilds": "Set<string>"
     }
   },
   "components": {
@@ -61,19 +53,22 @@
       "logic": "Injects zero-byte buffers when delta between packets > silence_threshold_ms.",
       "calculation": "silenceBytes = floor((delta - 20) * (48000 * 2ch * 2bytes / 1000)). Aligned to 4 bytes."
     },
-    "rotary_encoder": {
-      "library": "prism-media",
-      "behavior": "Re-instantiate prism.FFmpeg every chunk_duration_ms to write valid MP3 headers.",
-      "constraints": [
-        "Must preserve opus/decoder stream during rotation",
-        "Must use unpipe/pipe logic to ensure zero data loss"
+    "session_mixer": {
+      "module": "sessionMixer.ts",
+      "function": "mixSessionAudio(sessionId)",
+      "logic": "Iterative batch mixing of all session recordings retrieved from DB/Oracle.",
+      "features": [
+        "Automatic download of missing files from Oracle",
+        "Batch processing (50 files at a time) to save RAM",
+        "WAV accumulation for quality preservation",
+        "Final MP3 conversion with Loudnorm"
       ]
     }
   },
   "workflows": {
     "connect_session": {
       "trigger": "Bot joins channel",
-      "action": "Set sessionStartTimes[sessionId] = Date.now() IF NOT EXISTS."
+      "action": "Check DB for session start time. If missing, createSession(sessionId, now) in DB."
     },
     "stream_rotation": {
       "trigger": "Every 5 minutes OR Idle Timeout",
@@ -92,9 +87,7 @@
         "Filter valid local chunks",
         "Generate list.txt for FFmpeg concat demuxer",
         "Execute FFmpeg Merge (Concat ONLY - No normalization applied here)",
-        "Upload result to Oracle /full/",
-        "Push {path, startTime, userId} to completedSessionFiles[sessionId]",
-        "Queue for transcription",
+        "Process Final File: DB Insert, Upload to Oracle /full/, Queue Transcription",
         "Delete local chunks"
       ]
     },
@@ -102,14 +95,11 @@
       "trigger": "Bot disconnect (End of Session)",
       "steps": [
         "Wait for all active stream closures (Promise.all)",
-        "Retrieve all SessionFiles for sessionId",
-        "Sort files by startTime ASC",
-        "Get sessionStart = sessionStartTimes[sessionId]",
-        "Calculate delay for each file: max(0, file.startTime - sessionStart)",
-        "Construct FFmpeg Complex Filter (adelay + amix + loudnorm)",
-        "Execute Spawn FFmpeg",
-        "Upload to Oracle /master/",
-        "Cleanup local files and maps"
+        "Invoke mixSessionAudio(sessionId)",
+        "Mixer downloads missing files from Oracle if needed",
+        "Mixer generates MASTER-{sessionId}.mp3",
+        "Upload result to Oracle /master/",
+        "Log success"
       ]
     }
   },
@@ -119,19 +109,18 @@
       "template": "ffmpeg -f concat -safe 0 -i {listPath} -c:a libmp3lame -b:a 64k {outputPath}",
       "execution_method": "child_process.exec"
     },
-    "master_mix": {
-      "description": "Mixes multiple tracks with time offsets and applies final EBU R128 normalization.",
-      "inputs": "One -i per fragment",
+    "master_mix_iterative": {
+      "description": "Mixes batch of files into an accumulator WAV.",
+      "inputs": "Accumulator (optional) + Batch Files",
       "filter_complex_logic": {
         "step_1_delay": "[{i}]adelay={delay}|{delay}[s{i}]",
-        "step_2_mix": "[s0]...[sN]amix=inputs={count}:dropout_transition=0:normalize=0[mixed]",
-        "step_3_norm": "[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+        "step_2_mix": "[s0]...[sN]amix=inputs={count}:dropout_transition=0:normalize=0[out]"
       },
       "output_args": [
         "-map", "[out]",
-        "-c:a", "libmp3lame",
-        "-b:a", "128k",
-        "-y", "{outputPath}"
+        "-ac", "2",
+        "-c:a", "pcm_s16le",
+        "-y", "{destination}"
       ],
       "execution_method": "child_process.spawn"
     }

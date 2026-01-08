@@ -381,7 +381,7 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
 }
 
 // --- RAG: INGESTIONE CRONACA MONDIALE ---
-export async function ingestWorldEvent(campaignId: number, sessionId: string, event: string, type: string) {
+export async function ingestWorldEvent(campaignId: number, sessionId: string | null, event: string, type: string) {
     const content = `[STORIA DEL MONDO] TIPO: ${type}. EVENTO: ${event}`;
     console.log(`[RAG] 🌍 Indicizzazione evento globale...`);
 
@@ -409,7 +409,7 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
             if (!val.error) {
                 insertKnowledgeFragment(
                     campaignId, 
-                    sessionId, 
+                    sessionId || "MANUAL_ENTRY", 
                     content, 
                     val.data, 
                     val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
@@ -420,6 +420,96 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
                 );
             } else {
                 console.warn(`[RAG] ⚠️ Errore ingestione mondo (${val.provider}): ${val.error}`);
+            }
+        }
+    }
+}
+
+// --- RAG: INGESTIONE DOSSIER NPC ---
+export async function ingestNpcDossier(campaignId: number, npcName: string, description: string, role: string, status: string) {
+    const content = `[DOSSIER NPC: ${npcName}] RUOLO: ${role}. STATO: ${status}. DESCRIZIONE: ${description}`;
+    console.log(`[RAG] 👤 Indicizzazione dossier NPC ${npcName}...`);
+
+    const promises = [];
+
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OPENAI, input: content })
+            .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'openai', error: err.message }))
+    );
+
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OLLAMA, input: content })
+            .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'ollama', error: err.message }))
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, 
+                    "MANUAL_ENTRY", 
+                    content, 
+                    val.data, 
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
+                    0, 
+                    null, 
+                    null, 
+                    [npcName] // Tag NPC
+                );
+            } else {
+                console.warn(`[RAG] ⚠️ Errore ingestione dossier (${val.provider}): ${val.error}`);
+            }
+        }
+    }
+}
+
+// --- RAG: INGESTIONE LUOGO (ATLANTE) ---
+export async function ingestLocationDescription(campaignId: number, macro: string, micro: string, description: string) {
+    const content = `[ATLANTE: ${macro} - ${micro}] DESCRIZIONE: ${description}`;
+    console.log(`[RAG] 🗺️ Indicizzazione luogo ${macro}/${micro}...`);
+
+    const promises = [];
+
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OPENAI, input: content })
+            .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'openai', error: err.message }))
+    );
+
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OLLAMA, input: content })
+            .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'ollama', error: err.message }))
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, 
+                    "MANUAL_ENTRY", 
+                    content, 
+                    val.data, 
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
+                    0, 
+                    macro, 
+                    micro, 
+                    [] 
+                );
+            } else {
+                console.warn(`[RAG] ⚠️ Errore ingestione luogo (${val.provider}): ${val.error}`);
             }
         }
     }

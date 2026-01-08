@@ -10,7 +10,7 @@ import { connectToChannel, disconnect, pauseRecording, resumeRecording, isRecord
 import { checkAutoLeave } from '../events/voiceStateUpdate';
 import { waitForCompletionAndSummarize, publishSummary } from '../../services/sessionService';
 import { downloadFromOracle, uploadToOracle, getPresignedUrl } from '../../backupService';
-import { ingestSessionRaw, generateSummary, ingestBioEvent, ingestWorldEvent, TONES, ToneKey } from '../../bard';
+import { ingestSessionRaw, generateSummary, ingestBioEvent, ingestWorldEvent, ingestLocationDescription, TONES, ToneKey } from '../../bard';
 import { mixSessionAudio } from '../../sessionMixer';
 import { processSessionReport, sendSessionRecap } from '../../reporter';
 import { ensureTestEnvironment } from '../../services/recoveryService';
@@ -226,6 +226,11 @@ export async function handleSessionCommands(message: Message, command: string, a
 
         if (newDesc) {
             updateAtlasEntry(activeCampaign.id, loc.macro, loc.micro, newDesc);
+            
+            // Ingestione Vettoriale
+            ingestLocationDescription(activeCampaign.id, loc.macro, loc.micro, newDesc)
+                .catch(e => console.error(`Errore ingestione atlante:`, e));
+
             return message.reply(`📖 **Atlante Aggiornato** per *${loc.micro}*:\n"${newDesc}"`);
         } else {
             const lore = getAtlasEntry(activeCampaign.id, loc.macro, loc.micro);

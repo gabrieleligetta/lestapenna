@@ -340,7 +340,7 @@ client.on('messageCreate', async (message: Message) => {
                     name: "⚙️ Configurazione & Status",
                     value:
                         "`$setcmd`: Imposta questo canale per i comandi.\n" +
-                        "`$setsummary`: Imposta questo canale per la pubblicazione dei riassunti.\n" +
+                        "`$setsummary`: Set this channel for summaries.\n" +
                         "`$stato`: Mostra lo stato delle code di elaborazione."
                 },
                 {
@@ -1251,6 +1251,11 @@ client.on('messageCreate', async (message: Message) => {
 
         setCampaignYear(activeCampaign!.id, year);
         const label = year === 0 ? "Anno 0" : (year > 0 ? `${year} D.E.` : `${Math.abs(year)} P.E.`);
+        
+        // --- NUOVO: Aggiorna anche l'anno corrente in memoria per le registrazioni attive ---
+        // Nota: activeCampaign è un riferimento locale, aggiorniamolo
+        activeCampaign!.current_year = year;
+        
         return await message.reply(`📅 Data campagna aggiornata a: **${label}**`);
     }
 
@@ -1559,7 +1564,13 @@ client.on('messageCreate', async (message: Message) => {
 
             // --- PROCEDURA STANDARD (Uguale a prima) ---
             // Registra nel DB come se fosse un file vocale
-            addRecording(sessionId, tempFileName, tempFilePath, message.author.id, Date.now());
+            // 0. RECUPERA LUOGO CORRENTE (Simulato per teststream)
+            const loc = getCampaignLocation(message.guild.id);
+            const macro = loc?.macro || null;
+            const micro = loc?.micro || null;
+            const year = activeCampaign?.current_year ?? null;
+
+            addRecording(sessionId, tempFileName, tempFilePath, message.author.id, Date.now(), macro, micro, year);
 
             // Upload su Oracle (simulato o reale)
             try {

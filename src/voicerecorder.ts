@@ -8,7 +8,7 @@ import { VoiceBasedChannel } from 'discord.js';
 import * as fs from 'fs';
 import * as prism from 'prism-media';
 import * as path from 'path';
-import { addRecording, updateRecordingStatus } from './db';
+import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign } from './db';
 import { audioQueue } from './queue';
 import { uploadToOracle } from './backupService';
 
@@ -172,7 +172,7 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
         if (activeStreams.has(streamKey)) {
             activeStreams.delete(streamKey);
         }
-        await onFileClosed(userId, filepath, filename, startTime, sessionId);
+        await onFileClosed(userId, filepath, filename, startTime, sessionId, guildId);
     });
 
     opusStream.on('end', async () => {
@@ -181,9 +181,17 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     });
 }
 
-async function onFileClosed(userId: string, filePath: string, fileName: string, timestamp: number, sessionId: string) {
+async function onFileClosed(userId: string, filePath: string, fileName: string, timestamp: number, sessionId: string, guildId: string) {
+    // 0. RECUPERA LUOGO E ANNO CORRENTE
+    const loc = getCampaignLocation(guildId);
+    const macro = loc?.macro || null;
+    const micro = loc?.micro || null;
+
+    const campaign = getActiveCampaign(guildId);
+    const year = campaign?.current_year ?? null;
+
     // 1. SALVA SU DB (Stato: PENDING)
-    addRecording(sessionId, fileName, filePath, userId, timestamp);
+    addRecording(sessionId, fileName, filePath, userId, timestamp, macro, micro, year);
 
     // 2. BACKUP CLOUD (Il "Custode" mette al sicuro l'audio grezzo)
     // Attendiamo l'upload per garantire la sicurezza del file prima di proseguire

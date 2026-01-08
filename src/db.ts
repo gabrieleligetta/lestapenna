@@ -213,7 +213,9 @@ const migrations = [
     "ALTER TABLE recordings ADD COLUMN character_name_snapshot TEXT",
     // NUOVE COLONNE PER TIMELINE
     "ALTER TABLE campaigns ADD COLUMN current_year INTEGER",
-    "ALTER TABLE world_history ADD COLUMN year INTEGER"
+    "ALTER TABLE world_history ADD COLUMN year INTEGER",
+    // NUOVA COLONNA PER ANNO REGISTRAZIONE
+    "ALTER TABLE recordings ADD COLUMN year INTEGER"
 ];
 
 for (const m of migrations) {
@@ -262,6 +264,7 @@ export interface Recording {
     micro_location?: string | null;
     present_npcs?: string | null;
     character_name_snapshot?: string | null;
+    year?: number | null;
 }
 
 export interface SessionSummary {
@@ -777,8 +780,8 @@ export const deleteUserCharacter = (userId: string, campaignId: number) => {
 
 // --- FUNZIONI REGISTRAZIONI ---
 
-export const addRecording = (sessionId: string, filename: string, filepath: string, userId: string, timestamp: number) => {
-    return db.prepare('INSERT INTO recordings (session_id, filename, filepath, user_id, timestamp) VALUES (?, ?, ?, ?, ?)').run(sessionId, filename, filepath, userId, timestamp);
+export const addRecording = (sessionId: string, filename: string, filepath: string, userId: string, timestamp: number, macro: string | null = null, micro: string | null = null, year: number | null = null) => {
+    return db.prepare('INSERT INTO recordings (session_id, filename, filepath, user_id, timestamp, macro_location, micro_location, year) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(sessionId, filename, filepath, userId, timestamp, macro, micro, year);
 };
 
 export const getSessionRecordings = (sessionId: string): Recording[] => {
@@ -954,7 +957,7 @@ export const findSessionByTimestamp = (timestamp: number): string | null => {
 
 // --- FUNZIONI NOTE SESSIONE ---
 
-export const addSessionNote = (sessionId: string, userId: string, content: string, timestamp: number) => {
+export const addSessionNote = (sessionId: string, user_id: string, content: string, timestamp: number) => {
     // Recupera luogo attuale
     const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as {campaign_id: number};
     let macro = null, micro = null;
@@ -968,7 +971,7 @@ export const addSessionNote = (sessionId: string, userId: string, content: strin
     db.prepare(`
         INSERT INTO session_notes (session_id, user_id, content, timestamp, created_at, macro_location, micro_location) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(sessionId, userId, content, timestamp, Date.now(), macro, micro);
+    `).run(sessionId, user_id, content, timestamp, Date.now(), macro, micro);
 };
 
 export const getSessionNotes = (sessionId: string): SessionNote[] => {

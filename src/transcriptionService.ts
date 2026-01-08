@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 
 // Configurazione Whisper
 const WHISPER_BIN = process.env.WHISPER_BIN || '/app/whisper/main';
-const WHISPER_MODEL = process.env.WHISPER_MODEL || '/app/whisper/models/ggml-medium.bin';
+const WHISPER_MODEL = process.env.WHISPER_MODEL || '/app/whisper/model.bin';
 
 // Lista delle allucinazioni (Invariata - va benissimo)
 const WHISPER_HALLUCINATIONS = [
@@ -56,9 +56,8 @@ export class WhisperCppService {
                 '-m', WHISPER_MODEL,
                 '-f', audioPath,  // Qui ci aspettiamo il file WAV temporaneo
                 '-l', 'it',
-                '-t', '4',        // Aumentato leggermente a 4 thread se il server lo regge
-                '-oj',            // Output JSON
-                '-osrt', 'false'
+                '-t', '3',        // Dobbiamo tenere 3 thread perchè il server di produzione ha 4 core e 1 serve per node!
+                '-oj'           // Output JSON
             ];
 
             const proc = spawn('nice', args);
@@ -71,7 +70,9 @@ export class WhisperCppService {
 
             proc.on('close', (code) => {
                 if (code !== 0) {
-                    console.error(`[Whisper] Errore (code ${code}): ${stderr}`);
+                    // Ora vedremo il vero errore nel log se succede ancora
+                    console.error(`[Whisper] ❌ Errore Processo (code ${code}):`);
+                    console.error(`[Whisper] STDERR: ${stderr}`);
                     return reject(new Error(`Whisper process exited with code ${code}`));
                 }
 

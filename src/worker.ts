@@ -9,7 +9,7 @@ import { correctTranscription } from './bard';
 import { correctionQueue } from './queue';
 
 // Worker BullMQ - LO SCRIBA (Audio Worker)
-const ENABLE_AI_CORRECTION = process.env.ENABLE_AI_CORRECTION !== 'false';
+const ENABLE_AI_TRANSCRIPTION_CORRECTION = process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION !== 'false';
 
 export function startWorker() {
     // --- WORKER 1: AUDIO PROCESSING ---
@@ -33,7 +33,7 @@ export function startWorker() {
                 console.log(`[Scriba] ⚠️ File ${fileName} trovato in stato TRANSCRIBED. Tento recupero...`);
                 try {
                     const segments = JSON.parse(currentRecording.transcription_text || '[]');
-                    if (segments.length > 0 && ENABLE_AI_CORRECTION) {
+                    if (segments.length > 0 && ENABLE_AI_TRANSCRIPTION_CORRECTION) {
                         await correctionQueue.add('correction-job', {
                             sessionId, fileName, segments, campaignId, userId
                         }, { jobId: `correct-${fileName}-${Date.now()}`, removeOnComplete: true });
@@ -97,7 +97,7 @@ export function startWorker() {
                 }
 
                 // 4. Accodamento Correzione
-                if (ENABLE_AI_CORRECTION) {
+                if (ENABLE_AI_TRANSCRIPTION_CORRECTION) {
                     console.log(`[Scriba] 🧠 Invio a Correzione AI...`);
                     await correctionQueue.add('correction-job', {
                         sessionId, fileName, segments: result.segments, campaignId, userId

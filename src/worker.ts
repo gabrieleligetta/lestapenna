@@ -10,6 +10,9 @@ import { correctionQueue } from './queue';
 // Worker BullMQ - LO SCRIBA (Audio Worker)
 // Si occupa di: Download -> Trascrizione -> Backup -> Accodamento Correzione
 
+// 1. Leggi la variabile (Default: true)
+const ENABLE_AI_CORRECTION = process.env.ENABLE_AI_CORRECTION !== 'false';
+
 export function startWorker() {
     // --- WORKER 1: AUDIO PROCESSING ---
     const audioWorker = new Worker('audio-processing', async job => {
@@ -36,20 +39,27 @@ export function startWorker() {
                 try {
                     const segments = JSON.parse(currentRecording.transcription_text || '[]');
                     if (segments.length > 0) {
-                         await correctionQueue.add('correction-job', {
-                            sessionId,
-                            fileName,
-                            segments: segments,
-                            campaignId,
-                            userId // Passiamo userId per recuperare lo snapshot nel correction worker
-                        }, {
-                            jobId: `correct-${fileName}-${Date.now()}`,
-                            attempts: 3,
-                            backoff: { type: 'exponential', delay: 2000 },
-                            removeOnComplete: true
-                        });
-                        console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
-                        return { status: 'recovered_to_correction' };
+                        if (ENABLE_AI_CORRECTION) {
+                             await correctionQueue.add('correction-job', {
+                                sessionId,
+                                fileName,
+                                segments: segments,
+                                campaignId,
+                                userId // Passiamo userId per recuperare lo snapshot nel correction worker
+                            }, {
+                                jobId: `correct-${fileName}-${Date.now()}`,
+                                attempts: 3,
+                                backoff: { type: 'exponential', delay: 2000 },
+                                removeOnComplete: true
+                            });
+                            console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
+                            return { status: 'recovered_to_correction' };
+                        } else {
+                            // Se la correzione è disabilitata, completiamo subito
+                            updateRecordingStatus(fileName, 'PROCESSED', JSON.stringify(segments));
+                            console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} marcato come PROCESSED (Correzione OFF).`);
+                            return { status: 'recovered_to_processed' };
+                        }
                     }
                 } catch (e) {
                     console.error(`[Scriba] ❌ Errore recupero JSON per ${fileName}, procedo con ritrascrizione.`);
@@ -126,22 +136,41 @@ export function startWorker() {
                     }
                 }
 
-                // 4. Accodamento per Correzione AI
-                console.log(`[Scriba] 🧠 Accodo ${fileName} per correzione AI...`);
-                await correctionQueue.add('correction-job', {
-                    sessionId,
-                    fileName,
-                    segments: result.segments,
-                    campaignId,
-                    userId // Passiamo userId per recuperare lo snapshot nel correction worker
-                }, {
-                    jobId: `correct-${fileName}-${Date.now()}`,
-                    attempts: 3,
-                    backoff: { type: 'exponential', delay: 2000 },
-                    removeOnComplete: true
-                });
+                // 4. Accodamento per Correzione AI (CONDIZIONALE)
+                if (ENABLE_AI_CORRECTION) {
+                    console.log(`[Scriba] 🧠 Correzione AI ATTIVA. Accodo ${fileName}...`);
+                    await correctionQueue.add('correction-job', {
+                        sessionId,
+                        fileName,
+                        segments: result.segments,
+                        campaignId,
+                        userId // Passiamo userId per recuperare lo snapshot nel correction worker
+                    }, {
+                        jobId: `correct-${fileName}-${Date.now()}`,
+                        attempts: 3,
+                        backoff: { type: 'exponential', delay: 2000 },
+                        removeOnComplete: true
+                    });
 
-                return { status: 'transcribed', segmentsCount: result.segments.length };
+                    return { status: 'transcribed_queued_correction', segmentsCount: result.segments.length };
+                } else {
+                    console.log(`[Scriba] ⏩ Correzione AI DISABILITATA. Salvo trascrizione grezza.`);
+                    
+                    // Salviamo subito come PROCESSED usando i segmenti grezzi di Whisper
+                    // Nota: macro, micro e NPC saranno null perché non c'è l'AI a estrarli
+                    updateRecordingStatus(
+                        fileName, 
+                        'PROCESSED', 
+                        rawJson, 
+                        null, // Nessun errore
+                        null, // Macro location ignota
+                        null, // Micro location ignota
+                        [],   // Nessun NPC rilevato
+                        null  // Nome PG ignoto (o meglio, non snapshotato)
+                    );
+                    
+                    return { status: 'completed_raw', segmentsCount: result.segments.length };
+                }
 
             } else {
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');

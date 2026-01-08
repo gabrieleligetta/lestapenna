@@ -63,6 +63,13 @@ const openai = new OpenAI({
     timeout: 600 * 1000,
 });
 
+// --- CLIENT DEDICATO PER CORREZIONE LOCALE (IBRIDO) ---
+const localClient = new OpenAI({
+    baseURL: OLLAMA_BASE_URL,
+    apiKey: 'ollama', // Ollama non richiede vera API key
+});
+const LOCAL_CORRECTION_MODEL = process.env.OLLAMA_MODEL || "llama3.2";
+
 // --- CLIENT DEDICATI PER EMBEDDING ---
 const openaiEmbedClient = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY || 'dummy',
@@ -672,9 +679,10 @@ REGOLE CARTOGRAFO:
 ISTRUZIONI SPECIFICHE PER LA CORREZIONE:
 1. Rimuovi riempitivi verbali come "ehm", "uhm", "cioè", ripetizioni inutili e balbettii.
 2. Correggi i termini tecnici di D&D (es. incantesimi, mostri) usando la grafia corretta (es. "Dardo Incantato" invece di "dardo incantato").
-3. Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature.
-4. Mantieni il tono colloquiale ma rendilo leggibile.
-5. Se il testo contiene un chiaro cambio di interlocutore (es. il DM parla in prima persona come un NPC), inserisci il nome dell'NPC tra parentesi quadre all'inizio della frase. Esempio: "[Locandiere] Benvenuti!".
+3. [IMPORTANTE] Rileva ed ELIMINA le "allucinazioni" di Whisper: se un segmento contiene frasi come "Sottotitoli creati dalla comunità", "Amara.org" o testi totalmente fuori contesto (copyright, crediti video), DEVI restituire una stringa vuota per quel segmento o rimuovere la frase.
+4. Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature.
+5. Mantieni il tono colloquiale ma rendilo leggibile.
+6. Se il testo contiene un chiaro cambio di interlocutore (es. il DM parla in prima persona come un NPC), inserisci il nome dell'NPC tra parentesi quadre all'inizio della frase. Esempio: "[Locandiere] Benvenuti!".
 
 IMPORTANTE:
 1. Non modificare "start" e "end".
@@ -685,8 +693,9 @@ Input:
 ${JSON.stringify(batchInput)}`;
 
         try {
-            const response = await withRetry(() => openai.chat.completions.create({
-                model: FAST_MODEL_NAME,
+            // MODIFICA IBRIDA: Usiamo localClient (Ollama) invece di openai
+            const response = await withRetry(() => localClient.chat.completions.create({
+                model: LOCAL_CORRECTION_MODEL,
                 messages: [
                     { role: "system", content: "Sei un assistente che parla solo JSON valido." },
                     { role: "user", content: prompt }
@@ -699,10 +708,10 @@ ${JSON.stringify(batchInput)}`;
             const parsed = JSON.parse(content);
             return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update?, npc_updates?, present_npcs? }
         } catch (err) {
-            console.error(`[Bardo] ⚠️ Errore batch ${idx+1}, uso originale.`);
+            console.error(`[Bardo] ⚠️ Errore batch ${idx+1} su Ollama, uso originale.`);
             return { segments: batch };
         }
-    }, "Correzione Trascrizione");
+    }, "Correzione Trascrizione (Ollama Local)");
 
     // Appiattiamo il risultato (array di oggetti -> array unico di segmenti e merge location)
     const allSegments = results.flatMap(r => r.segments || []);

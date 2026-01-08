@@ -37,37 +37,66 @@ const getBucketName = () => (process.env.OCI_BUCKET_NAME || '').trim();
 
 /**
  * Utility per ottenere la chiave S3 preferita (nuova struttura con sessionId)
+ * Default: recordings/{sessionId}/chunks/{fileName} per i file raw
  */
 function getPreferredKey(fileName: string, sessionId?: string): string {
-    return sessionId ? `recordings/${sessionId}/${fileName}` : `recordings/${fileName}`;
+    // Se è un file MASTER, va in /master/
+    if (fileName.startsWith('MASTER-') && sessionId) {
+        return `recordings/${sessionId}/master/${fileName}`;
+    }
+    // Se è un file FULL (fragment), va in /full/
+    if (fileName.startsWith('FULL-') && sessionId) {
+        return `recordings/${sessionId}/full/${fileName}`;
+    }
+    // Default: chunks (o legacy root se non c'è sessionId)
+    return sessionId ? `recordings/${sessionId}/chunks/${fileName}` : `recordings/${fileName}`;
 }
 
 /**
- * Verifica se un file esiste nel bucket OCI, controllando sia il nuovo percorso che quello legacy.
+ * Verifica se un file esiste nel bucket OCI, controllando in ordine di priorità:
+ * 1. Master (se il nome corrisponde)
+ * 2. Full (se il nome corrisponde)
+ * 3. Chunks (default)
+ * 4. Root Sessione (legacy)
+ * 5. Root Recordings (legacy assoluto)
+ * 
  * Ritorna la Key se trovato, null altrimenti.
  */
 async function findS3Key(fileName: string, sessionId?: string): Promise<string | null> {
-    // 1. Prova il percorso specifico per la sessione (se fornito)
+    const client = getS3Client();
+    const bucket = getBucketName();
+
+    // Lista dei possibili path da controllare
+    const candidates: string[] = [];
+
     if (sessionId) {
-        const sessionKey = `recordings/${sessionId}/${fileName}`;
-        try {
-            await getS3Client().send(new HeadObjectCommand({ Bucket: getBucketName(), Key: sessionKey }));
-            return sessionKey;
-        } catch (err: any) {
-            if (err.name !== 'NotFound' && err.$metadata?.httpStatusCode !== 404) {
-                console.error(`[Custode] ❌ Errore verifica existence per ${sessionKey}:`, err);
-            }
+        // 1. Path specifici basati sul nome file
+        if (fileName.startsWith('MASTER-')) {
+            candidates.push(`recordings/${sessionId}/master/${fileName}`);
+        } else if (fileName.startsWith('FULL-')) {
+            candidates.push(`recordings/${sessionId}/full/${fileName}`);
+        } else {
+            // Se è un chunk generico, controlla prima in chunks
+            candidates.push(`recordings/${sessionId}/chunks/${fileName}`);
         }
+
+        // 2. Fallback generici nella sessione (nel caso avessimo spostato file a mano)
+        candidates.push(`recordings/${sessionId}/${fileName}`);
     }
 
-    // 2. Prova il percorso legacy (root di recordings)
-    const legacyKey = `recordings/${fileName}`;
-    try {
-        await getS3Client().send(new HeadObjectCommand({ Bucket: getBucketName(), Key: legacyKey }));
-        return legacyKey;
-    } catch (err: any) {
-        if (err.name !== 'NotFound' && err.$metadata?.httpStatusCode !== 404) {
-            console.error(`[Custode] ❌ Errore verifica existence per ${legacyKey}:`, err);
+    // 3. Fallback Legacy (Root recordings)
+    candidates.push(`recordings/${fileName}`);
+
+    // Eseguiamo i check in sequenza (per evitare troppe chiamate parallele inutili se il primo è giusto)
+    for (const key of candidates) {
+        try {
+            await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+            return key; // Trovato!
+        } catch (err: any) {
+            // Ignora 404, logga altri errori
+            if (err.name !== 'NotFound' && err.$metadata?.httpStatusCode !== 404) {
+                console.warn(`[Custode] ⚠️ Errore check ${key}: ${err.message}`);
+            }
         }
     }
 
@@ -192,7 +221,7 @@ export async function getPresignedUrl(fileName: string, sessionId?: string, expi
             
             // Fallback: proviamo a generare l'URL per dove DOVREBBE essere
             const targetKey = getPreferredKey(fileName, sessionId);
-            console.log(`[Custode] 🔗 Genero URL per percorso previsto: ${targetKey}`);
+            // console.log(`[Custode] 🔗 Genero URL per percorso previsto: ${targetKey}`);
             
             const command = new GetObjectCommand({
                 Bucket: getBucketName(),

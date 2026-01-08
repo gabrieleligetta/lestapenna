@@ -1358,6 +1358,20 @@ client.on('messageCreate', async (message: Message) => {
         await message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
 
         try {
+            // 1. Controlla se esiste già un MASTER su Oracle
+            const masterFileName = `MASTER-${targetSessionId}.mp3`;
+            const presignedUrl = await getPresignedUrl(masterFileName, targetSessionId, 3600 * 24);
+
+            if (presignedUrl) {
+                 await (message.channel as TextChannel).send(`✅ **Audio Sessione Trovato!**\nPuoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
+                 return;
+            }
+
+            // 2. Se non esiste, prova a generarlo (Fallback)
+            // Nota: mixSessionAudio è la vecchia funzione che univa i chunk.
+            // Con il nuovo sistema, il Master dovrebbe essere generato automaticamente alla fine.
+            // Se siamo qui, significa che il Master automatico è fallito o è una vecchia sessione.
+            
             const filePath = await mixSessionAudio(targetSessionId);
             const stats = fs.statSync(filePath);
             const sizeMB = stats.size / (1024 * 1024);
@@ -1369,11 +1383,14 @@ client.on('messageCreate', async (message: Message) => {
                 });
             } else {
                 const fileName = path.basename(filePath);
-                await uploadToOracle(filePath, fileName, targetSessionId);
-                const presignedUrl = await getPresignedUrl(fileName, targetSessionId, 3600 * 24);
+                // Carichiamo come MASTER ufficiale
+                const customKey = `recordings/${targetSessionId}/master/${fileName}`;
+                await uploadToOracle(filePath, fileName, targetSessionId, customKey);
+                
+                const newUrl = await getPresignedUrl(fileName, targetSessionId, 3600 * 24);
 
-                if (presignedUrl) {
-                    await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
+                if (newUrl) {
+                    await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${newUrl}`);
                 } else {
                     await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
                 }

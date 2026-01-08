@@ -1,0 +1,150 @@
+{
+  "meta": {
+    "project": "Discord Voice Recorder Bot",
+    "module": "Audio Engine (Phase 1)",
+    "version": "1.0.1",
+    "type": "Architecture Contract",
+    "last_updated": "Refined Normalization Strategy"
+  },
+  "global_settings": {
+    "audio": {
+      "sample_rate": 48000,
+      "channels": 2,
+      "bitrate_chunk": "64k",
+      "bitrate_master": "128k",
+      "codec": "libmp3lame",
+      "format": "mp3",
+      "pcm_frame_size": 960
+    },
+    "timings": {
+      "chunk_duration_ms": 300000,
+      "idle_timeout_ms": 900000,
+      "silence_threshold_ms": 40,
+      "silence_packet_deduction_ms": 20
+    }
+  },
+  "data_structures": {
+    "typescript_interfaces": [
+      {
+        "name": "SessionFile",
+        "description": "Represents a finalized, continuous audio fragment from a single user connection session.",
+        "fields": {
+          "path": "string",
+          "startTime": "number (Unix Timestamp)",
+          "userId": "string"
+        }
+      },
+      {
+        "name": "ActiveStream",
+        "description": "State of a currently recording stream.",
+        "fields": {
+          "out": "fs.WriteStream",
+          "decoder": "prism.opus.Decoder",
+          "encoder": "prism.FFmpeg",
+          "silenceInjector": "SilenceInjector",
+          "currentPath": "string",
+          "startTime": "number",
+          "sessionId": "string",
+          "chunks": "string[]"
+        }
+      }
+    ],
+    "state_maps": {
+      "sessionStartTimes": "Map<string, number>",
+      "completedSessionFiles": "Map<string, SessionFile[]>"
+    }
+  },
+  "components": {
+    "silence_injector": {
+      "class_name": "SilenceInjector",
+      "extends": "Transform",
+      "logic": "Injects zero-byte buffers when delta between packets > silence_threshold_ms.",
+      "calculation": "silenceBytes = floor((delta - 20) * (48000 * 2ch * 2bytes / 1000)). Aligned to 4 bytes."
+    },
+    "rotary_encoder": {
+      "library": "prism-media",
+      "behavior": "Re-instantiate prism.FFmpeg every chunk_duration_ms to write valid MP3 headers.",
+      "constraints": [
+        "Must preserve opus/decoder stream during rotation",
+        "Must use unpipe/pipe logic to ensure zero data loss"
+      ]
+    }
+  },
+  "workflows": {
+    "connect_session": {
+      "trigger": "Bot joins channel",
+      "action": "Set sessionStartTimes[sessionId] = Date.now() IF NOT EXISTS."
+    },
+    "stream_rotation": {
+      "trigger": "Every 5 minutes OR Idle Timeout",
+      "actions": [
+        "Unpipe SilenceInjector from OldEncoder",
+        "End OldEncoder",
+        "On OldOut finish -> Upload to Oracle /chunks/",
+        "Create NewEncoder & NewFile",
+        "Pipe SilenceInjector -> NewEncoder -> NewFile"
+      ]
+    },
+    "fragment_merge": {
+      "trigger": "User disconnect OR Stream Close",
+      "context": "User might reconnect later. This handles only the current connection span.",
+      "steps": [
+        "Filter valid local chunks",
+        "Generate list.txt for FFmpeg concat demuxer",
+        "Execute FFmpeg Merge (Concat ONLY - No normalization applied here)",
+        "Upload result to Oracle /full/",
+        "Push {path, startTime, userId} to completedSessionFiles[sessionId]",
+        "Queue for transcription",
+        "Delete local chunks"
+      ]
+    },
+    "master_mix": {
+      "trigger": "Bot disconnect (End of Session)",
+      "steps": [
+        "Wait for all active stream closures (Promise.all)",
+        "Retrieve all SessionFiles for sessionId",
+        "Sort files by startTime ASC",
+        "Get sessionStart = sessionStartTimes[sessionId]",
+        "Calculate delay for each file: max(0, file.startTime - sessionStart)",
+        "Construct FFmpeg Complex Filter (adelay + amix + loudnorm)",
+        "Execute Spawn FFmpeg",
+        "Upload to Oracle /master/",
+        "Cleanup local files and maps"
+      ]
+    }
+  },
+  "ffmpeg_commands": {
+    "merge_fragment": {
+      "description": "Concatenates chunks quickly without altering audio levels.",
+      "template": "ffmpeg -f concat -safe 0 -i {listPath} -c:a libmp3lame -b:a 64k {outputPath}",
+      "execution_method": "child_process.exec"
+    },
+    "master_mix": {
+      "description": "Mixes multiple tracks with time offsets and applies final EBU R128 normalization.",
+      "inputs": "One -i per fragment",
+      "filter_complex_logic": {
+        "step_1_delay": "[{i}]adelay={delay}|{delay}[s{i}]",
+        "step_2_mix": "[s0]...[sN]amix=inputs={count}:dropout_transition=0:normalize=0[mixed]",
+        "step_3_norm": "[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+      },
+      "output_args": [
+        "-map", "[out]",
+        "-c:a", "libmp3lame",
+        "-b:a", "128k",
+        "-y", "{outputPath}"
+      ],
+      "execution_method": "child_process.spawn"
+    }
+  },
+  "file_naming": {
+    "chunk": "recordings/{userId}-{timestamp}.mp3",
+    "fragment": "recordings/FULL-{userId}-{timestamp}.mp3",
+    "master": "recordings/MASTER-{sessionId}.mp3",
+    "list_file": "recordings/list-{sessionId}-{userId}-{timestamp}.txt"
+  },
+  "oracle_paths": {
+    "chunks": "recordings/{sessionId}/chunks/{filename}",
+    "fragments": "recordings/{sessionId}/full/{filename}",
+    "master": "recordings/{sessionId}/master/{filename}"
+  }
+}

@@ -15,6 +15,10 @@ const BATCH_SIZE = 50; // Numero di file da processare per volta (basso per sicu
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
+/**
+ * Funzione di fallback per generare il mix audio se il MASTER automatico non esiste.
+ * Usa la logica iterativa per unire i chunk/fragment.
+ */
 export async function mixSessionAudio(sessionId: string): Promise<string> {
     console.log(`[Mixer] 🧱 Inizio mixaggio ITERATIVO sessione ${sessionId}...`);
 
@@ -28,8 +32,6 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
     // 1. Download e Preparazione Lista
     console.log(`[Mixer] 📥 Verifica/Download di ${recordings.length} file...`);
     
-    // Per risparmiare spazio, potremmo scaricare i file "just in time" nel loop, 
-    // ma per semplicità verifichiamo tutto prima (o scarichiamo a blocchi se preferisci).
     const validFiles: { path: string, delay: number }[] = [];
 
     for (const rec of recordings) {
@@ -40,7 +42,7 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
         }
         validFiles.push({ 
             path: filePath, 
-            delay: rec.timestamp - sessionStart 
+            delay: Math.max(0, rec.timestamp - sessionStart) // Delay non negativo
         });
     }
 
@@ -78,9 +80,9 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
         if (global.gc) global.gc(); 
     }
 
-    // 3. Conversione Finale in MP3
-    console.log(`[Mixer] 🎛️  Conversione finale WAV -> MP3...`);
-    const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_full.mp3`);
+    // 3. Conversione Finale in MP3 + Normalizzazione (Loudnorm)
+    console.log(`[Mixer] 🎛️  Conversione finale WAV -> MP3 con Normalizzazione...`);
+    const finalMp3Path = path.join(OUTPUT_DIR, `MASTER-${sessionId}.mp3`);
     
     await convertToMp3(accumulatorPath, finalMp3Path);
 
@@ -160,8 +162,6 @@ function processBatch(
             '-y'
         ];
 
-        // console.log("Spawn FFmpeg:", ffmpegArgs.join(" "));
-
         const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
         ffmpeg.on('close', (code) => {
@@ -174,12 +174,14 @@ function processBatch(
 }
 
 /**
- * Converte il WAV master finale in MP3 compresso
+ * Converte il WAV master finale in MP3 compresso e applica LOUDNORM
  */
 function convertToMp3(inputPath: string, outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
+        // Aggiunto filtro loudnorm per allineare il volume finale allo standard EBU R128
         const ffmpeg = spawn('ffmpeg', [
             '-i', inputPath,
+            '-filter:a', 'loudnorm=I=-16:TP=-1.5:LRA=11',
             '-codec:a', 'libmp3lame',
             '-b:a', '128k', // Bitrate MP3 finale
             outputPath,

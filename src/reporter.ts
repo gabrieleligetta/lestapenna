@@ -1,6 +1,6 @@
 import * as nodemailer from 'nodemailer';
 import { SessionMetrics } from './monitor';
-import { uploadToOracle } from './backupService';
+import { uploadToOracle, getPresignedUrl } from './backupService';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -231,13 +231,34 @@ export async function sendSessionRecap(
         ? new Date(startTime).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
         : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-    // 2. Costruisci HTML
+    // 2. Genera Link Download Audio (Master)
+    let downloadLinkHtml = "";
+    try {
+        const masterFileName = `MASTER-${sessionId}.mp3`;
+        // URL valido per 7 giorni (604800 secondi)
+        const url = await getPresignedUrl(masterFileName, sessionId, 604800);
+        if (url) {
+            downloadLinkHtml = `
+            <div style="margin: 20px 0; padding: 15px; background-color: #e8f6f3; border: 1px solid #1abc9c; border-radius: 5px; text-align: center;">
+                <p style="margin: 0 0 10px 0; font-weight: bold; color: #16a085;">🎧 Registrazione Audio Completa</p>
+                <a href="${url}" style="background-color: #1abc9c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Scarica MP3 (Master Mix)</a>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #7f8c8d;">Link valido per 7 giorni</p>
+            </div>
+            `;
+        }
+    } catch (e) {
+        console.warn("[Reporter] Impossibile generare link audio per email:", e);
+    }
+
+    // 3. Costruisci HTML
     let htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
         <h1 style="color: #d35400;">📜 Report Sessione: ${campaignName}</h1>
         <p style="font-style: italic; margin-bottom: 5px;">ID Sessione: ${sessionId}</p>
         <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
         <hr style="border: 1px solid #d35400;">
+        
+        ${downloadLinkHtml}
     `;
 
     // --- SEZIONE RACCONTO ---

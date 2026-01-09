@@ -5,8 +5,9 @@ WORKDIR /app
 # Tool di base
 RUN apt-get update && apt-get install -y build-essential git python3 && rm -rf /var/lib/apt/lists/*
 
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+COPY package.json ./
+# Rimuoviamo yarn.lock per forzare la rigenerazione delle dipendenze ed evitare conflitti
+RUN yarn install
 
 COPY . .
 RUN yarn build
@@ -70,5 +71,7 @@ RUN chmod +x /app/whisper/main
 
 # Cartelle dati
 RUN mkdir -p recordings batch_processing data
+
+EXPOSE 3000
 
 CMD ["node", "dist/main.js"]

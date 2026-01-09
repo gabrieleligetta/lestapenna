@@ -7,10 +7,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - NODE_ENV=development
     depends_on:
       - redis
     # Override del comando di default (che ora è node dist/index.js) per usare dev mode
     command: yarn dev
+    ports:
+      - "3000:3000"
     volumes:
       # Mappatura corretta su /app
       - ./src:/app/src

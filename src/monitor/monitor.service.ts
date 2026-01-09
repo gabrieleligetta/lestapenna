@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import * as pidusage from 'pidusage';
+import pidusage from 'pidusage';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';

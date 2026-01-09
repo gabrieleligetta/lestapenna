@@ -6,7 +6,7 @@ import { SessionRepository } from '../session/session.repository';
 import { LoreService } from '../lore/lore.service';
 import { MonitorService } from '../monitor/monitor.service';
 import { Client, TextChannel, EmbedBuilder } from 'discord.js';
-import { NecordClient } from 'necord';
+import { Inject } from '@nestjs/common';
 
 @Processor('summary-processing')
 export class SummaryProcessor extends WorkerHost {
@@ -16,7 +16,7 @@ export class SummaryProcessor extends WorkerHost {
     private readonly sessionRepo: SessionRepository,
     private readonly loreService: LoreService,
     private readonly monitorService: MonitorService,
-    private readonly client: NecordClient
+    @Inject('DISCORD_CLIENT') private readonly client: Client
   ) {
     super();
   }

@@ -66,7 +66,7 @@ export class PodcastMixerService {
 
       validFiles.push({
         path: filePath,
-        delay: Math.max(0, rec.timestamp - sessionStart)
+        delay: Math.max(0, rec.timestamp! - sessionStart)
       });
     }
 

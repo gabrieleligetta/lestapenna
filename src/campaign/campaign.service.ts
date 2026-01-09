@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { CampaignRepository, Campaign } from './campaign.repository';
+import { CampaignRepository } from './campaign.repository';
+import { Campaign } from '../database/types';
 
 @Injectable()
 export class CampaignService {
@@ -13,7 +14,17 @@ export class CampaignService {
     const id = this.campaignRepo.create(guildId, name);
     // La nuova campagna viene creata con is_active=1 dal repository
 
-    return { id, guild_id: guildId, name, created_at: Date.now(), is_active: 1, current_year: 0 };
+    return { 
+        id, 
+        guild_id: guildId, 
+        name, 
+        created_at: Date.now(), 
+        is_active: 1, 
+        current_year: 0,
+        current_location: null,
+        current_macro_location: null,
+        current_micro_location: null
+    };
   }
 
   findAll(guildId: string): Campaign[] {

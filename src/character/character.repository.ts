@@ -1,14 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-
-export interface Character {
-  user_id: string;
-  campaign_id: number;
-  character_name: string;
-  class: string;
-  race: string;
-  description: string;
-}
+import { Character, CharacterHistory } from '../database/types';
 
 @Injectable()
 export class CharacterRepository {
@@ -30,7 +22,7 @@ export class CharacterRepository {
     }
   }
 
-  findByUser(userId: string, campaignId: number): Character | undefined {
+    findByUser(userId: string | null, campaignId: number | null): Character | undefined {
     return this.dbService.getDb().prepare(
       'SELECT * FROM characters WHERE user_id = ? AND campaign_id = ?'
     ).get(userId, campaignId) as Character | undefined;
@@ -47,11 +39,11 @@ export class CharacterRepository {
       return this.findAll(campaignId);
   }
 
-  getHistory(campaignId: number, charName: string): any[] {
+  getHistory(campaignId: number, charName: string): CharacterHistory[] {
       try {
           return this.dbService.getDb().prepare(
               'SELECT * FROM character_history WHERE campaign_id = ? AND character_name = ? ORDER BY timestamp ASC'
-          ).all(campaignId, charName);
+          ).all(campaignId, charName) as CharacterHistory[];
       } catch (e) {
           return [];
       }

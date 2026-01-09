@@ -350,8 +350,8 @@ export class AudioService implements OnModuleDestroy {
             filePath, 
             userId, 
             startTime, 
-            loc?.macro, 
-            loc?.micro, 
+            loc?.macro || undefined, 
+            loc?.micro || undefined,
             campaign?.current_year
         );
 

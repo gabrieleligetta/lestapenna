@@ -1,20 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-
-export interface Recording {
-  id: number;
-  session_id: string;
-  filename: string;
-  filepath: string;
-  user_id: string;
-  timestamp: number;
-  status: string;
-  macro_location?: string;
-  micro_location?: string;
-  campaign_year?: number;
-  transcription_text?: string;
-  error_message?: string;
-}
+import { Recording } from '../database/types';
 
 @Injectable()
 export class RecordingRepository {
@@ -22,7 +8,7 @@ export class RecordingRepository {
 
   create(sessionId: string, filename: string, filepath: string, userId: string, timestamp: number, macro?: string, micro?: string, year?: number): void {
     this.dbService.getDb().prepare(
-      'INSERT INTO recordings (session_id, filename, filepath, user_id, timestamp, macro_location, micro_location, campaign_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO recordings (session_id, filename, filepath, user_id, timestamp, macro_location, micro_location, year) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(sessionId, filename, filepath, userId, timestamp, macro, micro, year);
   }
 
@@ -48,7 +34,7 @@ export class RecordingRepository {
     }
 
     if (errorMessage !== undefined && errorMessage !== null) {
-        query += ', error_message = ?';
+        query += ', error_log = ?'; // FIX: error_message -> error_log
         params.push(errorMessage);
     }
 

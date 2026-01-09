@@ -1,24 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-
-export interface Session {
-  session_id: string;
-  guild_id: string;
-  campaign_id: number;
-  start_time: number;
-  end_time?: number;
-  title?: string;
-  summary?: string;
-  session_number?: number;
-}
-
-export interface SessionNote {
-  id: number;
-  session_id: string;
-  user_id: string;
-  note: string;
-  timestamp: number;
-}
+import { Session, SessionNote, LocationHistory } from '../database/types';
 
 @Injectable()
 export class SessionRepository {
@@ -82,7 +64,7 @@ export class SessionRepository {
 
   addNote(sessionId: string, userId: string, note: string): void {
     this.dbService.getDb().prepare(
-      'INSERT INTO session_notes (session_id, user_id, note, timestamp) VALUES (?, ?, ?, ?)'
+      'INSERT INTO session_notes (session_id, user_id, content, timestamp) VALUES (?, ?, ?, ?)'
     ).run(sessionId, userId, note, Date.now());
   }
 
@@ -104,19 +86,21 @@ export class SessionRepository {
   getLastLocation(guildId: string): { macro: string, micro: string } | undefined {
     // Nota: location_history ora usa campaign_id, non guild_id direttamente.
     // Dobbiamo fare una JOIN con campaigns
-    return this.dbService.getDb().prepare(`
+    const res = this.dbService.getDb().prepare(`
       SELECT lh.macro_location as macro, lh.micro_location as micro 
       FROM location_history lh
       JOIN campaigns c ON lh.campaign_id = c.id
       WHERE c.guild_id = ? AND c.is_active = 1
       ORDER BY lh.timestamp DESC LIMIT 1
     `).get(guildId) as { macro: string, micro: string } | undefined;
+    
+    return res;
   }
 
-  getLocationHistory(sessionId: string): any[] {
+  getLocationHistory(sessionId: string): LocationHistory[] {
     return this.dbService.getDb().prepare(
       'SELECT * FROM location_history WHERE session_id = ?'
-    ).all(sessionId) as any[];
+    ).all(sessionId) as LocationHistory[];
   }
 
   delete(sessionId: string): void {

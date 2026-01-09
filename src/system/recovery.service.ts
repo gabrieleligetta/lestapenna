@@ -104,10 +104,10 @@ export class RecoveryService implements OnModuleInit {
                 this.logger.log(`[Recovery] 🔄 Ripristino automatico sessione ${sessionId}...`);
                 
                 // Rimuoviamo vecchi job dalla coda per evitare duplicati
-                await this.queueService.removeSessionJobs(sessionId);
+                await this.queueService.removeSessionJobs(sessionId!);
                 
                 // Resettiamo lo stato nel DB e otteniamo la lista da riprocessare
-                const filesToProcess = this.recordingRepo.resetUnfinished(sessionId);
+                const filesToProcess = this.recordingRepo.resetUnfinished(sessionId!);
 
                 for (const job of filesToProcess) {
                     await this.queueService.addAudioJob({

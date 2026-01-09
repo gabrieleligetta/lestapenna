@@ -283,7 +283,7 @@ export class AiService {
   }
 
   // --- GENERATORI BIOGRAFIE ---
-  async generateCharacterBiography(campaignId: string, charName: string, charClass: string, charRace: string): Promise<string> {
+  async generateCharacterBiography(campaignId: string, charName: string, charClass: string | null, charRace: string | null): Promise<string> {
       try {
           const history = this.characterRepo.getHistory(Number(campaignId), charName);
           if (history.length === 0) return `Non c'è ancora abbastanza storia scritta su ${charName}.`;
@@ -314,7 +314,7 @@ export class AiService {
       }
   }
 
-  async generateNpcBiography(campaignId: string, npcName: string, role: string, staticDesc: string): Promise<string> {
+  async generateNpcBiography(campaignId: string, npcName: string, role: string | null, staticDesc: string | null): Promise<string> {
       try {
           const history = this.campaignRepo.getNpcHistory(Number(campaignId), npcName);
           const historyText = history.length > 0 
@@ -373,7 +373,7 @@ export class AiService {
         try {
             const segments = JSON.parse(t.transcription_text || '[]');
             for (const seg of segments) {
-                const absTime = t.timestamp + (seg.start * 1000);
+                const absTime = t.timestamp! + (seg.start * 1000);
                 lines.push({
                     timestamp: absTime,
                     text: `${charName}: ${seg.text}`,
@@ -400,7 +400,7 @@ export class AiService {
         const foundNpcs = npcNames.filter(name => chunk.toLowerCase().includes(name.toLowerCase()));
         const uniqueNpcs = Array.from(new Set(foundNpcs));
 
-        await this.ingestContent(session.campaign_id, sessionId, chunk, uniqueNpcs, timestamp, macro, micro);
+        await this.ingestContent(session.campaign_id, sessionId, chunk, uniqueNpcs, timestamp, macro!, micro!);
     }
     
     this.logger.log(`[AI] Ingestione completata: ${chunks.length} frammenti.`);
@@ -532,7 +532,7 @@ export class AiService {
   }
 
   // --- HELPERS ---
-  private async ingestContent(campaignId: number, sessionId: string, content: string, tags: string[], timestamp: number, macro?: string, micro?: string) {
+  private async ingestContent(campaignId: number | null, sessionId: string, content: string, tags: string[], timestamp: number, macro?: string, micro?: string) {
       const promises = [];
       promises.push(this.createEmbedding(content, 'openai').then(d => ({ p: 'openai', d })).catch(e => ({ p: 'openai', e })));
       promises.push(this.createEmbedding(content, 'ollama').then(d => ({ p: 'ollama', d })).catch(e => ({ p: 'ollama', e })));
@@ -573,7 +573,7 @@ export class AiService {
       return chunks;
   }
 
-  private getCharacterName(userId: string, sessionId: string): string {
+  private getCharacterName(userId: string | null, sessionId: string): string {
     const session = this.sessionRepo.findById(sessionId);
     if (!session) return "Sconosciuto";
     const char = this.characterRepo.findByUser(userId, session.campaign_id);

@@ -103,7 +103,7 @@ export class LoreCommands {
         { name: "Stato", value: npc.status || "Vivo", inline: true },
         { name: "Note", value: npc.description || "Nessuna nota." }
       )
-      .setFooter({ text: `Ultimo avvistamento: ${new Date(npc.last_updated).toLocaleDateString()}` });
+      .setFooter({ text: `Ultimo avvistamento: ${npc.last_updated ? new Date(npc.last_updated).toLocaleDateString() : 'Sconosciuto'}` });
 
     return interaction.reply({ embeds: [embed] });
   }
@@ -138,8 +138,8 @@ export class LoreCommands {
     };
 
     events.forEach(e => {
-      const icon = icons[e.event_type] || '🔹';
-      const yearLabel = e.year === 0 ? "**[Anno 0]**" : (e.year > 0 ? `**[${e.year} D.E.]**` : `**[${Math.abs(e.year)} P.E.]**`);
+      const icon = icons[e.event_type!] || '🔹';
+      const yearLabel = e.year === 0 ? "**[Anno 0]**" : (e.year! > 0 ? `**[${e.year} D.E.]**` : `**[${Math.abs(e.year!)} P.E.]**`);
       msg += `${yearLabel} ${icon} ${e.description}\n`;
     });
 

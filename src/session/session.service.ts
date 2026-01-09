@@ -8,6 +8,7 @@ import { CampaignRepository } from '../campaign/campaign.repository';
 import { CharacterRepository } from '../character/character.repository';
 import { v4 as uuidv4 } from 'uuid';
 import { VoiceBasedChannel, GuildMember } from 'discord.js';
+import { Campaign } from '../database/types';
 
 @Injectable()
 export class SessionService {
@@ -28,7 +29,7 @@ export class SessionService {
     return this.activeSessions.get(guildId);
   }
 
-  async ensureTestEnvironment(guildId: string, userId: string): Promise<any> {
+  async ensureTestEnvironment(guildId: string, userId: string): Promise<Campaign | null> {
     let campaign = this.campaignRepo.findActive(guildId);
 
     if (!campaign) {

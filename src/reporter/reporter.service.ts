@@ -153,7 +153,7 @@ export class ReporterService {
         if (fs.existsSync(logPath)) try { fs.unlinkSync(logPath); } catch {}
     }
 
-    async sendSessionRecap(sessionId: string, campaignId: number, summaryText: string, lootGained: string[] = [], lootLost: string[] = [], narrative?: string) {
+    async sendSessionRecap(sessionId: string, campaignId: number | null, summaryText: string, lootGained: string[] = [], lootLost: string[] = [], narrative?: string) {
         const campaign = this.campaignRepo.findById(campaignId);
         const campaignName = campaign ? campaign.name : "Sconosciuta";
 
@@ -217,7 +217,7 @@ export class ReporterService {
                     <h3 style="color: #2980b9;">🗺️ Cronologia Luoghi</h3>
                     <ul>
                         ${travels.map(t => {
-                            const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
+                            const time = new Date(t.timestamp!).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
                             return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
                         }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
                     </ul>
@@ -286,7 +286,7 @@ export class ReporterService {
                     if (Array.isArray(segments)) {
                         text = segments.map(s => {
                             if (typeof s.start !== 'number' || !s.text) return "";
-                            const absTime = t.timestamp + (s.start * 1000);
+                            const absTime = t.timestamp! + (s.start * 1000);
                             const mins = Math.floor((absTime - startTime) / 60000);
                             const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
                             return `[${mins}:${secs.toString().padStart(2, '0')}] ${s.text}`;
@@ -299,7 +299,7 @@ export class ReporterService {
                 }
                 // Recupera nome personaggio se possibile (qui semplificato, si potrebbe fare join con users/characters)
                 const charName = t.user_id || 'Sconosciuto'; 
-                return `--- ${charName} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}\n`;
+                return `--- ${charName} (File: ${new Date(t.timestamp!).toLocaleTimeString()}) ---\n${text}\n`;
             }).join('\n');
 
             const fileName = `transcript-${sessionId}.txt`;

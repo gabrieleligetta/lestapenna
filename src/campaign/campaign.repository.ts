@@ -1,23 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-
-export interface Campaign {
-  id: number;
-  guild_id: string;
-  name: string;
-  created_at: number;
-  is_active: number;
-  current_year: number;
-}
-
-export interface Npc {
-    id: number;
-    campaign_id: number;
-    name: string;
-    role: string;
-    description: string;
-    status: string;
-}
+import { Campaign, NpcDossier, NpcHistory, LocationHistory, LocationAtlas, Quest } from '../database/types';
 
 export interface LocationState {
     macro: string | null;
@@ -47,7 +30,7 @@ export class CampaignRepository {
     ).get(guildId) as Campaign | undefined;
   }
 
-  findById(id: number): Campaign | undefined {
+  findById(id: number | null): Campaign | undefined {
     return this.dbService.getDb().prepare(
       'SELECT * FROM campaigns WHERE id = ?'
     ).get(id) as Campaign | undefined;
@@ -68,19 +51,19 @@ export class CampaignRepository {
   }
 
   // --- NUOVI METODI PER AI ---
-  getAllNpcs(campaignId: number): Npc[] {
+  getAllNpcs(campaignId: number | null): NpcDossier[] {
       try {
-          return this.dbService.getDb().prepare('SELECT * FROM npc_dossier WHERE campaign_id = ?').all(campaignId) as Npc[];
+          return this.dbService.getDb().prepare('SELECT * FROM npc_dossier WHERE campaign_id = ?').all(campaignId) as NpcDossier[];
       } catch (e) {
           return [];
       }
   }
 
-  getNpcHistory(campaignId: number, npcName: string): any[] {
+  getNpcHistory(campaignId: number, npcName: string): NpcHistory[] {
       try {
           return this.dbService.getDb().prepare(
               'SELECT * FROM npc_history WHERE campaign_id = ? AND npc_name = ? ORDER BY timestamp ASC'
-          ).all(campaignId, npcName);
+          ).all(campaignId, npcName) as NpcHistory[];
       } catch (e) {
           return [];
       }
@@ -91,7 +74,7 @@ export class CampaignRepository {
           // Cerca l'ultima location history
           const loc = this.dbService.getDb().prepare(
               'SELECT macro_location, micro_location FROM location_history WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 1'
-          ).get(campaignId) as any;
+          ).get(campaignId) as LocationHistory;
           
           return { macro: loc?.macro_location || null, micro: loc?.micro_location || null };
       } catch (e) {
@@ -103,16 +86,16 @@ export class CampaignRepository {
       try {
           const entry = this.dbService.getDb().prepare(
               'SELECT description FROM location_atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?'
-          ).get(campaignId, macro, micro) as any;
+          ).get(campaignId, macro, micro) as LocationAtlas;
           return entry?.description || null;
       } catch (e) {
           return null;
       }
   }
 
-  getQuests(campaignId: number): any[] {
+  getQuests(campaignId: number): Quest[] {
       try {
-          return this.dbService.getDb().prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = "OPEN"').all(campaignId);
+          return this.dbService.getDb().prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = "OPEN"').all(campaignId) as Quest[];
       } catch (e) {
           return [];
       }

@@ -1,46 +1,34 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-
-export interface KnowledgeFragment {
-  id: number;
-  campaign_id: number;
-  session_id: string;
-  content: string;
-  embedding: Buffer;
-  tags?: string;
-  created_at: number;
-  macro_location?: string;
-  micro_location?: string;
-  timestamp?: number;
-  embedding_model?: string;
-  associated_npcs?: string;
-}
+import { KnowledgeFragment } from '../database/types';
 
 @Injectable()
 export class KnowledgeRepository {
   constructor(private readonly dbService: DatabaseService) {}
 
-  addFragment(
-      campaignId: number, 
-      sessionId: string, 
-      content: string, 
-      embedding: number[], 
-      timestamp: number = 0,
-      macro?: string,
-      micro?: string,
-      tags: string[] = [],
-      model: string = 'openai',
-      associatedNpcs: string[] = []
-  ): void {
-    const buffer = Buffer.from(new Float32Array(embedding).buffer);
-    const tagsStr = tags.length > 0 ? tags.join(',') : null;
+    addFragment(
+        campaignId: number | null,
+        sessionId: string,
+        content: string,
+        embedding: number[],
+        timestamp: number = 0,
+        macro?: string | undefined,
+        micro?: string | undefined,
+        tags: string[] = [],
+        model: string = 'openai',
+        associatedNpcs: string[] = []
+    ): void {
+    // FIX: embedding -> embedding_json (stored as JSON string)
+    const embeddingJson = JSON.stringify(embedding);
     const npcsStr = associatedNpcs.length > 0 ? associatedNpcs.join(',') : null;
     
+    // FIX: Removed 'tags' column which does not exist in schema
+    // FIX: Added 'start_timestamp'
     this.dbService.getDb().prepare(
       `INSERT INTO knowledge_fragments 
-      (campaign_id, session_id, content, embedding, tags, created_at, macro_location, micro_location, timestamp, embedding_model, associated_npcs) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(campaignId, sessionId, content, buffer, tagsStr, Date.now(), macro, micro, timestamp, model, npcsStr);
+      (campaign_id, session_id, content, embedding_json, created_at, macro_location, micro_location, start_timestamp, embedding_model, associated_npcs) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(campaignId, sessionId, content, embeddingJson, Date.now(), macro, micro, timestamp, model, npcsStr);
   }
 
   deleteBySession(sessionId: string, model?: string): void {
@@ -75,7 +63,16 @@ export class KnowledgeRepository {
 
     // Scoring & Boosting
     const scored = candidates.map((f, index) => {
-        const vector = new Float32Array(f.embedding.buffer);
+        // FIX: embedding_json -> number[]
+        let vector: number[];
+        try {
+            vector = JSON.parse(f.embedding_json || '[]');
+        } catch {
+            return { ...f, score: -1, originalIndex: index };
+        }
+
+        if (!Array.isArray(vector) || vector.length === 0) return { ...f, score: -1, originalIndex: index };
+
         let score = this.cosineSimilarity(queryEmbedding, vector);
 
         // Boost Contestuale
@@ -87,20 +84,13 @@ export class KnowledgeRepository {
 
     scored.sort((a, b) => b.score - a.score);
 
-    // Selezione Top K + Espansione Temporale
+    // Selezione Top K
     const topK = scored.slice(0, limit);
-    const finalIndices = new Set<number>();
-
-    topK.forEach(item => {
-        finalIndices.add(item.originalIndex);
-        // Espansione temporale semplificata (richiederebbe ordinamento globale per timestamp per essere accurata come legacy)
-        // Qui ci limitiamo a restituire i top match per ora.
-    });
 
     return topK.map(k => k.content);
   }
 
-  private cosineSimilarity(vecA: number[], vecB: Float32Array): number {
+  private cosineSimilarity(vecA: number[], vecB: number[]): number {
     let dotProduct = 0;
     let normA = 0;
     let normB = 0;

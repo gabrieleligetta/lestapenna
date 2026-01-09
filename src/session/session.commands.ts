@@ -266,7 +266,7 @@ export class SessionCommands {
         }
 
         // Calcolo Timestamp Relativo (HH:MM:SS)
-        const offsetMs = t.timestamp - sessionStart;
+        const offsetMs = t.timestamp! - sessionStart!;
         const totalSeconds = Math.floor(Math.max(0, offsetMs) / 1000);
         const h = Math.floor(totalSeconds / 3600);
         const m = Math.floor((totalSeconds % 3600) / 60);
@@ -332,7 +332,7 @@ export class SessionCommands {
 
           const list = currentSessions.map(s => {
               const title = s.title ? `📜 **${s.title}**` : "";
-              return `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()}\n${title}`;
+              return `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time!).toLocaleString()}\n${title}`;
           }).join('\n\n');
 
           return new EmbedBuilder()

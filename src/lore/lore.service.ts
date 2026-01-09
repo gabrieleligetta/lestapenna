@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { LoreRepository, Npc, WorldEvent, AtlasEntry, Quest, InventoryItem } from './lore.repository';
+import { LoreRepository } from './lore.repository';
+import { NpcDossier, WorldHistory, LocationAtlas, Quest, InventoryItem } from '../database/types';
 import { CampaignRepository } from '../campaign/campaign.repository';
 import { LoggerService } from '../logger/logger.service';
 
@@ -12,29 +13,29 @@ export class LoreService {
   ) {}
 
   // --- NPC ---
-  listNpcs(campaignId: number): Npc[] {
+  listNpcs(campaignId: number): NpcDossier[] {
     return this.loreRepo.findAllNpcs(campaignId);
   }
 
-  getNpcEntry(campaignId: number, name: string): Npc | undefined {
+  getNpcEntry(campaignId: number, name: string): NpcDossier | undefined {
     return this.loreRepo.findNpcByName(campaignId, name);
   }
 
-  updateNpcEntry(campaignId: number, name: string, description: string, role?: string, status?: string): void {
+    updateNpcEntry(campaignId: number | null, name: string, description: string, role?: undefined, status?: string | undefined): void {
     this.loreRepo.upsertNpc(campaignId, name, role || 'Sconosciuto', description, status || 'ALIVE');
     this.logger.log(`Aggiornato/Creato NPC ${name}`);
   }
 
-  getEncounteredNpcs(sessionId: string): Npc[] {
+  getEncounteredNpcs(sessionId: string): NpcDossier[] {
       return this.loreRepo.findEncounteredNpcs(sessionId);
   }
 
   // --- TIMELINE ---
-  getWorldTimeline(campaignId: number): WorldEvent[] {
+  getWorldTimeline(campaignId: number): WorldHistory[] {
     return this.loreRepo.getTimeline(campaignId);
   }
 
-  addWorldEvent(campaignId: number, sessionId: string | null, description: string, type: string, year: number): void {
+    addWorldEvent(campaignId: number | null, sessionId: string | null, description: string, type: string, year: number): void {
     this.loreRepo.addEvent(campaignId, sessionId, description, type, year);
     this.logger.log(`Aggiunto evento storico anno ${year}: ${description}`);
   }
@@ -50,7 +51,7 @@ export class LoreService {
       this.logger.log(`Aggiornato Atlante: ${macro} - ${micro}`);
   }
 
-  getAtlasEntry(campaignId: number, macro: string, micro: string): AtlasEntry | undefined {
+  getAtlasEntry(campaignId: number, macro: string, micro: string): LocationAtlas | undefined {
       return this.loreRepo.getAtlasEntry(campaignId, macro, micro);
   }
 

@@ -1,57 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-
-export interface Npc {
-  id: number;
-  campaign_id: number;
-  name: string;
-  role: string;
-  description: string;
-  status: string;
-  last_updated: number;
-}
-
-export interface WorldEvent {
-  id: number;
-  campaign_id: number;
-  session_id?: string;
-  description: string;
-  event_type: string;
-  year: number;
-}
-
-export interface AtlasEntry {
-    id: number;
-    campaign_id: number;
-    macro_location: string;
-    micro_location: string;
-    description: string;
-    last_updated: number;
-}
-
-export interface Quest {
-    id: number;
-    campaign_id: number;
-    title: string;
-    status: string; // OPEN, COMPLETED, FAILED
-    created_at: number;
-    updated_at: number;
-}
-
-export interface InventoryItem {
-    id: number;
-    campaign_id: number;
-    item_name: string;
-    quantity: number;
-    added_at: number;
-}
+import { NpcDossier, WorldHistory, LocationAtlas, Quest, InventoryItem } from '../database/types';
 
 @Injectable()
 export class LoreRepository {
   constructor(private readonly dbService: DatabaseService) {}
 
   // --- NPC ---
-  upsertNpc(campaignId: number, name: string, role: string, description: string, status: string): void {
+    upsertNpc(campaignId: number | null, name: string, role: string, description: string, status: string): void {
     const exists = this.dbService.getDb().prepare(
       'SELECT id FROM npc_dossier WHERE campaign_id = ? AND name = ?'
     ).get(campaignId, name) as { id: number } | undefined;
@@ -67,38 +23,38 @@ export class LoreRepository {
     }
   }
 
-  findNpcByName(campaignId: number, name: string): Npc | undefined {
+  findNpcByName(campaignId: number, name: string): NpcDossier | undefined {
     return this.dbService.getDb().prepare(
       'SELECT * FROM npc_dossier WHERE campaign_id = ? AND name LIKE ?'
-    ).get(campaignId, name) as Npc | undefined;
+    ).get(campaignId, name) as NpcDossier | undefined;
   }
 
-  findAllNpcs(campaignId: number): Npc[] {
+  findAllNpcs(campaignId: number): NpcDossier[] {
     return this.dbService.getDb().prepare(
       'SELECT * FROM npc_dossier WHERE campaign_id = ? ORDER BY last_updated DESC'
-    ).all(campaignId) as Npc[];
+    ).all(campaignId) as NpcDossier[];
   }
 
-  findEncounteredNpcs(sessionId: string): Npc[] {
+  findEncounteredNpcs(sessionId: string): NpcDossier[] {
     return this.dbService.getDb().prepare(`
         SELECT DISTINCT n.name, n.role, n.description, n.status 
         FROM npc_dossier n 
         JOIN recordings r ON r.present_npcs LIKE '%' || n.name || '%' 
         WHERE r.session_id = ?
-    `).all(sessionId) as Npc[];
+    `).all(sessionId) as NpcDossier[];
   }
 
   // --- World Events ---
-  addEvent(campaignId: number, sessionId: string | null, description: string, type: string, year: number): void {
+    addEvent(campaignId: number | null, sessionId: string | null, description: string, type: string, year: number): void {
     this.dbService.getDb().prepare(
       'INSERT INTO world_history (campaign_id, session_id, description, event_type, year) VALUES (?, ?, ?, ?, ?)'
     ).run(campaignId, sessionId, description, type, year);
   }
 
-  getTimeline(campaignId: number): WorldEvent[] {
+  getTimeline(campaignId: number): WorldHistory[] {
     return this.dbService.getDb().prepare(
       'SELECT * FROM world_history WHERE campaign_id = ? ORDER BY year ASC'
-    ).all(campaignId) as WorldEvent[];
+    ).all(campaignId) as WorldHistory[];
   }
 
   // --- Atlas ---
@@ -118,16 +74,16 @@ export class LoreRepository {
       }
   }
 
-  getAtlasEntry(campaignId: number, macro: string, micro: string): AtlasEntry | undefined {
+  getAtlasEntry(campaignId: number, macro: string, micro: string): LocationAtlas | undefined {
       return this.dbService.getDb().prepare(
           'SELECT * FROM location_atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?'
-      ).get(campaignId, macro, micro) as AtlasEntry | undefined;
+      ).get(campaignId, macro, micro) as LocationAtlas | undefined;
   }
 
   // --- Quests ---
   addQuest(campaignId: number, title: string): void {
       this.dbService.getDb().prepare(
-          'INSERT INTO quests (campaign_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+          'INSERT INTO quests (campaign_id, title, status, created_at, last_updated) VALUES (?, ?, ?, ?, ?)'
       ).run(campaignId, title, 'OPEN', Date.now(), Date.now());
   }
 
@@ -139,7 +95,7 @@ export class LoreRepository {
 
   updateQuestStatus(campaignId: number, titleSearch: string, status: string): boolean {
       const result = this.dbService.getDb().prepare(
-          'UPDATE quests SET status = ?, updated_at = ? WHERE campaign_id = ? AND title LIKE ?'
+          'UPDATE quests SET status = ?, last_updated = ? WHERE campaign_id = ? AND title LIKE ?'
       ).run(status, Date.now(), campaignId, `%${titleSearch}%`);
       return result.changes > 0;
   }
@@ -156,7 +112,7 @@ export class LoreRepository {
           ).run(quantity, exists.id);
       } else {
           this.dbService.getDb().prepare(
-              'INSERT INTO inventory (campaign_id, item_name, quantity, added_at) VALUES (?, ?, ?, ?)'
+              'INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at) VALUES (?, ?, ?, ?)'
           ).run(campaignId, item, quantity, Date.now());
       }
   }

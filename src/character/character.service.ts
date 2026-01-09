@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { CharacterRepository, Character } from './character.repository';
+import { CharacterRepository } from './character.repository';
+import { Character } from '../database/types';
 import { LoggerService } from '../logger/logger.service';
 
 @Injectable()

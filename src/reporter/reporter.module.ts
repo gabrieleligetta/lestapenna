@@ -6,7 +6,11 @@ import { LoggerModule } from '../logger/logger.module';
 
 @Global()
 @Module({
-  imports: [DatabaseModule, BackupModule, LoggerModule],
+  imports: [
+    DatabaseModule, 
+    BackupModule, 
+    LoggerModule
+  ],
   providers: [ReporterService],
   exports: [ReporterService],
 })

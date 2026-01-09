@@ -4,8 +4,10 @@ import { AudioService } from '../audio/audio.service';
 import { LoggerService } from '../logger/logger.service';
 import { QueueService } from '../queue/queue.service';
 import { MonitorService } from '../monitor/monitor.service';
+import { CampaignRepository } from '../campaign/campaign.repository';
+import { CharacterRepository } from '../character/character.repository';
 import { v4 as uuidv4 } from 'uuid';
-import { VoiceBasedChannel } from 'discord.js';
+import { VoiceBasedChannel, GuildMember } from 'discord.js';
 
 @Injectable()
 export class SessionService {
@@ -17,17 +19,85 @@ export class SessionService {
     private readonly audioService: AudioService,
     private readonly logger: LoggerService,
     private readonly queueService: QueueService,
-    private readonly monitorService: MonitorService
+    private readonly monitorService: MonitorService,
+    private readonly campaignRepo: CampaignRepository,
+    private readonly characterRepo: CharacterRepository
   ) {}
 
   getActiveSession(guildId: string): string | undefined {
     return this.activeSessions.get(guildId);
   }
 
+  async ensureTestEnvironment(guildId: string, userId: string): Promise<any> {
+    let campaign = this.campaignRepo.findActive(guildId);
+
+    if (!campaign) {
+        const campaigns = this.campaignRepo.findAll(guildId);
+        const testCampaignName = "Campagna di Test";
+        let testCampaign = campaigns.find(c => c.name === testCampaignName);
+
+        if (!testCampaign) {
+            const newId = uuidv4();
+            this.campaignRepo.create(newId, guildId, testCampaignName);
+            testCampaign = this.campaignRepo.findById(newId);
+        }
+
+        if (testCampaign) {
+            this.campaignRepo.setActive(guildId, testCampaign.id);
+            campaign = this.campaignRepo.findActive(guildId);
+        }
+    }
+
+    if (!campaign) return null;
+
+    // Check Year
+    if (campaign.current_year === undefined || campaign.current_year === null) {
+        this.campaignRepo.setYear(campaign.id, 1000);
+        campaign.current_year = 1000;
+    }
+
+    // Check Location
+    const loc = this.sessionRepo.getLastLocation(guildId);
+    if (!loc || (!loc.macro && !loc.micro)) {
+        this.sessionRepo.addLocationHistory(guildId, null, "Laboratorio", "Stanza dei Test");
+    }
+
+    // Check Character
+    const char = this.characterRepo.findByUser(userId, campaign.id);
+    if (!char || !char.character_name) {
+        this.characterRepo.upsert(userId, campaign.id, 'character_name', 'Test Subject');
+        this.characterRepo.upsert(userId, campaign.id, 'class', 'Tester');
+        this.characterRepo.upsert(userId, campaign.id, 'race', 'Construct');
+    }
+
+    return campaign;
+  }
+
+  async validateParticipants(campaignId: string, members: GuildMember[]): Promise<{ missing: string[], bots: string[] }> {
+    const missing: string[] = [];
+    const bots: string[] = [];
+
+    for (const m of members) {
+        if (m.user.bot) {
+            bots.push(m.displayName);
+            continue;
+        }
+        const char = this.characterRepo.findByUser(m.id, campaignId);
+        if (!char || !char.character_name) {
+            missing.push(m.displayName);
+        }
+    }
+    return { missing, bots };
+  }
+
   async startSession(guildId: string, voiceChannel: VoiceBasedChannel, textChannelId: string, campaignId: string, location?: { macro?: string, micro?: string }): Promise<string> {
     if (this.activeSessions.has(guildId)) {
       throw new Error('Una sessione è già attiva in questo server.');
     }
+
+    // PAUSA CODA
+    await this.queueService.getAudioQueue().pause();
+    this.logger.log(`[Flow] Coda in PAUSA. Inizio accumulo file.`);
 
     const sessionId = uuidv4();
     const now = Date.now();
@@ -62,6 +132,10 @@ export class SessionService {
     this.sessionRepo.updateEndTime(sessionId, Date.now());
 
     const channelId = this.sessionChannels.get(sessionId);
+
+    // RIPRESA CODA
+    await this.queueService.getAudioQueue().resume();
+    this.logger.log(`[Flow] Coda RIPRESA.`);
 
     if (channelId) {
         await this.queueService.addSummaryJob(

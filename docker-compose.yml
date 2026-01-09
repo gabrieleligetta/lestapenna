@@ -14,7 +14,7 @@ services:
     # Override del comando di default (che ora è node dist/index.js) per usare dev mode
     command: yarn dev
     ports:
-      - "3000:3000"
+      - "3999:3999"
     volumes:
       # Mappatura corretta su /app
       - ./src:/app/src

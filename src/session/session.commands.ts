@@ -5,17 +5,23 @@ import { CampaignService } from '../campaign/campaign.service';
 import { SessionRepository } from './session.repository';
 import { RecordingRepository } from '../audio/recording.repository';
 import { QueueService } from '../queue/queue.service';
-import { StringOption, NumberOption } from 'necord';
-import { GuildMember } from 'discord.js';
+import { StringOption, NumberOption, BooleanOption } from 'necord';
+import { GuildMember, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PodcastMixerService } from '../audio/podcast-mixer.service';
 import { BackupService } from '../backup/backup.service';
 import { CharacterRepository } from '../character/character.repository';
+import { LoreRepository } from '../lore/lore.repository';
+import { AiService } from '../ai/ai.service';
+import { LoggerService } from '../logger/logger.service';
 
 class StartSessionDto {
-  @StringOption({ name: 'location', description: 'Luogo della sessione', required: false })
+  @StringOption({ name: 'location', description: 'Luogo della sessione (Macro | Micro)', required: false })
   location?: string;
+
+  @BooleanOption({ name: 'test', description: 'Modalità test (crea ambiente automatico)', required: false })
+  test?: boolean;
 }
 
 class NoteDto {
@@ -40,6 +46,25 @@ class SetSessionNumberDto {
   number: number;
 }
 
+class AtlasDto {
+    @StringOption({ name: 'description', description: 'Nuova descrizione per il luogo corrente', required: false })
+    description?: string;
+}
+
+class SummarizeDto {
+    @StringOption({ name: 'session_id', description: 'ID della sessione', required: false })
+    sessionId?: string;
+    @StringOption({ name: 'tone', description: 'Tono del riassunto (DM, EPICO, MISTERO)', required: false })
+    tone?: string;
+}
+
+class EditTitleDto {
+    @StringOption({ name: 'session_id', description: 'ID della sessione', required: true })
+    sessionId: string;
+    @StringOption({ name: 'title', description: 'Nuovo titolo', required: true })
+    title: string;
+}
+
 @Injectable()
 export class SessionCommands {
   constructor(
@@ -50,30 +75,85 @@ export class SessionCommands {
     private readonly characterRepo: CharacterRepository,
     private readonly queueService: QueueService,
     private readonly podcastMixer: PodcastMixerService,
-    private readonly backupService: BackupService
+    private readonly backupService: BackupService,
+    private readonly loreRepo: LoreRepository,
+    private readonly aiService: AiService,
+    private readonly logger: LoggerService
   ) {}
 
   @SlashCommand({ name: 'session-start', description: 'Inizia una nuova sessione di gioco' })
-  public async onStart(@Context() [interaction]: SlashCommandContext, @Options() { location }: StartSessionDto) {
+  public async onStart(@Context() [interaction]: SlashCommandContext, @Options() { location, test }: StartSessionDto) {
     const member = interaction.member as GuildMember;
-    if (!member.voice.channel) return interaction.reply({ content: "❌ Devi essere in un canale vocale!", ephemeral: true });
+    if (!member.voice.channel) return interaction.reply({ content: "❌ Devi essere in un canale vocale per evocare il Bardo!", ephemeral: true });
 
-    const activeCampaign = this.campaignService.getActive(interaction.guildId!);
-    if (!activeCampaign) return interaction.reply({ content: "⚠️ Nessuna campagna attiva.", ephemeral: true });
+    let activeCampaign = this.campaignService.getActive(interaction.guildId!);
 
-    if (activeCampaign.current_year === undefined || activeCampaign.current_year === null) {
-        return interaction.reply({ content: "🛑 Configura l'anno corrente con `/set-date` prima di iniziare.", ephemeral: true });
+    if (test) {
+        const setupCamp = await this.sessionService.ensureTestEnvironment(interaction.guildId!, interaction.user.id);
+        if (setupCamp) {
+            activeCampaign = setupCamp;
+            if (interaction.channel) {
+                await (interaction.channel as any).send(`🧪 **Modalità Test Attiva**: Campagna e Personaggio configurati.`);
+            }
+        } else {
+            return interaction.reply({ content: "❌ Errore critico nel setup dell'ambiente di test.", ephemeral: true });
+        }
     }
 
+    if (!activeCampaign) return interaction.reply({ content: "⚠️ **Nessuna campagna attiva!** Chiedi a un admin di attivarne una.", ephemeral: true });
+
+    if (activeCampaign.current_year === undefined || activeCampaign.current_year === null) {
+        return interaction.reply({ 
+            content: `🛑 **Configurazione Temporale Mancante!**\n` +
+                     `Prima di iniziare, imposta l'anno corrente con \`/set-date <Anno>\`.`, 
+            ephemeral: true 
+        });
+    }
+
+    // Gestione Luogo
     let locObj = undefined;
     if (location) {
       const parts = location.split('|').map(s => s.trim());
       locObj = { macro: parts[0], micro: parts[1] || parts[0] };
+      if (interaction.channel) {
+          await (interaction.channel as any).send(`📍 Posizione tracciata: **${locObj.macro}** | **${locObj.micro}**.`);
+      }
+    } else {
+      const currentLoc = this.sessionService.getLocation(interaction.guildId!);
+      if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
+          if (interaction.channel) {
+              await (interaction.channel as any).send(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`/session-start location: Macro | Micro\`)`);
+          }
+      } else {
+          if (interaction.channel) {
+              await (interaction.channel as any).send(`⚠️ **Luogo Sconosciuto.**\nConsiglio: usa \`/session-start location: <Città> | <Luogo>\` per aiutare il Bardo.`);
+          }
+      }
+    }
+
+    // Validazione Partecipanti
+    const voiceChannel = member.voice.channel;
+    const members = Array.from(voiceChannel.members.values());
+    const validation = await this.sessionService.validateParticipants(activeCampaign.id, members);
+
+    if (validation.missing.length > 0) {
+        return interaction.reply({
+            content: `🛑 **ALT!** Non posso iniziare la cronaca per **${activeCampaign.name}**.\n` +
+                     `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
+                     validation.missing.map(n => `- **${n}** (Usa: \`/iam <NomePersonaggio>\`)`).join('\n'),
+            ephemeral: false
+        });
+    }
+
+    if (validation.bots.length > 0) {
+        if (interaction.channel) {
+            await (interaction.channel as any).send(`🤖 Noto la presenza di costrutti magici (${validation.bots.join(', ')}). Le loro voci saranno ignorate.`);
+        }
     }
 
     try {
       const sessionId = await this.sessionService.startSession(interaction.guildId!, member.voice.channel, interaction.channelId, activeCampaign.id, locObj);
-      return interaction.reply(`🔊 **Sessione Iniziata**\nCampagna: **${activeCampaign.name}**\nID: \`${sessionId}\`\nIl Bardo sta ascoltando...`);
+      return interaction.reply(`🔊 **Cronaca Iniziata** per la campagna **${activeCampaign.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${members.length - validation.bots.length} eroi.`);
     } catch (e: any) {
       return interaction.reply({ content: `❌ Errore: ${e.message}`, ephemeral: true });
     }
@@ -236,7 +316,144 @@ export class SessionCommands {
       
       if (sessions.length === 0) return interaction.reply("Nessuna sessione trovata.");
       
-      const list = sessions.map(s => `🆔 \`${s.session_id}\` - 📅 ${new Date(s.start_time).toLocaleDateString()} - 📜 ${s.title || 'Senza titolo'}`).join('\n');
-      return interaction.reply(`**Ultime Sessioni (${active.name})**\n${list}`);
+      const ITEMS_PER_PAGE = 5;
+      const totalPages = Math.ceil(sessions.length / ITEMS_PER_PAGE);
+      let currentPage = 0;
+
+      const generateEmbed = (page: number) => {
+          const start = page * ITEMS_PER_PAGE;
+          const end = start + ITEMS_PER_PAGE;
+          const currentSessions = sessions.slice(start, end);
+
+          const list = currentSessions.map(s => {
+              const title = s.title ? `📜 **${s.title}**` : "";
+              return `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()}\n${title}`;
+          }).join('\n\n');
+
+          return new EmbedBuilder()
+              .setTitle(`📜 Cronache: ${active.name}`)
+              .setColor("#7289DA")
+              .setDescription(list)
+              .setFooter({ text: `Pagina ${page + 1} di ${totalPages}` });
+      };
+
+      const generateButtons = (page: number) => {
+          const row = new ActionRowBuilder<ButtonBuilder>();
+          row.addComponents(
+              new ButtonBuilder().setCustomId('prev_page').setLabel('⬅️ Precedente').setStyle(ButtonStyle.Primary).setDisabled(page === 0),
+              new ButtonBuilder().setCustomId('next_page').setLabel('Successivo ➡️').setStyle(ButtonStyle.Primary).setDisabled(page === totalPages - 1)
+          );
+          return row;
+      };
+
+      const reply = await interaction.reply({
+          embeds: [generateEmbed(currentPage)],
+          components: totalPages > 1 ? [generateButtons(currentPage)] : [],
+          fetchReply: true
+      });
+
+      if (totalPages > 1) {
+          const collector = reply.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000 });
+          collector.on('collect', async (i) => {
+              if (i.user.id !== interaction.user.id) {
+                  await i.reply({ content: "Solo chi ha invocato il comando può sfogliare.", ephemeral: true });
+                  return;
+              }
+              if (i.customId === 'prev_page') currentPage--;
+              else if (i.customId === 'next_page') currentPage++;
+              await i.update({ embeds: [generateEmbed(currentPage)], components: [generateButtons(currentPage)] });
+          });
+      }
+  }
+
+  @SlashCommand({ name: 'session-travels', description: 'Mostra il diario di viaggio' })
+  public async onTravels(@Context() [interaction]: SlashCommandContext) {
+      const active = this.campaignService.getActive(interaction.guildId!);
+      if (!active) return interaction.reply("Nessuna campagna attiva.");
+
+      const sessionId = this.sessionService.getActiveSession(interaction.guildId!);
+      if (!sessionId) return interaction.reply("Nessuna sessione attiva per mostrare i viaggi correnti.");
+
+      const history = this.sessionRepo.getLocationHistory(sessionId);
+      if (history.length === 0) return interaction.reply("Il diario di viaggio è vuoto.");
+
+      let msg = "**📜 Diario di Viaggio (Ultimi spostamenti):**\n";
+      history.forEach((h: any) => {
+          const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+          msg += `\`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+      });
+
+      return interaction.reply(msg);
+  }
+
+  @SlashCommand({ name: 'atlas', description: 'Consulta o aggiorna l\'Atlante' })
+  public async onAtlas(@Context() [interaction]: SlashCommandContext, @Options() { description }: AtlasDto) {
+      const active = this.campaignService.getActive(interaction.guildId!);
+      if (!active) return interaction.reply("Nessuna campagna attiva.");
+
+      const loc = this.sessionService.getLocation(interaction.guildId!);
+      if (!loc || !loc.macro || !loc.micro) {
+          return interaction.reply("⚠️ Non so dove siete. Imposta prima il luogo con `/location`.");
+      }
+
+      if (description) {
+          this.loreRepo.upsertAtlasEntry(active.id, loc.macro, loc.micro, description);
+          this.logger.log(`Aggiornato Atlante: ${loc.macro} - ${loc.micro}`);
+          await this.aiService.ingestLocationDescription(active.id, loc.macro, loc.micro, description);
+          return interaction.reply(`📖 **Atlante Aggiornato** per *${loc.micro}*:\n"${description}"`);
+      } else {
+          const entry = this.loreRepo.getAtlasEntry(active.id, loc.macro, loc.micro);
+          if (entry) {
+              return interaction.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n_${entry.description}_`);
+          } else {
+              return interaction.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*`);
+          }
+      }
+  }
+
+  @SlashCommand({ name: 'session-summarize', description: 'Genera manualmente un riassunto' })
+  public async onSummarize(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, tone }: SummarizeDto) {
+      const targetSessionId = sessionId || this.sessionService.getActiveSession(interaction.guildId!);
+      if (!targetSessionId) return interaction.reply("Specifica un ID sessione o avvia una sessione.");
+
+      await interaction.reply(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
+
+      try {
+          await this.aiService.ingestSessionRaw(targetSessionId);
+          const result = await this.aiService.generateSummary(targetSessionId, tone || 'DM');
+          
+          this.sessionRepo.updateTitleAndSummary(targetSessionId, result.title, result.summary);
+          
+          const embed = new EmbedBuilder()
+              .setTitle(`📜 ${result.title}`)
+              .setDescription(result.summary)
+              .setColor('#FFD700')
+              .addFields(
+                  { name: '📖 Narrativa', value: result.narrative?.substring(0, 1024) || '-' },
+                  { name: '💰 Loot', value: result.loot?.join(', ') || 'Nessuno', inline: true },
+                  { name: '⚔️ Quest', value: result.quests?.join('\n') || 'Nessuna', inline: true }
+              );
+
+          return interaction.followUp({ embeds: [embed] });
+      } catch (e: any) {
+          return interaction.followUp(`⚠️ Errore generazione riassunto: ${e.message}`);
+      }
+  }
+
+  @SlashCommand({ name: 'session-edit-title', description: 'Modifica il titolo di una sessione' })
+  public async onEditTitle(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, title }: EditTitleDto) {
+      this.sessionRepo.updateSessionTitle(sessionId, title);
+      return interaction.reply(`✅ Titolo aggiornato per la sessione \`${sessionId}\`: **${title}**`);
+  }
+
+  @SlashCommand({ name: 'session-ingest', description: 'Forza l\'ingestione della memoria' })
+  public async onIngest(@Context() [interaction]: SlashCommandContext, @Options() { sessionId }: SessionIdDto) {
+      await interaction.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${sessionId}\`...`);
+      try {
+          await this.aiService.ingestSessionRaw(sessionId);
+          return interaction.followUp(`✅ Memoria aggiornata per sessione \`${sessionId}\`.`);
+      } catch (e: any) {
+          return interaction.followUp(`❌ Errore ingestione: ${e.message}`);
+      }
   }
 }

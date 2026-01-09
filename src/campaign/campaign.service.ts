@@ -34,4 +34,8 @@ export class CampaignService {
     this.campaignRepo.setActive(guildId, campaignId);
     return true;
   }
+
+  delete(campaignId: string): void {
+    this.campaignRepo.delete(campaignId);
+  }
 }

@@ -36,19 +36,28 @@ export const CONCURRENCY_LIMIT = useOllama ? 1 : 5;
 // URL Base
 export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1';
 
-// Client Principale (Chat)
-export const openai = new OpenAI({
-    baseURL: useOllama ? OLLAMA_BASE_URL : undefined,
-    project: useOllama ? undefined : process.env.OPENAI_PROJECT_ID,
-    apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
+// --- CLIENTS ---
+
+// 1. Client OpenAI Reale (sempre OpenAI)
+export const openAiClient = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    project: process.env.OPENAI_PROJECT_ID,
     timeout: 600 * 1000,
 });
 
-// --- CLIENT DEDICATO PER CORREZIONE LOCALE (IBRIDO) ---
-export const localClient = new OpenAI({
+// 2. Client Ollama Reale (sempre Ollama)
+export const ollamaClient = new OpenAI({
     baseURL: OLLAMA_BASE_URL,
-    apiKey: 'ollama', // Ollama non richiede vera API key
+    apiKey: 'ollama',
+    timeout: 600 * 1000,
 });
+
+// 3. Client Principale (Alias dinamico per il resto dell'app)
+export const openai = useOllama ? ollamaClient : openAiClient;
+
+// 4. Client Locale (Alias per retrocompatibilità, punta a Ollama)
+export const localClient = ollamaClient;
+
 export const LOCAL_CORRECTION_MODEL = process.env.OLLAMA_MODEL || "llama3.2";
 
 // --- CLIENT DEDICATI PER EMBEDDING ---

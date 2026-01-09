@@ -14,7 +14,8 @@ import {
 } from '../db';
 import {
     openai,
-    localClient,
+    openAiClient,
+    ollamaClient,
     MODEL_NAME,
     FAST_MODEL_NAME,
     LOCAL_CORRECTION_MODEL,
@@ -122,7 +123,8 @@ export async function correctTranscription(segments: any[], campaignId?: number)
     const useOllamaForCorrection = TRANSCRIPTION_PROVIDER === 'ollama';
     
     // Scegliamo il client (Cloud o Locale)
-    const activeClient = useOllamaForCorrection ? localClient : openai;
+    // FIX: Usiamo i client espliciti per evitare conflitti se AI_PROVIDER != TRANSCRIPTION_PROVIDER
+    const activeClient = useOllamaForCorrection ? ollamaClient : openAiClient;
     
     // Scegliamo il modello (Locale o Nano Cloud)
     const activeModel = useOllamaForCorrection ? LOCAL_CORRECTION_MODEL : OPEN_AI_MODEL_NANO;
@@ -308,6 +310,15 @@ ${JSON.stringify(batchInput)}`;
         if (res.present_npcs && Array.isArray(res.present_npcs)) {
             res.present_npcs.forEach((n: string) => allPresentNpcs.add(n));
         }
+    }
+
+    // LOG FINALE DI RIEPILOGO
+    console.log(`[Bardo] ✅ Correzione completata: ${allSegments.length} segmenti processati.`);
+    if (lastDetectedLocation) {
+        console.log(`[Bardo] 📍 Nuova posizione rilevata: ${lastDetectedLocation.macro || '?'} - ${lastDetectedLocation.micro || '?'}`);
+    }
+    if (allNpcUpdates.length > 0) {
+        console.log(`[Bardo] 👥 Aggiornamenti NPC rilevati: ${allNpcUpdates.length}`);
     }
 
     return {

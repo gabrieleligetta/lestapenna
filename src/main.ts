@@ -7,7 +7,7 @@ async function bootstrap() {
   // Abilita lo shutdown hooks per gestire correttamente SIGINT/SIGTERM
   app.enableShutdownHooks();
   
-  await app.listen(3000);
-  console.log(`Application is running`);
+  await app.listen(3999);
+  console.log(`Application is running on port 3999`);
 }
 bootstrap();

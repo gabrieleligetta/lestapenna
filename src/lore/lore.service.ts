@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { LoreRepository, Npc, WorldEvent } from './lore.repository';
+import { LoreRepository, Npc, WorldEvent, AtlasEntry, Quest, InventoryItem } from './lore.repository';
 import { CampaignRepository } from '../campaign/campaign.repository';
 import { LoggerService } from '../logger/logger.service';
 
@@ -21,10 +21,12 @@ export class LoreService {
   }
 
   updateNpcEntry(campaignId: string, name: string, description: string, role?: string, status?: string): void {
-    // Logica di upsert delegata al repository o gestita qui se complessa
-    // Il repo ha upsertNpc che prende tutto.
     this.loreRepo.upsertNpc(campaignId, name, role || 'Sconosciuto', description, status || 'ALIVE');
     this.logger.log(`Aggiornato/Creato NPC ${name}`);
+  }
+
+  getEncounteredNpcs(sessionId: string): Npc[] {
+      return this.loreRepo.findEncounteredNpcs(sessionId);
   }
 
   // --- TIMELINE ---
@@ -40,5 +42,47 @@ export class LoreService {
   setCampaignYear(campaignId: string, year: number): void {
     this.campaignRepo.setYear(campaignId, year);
     this.logger.log(`Anno corrente campagna ${campaignId} impostato a ${year}`);
+  }
+
+  // --- ATLAS ---
+  updateAtlasEntry(campaignId: string, macro: string, micro: string, description: string): void {
+      this.loreRepo.upsertAtlasEntry(campaignId, macro, micro, description);
+      this.logger.log(`Aggiornato Atlante: ${macro} - ${micro}`);
+  }
+
+  getAtlasEntry(campaignId: string, macro: string, micro: string): AtlasEntry | undefined {
+      return this.loreRepo.getAtlasEntry(campaignId, macro, micro);
+  }
+
+  // --- QUESTS ---
+  addQuest(campaignId: string, title: string): void {
+      this.loreRepo.addQuest(campaignId, title);
+      this.logger.log(`Quest aggiunta: ${title}`);
+  }
+
+  getOpenQuests(campaignId: string): Quest[] {
+      return this.loreRepo.getOpenQuests(campaignId);
+  }
+
+  completeQuest(campaignId: string, titleSearch: string): boolean {
+      const success = this.loreRepo.updateQuestStatus(campaignId, titleSearch, 'COMPLETED');
+      if (success) this.logger.log(`Quest completata: ${titleSearch}`);
+      return success;
+  }
+
+  // --- INVENTORY ---
+  addLoot(campaignId: string, item: string): void {
+      this.loreRepo.addLoot(campaignId, item);
+      this.logger.log(`Loot aggiunto: ${item}`);
+  }
+
+  removeLoot(campaignId: string, itemSearch: string): boolean {
+      const success = this.loreRepo.removeLoot(campaignId, itemSearch);
+      if (success) this.logger.log(`Loot rimosso: ${itemSearch}`);
+      return success;
+  }
+
+  getInventory(campaignId: string): InventoryItem[] {
+      return this.loreRepo.getInventory(campaignId);
   }
 }

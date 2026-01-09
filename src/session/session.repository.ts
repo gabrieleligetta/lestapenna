@@ -66,6 +66,12 @@ export class SessionRepository {
     ).run(title, summary, sessionId);
   }
 
+  updateSessionTitle(sessionId: string, title: string): void {
+    this.dbService.getDb().prepare(
+      'UPDATE sessions SET title = ? WHERE session_id = ?'
+    ).run(title, sessionId);
+  }
+
   addNote(sessionId: string, userId: string, note: string): void {
     this.dbService.getDb().prepare(
       'INSERT INTO session_notes (session_id, user_id, note, timestamp) VALUES (?, ?, ?, ?)'

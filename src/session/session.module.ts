@@ -8,6 +8,7 @@ import { QueueModule } from '../queue/queue.module';
 import { CampaignModule } from '../campaign/campaign.module';
 import { MonitorModule } from '../monitor/monitor.module';
 import { BackupModule } from '../backup/backup.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
@@ -17,7 +18,8 @@ import { BackupModule } from '../backup/backup.module';
     QueueModule,
     CampaignModule,
     MonitorModule,
-    BackupModule
+    BackupModule,
+    AiModule
   ],
   providers: [SessionService, SessionCommands],
   exports: [SessionService],

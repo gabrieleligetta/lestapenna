@@ -4,6 +4,7 @@ import { SessionRepository } from '../session/session.repository';
 import { CampaignRepository } from '../campaign/campaign.repository';
 import { RecordingRepository } from '../audio/recording.repository';
 import { CharacterRepository } from '../character/character.repository';
+import { LoreRepository } from '../lore/lore.repository';
 
 @Global()
 @Module({
@@ -12,13 +13,15 @@ import { CharacterRepository } from '../character/character.repository';
     SessionRepository,
     CampaignRepository,
     RecordingRepository,
-    CharacterRepository
+    CharacterRepository,
+    LoreRepository
   ],
   exports: [
     SessionRepository,
     CampaignRepository,
     RecordingRepository,
-    CharacterRepository
+    CharacterRepository,
+    LoreRepository
   ],
 })
 export class RepositoryModule {}

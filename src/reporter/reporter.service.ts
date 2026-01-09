@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { SessionMetrics } from '../monitor/monitor.service';
-import { DatabaseService } from '../database/database.service';
 import { BackupService } from '../backup/backup.service';
 import { LoggerService } from '../logger/logger.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import OpenAI from 'openai';
+import { CampaignRepository } from '../campaign/campaign.repository';
+import { SessionRepository } from '../session/session.repository';
+import { LoreRepository } from '../lore/lore.repository';
+import { RecordingRepository } from '../audio/recording.repository';
 
 @Injectable()
 export class ReporterService {
@@ -16,9 +19,12 @@ export class ReporterService {
 
     constructor(
         private readonly configService: ConfigService,
-        private readonly dbService: DatabaseService,
         private readonly backupService: BackupService,
-        private readonly logger: LoggerService
+        private readonly logger: LoggerService,
+        private readonly campaignRepo: CampaignRepository,
+        private readonly sessionRepo: SessionRepository,
+        private readonly loreRepo: LoreRepository,
+        private readonly recordingRepo: RecordingRepository
     ) {
         this.transporter = nodemailer.createTransport({
             host: this.configService.get<string>('SMTP_HOST') || "smtp.porkbun.com",
@@ -124,21 +130,16 @@ export class ReporterService {
     }
 
     async sendSessionRecap(sessionId: string, campaignId: string, summaryText: string, lootGained: string[] = [], lootLost: string[] = [], narrative?: string) {
-        const campaign = this.dbService.getDb().prepare('SELECT name FROM campaigns WHERE id = ?').get(campaignId) as { name: string };
+        const campaign = this.campaignRepo.findById(campaignId);
         const campaignName = campaign ? campaign.name : "Sconosciuta";
 
-        // Recupera dati DB
-        const travels = this.dbService.getDb().prepare('SELECT * FROM location_history WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId) as any[];
-        const npcs = this.dbService.getDb().prepare(`
-            SELECT DISTINCT n.name, n.role, n.description, n.status 
-            FROM npcs n 
-            JOIN recordings r ON r.present_npcs LIKE '%' || n.name || '%' 
-            WHERE r.session_id = ?
-        `).all(sessionId) as any[];
-
-        const sessionStart = this.dbService.getDb().prepare('SELECT MIN(timestamp) as start FROM recordings WHERE session_id = ?').get(sessionId) as { start: number };
-        const sessionDate = sessionStart && sessionStart.start 
-            ? new Date(sessionStart.start).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+        // Recupera dati DB tramite Repository
+        const travels = this.sessionRepo.getLocationHistory(sessionId);
+        const npcs = this.loreRepo.findEncounteredNpcs(sessionId);
+        const session = this.sessionRepo.findById(sessionId);
+        
+        const sessionDate = session && session.start_time 
+            ? new Date(session.start_time).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
             : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
         // Genera Link
@@ -247,19 +248,17 @@ export class ReporterService {
 
     private async generateAndUploadTranscript(sessionId: string): Promise<string | null> {
         try {
-            const transcripts = this.dbService.getDb().prepare(
-                'SELECT * FROM recordings WHERE session_id = ? AND transcription_text IS NOT NULL ORDER BY timestamp ASC'
-            ).all(sessionId) as any[];
+            const transcripts = this.recordingRepo.getTranscripts(sessionId);
 
             if (!transcripts || transcripts.length === 0) return null;
 
-            const sessionStart = this.dbService.getDb().prepare('SELECT MIN(timestamp) as start FROM recordings WHERE session_id = ?').get(sessionId) as { start: number };
-            const startTime = sessionStart?.start || 0;
+            const session = this.sessionRepo.findById(sessionId);
+            const startTime = session?.start_time || 0;
 
             const formattedText = transcripts.map(t => {
                 let text = "";
                 try {
-                    const segments = JSON.parse(t.transcription_text);
+                    const segments = JSON.parse(t.transcription_text || "[]");
                     if (Array.isArray(segments)) {
                         text = segments.map(s => {
                             if (typeof s.start !== 'number' || !s.text) return "";
@@ -269,10 +268,10 @@ export class ReporterService {
                             return `[${mins}:${secs.toString().padStart(2, '0')}] ${s.text}`;
                         }).filter(line => line !== "").join('\n');
                     } else {
-                        text = t.transcription_text;
+                        text = t.transcription_text || "";
                     }
                 } catch (e) {
-                    text = t.transcription_text;
+                    text = t.transcription_text || "";
                 }
                 // Recupera nome personaggio se possibile (qui semplificato, si potrebbe fare join con users/characters)
                 const charName = t.user_id || 'Sconosciuto'; 

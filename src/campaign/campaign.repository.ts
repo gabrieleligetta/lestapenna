@@ -10,6 +10,20 @@ export interface Campaign {
   current_year: number;
 }
 
+export interface Npc {
+    id: number;
+    campaign_id: string;
+    name: string;
+    role: string;
+    description: string;
+    status: string;
+}
+
+export interface LocationState {
+    macro: string | null;
+    micro: string | null;
+}
+
 @Injectable()
 export class CampaignRepository {
   constructor(private readonly dbService: DatabaseService) {}
@@ -50,5 +64,100 @@ export class CampaignRepository {
     this.dbService.getDb().prepare(
       'UPDATE campaigns SET current_year = ? WHERE id = ?'
     ).run(year, campaignId);
+  }
+
+  // --- NUOVI METODI PER AI ---
+  getAllNpcs(campaignId: string): Npc[] {
+      try {
+          return this.dbService.getDb().prepare('SELECT * FROM npcs WHERE campaign_id = ?').all(campaignId) as Npc[];
+      } catch (e) {
+          return [];
+      }
+  }
+
+  getNpcHistory(campaignId: string, npcName: string): any[] {
+      try {
+          return this.dbService.getDb().prepare(
+              'SELECT * FROM npc_events WHERE campaign_id = ? AND npc_name = ? ORDER BY timestamp ASC'
+          ).all(campaignId, npcName);
+      } catch (e) {
+          return [];
+      }
+  }
+
+  getCurrentLocation(campaignId: string): LocationState {
+      try {
+          // Cerca l'ultima location history
+          const loc = this.dbService.getDb().prepare(
+              'SELECT macro_location, micro_location FROM location_history WHERE guild_id = (SELECT guild_id FROM campaigns WHERE id = ?) ORDER BY timestamp DESC LIMIT 1'
+          ).get(campaignId) as any;
+          
+          return { macro: loc?.macro_location || null, micro: loc?.micro_location || null };
+      } catch (e) {
+          return { macro: null, micro: null };
+      }
+  }
+
+  getAtlasEntry(campaignId: string, macro: string, micro: string): string | null {
+      try {
+          const entry = this.dbService.getDb().prepare(
+              'SELECT description FROM atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?'
+          ).get(campaignId, macro, micro) as any;
+          return entry?.description || null;
+      } catch (e) {
+          return null;
+      }
+  }
+
+  getQuests(campaignId: string): any[] {
+      try {
+          return this.dbService.getDb().prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = "OPEN"').all(campaignId);
+      } catch (e) {
+          return [];
+      }
+  }
+  // ---------------------------
+
+  delete(id: string): void {
+    const db = this.dbService.getDb();
+    
+    db.transaction(() => {
+        // 1. Trova sessioni
+        try {
+            const sessions = db.prepare('SELECT session_id FROM sessions WHERE campaign_id = ?').all(id) as { session_id: string }[];
+
+            const deleteRec = db.prepare('DELETE FROM recordings WHERE session_id = ?');
+            const deleteSess = db.prepare('DELETE FROM sessions WHERE session_id = ?');
+            const deleteNotes = db.prepare('DELETE FROM session_notes WHERE session_id = ?');
+
+            for (const s of sessions) {
+                try { deleteRec.run(s.session_id); } catch(e) {}
+                try { deleteNotes.run(s.session_id); } catch(e) {}
+                try { deleteSess.run(s.session_id); } catch(e) {}
+            }
+        } catch (e) {}
+
+        // --- PULIZIA MANUALE TABELLE ORFANE ---
+        const tables = [
+            'location_history', 
+            'atlas', 
+            'npcs', 
+            'quests', 
+            'inventory', 
+            'character_events', 
+            'npc_events', 
+            'world_events',
+            'knowledge_fragments'
+        ];
+
+        for (const table of tables) {
+            try {
+                db.prepare(`DELETE FROM ${table} WHERE campaign_id = ?`).run(id);
+            } catch (e) {}
+        }
+
+        // 3. Elimina campagna
+        db.prepare('DELETE FROM campaigns WHERE id = ?').run(id);
+    })();
   }
 }

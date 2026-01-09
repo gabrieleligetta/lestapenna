@@ -36,10 +36,25 @@ export class CharacterRepository {
     ).get(userId, campaignId) as Character | undefined;
   }
 
-  findByCampaign(campaignId: string): Character[] {
+  findAll(campaignId: string): Character[] {
     return this.dbService.getDb().prepare(
       'SELECT * FROM characters WHERE campaign_id = ?'
     ).all(campaignId) as Character[];
+  }
+
+  // Alias per compatibilità
+  findByCampaign(campaignId: string): Character[] {
+      return this.findAll(campaignId);
+  }
+
+  getHistory(campaignId: string, charName: string): any[] {
+      try {
+          return this.dbService.getDb().prepare(
+              'SELECT * FROM character_events WHERE campaign_id = ? AND character_name = ? ORDER BY timestamp ASC'
+          ).all(campaignId, charName);
+      } catch (e) {
+          return [];
+      }
   }
 
   delete(userId: string, campaignId: string): void {

@@ -5,6 +5,7 @@ import { AiService } from '../ai/ai.service';
 import { SessionRepository } from '../session/session.repository';
 import { LoreService } from '../lore/lore.service';
 import { MonitorService } from '../monitor/monitor.service';
+import { ReporterService } from '../reporter/reporter.service';
 import { Client, TextChannel, EmbedBuilder } from 'discord.js';
 import { Inject } from '@nestjs/common';
 
@@ -16,6 +17,7 @@ export class SummaryProcessor extends WorkerHost {
     private readonly sessionRepo: SessionRepository,
     private readonly loreService: LoreService,
     private readonly monitorService: MonitorService,
+    private readonly reporterService: ReporterService,
     @Inject('DISCORD_CLIENT') private readonly client: Client
   ) {
     super();
@@ -70,7 +72,19 @@ export class SummaryProcessor extends WorkerHost {
           await channel.send({ embeds: [embed] });
       }
 
-      // 5. Ingestione RAG
+      // 5. Invia Email Recap
+      if (session) {
+          this.reporterService.sendSessionRecap(
+              sessionId,
+              session.campaign_id,
+              result.summary,
+              result.loot || [],
+              result.loot_removed || [],
+              result.narrative
+          ).catch(e => this.logger.error(`[Worker] ❌ Errore invio email recap:`, e));
+      }
+
+      // 6. Ingestione RAG
       await this.aiService.ingestSessionRaw(sessionId);
 
       this.logger.log(`[Worker] ✅ Riassunto completato per ${sessionId}`);

@@ -103,6 +103,11 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         embedding BLOB,
         tags TEXT,
         created_at INTEGER,
+        macro_location TEXT,
+        micro_location TEXT,
+        timestamp INTEGER,
+        embedding_model TEXT,
+        associated_npcs TEXT,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
       );
 
@@ -210,7 +215,23 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         console.log('📦 Migrazione: Aggiunta colonna transcription_text a recordings.');
       }
     } catch (e) {
-      console.error('Errore migrazione:', e);
+      console.error('Errore migrazione recordings:', e);
+    }
+
+    // Migrazione per knowledge_fragments
+    try {
+      const kTableInfo = this.db.pragma('table_info(knowledge_fragments)') as any[];
+      const hasMacro = kTableInfo.some(col => col.name === 'macro_location');
+      if (!hasMacro) {
+        this.db.exec('ALTER TABLE knowledge_fragments ADD COLUMN macro_location TEXT');
+        this.db.exec('ALTER TABLE knowledge_fragments ADD COLUMN micro_location TEXT');
+        this.db.exec('ALTER TABLE knowledge_fragments ADD COLUMN timestamp INTEGER');
+        this.db.exec('ALTER TABLE knowledge_fragments ADD COLUMN embedding_model TEXT');
+        this.db.exec('ALTER TABLE knowledge_fragments ADD COLUMN associated_npcs TEXT');
+        console.log('📦 Migrazione: Aggiornata tabella knowledge_fragments.');
+      }
+    } catch (e) {
+      console.error('Errore migrazione knowledge_fragments:', e);
     }
   }
 }

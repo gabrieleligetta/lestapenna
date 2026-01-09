@@ -1,11 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { LoggerService } from '../logger/logger.service';
-
-const WHISPER_BIN = process.env.WHISPER_BIN || '/app/whisper/main';
-const WHISPER_MODEL = process.env.WHISPER_MODEL || '/app/whisper/model.bin';
 
 const WHISPER_HALLUCINATIONS = [
     "Sottotitoli creati dalla comunità", "Sottotitoli a cura di", "Sottotitoli e revisione",
@@ -33,7 +31,16 @@ export interface TranscriptionResult {
 
 @Injectable()
 export class TranscriptionService {
-    constructor(private readonly logger: LoggerService) {}
+    private whisperBin: string;
+    private whisperModel: string;
+
+    constructor(
+        private readonly configService: ConfigService,
+        private readonly logger: LoggerService
+    ) {
+        this.whisperBin = this.configService.get<string>('WHISPER_BIN') || '/app/whisper/main';
+        this.whisperModel = this.configService.get<string>('WHISPER_MODEL') || '/app/whisper/model.bin';
+    }
 
     async transcribe(filePath: string): Promise<TranscriptionResult> {
         const tempWavPath = filePath + '.temp.wav';
@@ -77,7 +84,7 @@ export class TranscriptionService {
             if (!fs.existsSync(audioPath)) return reject(new Error(`File audio non trovato: ${audioPath}`));
 
             const args = [
-                '-n', '10', WHISPER_BIN, '-m', WHISPER_MODEL, '-f', audioPath, '-l', 'it', '-t', '3', '-oj'
+                '-n', '10', this.whisperBin, '-m', this.whisperModel, '-f', audioPath, '-l', 'it', '-t', '3', '-oj'
             ];
 
             const proc = spawn('nice', args);

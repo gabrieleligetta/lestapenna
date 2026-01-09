@@ -3,49 +3,42 @@ import { Context, SlashCommand, Options, SlashCommandContext } from 'necord';
 import { CharacterService } from './character.service';
 import { CampaignService } from '../campaign/campaign.service';
 import { StringOption } from 'necord';
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, TextChannel } from 'discord.js';
+import { AiService } from '../ai/ai.service';
+import { LoreService } from '../lore/lore.service';
 
 class SetNameDto {
-  @StringOption({
-    name: 'name',
-    description: 'Il nome del tuo personaggio',
-    required: true,
-  })
+  @StringOption({ name: 'name', description: 'Il nome del tuo personaggio', required: true })
   name: string;
 }
 
 class SetClassDto {
-  @StringOption({
-    name: 'class_name',
-    description: 'La classe del tuo personaggio (es. Barbaro, Mago)',
-    required: true,
-  })
+  @StringOption({ name: 'class_name', description: 'La classe del tuo personaggio (es. Barbaro, Mago)', required: true })
   className: string;
 }
 
 class SetRaceDto {
-  @StringOption({
-    name: 'race_name',
-    description: 'La razza del tuo personaggio (es. Elfo, Nano)',
-    required: true,
-  })
+  @StringOption({ name: 'race_name', description: 'La razza del tuo personaggio (es. Elfo, Nano)', required: true })
   raceName: string;
 }
 
 class SetDescDto {
-  @StringOption({
-    name: 'description',
-    description: 'Breve descrizione del personaggio',
-    required: true,
-  })
+  @StringOption({ name: 'description', description: 'Breve descrizione del personaggio', required: true })
   description: string;
+}
+
+class StoryDto {
+    @StringOption({ name: 'name', description: 'Nome del personaggio o NPC', required: true })
+    name: string;
 }
 
 @Injectable()
 export class CharacterCommands {
   constructor(
     private readonly characterService: CharacterService,
-    private readonly campaignService: CampaignService
+    private readonly campaignService: CampaignService,
+    private readonly aiService: AiService,
+    private readonly loreService: LoreService
   ) {}
 
   private async getActiveCampaignOrReply(interaction: any) {
@@ -73,7 +66,7 @@ export class CharacterCommands {
     return interaction.reply(`⚔️ Nome aggiornato: **${name}** (Campagna: ${active.name})`);
   }
 
-  @SlashCommand({ name: 'myclass', description: 'Imposta la classe del tuo personaggio' })
+  @SlashCommand({ name: 'miaclasse', description: 'Imposta la classe del tuo personaggio' })
   public async onMyClass(@Context() [interaction]: SlashCommandContext, @Options() { className }: SetClassDto) {
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
@@ -82,7 +75,7 @@ export class CharacterCommands {
     return interaction.reply(`🛡️ Classe aggiornata: **${className}**`);
   }
 
-  @SlashCommand({ name: 'myrace', description: 'Imposta la razza del tuo personaggio' })
+  @SlashCommand({ name: 'miarazza', description: 'Imposta la razza del tuo personaggio' })
   public async onMyRace(@Context() [interaction]: SlashCommandContext, @Options() { raceName }: SetRaceDto) {
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
@@ -91,7 +84,7 @@ export class CharacterCommands {
     return interaction.reply(`🧬 Razza aggiornata: **${raceName}**`);
   }
 
-  @SlashCommand({ name: 'mydesc', description: 'Imposta la descrizione del tuo personaggio' })
+  @SlashCommand({ name: 'miadesc', description: 'Imposta la descrizione del tuo personaggio' })
   public async onMyDesc(@Context() [interaction]: SlashCommandContext, @Options() { description }: SetDescDto) {
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
@@ -100,7 +93,7 @@ export class CharacterCommands {
     return interaction.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
   }
 
-  @SlashCommand({ name: 'whoami', description: 'Mostra il tuo profilo personaggio corrente' })
+  @SlashCommand({ name: 'chisono', description: 'Mostra il tuo profilo personaggio corrente' })
   public async onWhoAmI(@Context() [interaction]: SlashCommandContext) {
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
@@ -157,5 +150,36 @@ export class CharacterCommands {
 
     this.characterService.deleteUserCharacter(interaction.user.id, active.id);
     return interaction.reply("🗑️ Scheda personaggio resettata. Ora sei un'anima errante.");
+  }
+
+  @SlashCommand({ name: 'storia', description: 'Genera la biografia evolutiva di un PG o NPC' })
+  public async onStory(@Context() [interaction]: SlashCommandContext, @Options() { name }: StoryDto) {
+      const active = await this.getActiveCampaignOrReply(interaction);
+      if (!active) return;
+
+      await interaction.deferReply();
+
+      // 1. Cerca tra i PG
+      const characters = this.characterService.getCampaignCharacters(active.id);
+      const targetPG = characters.find(c => c.character_name.toLowerCase() === name.toLowerCase());
+
+      if (targetPG) {
+          await interaction.editReply(`📖 **Saga dell'Eroe: ${targetPG.character_name}**\nIl Bardo sta scrivendo...`);
+          // TODO: Implementare generateCharacterBiography in AiService
+          // const bio = await this.aiService.generateCharacterBiography(active.id, targetPG.character_name, targetPG.class, targetPG.race);
+          const bio = "Funzionalità AI in arrivo..."; 
+          return interaction.followUp(bio);
+      }
+
+      // 2. Cerca tra gli NPC
+      const targetNPC = this.loreService.getNpcEntry(active.id, name);
+      if (targetNPC) {
+          await interaction.editReply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
+          // TODO: Implementare generateNpcBiography in AiService
+          const bio = "Funzionalità AI in arrivo...";
+          return interaction.followUp(bio);
+      }
+
+      return interaction.editReply(`❌ Non ho trovato nessun PG o NPC chiamato "**${name}**" negli archivi.`);
   }
 }

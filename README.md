@@ -61,47 +61,64 @@ Lestapenna è un bot Discord avanzato progettato per registrare, trascrivere e n
 Tutti i comandi sono ora Slash Commands. Digita `/` su Discord per vedere l'elenco completo e i parametri.
 
 ### ℹ️ Sistema
-*   `/help`: Mostra una guida rapida ai comandi.
-*   `/status`: Mostra lo stato delle code di elaborazione (Audio, Summary, Correction).
-*   `/tones`: Mostra l'elenco dei toni narrativi disponibili.
-*   `/config-set-channel`: Imposta i canali per i comandi o i riassunti (Admin).
+*   `/help` / `/aiuto`: Mostra una guida rapida ai comandi.
+*   `/status` / `/stato`: Mostra lo stato delle code di elaborazione (Audio, Summary, Correction).
+*   `/tones` / `/toni`: Mostra l'elenco dei toni narrativi disponibili.
+*   `/setcmd`: Imposta il canale per i comandi (Admin).
+*   `/setsummary`: Imposta il canale per i riassunti (Admin).
 
 ### 🗺️ Gestione Campagne
-*   `/campaign-create <name>`: Crea una nuova campagna.
-*   `/campaign-select <name_or_id>`: Attiva una campagna specifica.
-*   `/campaign-list`: Mostra l'elenco delle campagne disponibili.
+*   `/createcampaign` / `/creacampagna <name>`: Crea una nuova campagna.
+*   `/selectcampaign` / `/selezionacampagna <name_or_id>`: Attiva una campagna specifica.
+*   `/listcampaigns` / `/listacampagne`: Mostra l'elenco delle campagne disponibili.
+*   `/deletecampaign` / `/eliminacampagna <name_or_id>`: Elimina una campagna.
 
 ### 🎙️ Gestione Sessione
-*   `/session-start [location]`: Il bot entra nel canale vocale e inizia a registrare.
-*   `/session-stop`: Termina la registrazione, avvia la trascrizione e genera il riassunto.
-*   `/session-pause`: Sospende temporaneamente la registrazione.
-*   `/session-resume`: Riprende la registrazione.
-*   `/note <text>`: Inserisce una nota testuale manuale nel diario della sessione.
-*   `/location <place>`: Aggiorna il luogo corrente (es. "Castello | Sala del Trono").
-*   `/session-download <session_id>`: Scarica l'audio completo della sessione.
-*   `/session-transcript <session_id>`: Scarica la trascrizione testuale.
-*   `/session-list`: Mostra le ultime sessioni della campagna.
-*   `/session-set-number`: Corregge il numero di una sessione.
-*   `/session-reset`: Forza la rielaborazione di una sessione.
+*   `/listen` / `/ascolta [location]`: Il bot entra nel canale vocale e inizia a registrare.
+*   `/stoplistening` / `/termina`: Termina la registrazione, avvia la trascrizione e genera il riassunto.
+*   `/pause` / `/pausa`: Sospende temporaneamente la registrazione.
+*   `/resume` / `/riprendi`: Riprende la registrazione.
+*   `/note` / `/nota <text>`: Inserisce una nota testuale manuale nel diario della sessione.
+*   `/location` / `/luogo <place>`: Aggiorna il luogo corrente (es. "Castello | Sala del Trono").
+*   `/download` / `/scarica <session_id>`: Scarica l'audio completo della sessione.
+*   `/downloadtxt` / `/scaricatrascrizioni <session_id>`: Scarica la trascrizione testuale.
+*   `/listsessions` / `/listasessioni`: Mostra le ultime sessioni della campagna.
+*   `/setsession` / `/impostasessione`: Corregge il numero di una sessione.
+*   `/reset`: Forza la rielaborazione di una sessione.
+*   `/narrate` / `/racconta`: Genera manualmente un riassunto.
+*   `/edittitle` / `/modificatitolo`: Modifica il titolo di una sessione.
+*   `/ingest` / `/memorizza`: Forza l'ingestione della memoria.
+*   `/travels` / `/viaggi`: Mostra il diario di viaggio.
+*   `/atlas` / `/atlante`: Consulta o aggiorna l'Atlante.
 
 ### 👥 NPC e Lore
-*   `/npc [name]`: Cerca un NPC o mostra la lista degli ultimi incontrati.
-*   `/timeline-view`: Mostra la cronologia degli eventi mondiali.
+*   `/npc` / `/dossier [name]`: Cerca un NPC o mostra la lista degli ultimi incontrati.
+*   `/timeline` / `/cronologia`: Mostra la cronologia degli eventi mondiali.
 *   `/timeline-add <year> <description> [type]`: Aggiunge un evento storico.
-*   `/set-date <year>`: Imposta l'anno corrente della campagna.
+*   `/date` / `/data <year>`: Imposta l'anno corrente della campagna.
+*   `/year0` / `/anno0 <description>`: Imposta l'evento fondante.
+*   `/ask` / `/chiedialbardo <question>`: Chiedi al Bardo qualcosa sulla storia.
+*   `/wiki` / `/lore <term>`: Cerca frammenti di lore esatti.
+*   `/quest` / `/obiettivi`: Visualizza le quest attive.
+*   `/quest-add`: Aggiunge una nuova quest.
+*   `/quest-done`: Completa una quest.
+*   `/inventory` / `/inventario`: Visualizza l'inventario di gruppo.
+*   `/loot-add`: Aggiunge un oggetto all'inventario.
+*   `/loot-use`: Rimuove o usa un oggetto.
 
 ### 👤 Scheda Personaggio
-*   `/iam <name>`: Imposta il nome del tuo personaggio.
-*   `/myclass <class_name>`: Imposta la tua classe.
-*   `/myrace <race_name>`: Imposta la tua razza.
-*   `/mydesc <description>`: Aggiunge una descrizione.
-*   `/whoami`: Visualizza la tua scheda attuale.
-*   `/party`: Visualizza l'elenco di tutti i personaggi.
-*   `/resetpg`: Cancella la tua scheda personaggio.
+*   `/iam` / `/sono <name>`: Imposta il nome del tuo personaggio.
+*   `/myclass` / `/miaclasse <class_name>`: Imposta la tua classe.
+*   `/myrace` / `/miarazza <race_name>`: Imposta la tua razza.
+*   `/mydesc` / `/miadesc <description>`: Aggiunge una descrizione.
+*   `/whoami` / `/chisono`: Visualizza la tua scheda attuale.
+*   `/party` / `/compagni`: Visualizza l'elenco di tutti i personaggi.
+*   `/resetpg` / `/clearchara`: Cancella la tua scheda personaggio.
+*   `/story` / `/storia <name>`: Genera la biografia evolutiva di un PG o NPC.
 
 ### 🧪 Debug
-*   `/test-stream <url>`: Simula una sessione scaricando un file audio da un URL.
-*   `/clean-test`: Rimuove tutte le sessioni di test.
+*   `/wipe`: Reset totale del sistema (PERICOLO).
+*   `/testmail`: Invia una mail di test.
 
 ## 🐳 Docker
 

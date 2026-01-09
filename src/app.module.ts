@@ -30,6 +30,7 @@ import { ReporterModule } from './reporter/reporter.module';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         token: configService.get<string>('DISCORD_BOT_TOKEN')!,
+        development: configService.get<string>('DISCORD_DEV_GUILD_ID') ? [configService.get<string>('DISCORD_DEV_GUILD_ID')!] : undefined,
         intents: [
           IntentsBitField.Flags.Guilds,
           IntentsBitField.Flags.GuildMessages,

@@ -29,20 +29,33 @@ export class SystemCommands {
     private readonly dbService: DatabaseService
   ) {}
 
-  @SlashCommand({ name: 'aiuto', description: 'Mostra i comandi disponibili' })
+  // --- HELP / AIUTO ---
+  @SlashCommand({ name: 'help', description: 'Mostra i comandi disponibili' })
   public async onHelp(@Context() [interaction]: SlashCommandContext) {
     return interaction.reply({
-        content: `📚 **Guida ai Comandi**\nConsulta il README o usa i comandi Slash autocompletati.\n\n**Categorie:**\n- \`/session-*\`: Gestione sessioni\n- \`/campaign-*\`: Gestione campagne\n- \`/iam\`, \`/myclass\`: Gestione PG\n- \`/npc\`, \`/timeline-*\`: Lore`,
+        content: `📚 **Guida ai Comandi**\nConsulta il README o usa i comandi Slash autocompletati.\n\n**Categorie:**\n- \`/listen\`, \`/ascolta\`: Gestione sessioni\n- \`/creacampagna\`, \`/createcampaign\`: Gestione campagne\n- \`/iam\`, \`/sono\`: Gestione PG\n- \`/npc\`, \`/dossier\`: Lore`,
         ephemeral: true
     });
   }
 
-  @SlashCommand({ name: 'toni', description: 'Mostra i toni narrativi disponibili' })
+  @SlashCommand({ name: 'aiuto', description: 'Mostra i comandi disponibili (Alias)' })
+  public async onAiuto(@Context() [interaction]: SlashCommandContext) {
+    return this.onHelp([interaction]);
+  }
+
+  // --- TONES / TONI ---
+  @SlashCommand({ name: 'tones', description: 'Mostra i toni narrativi disponibili' })
   public async onTones(@Context() [interaction]: SlashCommandContext) {
     return interaction.reply("🎭 **Toni Narrativi**:\n- DM (Tecnico)\n- EPIC (Epico)\n- DARK (Oscuro)\n- COMIC (Divertente)\n- MYSTERY (Misterioso)");
   }
 
-  @SlashCommand({ name: 'stato', description: 'Mostra lo stato del sistema' })
+  @SlashCommand({ name: 'toni', description: 'Mostra i toni narrativi disponibili (Alias)' })
+  public async onToni(@Context() [interaction]: SlashCommandContext) {
+      return this.onTones([interaction]);
+  }
+
+  // --- STATUS / STATO ---
+  @SlashCommand({ name: 'status', description: 'Mostra lo stato del sistema' })
   public async onStatus(@Context() [interaction]: SlashCommandContext) {
     const counts = await this.queueService.getJobCounts();
     return interaction.reply(
@@ -53,18 +66,26 @@ export class SystemCommands {
     );
   }
 
+  @SlashCommand({ name: 'stato', description: 'Mostra lo stato del sistema (Alias)' })
+  public async onStato(@Context() [interaction]: SlashCommandContext) {
+      return this.onStatus([interaction]);
+  }
+
+  // --- SETCMD ---
   @SlashCommand({ name: 'setcmd', description: 'Imposta il canale per i comandi', defaultMemberPermissions: PermissionFlagsBits.Administrator })
   public async onSetCmd(@Context() [interaction]: SlashCommandContext) {
       this.configRepo.setConfig(interaction.guildId!, 'cmd_channel_id', interaction.channelId);
       return interaction.reply(`✅ Canale **Comandi** impostato su <#${interaction.channelId}>.`);
   }
 
+  // --- SETSUMMARY ---
   @SlashCommand({ name: 'setsummary', description: 'Imposta il canale per i riassunti', defaultMemberPermissions: PermissionFlagsBits.Administrator })
   public async onSetSummary(@Context() [interaction]: SlashCommandContext) {
       this.configRepo.setConfig(interaction.guildId!, 'summary_channel_id', interaction.channelId);
       return interaction.reply(`✅ Canale **Riassunti** impostato su <#${interaction.channelId}>.`);
   }
 
+  // --- WIPE ---
   @SlashCommand({ name: 'wipe', description: 'Reset totale del sistema (PERICOLO)', defaultMemberPermissions: PermissionFlagsBits.Administrator })
   public async onWipe(@Context() [interaction]: SlashCommandContext) {
       if (interaction.user.id !== '310865403066712074') return interaction.reply({ content: "⛔ Solo il Creatore può invocare il Ragnarok.", ephemeral: true });
@@ -118,6 +139,7 @@ export class SystemCommands {
       }
   }
 
+  // --- TEST MAIL ---
   @SlashCommand({ name: 'testmail', description: 'Invia una mail di test', defaultMemberPermissions: PermissionFlagsBits.Administrator })
   public async onTestMail(@Context() [interaction]: SlashCommandContext, @Options() { email }: TestMailDto) {
       if (interaction.user.id !== '310865403066712074') return interaction.reply({ content: "⛔ Accesso negato.", ephemeral: true });
@@ -130,6 +152,24 @@ export class SystemCommands {
           await interaction.followUp("✅ Email inviata con successo! Controlla la casella di posta.");
       } else {
           await interaction.followUp("❌ Errore durante l'invio.");
+      }
+  }
+
+  // --- CLEAR LOCALS ---
+  @SlashCommand({ name: 'clearlocals', description: 'Rimuove i comandi di sviluppo da questo server', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onClearLocals(@Context() [interaction]: SlashCommandContext) {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+          if (!interaction.guild) {
+              return interaction.editReply("❌ Questo comando va eseguito in un server.");
+          }
+          
+          // Rimuove tutti i comandi registrati specificamente per questa gilda
+          await interaction.guild.commands.set([]);
+          
+          await interaction.editReply("✅ **Comandi Locali Rimossi.**\nOra dovresti vedere solo i comandi globali (se presenti).\n\n⚠️ **Importante:** Rimuovi `DISCORD_DEV_GUILD_ID` dal file `.env` e riavvia il bot per evitare che vengano ricreati.");
+      } catch (e: any) {
+          await interaction.editReply(`❌ Errore: ${e.message}`);
       }
   }
 }

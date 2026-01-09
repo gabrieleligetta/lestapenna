@@ -39,14 +39,22 @@ export class CampaignCommands {
       private readonly aiService: AiService
   ) {}
 
-  @SlashCommand({ name: 'creacampagna', description: 'Crea una nuova campagna', defaultMemberPermissions: PermissionFlagsBits.Administrator })
-  public async onCreate(@Context() [interaction]: SlashCommandContext, @Options() { name }: CreateCampaignDto) {
+  // --- CREATECAMPAIGN / CREACAMPAGNA ---
+  @SlashCommand({ name: 'createcampaign', description: 'Crea una nuova campagna', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onCreateCampaign(@Context() [interaction]: SlashCommandContext, @Options() options: CreateCampaignDto) {
+    const { name } = options;
     const campaign = this.campaignService.create(interaction.guildId!, name);
     return interaction.reply({ content: `✅ Campagna **${campaign.name}** creata e attivata! Usa \`/selezionacampagna ${name}\` per attivarla.`, ephemeral: false });
   }
 
-  @SlashCommand({ name: 'listacampagne', description: 'Lista tutte le campagne del server' })
-  public async onList(@Context() [interaction]: SlashCommandContext) {
+  @SlashCommand({ name: 'creacampagna', description: 'Crea una nuova campagna (Alias)', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onCreaCampagna(@Context() [interaction]: SlashCommandContext, @Options() options: CreateCampaignDto) {
+      return this.onCreateCampaign([interaction], options);
+  }
+
+  // --- LISTCAMPAIGNS / LISTACAMPAGNE ---
+  @SlashCommand({ name: 'listcampaigns', description: 'Lista tutte le campagne del server' })
+  public async onListCampaigns(@Context() [interaction]: SlashCommandContext) {
     const campaigns = this.campaignService.findAll(interaction.guildId!);
     const active = this.campaignService.getActive(interaction.guildId!);
 
@@ -56,10 +64,16 @@ export class CampaignCommands {
     return interaction.reply({ content: `**🗺️ Campagne di questo Server**\n${list}`, ephemeral: true });
   }
 
-  @SlashCommand({ name: 'selezionacampagna', description: 'Seleziona la campagna attiva', defaultMemberPermissions: PermissionFlagsBits.Administrator })
-  public async onSelect(@Context() [interaction]: SlashCommandContext, @Options() { nameOrId }: SelectCampaignDto) {
+  @SlashCommand({ name: 'listacampagne', description: 'Lista tutte le campagne del server (Alias)' })
+  public async onListaCampagne(@Context() [interaction]: SlashCommandContext) {
+      return this.onListCampaigns([interaction]);
+  }
+
+  // --- SELECTCAMPAIGN / SELEZIONACAMPAGNA / SETCAMPAGNA ---
+  @SlashCommand({ name: 'selectcampaign', description: 'Seleziona la campagna attiva', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onSelectCampaign(@Context() [interaction]: SlashCommandContext, @Options() options: SelectCampaignDto) {
+    const { nameOrId } = options;
     const campaigns = this.campaignService.findAll(interaction.guildId!);
-    // FIX: c.id is number, nameOrId is string
     const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
 
     if (!target) return interaction.reply({ content: "⚠️ Campagna non trovata.", ephemeral: true });
@@ -68,10 +82,21 @@ export class CampaignCommands {
     return interaction.reply({ content: `✅ Campagna attiva impostata su: **${target.name}**.` });
   }
 
-  @SlashCommand({ name: 'eliminacampagna', description: 'Elimina definitivamente una campagna', defaultMemberPermissions: PermissionFlagsBits.Administrator })
-  public async onDelete(@Context() [interaction]: SlashCommandContext, @Options() { nameOrId }: DeleteCampaignDto) {
+  @SlashCommand({ name: 'selezionacampagna', description: 'Seleziona la campagna attiva (Alias)', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onSelezionaCampagna(@Context() [interaction]: SlashCommandContext, @Options() options: SelectCampaignDto) {
+      return this.onSelectCampaign([interaction], options);
+  }
+
+  @SlashCommand({ name: 'setcampagna', description: 'Seleziona la campagna attiva (Alias)', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onSetCampagna(@Context() [interaction]: SlashCommandContext, @Options() options: SelectCampaignDto) {
+      return this.onSelectCampaign([interaction], options);
+  }
+
+  // --- DELETECAMPAIGN / ELIMINACAMPAGNA ---
+  @SlashCommand({ name: 'deletecampaign', description: 'Elimina definitivamente una campagna', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onDeleteCampaign(@Context() [interaction]: SlashCommandContext, @Options() options: DeleteCampaignDto) {
+      const { nameOrId } = options;
       const campaigns = this.campaignService.findAll(interaction.guildId!);
-      // FIX: c.id is number, nameOrId is string
       const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
 
       if (!target) return interaction.reply({ content: "⚠️ Campagna non trovata.", ephemeral: true });
@@ -98,14 +123,20 @@ export class CampaignCommands {
       }
   }
 
-  @SlashCommand({ name: 'chiedibardo', description: 'Fai una domanda al Bardo sulla storia della campagna' })
-  public async onAskBard(@Context() [interaction]: SlashCommandContext, @Options() { question }: AskBardDto) {
+  @SlashCommand({ name: 'eliminacampagna', description: 'Elimina definitivamente una campagna (Alias)', defaultMemberPermissions: PermissionFlagsBits.Administrator })
+  public async onEliminaCampagna(@Context() [interaction]: SlashCommandContext, @Options() options: DeleteCampaignDto) {
+      return this.onDeleteCampaign([interaction], options);
+  }
+
+  // --- ASK / CHIEDIALBARDO ---
+  @SlashCommand({ name: 'ask', description: 'Fai una domanda al Bardo sulla storia della campagna' })
+  public async onAsk(@Context() [interaction]: SlashCommandContext, @Options() options: AskBardDto) {
+      const { question } = options;
       const active = this.campaignService.getActive(interaction.guildId!);
       if (!active) return interaction.reply({ content: "⚠️ Nessuna campagna attiva.", ephemeral: true });
 
       await interaction.deferReply();
       try {
-          // FIX: active.id is number, askBard expects string
           const answer = await this.aiService.askBard(active.id.toString(), question);
           return interaction.editReply(`**❓ ${question}**\n\n📜 ${answer}`);
       } catch (e) {
@@ -113,18 +144,23 @@ export class CampaignCommands {
       }
   }
 
+  @SlashCommand({ name: 'chiedialbardo', description: 'Fai una domanda al Bardo sulla storia della campagna (Alias)' })
+  public async onChiediAlBardo(@Context() [interaction]: SlashCommandContext, @Options() options: AskBardDto) {
+      return this.onAsk([interaction], options);
+  }
+
+  // --- AGGIUNGILORE (Solo ITA in legacy?) ---
   @SlashCommand({ name: 'aggiungilore', description: 'Aggiungi manualmente una conoscenza alla memoria del Bardo' })
-  public async onIngestLore(@Context() [interaction]: SlashCommandContext, @Options() { text, type }: IngestLoreDto) {
+  public async onAggiungiLore(@Context() [interaction]: SlashCommandContext, @Options() options: IngestLoreDto) {
+      const { text, type } = options;
       const active = this.campaignService.getActive(interaction.guildId!);
       if (!active) return interaction.reply({ content: "⚠️ Nessuna campagna attiva.", ephemeral: true });
 
       await interaction.deferReply({ ephemeral: true });
       try {
           if (type?.toLowerCase() === 'mondo') {
-              // FIX: active.id is number, ingestWorldEvent expects string
               await this.aiService.ingestWorldEvent(active.id.toString(), "MANUAL", text, "LORE");
           } else {
-              // Default generico
               await this.aiService.ingestWorldEvent(active.id.toString(), "MANUAL", text, type || "GENERIC");
           }
           return interaction.editReply("✅ Conoscenza acquisita con successo.");

@@ -50,8 +50,10 @@ export class CharacterCommands {
     return active;
   }
 
+  // --- IAM / SONO ---
   @SlashCommand({ name: 'iam', description: 'Imposta il nome del tuo personaggio' })
-  public async onIam(@Context() [interaction]: SlashCommandContext, @Options() { name }: SetNameDto) {
+  public async onIam(@Context() [interaction]: SlashCommandContext, @Options() options: SetNameDto) {
+    const { name } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -66,8 +68,15 @@ export class CharacterCommands {
     return interaction.reply(`⚔️ Nome aggiornato: **${name}** (Campagna: ${active.name})`);
   }
 
-  @SlashCommand({ name: 'miaclasse', description: 'Imposta la classe del tuo personaggio' })
-  public async onMyClass(@Context() [interaction]: SlashCommandContext, @Options() { className }: SetClassDto) {
+  @SlashCommand({ name: 'sono', description: 'Imposta il nome del tuo personaggio (Alias)' })
+  public async onSono(@Context() [interaction]: SlashCommandContext, @Options() options: SetNameDto) {
+      return this.onIam([interaction], options);
+  }
+
+  // --- MYCLASS / MIACLASSE ---
+  @SlashCommand({ name: 'myclass', description: 'Imposta la classe del tuo personaggio' })
+  public async onMyClass(@Context() [interaction]: SlashCommandContext, @Options() options: SetClassDto) {
+    const { className } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -75,8 +84,15 @@ export class CharacterCommands {
     return interaction.reply(`🛡️ Classe aggiornata: **${className}**`);
   }
 
-  @SlashCommand({ name: 'miarazza', description: 'Imposta la razza del tuo personaggio' })
-  public async onMyRace(@Context() [interaction]: SlashCommandContext, @Options() { raceName }: SetRaceDto) {
+  @SlashCommand({ name: 'miaclasse', description: 'Imposta la classe del tuo personaggio (Alias)' })
+  public async onMiaClasse(@Context() [interaction]: SlashCommandContext, @Options() options: SetClassDto) {
+      return this.onMyClass([interaction], options);
+  }
+
+  // --- MYRACE / MIARAZZA ---
+  @SlashCommand({ name: 'myrace', description: 'Imposta la razza del tuo personaggio' })
+  public async onMyRace(@Context() [interaction]: SlashCommandContext, @Options() options: SetRaceDto) {
+    const { raceName } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -84,8 +100,15 @@ export class CharacterCommands {
     return interaction.reply(`🧬 Razza aggiornata: **${raceName}**`);
   }
 
-  @SlashCommand({ name: 'miadesc', description: 'Imposta la descrizione del tuo personaggio' })
-  public async onMyDesc(@Context() [interaction]: SlashCommandContext, @Options() { description }: SetDescDto) {
+  @SlashCommand({ name: 'miarazza', description: 'Imposta la razza del tuo personaggio (Alias)' })
+  public async onMiaRazza(@Context() [interaction]: SlashCommandContext, @Options() options: SetRaceDto) {
+      return this.onMyRace([interaction], options);
+  }
+
+  // --- MYDESC / MIADESC ---
+  @SlashCommand({ name: 'mydesc', description: 'Imposta la descrizione del tuo personaggio' })
+  public async onMyDesc(@Context() [interaction]: SlashCommandContext, @Options() options: SetDescDto) {
+    const { description } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -93,7 +116,13 @@ export class CharacterCommands {
     return interaction.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
   }
 
-  @SlashCommand({ name: 'chisono', description: 'Mostra il tuo profilo personaggio corrente' })
+  @SlashCommand({ name: 'miadesc', description: 'Imposta la descrizione del tuo personaggio (Alias)' })
+  public async onMiaDesc(@Context() [interaction]: SlashCommandContext, @Options() options: SetDescDto) {
+      return this.onMyDesc([interaction], options);
+  }
+
+  // --- WHOAMI / CHISONO ---
+  @SlashCommand({ name: 'whoami', description: 'Mostra il tuo profilo personaggio corrente' })
   public async onWhoAmI(@Context() [interaction]: SlashCommandContext) {
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
@@ -118,6 +147,12 @@ export class CharacterCommands {
     }
   }
 
+  @SlashCommand({ name: 'chisono', description: 'Mostra il tuo profilo personaggio corrente (Alias)' })
+  public async onChiSono(@Context() [interaction]: SlashCommandContext) {
+      return this.onWhoAmI([interaction]);
+  }
+
+  // --- PARTY / COMPAGNI ---
   @SlashCommand({ name: 'party', description: 'Mostra tutti i personaggi della campagna' })
   public async onParty(@Context() [interaction]: SlashCommandContext) {
     const active = await this.getActiveCampaignOrReply(interaction);
@@ -143,6 +178,12 @@ export class CharacterCommands {
     return interaction.reply({ embeds: [embed] });
   }
 
+  @SlashCommand({ name: 'compagni', description: 'Mostra tutti i personaggi della campagna (Alias)' })
+  public async onCompagni(@Context() [interaction]: SlashCommandContext) {
+      return this.onParty([interaction]);
+  }
+
+  // --- RESETPG / CLEARCHARA ---
   @SlashCommand({ name: 'resetpg', description: 'Cancella il tuo personaggio corrente' })
   public async onResetPg(@Context() [interaction]: SlashCommandContext) {
     const active = await this.getActiveCampaignOrReply(interaction);
@@ -152,8 +193,15 @@ export class CharacterCommands {
     return interaction.reply("🗑️ Scheda personaggio resettata. Ora sei un'anima errante.");
   }
 
-  @SlashCommand({ name: 'storia', description: 'Genera la biografia evolutiva di un PG o NPC' })
-  public async onStory(@Context() [interaction]: SlashCommandContext, @Options() { name }: StoryDto) {
+  @SlashCommand({ name: 'clearchara', description: 'Cancella il tuo personaggio corrente (Alias)' })
+  public async onClearChara(@Context() [interaction]: SlashCommandContext) {
+      return this.onResetPg([interaction]);
+  }
+
+  // --- STORY / STORIA ---
+  @SlashCommand({ name: 'story', description: 'Genera la biografia evolutiva di un PG o NPC' })
+  public async onStory(@Context() [interaction]: SlashCommandContext, @Options() options: StoryDto) {
+      const { name } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
@@ -166,7 +214,6 @@ export class CharacterCommands {
       if (targetPG) {
           await interaction.editReply(`📖 **Saga dell'Eroe: ${targetPG.character_name}**\nIl Bardo sta scrivendo...`);
           try {
-              // FIX: active.id is number, generateCharacterBiography expects string
               const bio = await this.aiService.generateCharacterBiography(active.id.toString(), targetPG.character_name, targetPG.class, targetPG.race);
               return interaction.followUp(bio);
           } catch (e) {
@@ -179,7 +226,6 @@ export class CharacterCommands {
       if (targetNPC) {
           await interaction.editReply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
           try {
-              // FIX: active.id is number, generateNpcBiography expects string
               const bio = await this.aiService.generateNpcBiography(active.id.toString(), targetNPC.name, targetNPC.role, targetNPC.description);
               return interaction.followUp(bio);
           } catch (e) {
@@ -188,5 +234,10 @@ export class CharacterCommands {
       }
 
       return interaction.editReply(`❌ Non ho trovato nessun PG o NPC chiamato "**${name}**" negli archivi.`);
+  }
+
+  @SlashCommand({ name: 'storia', description: 'Genera la biografia evolutiva di un PG o NPC (Alias)' })
+  public async onStoria(@Context() [interaction]: SlashCommandContext, @Options() options: StoryDto) {
+      return this.onStory([interaction], options);
   }
 }

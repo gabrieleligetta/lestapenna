@@ -79,8 +79,10 @@ export class LoreCommands {
     return active;
   }
 
+  // --- NPC / DOSSIER ---
   @SlashCommand({ name: 'npc', description: 'Cerca o lista NPC' })
-  public async onNpc(@Context() [interaction]: SlashCommandContext, @Options() { name }: NpcDto) {
+  public async onNpc(@Context() [interaction]: SlashCommandContext, @Options() options: NpcDto) {
+    const { name } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -108,8 +110,14 @@ export class LoreCommands {
     return interaction.reply({ embeds: [embed] });
   }
 
+  @SlashCommand({ name: 'dossier', description: 'Cerca o lista NPC (Alias)' })
+  public async onDossier(@Context() [interaction]: SlashCommandContext, @Options() options: NpcDto) {
+      return this.onNpc([interaction], options);
+  }
+
+  // --- PRESENZE ---
   @SlashCommand({ name: 'presenze', description: 'Mostra gli NPC incontrati nella sessione corrente' })
-  public async onPresence(@Context() [interaction]: SlashCommandContext) {
+  public async onPresenze(@Context() [interaction]: SlashCommandContext) {
       const sessionId = this.sessionService.getActiveSession(interaction.guildId!);
       if (!sessionId) return interaction.reply("⚠️ Nessuna sessione attiva.");
 
@@ -120,8 +128,9 @@ export class LoreCommands {
       return interaction.reply(`👥 **NPC Incontrati in questa sessione:**\n${list}`);
   }
 
+  // --- TIMELINE / CRONOLOGIA ---
   @SlashCommand({ name: 'timeline', description: 'Mostra la cronologia del mondo' })
-  public async onTimelineView(@Context() [interaction]: SlashCommandContext) {
+  public async onTimeline(@Context() [interaction]: SlashCommandContext) {
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -150,8 +159,14 @@ export class LoreCommands {
     return interaction.reply(msg);
   }
 
+  @SlashCommand({ name: 'cronologia', description: 'Mostra la cronologia del mondo (Alias)' })
+  public async onCronologia(@Context() [interaction]: SlashCommandContext) {
+      return this.onTimeline([interaction]);
+  }
+
   @SlashCommand({ name: 'timeline-add', description: 'Aggiunge un evento alla cronologia' })
-  public async onTimelineAdd(@Context() [interaction]: SlashCommandContext, @Options() { year, description, type }: TimelineAddDto) {
+  public async onTimelineAdd(@Context() [interaction]: SlashCommandContext, @Options() options: TimelineAddDto) {
+    const { year, description, type } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -159,8 +174,10 @@ export class LoreCommands {
     return interaction.reply(`📜 Evento storico aggiunto nell'anno **${year}**.`);
   }
 
-  @SlashCommand({ name: 'data', description: 'Imposta la data corrente della campagna' })
-  public async onSetDate(@Context() [interaction]: SlashCommandContext, @Options() { year }: SetDateDto) {
+  // --- DATE / DATA / ANNO / YEAR ---
+  @SlashCommand({ name: 'date', description: 'Imposta la data corrente della campagna' })
+  public async onDate(@Context() [interaction]: SlashCommandContext, @Options() options: SetDateDto) {
+    const { year } = options;
     const active = await this.getActiveCampaignOrReply(interaction);
     if (!active) return;
 
@@ -170,8 +187,25 @@ export class LoreCommands {
     return interaction.reply(`📅 Data campagna aggiornata a: **${label}**`);
   }
 
-  @SlashCommand({ name: 'anno0', description: 'Imposta l\'evento fondante (Anno 0)' })
-  public async onYearZero(@Context() [interaction]: SlashCommandContext, @Options() { description }: YearZeroDto) {
+  @SlashCommand({ name: 'data', description: 'Imposta la data corrente della campagna (Alias)' })
+  public async onData(@Context() [interaction]: SlashCommandContext, @Options() options: SetDateDto) {
+      return this.onDate([interaction], options);
+  }
+
+  @SlashCommand({ name: 'anno', description: 'Imposta la data corrente della campagna (Alias)' })
+  public async onAnno(@Context() [interaction]: SlashCommandContext, @Options() options: SetDateDto) {
+      return this.onDate([interaction], options);
+  }
+
+  @SlashCommand({ name: 'year', description: 'Imposta la data corrente della campagna (Alias)' })
+  public async onYear(@Context() [interaction]: SlashCommandContext, @Options() options: SetDateDto) {
+      return this.onDate([interaction], options);
+  }
+
+  // --- YEAR0 / ANNO0 ---
+  @SlashCommand({ name: 'year0', description: 'Imposta l\'evento fondante (Anno 0)' })
+  public async onYearZero(@Context() [interaction]: SlashCommandContext, @Options() options: YearZeroDto) {
+      const { description } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
@@ -181,14 +215,20 @@ export class LoreCommands {
       return interaction.reply(`📅 **Anno 0 Stabilito!**\nEvento: *${description}*\nOra puoi usare \`/data <Anno>\` per impostare la data corrente.`);
   }
 
-  @SlashCommand({ name: 'chiedialbardo', description: 'Chiedi al Bardo qualcosa sulla storia' })
-  public async onAsk(@Context() [interaction]: SlashCommandContext, @Options() { question }: AskDto) {
+  @SlashCommand({ name: 'anno0', description: 'Imposta l\'evento fondante (Anno 0) (Alias)' })
+  public async onAnnoZero(@Context() [interaction]: SlashCommandContext, @Options() options: YearZeroDto) {
+      return this.onYearZero([interaction], options);
+  }
+
+  // --- ASK / CHIEDIALBARDO ---
+  @SlashCommand({ name: 'ask', description: 'Chiedi al Bardo qualcosa sulla storia' })
+  public async onAsk(@Context() [interaction]: SlashCommandContext, @Options() options: AskDto) {
+      const { question } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
       await interaction.deferReply();
       try {
-          // FIX: active.id is number, askBard expects string
           const answer = await this.aiService.askBard(active.id.toString(), question);
           return interaction.followUp(`**❓ ${question}**\n\n📜 ${answer}`);
       } catch (e) {
@@ -196,15 +236,21 @@ export class LoreCommands {
       }
   }
 
+  @SlashCommand({ name: 'chiedialbardo', description: 'Chiedi al Bardo qualcosa sulla storia (Alias)' })
+  public async onChiediAlBardo(@Context() [interaction]: SlashCommandContext, @Options() options: AskDto) {
+      return this.onAsk([interaction], options);
+  }
+
+  // --- WIKI / LORE ---
   @SlashCommand({ name: 'wiki', description: 'Cerca frammenti di lore esatti' })
-  public async onWiki(@Context() [interaction]: SlashCommandContext, @Options() { term }: WikiDto) {
+  public async onWiki(@Context() [interaction]: SlashCommandContext, @Options() options: WikiDto) {
+      const { term } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
       await interaction.deferReply();
       
       try {
-          // FIX: active.id is number, searchKnowledge expects string
           const fragments = await this.aiService.searchKnowledge(active.id.toString(), term, 3);
 
           if (fragments.length === 0) {
@@ -222,9 +268,6 @@ export class LoreCommands {
                   .setColor("#F1C40F")
                   .setDescription(safeFragment);
 
-              // Fix: Cast esplicito a TextChannel per accedere a .send()
-              // interaction.channel è TextBasedChannel che include PartialGroupDMChannel che non ha send() in alcune versioni di djs
-              // Ma in un contesto SlashCommand di gilda, è sicuro assumere TextChannel o simile.
               if (interaction.channel && 'send' in interaction.channel) {
                   await (interaction.channel as TextChannel).send({ embeds: [embed] });
               }
@@ -235,6 +278,12 @@ export class LoreCommands {
       }
   }
 
+  @SlashCommand({ name: 'lore', description: 'Cerca frammenti di lore esatti (Alias)' })
+  public async onLore(@Context() [interaction]: SlashCommandContext, @Options() options: WikiDto) {
+      return this.onWiki([interaction], options);
+  }
+
+  // --- QUEST / OBIETTIVI ---
   @SlashCommand({ name: 'quest', description: 'Visualizza le quest attive' })
   public async onQuest(@Context() [interaction]: SlashCommandContext) {
       const active = await this.getActiveCampaignOrReply(interaction);
@@ -248,8 +297,14 @@ export class LoreCommands {
       return interaction.reply(`**🗺️ Quest Attive (${active.name})**\n\n${list}`);
   }
 
+  @SlashCommand({ name: 'obiettivi', description: 'Visualizza le quest attive (Alias)' })
+  public async onObiettivi(@Context() [interaction]: SlashCommandContext) {
+      return this.onQuest([interaction]);
+  }
+
   @SlashCommand({ name: 'quest-add', description: 'Aggiunge una nuova quest' })
-  public async onQuestAdd(@Context() [interaction]: SlashCommandContext, @Options() { title }: QuestAddDto) {
+  public async onQuestAdd(@Context() [interaction]: SlashCommandContext, @Options() options: QuestAddDto) {
+      const { title } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
@@ -258,7 +313,8 @@ export class LoreCommands {
   }
 
   @SlashCommand({ name: 'quest-done', description: 'Completa una quest' })
-  public async onQuestDone(@Context() [interaction]: SlashCommandContext, @Options() { title }: QuestDoneDto) {
+  public async onQuestDone(@Context() [interaction]: SlashCommandContext, @Options() options: QuestDoneDto) {
+      const { title } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
@@ -267,7 +323,8 @@ export class LoreCommands {
       else return interaction.reply(`⚠️ Quest "${title}" non trovata.`);
   }
 
-  @SlashCommand({ name: 'inventario', description: 'Visualizza l\'inventario di gruppo' })
+  // --- INVENTORY / INVENTARIO / BAG / LOOT ---
+  @SlashCommand({ name: 'inventory', description: 'Visualizza l\'inventario di gruppo' })
   public async onInventory(@Context() [interaction]: SlashCommandContext) {
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
@@ -280,8 +337,19 @@ export class LoreCommands {
       return interaction.reply(`**💰 Inventario di Gruppo (${active.name})**\n\n${list}`);
   }
 
+  @SlashCommand({ name: 'inventario', description: 'Visualizza l\'inventario di gruppo (Alias)' })
+  public async onInventario(@Context() [interaction]: SlashCommandContext) {
+      return this.onInventory([interaction]);
+  }
+
+  @SlashCommand({ name: 'bag', description: 'Visualizza l\'inventario di gruppo (Alias)' })
+  public async onBag(@Context() [interaction]: SlashCommandContext) {
+      return this.onInventory([interaction]);
+  }
+
   @SlashCommand({ name: 'loot-add', description: 'Aggiunge un oggetto all\'inventario' })
-  public async onLootAdd(@Context() [interaction]: SlashCommandContext, @Options() { item }: LootAddDto) {
+  public async onLootAdd(@Context() [interaction]: SlashCommandContext, @Options() options: LootAddDto) {
+      const { item } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 
@@ -290,7 +358,8 @@ export class LoreCommands {
   }
 
   @SlashCommand({ name: 'loot-use', description: 'Rimuove o usa un oggetto' })
-  public async onLootUse(@Context() [interaction]: SlashCommandContext, @Options() { item }: LootUseDto) {
+  public async onLootUse(@Context() [interaction]: SlashCommandContext, @Options() options: LootUseDto) {
+      const { item } = options;
       const active = await this.getActiveCampaignOrReply(interaction);
       if (!active) return;
 

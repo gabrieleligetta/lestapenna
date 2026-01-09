@@ -81,8 +81,10 @@ export class SessionCommands {
     private readonly logger: LoggerService
   ) {}
 
-  @SlashCommand({ name: 'session-start', description: 'Inizia una nuova sessione di gioco' })
-  public async onStart(@Context() [interaction]: SlashCommandContext, @Options() { location, test }: StartSessionDto) {
+  // --- LISTEN / ASCOLTA ---
+  @SlashCommand({ name: 'listen', description: 'Inizia una nuova sessione di gioco' })
+  public async onListen(@Context() [interaction]: SlashCommandContext, @Options() options: StartSessionDto) {
+    const { location, test } = options;
     const member = interaction.member as GuildMember;
     if (!member.voice.channel) return interaction.reply({ content: "❌ Devi essere in un canale vocale per evocare il Bardo!", ephemeral: true });
 
@@ -105,7 +107,7 @@ export class SessionCommands {
     if (activeCampaign.current_year === undefined || activeCampaign.current_year === null) {
         return interaction.reply({ 
             content: `🛑 **Configurazione Temporale Mancante!**\n` +
-                     `Prima di iniziare, imposta l'anno corrente con \`/set-date <Anno>\`.`, 
+                     `Prima di iniziare, imposta l'anno corrente con \`/data <Anno>\`.`, 
             ephemeral: true 
         });
     }
@@ -122,11 +124,11 @@ export class SessionCommands {
       const currentLoc = this.sessionService.getLocation(interaction.guildId!);
       if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
           if (interaction.channel) {
-              await (interaction.channel as any).send(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`/session-start location: Macro | Micro\`)`);
+              await (interaction.channel as any).send(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`/ascolta location: Macro | Micro\`)`);
           }
       } else {
           if (interaction.channel) {
-              await (interaction.channel as any).send(`⚠️ **Luogo Sconosciuto.**\nConsiglio: usa \`/session-start location: <Città> | <Luogo>\` per aiutare il Bardo.`);
+              await (interaction.channel as any).send(`⚠️ **Luogo Sconosciuto.**\nConsiglio: usa \`/ascolta location: <Città> | <Luogo>\` per aiutare il Bardo.`);
           }
       }
     }
@@ -159,35 +161,73 @@ export class SessionCommands {
     }
   }
 
-  @SlashCommand({ name: 'session-stop', description: 'Termina la sessione corrente' })
-  public async onStop(@Context() [interaction]: SlashCommandContext) {
+  @SlashCommand({ name: 'ascolta', description: 'Inizia una nuova sessione di gioco (Alias)' })
+  public async onAscolta(@Context() [interaction]: SlashCommandContext, @Options() options: StartSessionDto) {
+      return this.onListen([interaction], options);
+  }
+
+  @SlashCommand({ name: 'testascolta', description: 'Inizia una sessione di test (Alias)' })
+  public async onTestAscolta(@Context() [interaction]: SlashCommandContext, @Options() options: StartSessionDto) {
+      options.test = true;
+      return this.onListen([interaction], options);
+  }
+
+  // --- STOPLISTENING / TERMINA ---
+  @SlashCommand({ name: 'stoplistening', description: 'Termina la sessione corrente' })
+  public async onStopListening(@Context() [interaction]: SlashCommandContext) {
     const sessionId = await this.sessionService.stopSession(interaction.guildId!);
     if (!sessionId) return interaction.reply({ content: "⚠️ Nessuna sessione attiva.", ephemeral: true });
     return interaction.reply(`🛑 Sessione **${sessionId}** terminata.\nLo Scriba sta iniziando a trascrivere e riassumere...`);
   }
 
-  @SlashCommand({ name: 'session-pause', description: 'Mette in pausa la registrazione' })
+  @SlashCommand({ name: 'termina', description: 'Termina la sessione corrente (Alias)' })
+  public async onTermina(@Context() [interaction]: SlashCommandContext) {
+      return this.onStopListening([interaction]);
+  }
+
+  // --- PAUSE / PAUSA ---
+  @SlashCommand({ name: 'pause', description: 'Mette in pausa la registrazione' })
   public async onPause(@Context() [interaction]: SlashCommandContext) {
     if (!this.sessionService.pauseSession(interaction.guildId!)) return interaction.reply({ content: "⚠️ Nessuna sessione attiva.", ephemeral: true });
     return interaction.reply("⏸️ **Registrazione in Pausa**.");
   }
 
-  @SlashCommand({ name: 'session-resume', description: 'Riprende la registrazione' })
+  @SlashCommand({ name: 'pausa', description: 'Mette in pausa la registrazione (Alias)' })
+  public async onPausa(@Context() [interaction]: SlashCommandContext) {
+      return this.onPause([interaction]);
+  }
+
+  // --- RESUME / RIPRENDI ---
+  @SlashCommand({ name: 'resume', description: 'Riprende la registrazione' })
   public async onResume(@Context() [interaction]: SlashCommandContext) {
     if (!this.sessionService.resumeSession(interaction.guildId!)) return interaction.reply({ content: "⚠️ Nessuna sessione attiva.", ephemeral: true });
     return interaction.reply("▶️ **Registrazione Ripresa**.");
   }
 
+  @SlashCommand({ name: 'riprendi', description: 'Riprende la registrazione (Alias)' })
+  public async onRiprendi(@Context() [interaction]: SlashCommandContext) {
+      return this.onResume([interaction]);
+  }
+
+  // --- NOTE / NOTA ---
   @SlashCommand({ name: 'note', description: 'Aggiunge una nota alla sessione corrente' })
-  public async onNote(@Context() [interaction]: SlashCommandContext, @Options() { text }: NoteDto) {
+  public async onNote(@Context() [interaction]: SlashCommandContext, @Options() options: NoteDto) {
+    const { text } = options;
     const sessionId = this.sessionService.getActiveSession(interaction.guildId!);
     if (!sessionId) return interaction.reply({ content: "⚠️ Nessuna sessione attiva.", ephemeral: true });
     this.sessionService.addNote(sessionId, interaction.user.id, text);
     return interaction.reply({ content: "📝 Nota registrata.", ephemeral: true });
   }
 
+  @SlashCommand({ name: 'nota', description: 'Aggiunge una nota alla sessione corrente (Alias)' })
+  public async onNota(@Context() [interaction]: SlashCommandContext, @Options() options: NoteDto) {
+      return this.onNote([interaction], options);
+  }
+
+  // --- LOCATION / LUOGO ---
   @SlashCommand({ name: 'location', description: 'Aggiorna il luogo corrente' })
-  public async onLocation(@Context() [interaction]: SlashCommandContext, @Options() { place }: LocationDto) {
+  public async onLocation(@Context() [interaction]: SlashCommandContext, @Options() options: LocationDto) {
+    const { place } = options;
     const active = this.campaignService.getActive(interaction.guildId!);
     if (!active) return interaction.reply("⚠️ Nessuna campagna attiva.");
 
@@ -196,13 +236,19 @@ export class SessionCommands {
     const macro = parts[0];
     const micro = parts[1] || null;
     
-    // FIX: updateLocation requires campaignId (number)
     this.sessionService.updateLocation(active.id, sessionId || null, macro, micro);
     return interaction.reply(`📍 Posizione aggiornata: **${macro}** | **${micro || '-'}**`);
   }
 
-  @SlashCommand({ name: 'session-download', description: 'Scarica l\'audio completo della sessione' })
-  public async onDownload(@Context() [interaction]: SlashCommandContext, @Options() { sessionId }: SessionIdDto) {
+  @SlashCommand({ name: 'luogo', description: 'Aggiorna il luogo corrente (Alias)' })
+  public async onLuogo(@Context() [interaction]: SlashCommandContext, @Options() options: LocationDto) {
+      return this.onLocation([interaction], options);
+  }
+
+  // --- DOWNLOAD / SCARICA ---
+  @SlashCommand({ name: 'download', description: 'Scarica l\'audio completo della sessione' })
+  public async onDownload(@Context() [interaction]: SlashCommandContext, @Options() options: SessionIdDto) {
+    const { sessionId } = options;
     await interaction.deferReply();
     
     const activeSession = this.sessionService.getActiveSession(interaction.guildId!);
@@ -242,13 +288,19 @@ export class SessionCommands {
     }
   }
 
-  @SlashCommand({ name: 'session-transcript', description: 'Scarica la trascrizione testuale' })
-  public async onTranscript(@Context() [interaction]: SlashCommandContext, @Options() { sessionId }: SessionIdDto) {
+  @SlashCommand({ name: 'scarica', description: 'Scarica l\'audio completo della sessione (Alias)' })
+  public async onScarica(@Context() [interaction]: SlashCommandContext, @Options() options: SessionIdDto) {
+      return this.onDownload([interaction], options);
+  }
+
+  // --- DOWNLOADTXT / SCARICATRASCRIZIONI ---
+  @SlashCommand({ name: 'downloadtxt', description: 'Scarica la trascrizione testuale' })
+  public async onDownloadTxt(@Context() [interaction]: SlashCommandContext, @Options() options: SessionIdDto) {
+    const { sessionId } = options;
     const transcripts = this.recordingRepo.getTranscripts(sessionId);
 
     if (transcripts.length === 0) return interaction.reply("⚠️ Nessuna trascrizione trovata.");
 
-    // Recupera start_time della sessione per calcolare offset relativo
     const session = this.sessionRepo.findById(sessionId);
     const sessionStart = session ? session.start_time : 0;
 
@@ -265,7 +317,6 @@ export class SessionCommands {
             if (char) charName = char.character_name;
         }
 
-        // Calcolo Timestamp Relativo (HH:MM:SS)
         const offsetMs = t.timestamp! - sessionStart!;
         const totalSeconds = Math.floor(Math.max(0, offsetMs) / 1000);
         const h = Math.floor(totalSeconds / 3600);
@@ -286,13 +337,25 @@ export class SessionCommands {
     try { fs.unlinkSync(filePath); } catch {}
   }
 
-  @SlashCommand({ name: 'session-set-number', description: 'Imposta il numero della sessione' })
-  public async onSetNumber(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, number }: SetSessionNumberDto) {
+  @SlashCommand({ name: 'scaricatrascrizioni', description: 'Scarica la trascrizione testuale (Alias)' })
+  public async onScaricaTrascrizioni(@Context() [interaction]: SlashCommandContext, @Options() options: SessionIdDto) {
+      return this.onDownloadTxt([interaction], options);
+  }
+
+  // --- SETSESSION / IMPOSTASESSIONE ---
+  @SlashCommand({ name: 'setsession', description: 'Imposta il numero della sessione' })
+  public async onSetSession(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, number }: SetSessionNumberDto) {
     this.sessionRepo.updateSessionNumber(sessionId, number);
     return interaction.reply(`✅ Numero sessione per \`${sessionId}\` impostato a **${number}**.`);
   }
 
-  @SlashCommand({ name: 'session-reset', description: 'Forza il reset della sessione' })
+  @SlashCommand({ name: 'impostasessione', description: 'Imposta il numero della sessione (Alias)' })
+  public async onImpostaSessione(@Context() [interaction]: SlashCommandContext, @Options() options: SetSessionNumberDto) {
+      return this.onSetSession([interaction], options);
+  }
+
+  // --- RESET ---
+  @SlashCommand({ name: 'reset', description: 'Forza il reset della sessione' })
   public async onReset(@Context() [interaction]: SlashCommandContext, @Options() { sessionId }: SessionIdDto) {
     await interaction.reply(`🔄 **Reset Sessione ${sessionId}** avviato...`);
     
@@ -312,8 +375,9 @@ export class SessionCommands {
     return interaction.followUp(`✅ **Reset Completato**. ${files.length} file riaccodati.`);
   }
   
-  @SlashCommand({ name: 'session-list', description: 'Lista le sessioni della campagna' })
-  public async onList(@Context() [interaction]: SlashCommandContext) {
+  // --- LISTSESSIONS / LISTASESSIONI ---
+  @SlashCommand({ name: 'listsessions', description: 'Lista le sessioni della campagna' })
+  public async onListSessions(@Context() [interaction]: SlashCommandContext) {
       const active = this.campaignService.getActive(interaction.guildId!);
       if (!active) return interaction.reply("Nessuna campagna attiva.");
       
@@ -371,7 +435,13 @@ export class SessionCommands {
       }
   }
 
-  @SlashCommand({ name: 'session-travels', description: 'Mostra il diario di viaggio' })
+  @SlashCommand({ name: 'listasessioni', description: 'Lista le sessioni della campagna (Alias)' })
+  public async onListaSessioni(@Context() [interaction]: SlashCommandContext) {
+      return this.onListSessions([interaction]);
+  }
+
+  // --- TRAVELS / VIAGGI ---
+  @SlashCommand({ name: 'travels', description: 'Mostra il diario di viaggio' })
   public async onTravels(@Context() [interaction]: SlashCommandContext) {
       const active = this.campaignService.getActive(interaction.guildId!);
       if (!active) return interaction.reply("Nessuna campagna attiva.");
@@ -391,8 +461,15 @@ export class SessionCommands {
       return interaction.reply(msg);
   }
 
+  @SlashCommand({ name: 'viaggi', description: 'Mostra il diario di viaggio (Alias)' })
+  public async onViaggi(@Context() [interaction]: SlashCommandContext) {
+      return this.onTravels([interaction]);
+  }
+
+  // --- ATLAS / ATLANTE / MEMORIA ---
   @SlashCommand({ name: 'atlas', description: 'Consulta o aggiorna l\'Atlante' })
-  public async onAtlas(@Context() [interaction]: SlashCommandContext, @Options() { description }: AtlasDto) {
+  public async onAtlas(@Context() [interaction]: SlashCommandContext, @Options() options: AtlasDto) {
+      const { description } = options;
       const active = this.campaignService.getActive(interaction.guildId!);
       if (!active) return interaction.reply("Nessuna campagna attiva.");
 
@@ -404,7 +481,6 @@ export class SessionCommands {
       if (description) {
           this.loreRepo.upsertAtlasEntry(active.id, loc.macro, loc.micro, description);
           this.logger.log(`Aggiornato Atlante: ${loc.macro} - ${loc.micro}`);
-          // FIX: active.id is number, ingestLocationDescription expects string
           await this.aiService.ingestLocationDescription(active.id.toString(), loc.macro, loc.micro, description);
           return interaction.reply(`📖 **Atlante Aggiornato** per *${loc.micro}*:\n"${description}"`);
       } else {
@@ -417,8 +493,20 @@ export class SessionCommands {
       }
   }
 
-  @SlashCommand({ name: 'session-summarize', description: 'Genera manualmente un riassunto' })
-  public async onSummarize(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, tone }: SummarizeDto) {
+  @SlashCommand({ name: 'atlante', description: 'Consulta o aggiorna l\'Atlante (Alias)' })
+  public async onAtlante(@Context() [interaction]: SlashCommandContext, @Options() options: AtlasDto) {
+      return this.onAtlas([interaction], options);
+  }
+
+  @SlashCommand({ name: 'memoria', description: 'Consulta o aggiorna l\'Atlante (Alias)' })
+  public async onMemoria(@Context() [interaction]: SlashCommandContext, @Options() options: AtlasDto) {
+      return this.onAtlas([interaction], options);
+  }
+
+  // --- SUMMARIZE / RACCONTA / NARRATE ---
+  @SlashCommand({ name: 'summarize', description: 'Genera manualmente un riassunto' })
+  public async onSummarize(@Context() [interaction]: SlashCommandContext, @Options() options: SummarizeDto) {
+      const { sessionId, tone } = options;
       const targetSessionId = sessionId || this.sessionService.getActiveSession(interaction.guildId!);
       if (!targetSessionId) return interaction.reply("Specifica un ID sessione o avvia una sessione.");
 
@@ -446,13 +534,30 @@ export class SessionCommands {
       }
   }
 
-  @SlashCommand({ name: 'session-edit-title', description: 'Modifica il titolo di una sessione' })
+  @SlashCommand({ name: 'racconta', description: 'Genera manualmente un riassunto (Alias)' })
+  public async onRacconta(@Context() [interaction]: SlashCommandContext, @Options() options: SummarizeDto) {
+      return this.onSummarize([interaction], options);
+  }
+
+  @SlashCommand({ name: 'narrate', description: 'Genera manualmente un riassunto (Alias)' })
+  public async onNarrate(@Context() [interaction]: SlashCommandContext, @Options() options: SummarizeDto) {
+      return this.onSummarize([interaction], options);
+  }
+
+  // --- EDITTITLE / MODIFICATITOLO ---
+  @SlashCommand({ name: 'edittitle', description: 'Modifica il titolo di una sessione' })
   public async onEditTitle(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, title }: EditTitleDto) {
       this.sessionRepo.updateSessionTitle(sessionId, title);
       return interaction.reply(`✅ Titolo aggiornato per la sessione \`${sessionId}\`: **${title}**`);
   }
 
-  @SlashCommand({ name: 'session-ingest', description: 'Forza l\'ingestione della memoria' })
+  @SlashCommand({ name: 'modificatitolo', description: 'Modifica il titolo di una sessione (Alias)' })
+  public async onModificaTitolo(@Context() [interaction]: SlashCommandContext, @Options() options: EditTitleDto) {
+      return this.onEditTitle([interaction], options);
+  }
+
+  // --- INGEST / MEMORIZZA ---
+  @SlashCommand({ name: 'ingest', description: 'Forza l\'ingestione della memoria' })
   public async onIngest(@Context() [interaction]: SlashCommandContext, @Options() { sessionId }: SessionIdDto) {
       await interaction.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${sessionId}\`...`);
       try {
@@ -461,5 +566,10 @@ export class SessionCommands {
       } catch (e: any) {
           return interaction.followUp(`❌ Errore ingestione: ${e.message}`);
       }
+  }
+
+  @SlashCommand({ name: 'memorizza', description: 'Forza l\'ingestione della memoria (Alias)' })
+  public async onMemorizza(@Context() [interaction]: SlashCommandContext, @Options() options: SessionIdDto) {
+      return this.onIngest([interaction], options);
   }
 }

@@ -1,65 +1,37 @@
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { CampaignRepository, Campaign } from './campaign.repository';
 import { v4 as uuidv4 } from 'uuid';
-
-export interface Campaign {
-  id: string;
-  guild_id: string;
-  name: string;
-  created_at: number;
-  is_active: number;
-  current_year: number;
-}
 
 @Injectable()
 export class CampaignService {
-  constructor(private readonly dbService: DatabaseService) {}
+  constructor(private readonly campaignRepo: CampaignRepository) {}
 
   create(guildId: string, name: string): Campaign {
     const id = uuidv4();
-    const now = Date.now();
+    this.campaignRepo.setActive(guildId, ''); // Disattiva tutte (hacky ma efficace se id vuoto non matcha nulla)
+    // Meglio: implementare deactivateAll in repo, ma setActive fa già switch se implementato bene.
+    // Guardando il repo: setActive fa update is_active=0 per guild, poi is_active=1 per id.
+    // Quindi chiamiamo create poi setActive.
     
-    // Disattiva altre campagne
-    this.dbService.getDb().prepare('UPDATE campaigns SET is_active = 0 WHERE guild_id = ?').run(guildId);
-    
-    // Crea nuova
-    this.dbService.getDb().prepare(
-      'INSERT INTO campaigns (id, guild_id, name, created_at, is_active) VALUES (?, ?, ?, ?, 1)'
-    ).run(id, guildId, name, now);
+    this.campaignRepo.create(id, guildId, name);
+    this.campaignRepo.setActive(guildId, id);
 
-    return { id, guild_id: guildId, name, created_at: now, is_active: 1, current_year: 0 };
+    return { id, guild_id: guildId, name, created_at: Date.now(), is_active: 1, current_year: 0 };
   }
 
   findAll(guildId: string): Campaign[] {
-    return this.dbService.getDb().prepare(
-      'SELECT * FROM campaigns WHERE guild_id = ? ORDER BY created_at DESC'
-    ).all(guildId) as Campaign[];
+    return this.campaignRepo.findAll(guildId);
   }
 
   getActive(guildId: string): Campaign | undefined {
-    return this.dbService.getDb().prepare(
-      'SELECT * FROM campaigns WHERE guild_id = ? AND is_active = 1'
-    ).get(guildId) as Campaign | undefined;
+    return this.campaignRepo.findActive(guildId);
   }
 
   setActive(guildId: string, campaignId: string): boolean {
-    const exists = this.dbService.getDb().prepare('SELECT id FROM campaigns WHERE id = ? AND guild_id = ?').get(campaignId, guildId);
-    if (!exists) return false;
+    const exists = this.campaignRepo.findById(campaignId);
+    if (!exists || exists.guild_id !== guildId) return false;
 
-    this.dbService.getDb().transaction(() => {
-      this.dbService.getDb().prepare('UPDATE campaigns SET is_active = 0 WHERE guild_id = ?').run(guildId);
-      this.dbService.getDb().prepare('UPDATE campaigns SET is_active = 1 WHERE id = ?').run(campaignId);
-    })();
+    this.campaignRepo.setActive(guildId, campaignId);
     return true;
-  }
-
-  delete(campaignId: string): void {
-    this.dbService.getDb().transaction(() => {
-      // Cascade delete gestito dal DB per la maggior parte, ma puliamo esplicitamente per sicurezza
-      this.dbService.getDb().prepare('DELETE FROM recordings WHERE session_id IN (SELECT session_id FROM sessions WHERE campaign_id = ?)').run(campaignId);
-      this.dbService.getDb().prepare('DELETE FROM sessions WHERE campaign_id = ?').run(campaignId);
-      this.dbService.getDb().prepare('DELETE FROM characters WHERE campaign_id = ?').run(campaignId);
-      this.dbService.getDb().prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
-    })();
   }
 }

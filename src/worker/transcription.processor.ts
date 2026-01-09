@@ -1,61 +1,75 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { TranscriptionService } from '../ai/transcription.service';
-import { DatabaseService } from '../database/database.service';
 import { LoggerService } from '../logger/logger.service';
-import { MonitorService } from '../monitor/monitor.service';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
+import OpenAI from 'openai';
+import { RecordingRepository } from '../audio/recording.repository';
+import { SessionRepository } from '../session/session.repository';
+import { CharacterRepository } from '../character/character.repository';
 
 @Processor('audio-processing')
 export class TranscriptionProcessor extends WorkerHost {
+  private openai: OpenAI;
+
   constructor(
-    private readonly transcriptionService: TranscriptionService,
-    private readonly dbService: DatabaseService,
     private readonly logger: LoggerService,
-    private readonly monitorService: MonitorService
+    private readonly configService: ConfigService,
+    private readonly recordingRepo: RecordingRepository,
+    private readonly sessionRepo: SessionRepository,
+    private readonly characterRepo: CharacterRepository
   ) {
     super();
+    this.openai = new OpenAI({
+      apiKey: this.configService.get<string>('OPENAI_API_KEY'),
+    });
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
     const { sessionId, fileName, filePath, userId } = job.data;
-    this.logger.log(`[Worker] 🔨 Inizio trascrizione job ${job.id} (${fileName})`);
-    const start = Date.now();
+    this.logger.log(`[Worker] 🎙️ Inizio trascrizione: ${fileName}`);
 
     try {
-      const result = await this.transcriptionService.transcribe(filePath);
+      this.recordingRepo.updateStatus(fileName, 'PROCESSING');
 
-      const campaignId = this.dbService.getDb().prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: string } | undefined;
-      let characterName = "Sconosciuto";
-
-      if (campaignId) {
-        const char = this.dbService.getDb().prepare('SELECT character_name FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId.campaign_id) as { character_name: string } | undefined;
-        if (char) characterName = char.character_name;
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File non trovato: ${filePath}`);
       }
 
-      this.dbService.getDb().prepare(
-        'UPDATE recordings SET status = ?, transcription_text = ? WHERE filename = ?'
-      ).run('PROCESSED', JSON.stringify(result.segments), fileName);
+      const fileStream = fs.createReadStream(filePath);
 
+      const transcription = await this.openai.audio.transcriptions.create({
+        file: fileStream,
+        model: "whisper-1",
+        language: "it",
+        response_format: "verbose_json",
+        timestamp_granularities: ["segment"]
+      });
+
+      // Arricchimento con Speaker Name
+      const session = this.sessionRepo.findById(sessionId);
+      let charName = "Sconosciuto";
+      if (session) {
+        const char = this.characterRepo.findByUser(userId, session.campaign_id);
+        if (char) charName = char.character_name;
+      }
+
+      const enrichedSegments = transcription.segments?.map((s: any) => ({
+        ...s,
+        speaker: charName,
+        speaker_id: userId
+      })) || [];
+
+      const jsonContent = JSON.stringify(enrichedSegments);
+
+      this.recordingRepo.updateTranscription(fileName, jsonContent, 'COMPLETED');
+      
       this.logger.log(`[Worker] ✅ Trascrizione completata per ${fileName}`);
-
-      // Log metriche
-      // Calcoliamo durata audio approssimativa (es. da dimensione file o da result.segments)
-      // Qui usiamo una stima basata sui segmenti
-      const durationSec = result.segments.length > 0 ? result.segments[result.segments.length - 1].end : 0;
-      this.monitorService.logFileProcessed(durationSec, Date.now() - start);
-
-      if (fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch {}
-      }
-
-      return { success: true, segments: result.segments.length };
+      return { success: true, segments: enrichedSegments.length };
 
     } catch (error: any) {
       this.logger.error(`[Worker] ❌ Errore trascrizione ${fileName}:`, error);
-      this.dbService.getDb().prepare(
-        'UPDATE recordings SET status = ? WHERE filename = ?'
-      ).run('FAILED', fileName);
+      this.recordingRepo.updateStatus(fileName, 'ERROR');
       throw error;
     }
   }

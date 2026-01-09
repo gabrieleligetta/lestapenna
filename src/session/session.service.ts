@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { SessionRepository } from './session.repository';
 import { AudioService } from '../audio/audio.service';
 import { LoggerService } from '../logger/logger.service';
 import { QueueService } from '../queue/queue.service';
@@ -13,7 +13,7 @@ export class SessionService {
   private sessionChannels = new Map<string, string>(); // SessionID -> ChannelID (Text)
 
   constructor(
-    private readonly dbService: DatabaseService,
+    private readonly sessionRepo: SessionRepository,
     private readonly audioService: AudioService,
     private readonly logger: LoggerService,
     private readonly queueService: QueueService,
@@ -32,9 +32,7 @@ export class SessionService {
     const sessionId = uuidv4();
     const now = Date.now();
 
-    this.dbService.getDb().prepare(
-      'INSERT INTO sessions (session_id, guild_id, campaign_id, start_time) VALUES (?, ?, ?, ?)'
-    ).run(sessionId, guildId, campaignId, now);
+    this.sessionRepo.create(sessionId, guildId, campaignId, now);
 
     if (location) {
       this.updateLocation(guildId, sessionId, location.macro || null, location.micro || null);
@@ -61,9 +59,7 @@ export class SessionService {
 
     await this.audioService.disconnect(guildId);
 
-    this.dbService.getDb().prepare(
-      'UPDATE sessions SET end_time = ? WHERE session_id = ?'
-    ).run(Date.now(), sessionId);
+    this.sessionRepo.updateEndTime(sessionId, Date.now());
 
     const channelId = this.sessionChannels.get(sessionId);
 
@@ -101,26 +97,16 @@ export class SessionService {
   }
 
   addNote(sessionId: string, userId: string, note: string): void {
-    this.dbService.getDb().prepare(
-      'INSERT INTO session_notes (session_id, user_id, note, timestamp) VALUES (?, ?, ?, ?)'
-    ).run(sessionId, userId, note, Date.now());
+    this.sessionRepo.addNote(sessionId, userId, note);
     this.logger.log(`Nota aggiunta alla sessione ${sessionId} da ${userId}`);
   }
 
   updateLocation(guildId: string, sessionId: string | null, macro: string | null, micro: string | null): void {
-    const now = Date.now();
-    const dateStr = new Date().toLocaleDateString('it-IT');
-
-    this.dbService.getDb().prepare(
-      'INSERT INTO location_history (guild_id, session_id, macro_location, micro_location, timestamp, session_date) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(guildId, sessionId, macro, micro, now, dateStr);
-
+    this.sessionRepo.addLocationHistory(guildId, sessionId, macro, micro);
     this.logger.log(`Posizione aggiornata: ${macro} | ${micro}`);
   }
 
   getLocation(guildId: string): { macro: string, micro: string } | undefined {
-    return this.dbService.getDb().prepare(
-      'SELECT macro_location as macro, micro_location as micro FROM location_history WHERE guild_id = ? ORDER BY timestamp DESC LIMIT 1'
-    ).get(guildId) as { macro: string, micro: string } | undefined;
+    return this.sessionRepo.getLastLocation(guildId);
   }
 }

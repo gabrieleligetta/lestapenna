@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Context, SlashCommand, SlashCommandContext, Options, StringOption } from 'necord';
 import { QueueService } from '../queue/queue.service';
-import { DatabaseService } from '../database/database.service';
+import { ConfigRepository } from './config.repository';
 import { PermissionFlagsBits } from 'discord.js';
 
 class SetChannelDto {
@@ -13,7 +13,7 @@ class SetChannelDto {
 export class SystemCommands {
   constructor(
     private readonly queueService: QueueService,
-    private readonly dbService: DatabaseService
+    private readonly configRepo: ConfigRepository
   ) {}
 
   @SlashCommand({ name: 'help', description: 'Mostra i comandi disponibili' })
@@ -45,13 +45,7 @@ export class SystemCommands {
   public async onSetChannel(@Context() [interaction]: SlashCommandContext, @Options() { type }: SetChannelDto) {
       const field = type === 'cmd' ? 'cmd_channel_id' : 'summary_channel_id';
       
-      // Upsert config
-      const exists = this.dbService.getDb().prepare('SELECT guild_id FROM guild_config WHERE guild_id = ?').get(interaction.guildId!);
-      if (exists) {
-          this.dbService.getDb().prepare(`UPDATE guild_config SET ${field} = ? WHERE guild_id = ?`).run(interaction.channelId, interaction.guildId!);
-      } else {
-          this.dbService.getDb().prepare(`INSERT INTO guild_config (guild_id, ${field}) VALUES (?, ?)`).run(interaction.guildId!, interaction.channelId);
-      }
+      this.configRepo.setConfig(interaction.guildId!, field, interaction.channelId);
       
       return interaction.reply(`✅ Canale **${type}** impostato su <#${interaction.channelId}>.`);
   }

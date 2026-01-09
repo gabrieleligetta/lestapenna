@@ -47,7 +47,7 @@ export class DebugService {
   async startTestStream(guildId: string, userId: string, url: string, channelId: string) {
     const campaignId = await this.ensureTestEnvironment(guildId, userId);
     const sessionId = `test-direct-${uuidv4().substring(0, 8)}`;
-    
+
     // Crea sessione
     this.dbService.getDb().prepare(
       'INSERT INTO sessions (session_id, guild_id, campaign_id, start_time) VALUES (?, ?, ?, ?)'
@@ -111,7 +111,7 @@ export class DebugService {
 
   async cleanTestSessions(guildId: string): Promise<number> {
     const testSessions = this.dbService.getDb().prepare("SELECT session_id FROM sessions WHERE session_id LIKE 'test-%' AND guild_id = ?").all(guildId) as { session_id: string }[];
-    
+
     let count = 0;
     for (const s of testSessions) {
       await this.queueService.removeSessionJobs(s.session_id);

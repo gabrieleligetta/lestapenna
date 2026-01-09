@@ -12,12 +12,14 @@ import * as prism from 'prism-media';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { DatabaseService } from '../database/database.service';
 import { LoggerService } from '../logger/logger.service';
 import { PcmSilenceInjector } from './pcm-silence-injector';
 import { AudioChunkSavedEvent } from '../events/audio.events';
 import { BackupService } from '../backup/backup.service';
-import { mixSessionAudio } from '../../src_old/sessionMixer'; // Da migrare in futuro
+import { PodcastMixerService } from './podcast-mixer.service';
+import { SessionRepository } from '../session/session.repository';
+import { RecordingRepository } from './recording.repository';
+import { CampaignRepository } from '../campaign/campaign.repository';
 
 const execAsync = promisify(exec);
 
@@ -45,10 +47,13 @@ export class AudioService implements OnModuleDestroy {
     private readonly IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minuti
 
     constructor(
-        private readonly dbService: DatabaseService,
         private readonly logger: LoggerService,
         private readonly eventEmitter: EventEmitter2,
-        private readonly backupService: BackupService
+        private readonly backupService: BackupService,
+        private readonly podcastMixerService: PodcastMixerService,
+        private readonly sessionRepo: SessionRepository,
+        private readonly recordingRepo: RecordingRepository,
+        private readonly campaignRepo: CampaignRepository
     ) {}
 
     onModuleDestroy() {
@@ -81,10 +86,10 @@ export class AudioService implements OnModuleDestroy {
         const guildId = channel.guild.id;
         this.pausedGuilds.delete(guildId);
 
-        const existingStart = this.dbService.getDb().prepare('SELECT start_time FROM sessions WHERE session_id = ?').get(sessionId);
+        const existingStart = this.sessionRepo.findById(sessionId);
         
-        if (!existingStart) {
-            this.dbService.getDb().prepare('UPDATE sessions SET start_time = ? WHERE session_id = ? AND start_time IS NULL').run(Date.now(), sessionId);
+        if (existingStart && !existingStart.start_time) {
+            this.sessionRepo.updateStartTime(sessionId, Date.now());
             this.logger.log(`[Recorder] 🕒 Tempo Zero fissato per sessione ${sessionId}`);
         }
 
@@ -270,7 +275,7 @@ export class AudioService implements OnModuleDestroy {
 
             if (sessionId) {
                 try {
-                    const masterPath = await mixSessionAudio(sessionId);
+                    const masterPath = await this.podcastMixerService.mixSession(sessionId);
                     if (masterPath) {
                         const outputFilename = path.basename(masterPath);
                         const customKey = `recordings/${sessionId}/master/${outputFilename}`;
@@ -320,17 +325,24 @@ export class AudioService implements OnModuleDestroy {
     }
 
     private async processFinalFile(userId: string, filePath: string, fileName: string, sessionId: string, guildId: string, startTime: number) {
-        const loc = this.dbService.getDb().prepare('SELECT macro_location, micro_location FROM location_history WHERE guild_id = ? ORDER BY timestamp DESC LIMIT 1').get(guildId) as any;
-        const campaign = this.dbService.getDb().prepare('SELECT current_year FROM campaigns WHERE guild_id = ? AND is_active = 1').get(guildId) as any;
+        const loc = this.sessionRepo.getLastLocation(guildId);
+        const campaign = this.campaignRepo.findActive(guildId);
 
-        this.dbService.getDb().prepare(
-            'INSERT INTO recordings (session_id, filename, filepath, user_id, timestamp, macro_location, micro_location, campaign_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(sessionId, fileName, filePath, userId, startTime, loc?.macro_location, loc?.micro_location, campaign?.current_year);
+        this.recordingRepo.create(
+            sessionId, 
+            fileName, 
+            filePath, 
+            userId, 
+            startTime, 
+            loc?.macro, 
+            loc?.micro, 
+            campaign?.current_year
+        );
 
         const customKey = `recordings/${sessionId}/full/${fileName}`;
         try {
             await this.backupService.uploadToOracle(filePath, fileName, sessionId, customKey);
-            this.dbService.getDb().prepare('UPDATE recordings SET status = ? WHERE filename = ?').run('SECURED', fileName);
+            this.recordingRepo.updateStatus(fileName, 'SECURED');
         } catch (e) {
             this.logger.error(`[Recorder] ❌ Errore upload FULL:`, e);
         }

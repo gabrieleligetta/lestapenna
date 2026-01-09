@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
-import { DatabaseService } from '../database/database.service';
 import { LoggerService } from '../logger/logger.service';
+import { KnowledgeRepository } from './knowledge.repository';
+import { RecordingRepository } from '../audio/recording.repository';
+import { SessionRepository } from '../session/session.repository';
+import { CharacterRepository } from '../character/character.repository';
 
 @Injectable()
 export class AiService {
@@ -10,8 +13,11 @@ export class AiService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly dbService: DatabaseService,
-    private readonly logger: LoggerService
+    private readonly logger: LoggerService,
+    private readonly knowledgeRepo: KnowledgeRepository,
+    private readonly recordingRepo: RecordingRepository,
+    private readonly sessionRepo: SessionRepository,
+    private readonly characterRepo: CharacterRepository
   ) {
     this.openai = new OpenAI({
       apiKey: this.configService.get<string>('OPENAI_API_KEY'),
@@ -20,9 +26,7 @@ export class AiService {
 
   async generateSummary(sessionId: string, tone: string = 'DM'): Promise<any> {
     // Recupera trascrizioni
-    const transcripts = this.dbService.getDb().prepare(
-      'SELECT transcription_text, user_id, timestamp FROM recordings WHERE session_id = ? AND transcription_text IS NOT NULL ORDER BY timestamp ASC'
-    ).all(sessionId) as any[];
+    const transcripts = this.recordingRepo.getTranscripts(sessionId);
 
     if (transcripts.length === 0) {
       throw new Error("Nessuna trascrizione disponibile per questa sessione.");
@@ -33,11 +37,11 @@ export class AiService {
     for (const t of transcripts) {
       const char = this.getCharacterName(t.user_id, sessionId);
       try {
-        const segments = JSON.parse(t.transcription_text);
+        const segments = JSON.parse(t.transcription_text || '[]');
         const text = segments.map((s: any) => s.text).join(' ');
         if (text.trim()) fullText += `${char}: ${text}\n`;
       } catch {
-        if (t.transcription_text.trim()) fullText += `${char}: ${t.transcription_text}\n`;
+        if (t.transcription_text?.trim()) fullText += `${char}: ${t.transcription_text}\n`;
       }
     }
 
@@ -78,36 +82,30 @@ export class AiService {
   }
 
   private getCharacterName(userId: string, sessionId: string): string {
-    const campaignId = this.dbService.getDb().prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: string } | undefined;
-    if (!campaignId) return "Sconosciuto";
+    const session = this.sessionRepo.findById(sessionId);
+    if (!session) return "Sconosciuto";
     
-    const char = this.dbService.getDb().prepare('SELECT character_name FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId.campaign_id) as { character_name: string } | undefined;
+    const char = this.characterRepo.findByUser(userId, session.campaign_id);
     return char ? char.character_name : "Giocatore";
   }
 
   // --- RAG & MEMORY ---
   
   async ingestSessionRaw(sessionId: string) {
-    // Logica semplificata: prende tutto il testo, lo divide in chunk e crea embedding
-    // Per ora lasciamo vuoto o implementiamo base se richiesto.
-    // Implementazione base:
-    const transcripts = this.dbService.getDb().prepare(
-      'SELECT transcription_text FROM recordings WHERE session_id = ? AND transcription_text IS NOT NULL'
-    ).all(sessionId) as any[];
+    const transcripts = this.recordingRepo.getTranscripts(sessionId);
 
     const fullText = transcripts.map(t => {
-        try { return JSON.parse(t.transcription_text).map((s: any) => s.text).join(' '); }
-        catch { return t.transcription_text; }
+        try { return JSON.parse(t.transcription_text || '[]').map((s: any) => s.text).join(' '); }
+        catch { return t.transcription_text || ''; }
     }).join('\n');
 
     if (!fullText.trim()) return;
 
     const embedding = await this.createEmbedding(fullText.substring(0, 8000)); // Limitiamo per ora
-    const campaignId = this.dbService.getDb().prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: string };
+    const session = this.sessionRepo.findById(sessionId);
+    if (!session) return;
 
-    this.dbService.getDb().prepare(
-        'INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(campaignId.campaign_id, sessionId, fullText, Buffer.from(new Float32Array(embedding).buffer), Date.now());
+    this.knowledgeRepo.addFragment(session.campaign_id, sessionId, fullText, embedding);
     
     this.logger.log(`[AI] Ingestione completata per sessione ${sessionId}`);
   }

@@ -2,14 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { Context, SlashCommand, Options, SlashCommandContext } from 'necord';
 import { SessionService } from './session.service';
 import { CampaignService } from '../campaign/campaign.service';
-import { DatabaseService } from '../database/database.service';
+import { SessionRepository } from './session.repository';
+import { RecordingRepository } from '../audio/recording.repository';
 import { QueueService } from '../queue/queue.service';
 import { StringOption, NumberOption } from 'necord';
-import { GuildMember, EmbedBuilder } from 'discord.js';
+import { GuildMember } from 'discord.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PodcastMixerService } from '../audio/podcast-mixer.service';
 import { BackupService } from '../backup/backup.service';
+import { CharacterRepository } from '../character/character.repository';
 
 class StartSessionDto {
   @StringOption({ name: 'location', description: 'Luogo della sessione', required: false })
@@ -43,7 +45,9 @@ export class SessionCommands {
   constructor(
     private readonly sessionService: SessionService,
     private readonly campaignService: CampaignService,
-    private readonly dbService: DatabaseService,
+    private readonly sessionRepo: SessionRepository,
+    private readonly recordingRepo: RecordingRepository,
+    private readonly characterRepo: CharacterRepository,
     private readonly queueService: QueueService,
     private readonly podcastMixer: PodcastMixerService,
     private readonly backupService: BackupService
@@ -155,26 +159,24 @@ export class SessionCommands {
 
   @SlashCommand({ name: 'session-transcript', description: 'Scarica la trascrizione testuale' })
   public async onTranscript(@Context() [interaction]: SlashCommandContext, @Options() { sessionId }: SessionIdDto) {
-    const transcripts = this.dbService.getDb().prepare(
-        'SELECT transcription_text, user_id, timestamp FROM recordings WHERE session_id = ? AND transcription_text IS NOT NULL ORDER BY timestamp ASC'
-    ).all(sessionId) as any[];
+    const transcripts = this.recordingRepo.getTranscripts(sessionId);
 
     if (transcripts.length === 0) return interaction.reply("⚠️ Nessuna trascrizione trovata.");
 
     // Recupera start_time della sessione per calcolare offset relativo
-    const session = this.dbService.getDb().prepare('SELECT start_time, campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as any;
+    const session = this.sessionRepo.findById(sessionId);
     const sessionStart = session ? session.start_time : 0;
 
     const formattedText = transcripts.map(t => {
         let text = "";
         try {
-            const segments = JSON.parse(t.transcription_text);
+            const segments = JSON.parse(t.transcription_text || '[]');
             text = segments.map((s: any) => s.text).join(' ');
-        } catch { text = t.transcription_text; }
+        } catch { text = t.transcription_text || ''; }
         
         let charName = t.user_id;
         if (session) {
-            const char = this.dbService.getDb().prepare('SELECT character_name FROM characters WHERE user_id = ? AND campaign_id = ?').get(t.user_id, session.campaign_id) as any;
+            const char = this.characterRepo.findByUser(t.user_id, session.campaign_id);
             if (char) charName = char.character_name;
         }
 
@@ -201,7 +203,7 @@ export class SessionCommands {
 
   @SlashCommand({ name: 'session-set-number', description: 'Imposta il numero della sessione' })
   public async onSetNumber(@Context() [interaction]: SlashCommandContext, @Options() { sessionId, number }: SetSessionNumberDto) {
-    this.dbService.getDb().prepare('UPDATE sessions SET session_number = ? WHERE session_id = ?').run(number, sessionId);
+    this.sessionRepo.updateSessionNumber(sessionId, number);
     return interaction.reply(`✅ Numero sessione per \`${sessionId}\` impostato a **${number}**.`);
   }
 
@@ -211,7 +213,7 @@ export class SessionCommands {
     
     await this.queueService.removeSessionJobs(sessionId);
     
-    const files = this.dbService.getDb().prepare('SELECT * FROM recordings WHERE session_id = ?').all(sessionId) as any[];
+    const files = this.recordingRepo.findBySession(sessionId);
     
     for (const file of files) {
         await this.queueService.addAudioJob({
@@ -230,9 +232,7 @@ export class SessionCommands {
       const active = this.campaignService.getActive(interaction.guildId!);
       if (!active) return interaction.reply("Nessuna campagna attiva.");
       
-      const sessions = this.dbService.getDb().prepare(
-          'SELECT * FROM sessions WHERE campaign_id = ? ORDER BY start_time DESC LIMIT 10'
-      ).all(active.id) as any[];
+      const sessions = this.sessionRepo.findByCampaign(active.id);
       
       if (sessions.length === 0) return interaction.reply("Nessuna sessione trovata.");
       

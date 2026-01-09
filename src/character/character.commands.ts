@@ -165,19 +165,24 @@ export class CharacterCommands {
 
       if (targetPG) {
           await interaction.editReply(`📖 **Saga dell'Eroe: ${targetPG.character_name}**\nIl Bardo sta scrivendo...`);
-          // TODO: Implementare generateCharacterBiography in AiService
-          // const bio = await this.aiService.generateCharacterBiography(active.id, targetPG.character_name, targetPG.class, targetPG.race);
-          const bio = "Funzionalità AI in arrivo..."; 
-          return interaction.followUp(bio);
+          try {
+              const bio = await this.aiService.generateCharacterBiography(active.id, targetPG.character_name, targetPG.class, targetPG.race);
+              return interaction.followUp(bio);
+          } catch (e) {
+              return interaction.followUp("❌ Errore durante la scrittura della saga.");
+          }
       }
 
       // 2. Cerca tra gli NPC
       const targetNPC = this.loreService.getNpcEntry(active.id, name);
       if (targetNPC) {
           await interaction.editReply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
-          // TODO: Implementare generateNpcBiography in AiService
-          const bio = "Funzionalità AI in arrivo...";
-          return interaction.followUp(bio);
+          try {
+              const bio = await this.aiService.generateNpcBiography(active.id, targetNPC.name, targetNPC.role, targetNPC.description);
+              return interaction.followUp(bio);
+          } catch (e) {
+              return interaction.followUp("❌ Errore durante la stesura del dossier.");
+          }
       }
 
       return interaction.editReply(`❌ Non ho trovato nessun PG o NPC chiamato "**${name}**" negli archivi.`);

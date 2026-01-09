@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 
 export interface Campaign {
-  id: string;
+  id: number;
   guild_id: string;
   name: string;
   created_at: number;
@@ -12,7 +12,7 @@ export interface Campaign {
 
 export interface Npc {
     id: number;
-    campaign_id: string;
+    campaign_id: number;
     name: string;
     role: string;
     description: string;
@@ -28,10 +28,10 @@ export interface LocationState {
 export class CampaignRepository {
   constructor(private readonly dbService: DatabaseService) {}
 
-  create(id: string, guildId: string, name: string): void {
+  create(guildId: string, name: string): void {
     this.dbService.getDb().prepare(
-      'INSERT INTO campaigns (id, guild_id, name, created_at, is_active) VALUES (?, ?, ?, ?, 1)'
-    ).run(id, guildId, name, Date.now());
+      'INSERT INTO campaigns (guild_id, name, created_at, is_active) VALUES (?, ?, ?, 1)'
+    ).run(guildId, name, Date.now());
   }
 
   findAll(guildId: string): Campaign[] {
@@ -46,13 +46,13 @@ export class CampaignRepository {
     ).get(guildId) as Campaign | undefined;
   }
 
-  findById(id: string): Campaign | undefined {
+  findById(id: number): Campaign | undefined {
     return this.dbService.getDb().prepare(
       'SELECT * FROM campaigns WHERE id = ?'
     ).get(id) as Campaign | undefined;
   }
 
-  setActive(guildId: string, campaignId: string): void {
+  setActive(guildId: string, campaignId: number): void {
     const db = this.dbService.getDb();
     db.transaction(() => {
       db.prepare('UPDATE campaigns SET is_active = 0 WHERE guild_id = ?').run(guildId);
@@ -60,36 +60,36 @@ export class CampaignRepository {
     })();
   }
 
-  setYear(campaignId: string, year: number): void {
+  setYear(campaignId: number, year: number): void {
     this.dbService.getDb().prepare(
       'UPDATE campaigns SET current_year = ? WHERE id = ?'
     ).run(year, campaignId);
   }
 
   // --- NUOVI METODI PER AI ---
-  getAllNpcs(campaignId: string): Npc[] {
+  getAllNpcs(campaignId: number): Npc[] {
       try {
-          return this.dbService.getDb().prepare('SELECT * FROM npcs WHERE campaign_id = ?').all(campaignId) as Npc[];
+          return this.dbService.getDb().prepare('SELECT * FROM npc_dossier WHERE campaign_id = ?').all(campaignId) as Npc[];
       } catch (e) {
           return [];
       }
   }
 
-  getNpcHistory(campaignId: string, npcName: string): any[] {
+  getNpcHistory(campaignId: number, npcName: string): any[] {
       try {
           return this.dbService.getDb().prepare(
-              'SELECT * FROM npc_events WHERE campaign_id = ? AND npc_name = ? ORDER BY timestamp ASC'
+              'SELECT * FROM npc_history WHERE campaign_id = ? AND npc_name = ? ORDER BY timestamp ASC'
           ).all(campaignId, npcName);
       } catch (e) {
           return [];
       }
   }
 
-  getCurrentLocation(campaignId: string): LocationState {
+  getCurrentLocation(campaignId: number): LocationState {
       try {
           // Cerca l'ultima location history
           const loc = this.dbService.getDb().prepare(
-              'SELECT macro_location, micro_location FROM location_history WHERE guild_id = (SELECT guild_id FROM campaigns WHERE id = ?) ORDER BY timestamp DESC LIMIT 1'
+              'SELECT macro_location, micro_location FROM location_history WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 1'
           ).get(campaignId) as any;
           
           return { macro: loc?.macro_location || null, micro: loc?.micro_location || null };
@@ -98,10 +98,10 @@ export class CampaignRepository {
       }
   }
 
-  getAtlasEntry(campaignId: string, macro: string, micro: string): string | null {
+  getAtlasEntry(campaignId: number, macro: string, micro: string): string | null {
       try {
           const entry = this.dbService.getDb().prepare(
-              'SELECT description FROM atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?'
+              'SELECT description FROM location_atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?'
           ).get(campaignId, macro, micro) as any;
           return entry?.description || null;
       } catch (e) {
@@ -109,7 +109,7 @@ export class CampaignRepository {
       }
   }
 
-  getQuests(campaignId: string): any[] {
+  getQuests(campaignId: number): any[] {
       try {
           return this.dbService.getDb().prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = "OPEN"').all(campaignId);
       } catch (e) {
@@ -118,7 +118,7 @@ export class CampaignRepository {
   }
   // ---------------------------
 
-  delete(id: string): void {
+  delete(id: number): void {
     const db = this.dbService.getDb();
     
     db.transaction(() => {
@@ -140,13 +140,13 @@ export class CampaignRepository {
         // --- PULIZIA MANUALE TABELLE ORFANE ---
         const tables = [
             'location_history', 
-            'atlas', 
-            'npcs', 
+            'location_atlas', 
+            'npc_dossier', 
             'quests', 
             'inventory', 
-            'character_events', 
-            'npc_events', 
-            'world_events',
+            'character_history', 
+            'npc_history', 
+            'world_history',
             'knowledge_fragments'
         ];
 

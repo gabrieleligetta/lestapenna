@@ -59,38 +59,27 @@ export class RecoveryService implements OnModuleInit {
             this.logger.warn(`[Recovery] 🩹 Trovato file orfano: ${file}. Tento recupero...`);
 
             // Cerchiamo una sessione compatibile temporalmente
-            // Nota: Qui servirebbe una query complessa "trova sessione che include questo timestamp"
-            // Per semplicità, se non troviamo sessione, ne creiamo una di "Recovery"
             let sessionId = `recovered-${uuidv4().substring(0, 8)}`;
             
-            // TODO: Implementare logica findSessionByTimestamp se necessario
-            // const foundSession = this.sessionRepo.findByTimestamp(timestamp);
-            // if (foundSession) sessionId = foundSession.session_id;
-            
-            // Se la sessione non esiste nel DB, la creiamo come "Unknown Campaign"
-            const sessionExists = this.sessionRepo.findById(sessionId);
-            if (!sessionExists) {
-                this.logger.log(`[Recovery] 🆕 Creazione sessione di emergenza: ${sessionId}`);
-                // Usiamo una campagna fittizia o NULL se il DB lo permette. 
-                // Assumiamo che esista una campagna di default o gestiamo l'errore.
-                // Per ora mettiamo 'UNKNOWN' come campaign_id, sperando non violi FK (se FK strict, fallirà)
-                // Meglio: non creare sessione se non siamo sicuri, ma qui è recovery estremo.
-                // Soluzione sicura: Creare sessione solo se troviamo campagna attiva in quel momento? Difficile.
-                // Fallback: Non inseriamo in sessions, ma solo in recordings? No, FK constraint.
-                // Soluzione Pratica: Saltiamo creazione sessione e logghiamo errore se manca.
+            const foundSession = this.sessionRepo.findByTimestamp(timestamp);
+            if (foundSession) {
+                sessionId = foundSession.session_id;
+                this.logger.log(`[Recovery] 🔗 File orfano associato alla sessione esistente: ${sessionId}`);
+            } else {
+                this.logger.warn(`[Recovery] ⚠️ Nessuna sessione trovata per il timestamp ${timestamp}. Il file verrà caricato su Oracle ma non associato al DB.`);
             }
 
-            // Inseriamo il recording
+            // Tentativo di upload su Oracle per sicurezza
             try {
-                // Nota: Se sessionId non esiste in sessions table, questo fallirà per FK.
-                // Per ora assumiamo che l'utente debba risolvere manualmente o che la sessione esista.
-                // Se è un vero orfano (crash totale), la sessione potrebbe esserci ma senza end_time.
-                
-                // Tentativo di upload su Oracle per sicurezza
                 await this.backupService.uploadToOracle(filePath, file, sessionId);
                 
-                // Se riusciamo a inserire nel DB (es. sessione trovata), accodiamo il job
-                // Altrimenti lasciamo il file lì o lo spostiamo in 'recovered' folder.
+                // Se abbiamo trovato una sessione valida, proviamo a reinserire il record nel DB
+                if (foundSession) {
+                     // Recuperiamo location e anno dalla sessione se possibile, o usiamo default
+                     // Nota: recordingRepo.create richiede parametri che potremmo non avere precisi
+                     // Per ora ci limitiamo al backup cloud per non corrompere il DB con dati parziali
+                     this.logger.log(`[Recovery] ✅ File ${file} salvato su Cloud nella cartella ${sessionId}`);
+                }
             } catch (e) {
                 this.logger.error(`[Recovery] Errore gestione orfano ${file}:`, e);
             }

@@ -191,10 +191,18 @@ export class PodcastMixerService {
       ];
 
       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      let stderrData = '';
+
+      ffmpeg.stderr.on('data', (data) => {
+        stderrData += data.toString();
+      });
 
       ffmpeg.on('close', (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`FFmpeg batch mix failed with code ${code}`));
+        else {
+          this.logger.error(`[Mixer] FFmpeg batch mix failed. Stderr: ${stderrData}`);
+          reject(new Error(`FFmpeg batch mix failed with code ${code}`));
+        }
       });
 
       ffmpeg.on('error', (err) => reject(err));
@@ -213,9 +221,18 @@ export class PodcastMixerService {
         '-y'
       ]);
 
+      let stderrData = '';
+
+      ffmpeg.stderr.on('data', (data) => {
+        stderrData += data.toString();
+      });
+
       ffmpeg.on('close', (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`Final MP3 conversion failed with code ${code}`));
+        else {
+          this.logger.error(`[Mixer] Final MP3 conversion failed. Stderr: ${stderrData}`);
+          reject(new Error(`Final MP3 conversion failed with code ${code}`));
+        }
       });
 
       ffmpeg.on('error', reject);

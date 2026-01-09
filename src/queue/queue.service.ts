@@ -24,16 +24,24 @@ export class QueueService {
     return this.summaryQueue.add('summarize-job', data, opts);
   }
 
+  /**
+   * Rimuove TUTTI i job (anche attivi) associati a una specifica sessione da tutte le code.
+   */
   async removeSessionJobs(sessionId: string): Promise<number> {
     let removedCount = 0;
     const queues = [this.audioQueue, this.correctionQueue, this.summaryQueue];
 
     for (const queue of queues) {
+      // Recuperiamo tutti i job in qualsiasi stato
       const jobs = await queue.getJobs(['waiting', 'delayed', 'active', 'failed', 'completed']);
       for (const job of jobs) {
         if (job.data && job.data.sessionId === sessionId) {
           try {
             const state = await job.getState();
+            
+            // Se è attivo, lo rimuoviamo comunque per garantire un reset pulito.
+            // Il worker potrebbe continuare a lavorare "a vuoto", ma il risultato sarà ignorato/non salvato correttamente
+            // o sovrascritto dal nuovo job riaccodato.
             if (state === 'active') {
               this.logger.warn(`[Queue] ⚠️ Rimozione forzata job ATTIVO ${job.id} (${job.queueName}) per sessione ${sessionId}.`);
             }
@@ -48,6 +56,9 @@ export class QueueService {
     return removedCount;
   }
 
+  /**
+   * Svuota completamente le code e rimuove ogni metadato da Redis.
+   */
   async clearAllQueues() {
     this.logger.log("[Queue] 🧹 Svuotamento completo delle code in corso...");
     const queues = [this.audioQueue, this.correctionQueue, this.summaryQueue];
@@ -57,7 +68,7 @@ export class QueueService {
       await queue.drain(true);
       await queue.clean(0, 1000, 'completed');
       await queue.clean(0, 1000, 'failed');
-      await queue.resume();
+      await queue.resume(); // Importante riprendere dopo il drain se vogliamo che la coda torni usabile
     }
     this.logger.log("[Queue] ✅ Code svuotate.");
   }

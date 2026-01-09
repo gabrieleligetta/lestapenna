@@ -36,9 +36,28 @@ export class ReporterService {
             }
         });
 
+        const provider = this.configService.get<string>('AI_PROVIDER');
         this.openai = new OpenAI({
-            apiKey: this.configService.get<string>('OPENAI_API_KEY'),
+            baseURL: provider === 'ollama' ? (this.configService.get<string>('OLLAMA_BASE_URL') || 'http://host.docker.internal:11434/v1') : undefined,
+            apiKey: provider === 'ollama' ? 'ollama' : this.configService.get<string>('OPENAI_API_KEY'),
+            project: provider === 'ollama' ? undefined : this.configService.get<string>('OPENAI_PROJECT_ID'),
         });
+    }
+
+    async sendTestEmail(recipient: string): Promise<boolean> {
+        try {
+            await this.transporter.sendMail({
+                from: `"${this.configService.get('SMTP_FROM_NAME') || 'Lestapenna'}" <${this.configService.get('SMTP_USER')}>`,
+                to: recipient,
+                subject: `[Lestapenna] Test Email`,
+                html: `<h1>Test Email</h1><p>Se leggi questo messaggio, il sistema di notifica email funziona correttamente.</p>`
+            });
+            this.logger.log(`[Reporter] 📧 Email di test inviata a ${recipient}`);
+            return true;
+        } catch (e) {
+            this.logger.error("[Reporter] ❌ Errore invio email di test:", e);
+            return false;
+        }
     }
 
     async sendTechnicalReport(metrics: SessionMetrics) {
@@ -83,8 +102,13 @@ export class ReporterService {
             Analizza brevemente la stabilità del sistema.
             `;
 
+            const provider = this.configService.get<string>('AI_PROVIDER');
+            const modelToUse = provider === 'ollama' 
+                ? (this.configService.get<string>('OLLAMA_MODEL') || "llama3.2") 
+                : (this.configService.get<string>('OPEN_AI_MODEL_MINI') || "gpt-4o-mini");
+
             const response = await this.openai.chat.completions.create({
-                model: "gpt-4o-mini",
+                model: modelToUse,
                 messages: [{ role: "user", content: prompt }]
             });
             emailBody = response.choices[0].message.content || "Report generico.";

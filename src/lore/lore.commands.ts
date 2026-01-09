@@ -5,7 +5,7 @@ import { CampaignService } from '../campaign/campaign.service';
 import { SessionService } from '../session/session.service';
 import { AiService } from '../ai/ai.service';
 import { StringOption, NumberOption } from 'necord';
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, TextChannel } from 'discord.js';
 
 class NpcDto {
   @StringOption({ name: 'name', description: 'Nome dell\'NPC da cercare', required: false })
@@ -187,10 +187,12 @@ export class LoreCommands {
       if (!active) return;
 
       await interaction.deferReply();
-      // TODO: Implementare askBard in AiService quando pronto
-      // const answer = await this.aiService.askBard(active.id, question);
-      const answer = "Il Bardo sta accordando il liuto... (Funzionalità AI in arrivo)";
-      return interaction.followUp(answer);
+      try {
+          const answer = await this.aiService.askBard(active.id, question);
+          return interaction.followUp(`**❓ ${question}**\n\n📜 ${answer}`);
+      } catch (e) {
+          return interaction.followUp("❌ Il Bardo ha avuto un vuoto di memoria.");
+      }
   }
 
   @SlashCommand({ name: 'wiki', description: 'Cerca frammenti di lore esatti' })
@@ -199,14 +201,36 @@ export class LoreCommands {
       if (!active) return;
 
       await interaction.deferReply();
-      // TODO: Implementare searchKnowledge in AiService quando pronto
-      // const fragments = await this.aiService.searchKnowledge(active.id, term);
-      const fragments: string[] = []; 
+      
+      try {
+          const fragments = await this.aiService.searchKnowledge(active.id, term, 3);
 
-      if (fragments.length === 0) return interaction.followUp("Non ho trovato nulla negli archivi.");
+          if (fragments.length === 0) {
+              return interaction.followUp("Non ho trovato nulla negli archivi su questo argomento.");
+          }
 
-      await interaction.followUp(`📚 **Archivi: ${term}**\nHo trovato ${fragments.length} frammenti.`);
-      // Logica embed...
+          await interaction.followUp(`📚 **Archivi: ${term}**\nHo trovato ${fragments.length} frammenti pertinenti.`);
+
+          for (let i = 0; i < fragments.length; i++) {
+              const fragment = fragments[i];
+              const safeFragment = fragment.length > 4000 ? fragment.substring(0, 4000) + "..." : fragment;
+
+              const embed = new EmbedBuilder()
+                  .setTitle(`Frammento ${i + 1}`)
+                  .setColor("#F1C40F")
+                  .setDescription(safeFragment);
+
+              // Fix: Cast esplicito a TextChannel per accedere a .send()
+              // interaction.channel è TextBasedChannel che include PartialGroupDMChannel che non ha send() in alcune versioni di djs
+              // Ma in un contesto SlashCommand di gilda, è sicuro assumere TextChannel o simile.
+              if (interaction.channel && 'send' in interaction.channel) {
+                  await (interaction.channel as TextChannel).send({ embeds: [embed] });
+              }
+          }
+      } catch (err) {
+          console.error("Errore wiki:", err);
+          await interaction.followUp("Errore durante la consultazione degli archivi.");
+      }
   }
 
   @SlashCommand({ name: 'quest', description: 'Visualizza le quest attive' })

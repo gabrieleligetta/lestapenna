@@ -4,7 +4,7 @@ import { DatabaseService } from '../database/database.service';
 export interface Session {
   session_id: string;
   guild_id: string;
-  campaign_id: string;
+  campaign_id: number;
   start_time: number;
   end_time?: number;
   title?: string;
@@ -24,7 +24,7 @@ export interface SessionNote {
 export class SessionRepository {
   constructor(private readonly dbService: DatabaseService) {}
 
-  create(sessionId: string, guildId: string, campaignId: string, startTime: number): void {
+  create(sessionId: string, guildId: string, campaignId: number, startTime: number): void {
     this.dbService.getDb().prepare(
       'INSERT INTO sessions (session_id, guild_id, campaign_id, start_time) VALUES (?, ?, ?, ?)'
     ).run(sessionId, guildId, campaignId, startTime);
@@ -36,10 +36,18 @@ export class SessionRepository {
     ).get(sessionId) as Session | undefined;
   }
 
-  findByCampaign(campaignId: string, limit: number = 10): Session[] {
+  findByCampaign(campaignId: number, limit: number = 10): Session[] {
     return this.dbService.getDb().prepare(
       'SELECT * FROM sessions WHERE campaign_id = ? ORDER BY start_time DESC LIMIT ?'
     ).all(campaignId, limit) as Session[];
+  }
+
+  findByTimestamp(timestamp: number): Session | undefined {
+      // Cerca una sessione che era attiva durante quel timestamp
+      // start_time <= timestamp AND (end_time IS NULL OR end_time >= timestamp)
+      return this.dbService.getDb().prepare(
+          'SELECT * FROM sessions WHERE start_time <= ? AND (end_time IS NULL OR end_time >= ?) ORDER BY start_time DESC LIMIT 1'
+      ).get(timestamp, timestamp) as Session | undefined;
   }
 
   updateEndTime(sessionId: string, endTime: number): void {
@@ -85,18 +93,24 @@ export class SessionRepository {
   }
 
   // --- Location History ---
-  addLocationHistory(guildId: string, sessionId: string | null, macro: string | null, micro: string | null): void {
+  addLocationHistory(campaignId: number, sessionId: string | null, macro: string | null, micro: string | null): void {
     const now = Date.now();
     const dateStr = new Date().toLocaleDateString('it-IT');
     this.dbService.getDb().prepare(
-      'INSERT INTO location_history (guild_id, session_id, macro_location, micro_location, timestamp, session_date) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(guildId, sessionId, macro, micro, now, dateStr);
+      'INSERT INTO location_history (campaign_id, session_id, macro_location, micro_location, timestamp, session_date) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(campaignId, sessionId, macro, micro, now, dateStr);
   }
 
   getLastLocation(guildId: string): { macro: string, micro: string } | undefined {
-    return this.dbService.getDb().prepare(
-      'SELECT macro_location as macro, micro_location as micro FROM location_history WHERE guild_id = ? ORDER BY timestamp DESC LIMIT 1'
-    ).get(guildId) as { macro: string, micro: string } | undefined;
+    // Nota: location_history ora usa campaign_id, non guild_id direttamente.
+    // Dobbiamo fare una JOIN con campaigns
+    return this.dbService.getDb().prepare(`
+      SELECT lh.macro_location as macro, lh.micro_location as micro 
+      FROM location_history lh
+      JOIN campaigns c ON lh.campaign_id = c.id
+      WHERE c.guild_id = ? AND c.is_active = 1
+      ORDER BY lh.timestamp DESC LIMIT 1
+    `).get(guildId) as { macro: string, micro: string } | undefined;
   }
 
   getLocationHistory(sessionId: string): any[] {

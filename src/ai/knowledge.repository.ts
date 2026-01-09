@@ -3,7 +3,7 @@ import { DatabaseService } from '../database/database.service';
 
 export interface KnowledgeFragment {
   id: number;
-  campaign_id: string;
+  campaign_id: number;
   session_id: string;
   content: string;
   embedding: Buffer;
@@ -21,7 +21,7 @@ export class KnowledgeRepository {
   constructor(private readonly dbService: DatabaseService) {}
 
   addFragment(
-      campaignId: string, 
+      campaignId: number, 
       sessionId: string, 
       content: string, 
       embedding: number[], 
@@ -55,7 +55,7 @@ export class KnowledgeRepository {
     }
   }
 
-  search(campaignId: string, queryEmbedding: number[], model: string, limit: number = 5, currentMacro?: string, currentMicro?: string, mentionedNpcs: string[] = []): string[] {
+  search(campaignId: number, queryEmbedding: number[], model: string, limit: number = 5, currentMacro?: string, currentMicro?: string, mentionedNpcs: string[] = []): string[] {
     const fragments = this.dbService.getDb().prepare(
         'SELECT * FROM knowledge_fragments WHERE campaign_id = ? AND embedding_model = ?'
     ).all(campaignId, model) as KnowledgeFragment[];

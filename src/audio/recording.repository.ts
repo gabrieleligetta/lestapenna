@@ -13,6 +13,7 @@ export interface Recording {
   micro_location?: string;
   campaign_year?: number;
   transcription_text?: string;
+  error_message?: string;
 }
 
 @Injectable()
@@ -37,10 +38,24 @@ export class RecordingRepository {
     ).get(filename) as Recording | undefined;
   }
 
-  updateStatus(filename: string, status: string): void {
-    this.dbService.getDb().prepare(
-      'UPDATE recordings SET status = ? WHERE filename = ?'
-    ).run(status, filename);
+  updateStatus(filename: string, status: string, transcription?: string | null, errorMessage?: string | null): void {
+    let query = 'UPDATE recordings SET status = ?';
+    const params: any[] = [status];
+
+    if (transcription !== undefined && transcription !== null) {
+        query += ', transcription_text = ?';
+        params.push(transcription);
+    }
+
+    if (errorMessage !== undefined && errorMessage !== null) {
+        query += ', error_message = ?';
+        params.push(errorMessage);
+    }
+
+    query += ' WHERE filename = ?';
+    params.push(filename);
+
+    this.dbService.getDb().prepare(query).run(...params);
   }
 
   updateTranscription(filename: string, text: string, status: string): void {

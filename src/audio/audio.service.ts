@@ -20,6 +20,7 @@ import { PodcastMixerService } from './podcast-mixer.service';
 import { SessionRepository } from '../session/session.repository';
 import { RecordingRepository } from './recording.repository';
 import { CampaignRepository } from '../campaign/campaign.repository';
+import * as mm from 'music-metadata';
 
 const execAsync = promisify(exec);
 
@@ -56,9 +57,24 @@ export class AudioService implements OnModuleDestroy {
         private readonly campaignRepo: CampaignRepository
     ) {}
 
-    onModuleDestroy() {
+    async onModuleDestroy() {
+        this.logger.log('[AudioService] 🛑 Shutdown rilevato. Chiusura controllata delle sessioni...');
+        
+        // Identifica tutte le gilde attive
+        const activeGuilds = new Set<string>();
         for (const key of this.activeStreams.keys()) {
-            this.closeStream(key);
+            const guildId = key.split('-')[0];
+            if (guildId) activeGuilds.add(guildId);
+        }
+
+        // Esegue disconnect per ogni gilda (che gestisce chiusura stream, mixaggio e upload)
+        const promises = Array.from(activeGuilds).map(guildId => this.disconnect(guildId));
+        
+        try {
+            await Promise.all(promises);
+            this.logger.log('[AudioService] ✅ Tutte le sessioni audio sono state chiuse e salvate.');
+        } catch (error) {
+            this.logger.error('[AudioService] ❌ Errore durante la chiusura degli stream:', error);
         }
     }
 
@@ -347,6 +363,14 @@ export class AudioService implements OnModuleDestroy {
             this.logger.error(`[Recorder] ❌ Errore upload FULL:`, e);
         }
 
+        let durationMs = 0;
+        try {
+            const metadata = await mm.parseFile(filePath);
+            durationMs = (metadata.format.duration || 0) * 1000;
+        } catch (e: any) {
+            this.logger.warn(`[Recorder] Impossibile calcolare durata audio: ${e.message}`);
+        }
+
         // EMETTI EVENTO invece di chiamare QueueService direttamente
         this.eventEmitter.emit('audio.chunk.saved', new AudioChunkSavedEvent(
             sessionId,
@@ -354,9 +378,9 @@ export class AudioService implements OnModuleDestroy {
             filePath,
             userId,
             startTime,
-            0 // TODO: Calcolare durata reale se necessario
+            durationMs
         ));
 
-        this.logger.log(`[Recorder] ✅ Traccia utente salvata e inviata: ${fileName}`);
+        this.logger.log(`[Recorder] ✅ Traccia utente salvata e inviata: ${fileName} (${(durationMs/1000).toFixed(1)}s)`);
     }
 }

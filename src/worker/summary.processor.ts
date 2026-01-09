@@ -8,6 +8,7 @@ import { MonitorService } from '../monitor/monitor.service';
 import { ReporterService } from '../reporter/reporter.service';
 import { Client, TextChannel, EmbedBuilder } from 'discord.js';
 import { Inject } from '@nestjs/common';
+import { CampaignRepository } from '../campaign/campaign.repository';
 
 @Processor('summary-processing')
 export class SummaryProcessor extends WorkerHost {
@@ -18,6 +19,7 @@ export class SummaryProcessor extends WorkerHost {
     private readonly loreService: LoreService,
     private readonly monitorService: MonitorService,
     private readonly reporterService: ReporterService,
+    private readonly campaignRepo: CampaignRepository,
     @Inject('DISCORD_CLIENT') private readonly client: Client
   ) {
     super();
@@ -41,6 +43,9 @@ export class SummaryProcessor extends WorkerHost {
       // 3. Aggiorna Lore (NPC, Eventi, ecc.)
       const session = this.sessionRepo.findById(sessionId);
       if (session) {
+          const campaign = this.campaignRepo.findById(session.campaign_id);
+          const currentYear = campaign?.current_year || 0;
+
           if (result.npc_events) {
               for (const npc of result.npc_events) {
                   this.loreService.updateNpcEntry(session.campaign_id, npc.name, npc.event, undefined, npc.type === 'DEATH' ? 'DEAD' : undefined);
@@ -48,9 +53,7 @@ export class SummaryProcessor extends WorkerHost {
           }
           if (result.world_events) {
               for (const evt of result.world_events) {
-                  // Anno corrente? Recuperiamolo dalla campagna o usiamo 0
-                  // TODO: Recuperare anno corrente. Per ora 0.
-                  this.loreService.addWorldEvent(session.campaign_id, sessionId, evt.event, evt.type, 0);
+                  this.loreService.addWorldEvent(session.campaign_id, sessionId, evt.event, evt.type, currentYear);
               }
           }
       }
@@ -92,6 +95,7 @@ export class SummaryProcessor extends WorkerHost {
 
     } catch (error: any) {
       this.logger.error(`[Worker] ❌ Errore riassunto ${sessionId}:`, error);
+      this.monitorService.logError('Summary', `Session: ${sessionId} - ${error.message}`);
       throw error;
     }
   }

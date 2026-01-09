@@ -5,10 +5,18 @@ import { ConfigRepository } from './config.repository';
 import { PermissionFlagsBits, TextChannel, Message } from 'discord.js';
 import { BackupService } from '../backup/backup.service';
 import { ReporterService } from '../reporter/reporter.service';
+import { DatabaseService } from '../database/database.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 class SetChannelDto {
     @StringOption({ name: 'type', description: 'Tipo canale (cmd o summary)', required: true, choices: [{name: 'Comandi', value: 'cmd'}, {name: 'Riassunti', value: 'summary'}] })
     type: string;
+}
+
+class TestMailDto {
+    @StringOption({ name: 'email', description: 'Indirizzo email destinatario', required: true })
+    email: string;
 }
 
 @Injectable()
@@ -17,7 +25,8 @@ export class SystemCommands {
     private readonly queueService: QueueService,
     private readonly configRepo: ConfigRepository,
     private readonly backupService: BackupService,
-    private readonly reporterService: ReporterService
+    private readonly reporterService: ReporterService,
+    private readonly dbService: DatabaseService
   ) {}
 
   @SlashCommand({ name: 'aiuto', description: 'Mostra i comandi disponibili' })
@@ -76,12 +85,30 @@ export class SystemCommands {
           if (collected.size > 0) {
               const statusMsg = await interaction.followUp("🧹 **Ragnarok avviato...**");
               try {
+                  // 1. Svuota Code
                   await this.queueService.clearAllQueues();
                   await statusMsg.edit("🧹 **Ragnarok in corso...**\n- Code svuotate ✅");
+                  
+                  // 2. Svuota Cloud
                   const cloudCount = await this.backupService.wipeBucket();
                   await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅`);
-                  // TODO: Implementare wipeDatabase e wipeLocalFiles in servizi appropriati
-                  await statusMsg.edit(`🔥 **Ragnarok completato.** Tutto è stato riportato al nulla.\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅`);
+                  
+                  // 3. Svuota DB
+                  this.dbService.wipeDatabase();
+                  await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅`);
+
+                  // 4. Svuota File Locali
+                  const recordingsDir = path.join(process.cwd(), 'recordings');
+                  if (fs.existsSync(recordingsDir)) {
+                      const files = fs.readdirSync(recordingsDir);
+                      for (const file of files) {
+                          if (file !== '.gitkeep') {
+                              try { fs.unlinkSync(path.join(recordingsDir, file)); } catch {}
+                          }
+                      }
+                  }
+
+                  await statusMsg.edit(`🔥 **Ragnarok completato.** Tutto è stato riportato al nulla.\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅\n- File locali rimossi ✅`);
               } catch (err: any) {
                   await statusMsg.edit(`❌ Errore durante il Ragnarok: ${err.message}`);
               }
@@ -92,13 +119,12 @@ export class SystemCommands {
   }
 
   @SlashCommand({ name: 'testmail', description: 'Invia una mail di test', defaultMemberPermissions: PermissionFlagsBits.Administrator })
-  public async onTestMail(@Context() [interaction]: SlashCommandContext) {
+  public async onTestMail(@Context() [interaction]: SlashCommandContext, @Options() { email }: TestMailDto) {
       if (interaction.user.id !== '310865403066712074') return interaction.reply({ content: "⛔ Accesso negato.", ephemeral: true });
 
-      await interaction.reply("📧 Invio email di test in corso...");
-      // TODO: Implementare sendTestEmail in ReporterService
-      // const success = await this.reporterService.sendTestEmail('gabligetta@gmail.com');
-      const success = true; // Mock
+      await interaction.reply(`📧 Invio email di test a ${email}...`);
+      
+      const success = await this.reporterService.sendTestEmail(email);
 
       if (success) {
           await interaction.followUp("✅ Email inviata con successo! Controlla la casella di posta.");

@@ -37,8 +37,8 @@ export class SessionService {
         let testCampaign = campaigns.find(c => c.name === testCampaignName);
 
         if (!testCampaign) {
-            const newId = uuidv4();
-            this.campaignRepo.create(newId, guildId, testCampaignName);
+            // FIX: create returns number ID, no uuid needed
+            const newId = this.campaignRepo.create(guildId, testCampaignName);
             testCampaign = this.campaignRepo.findById(newId);
         }
 
@@ -59,7 +59,8 @@ export class SessionService {
     // Check Location
     const loc = this.sessionRepo.getLastLocation(guildId);
     if (!loc || (!loc.macro && !loc.micro)) {
-        this.sessionRepo.addLocationHistory(guildId, null, "Laboratorio", "Stanza dei Test");
+        // FIX: addLocationHistory requires campaignId
+        this.sessionRepo.addLocationHistory(campaign.id, null, "Laboratorio", "Stanza dei Test");
     }
 
     // Check Character
@@ -73,7 +74,7 @@ export class SessionService {
     return campaign;
   }
 
-  async validateParticipants(campaignId: string, members: GuildMember[]): Promise<{ missing: string[], bots: string[] }> {
+  async validateParticipants(campaignId: number, members: GuildMember[]): Promise<{ missing: string[], bots: string[] }> {
     const missing: string[] = [];
     const bots: string[] = [];
 
@@ -90,7 +91,7 @@ export class SessionService {
     return { missing, bots };
   }
 
-  async startSession(guildId: string, voiceChannel: VoiceBasedChannel, textChannelId: string, campaignId: string, location?: { macro?: string, micro?: string }): Promise<string> {
+  async startSession(guildId: string, voiceChannel: VoiceBasedChannel, textChannelId: string, campaignId: number, location?: { macro?: string, micro?: string }): Promise<string> {
     if (this.activeSessions.has(guildId)) {
       throw new Error('Una sessione è già attiva in questo server.');
     }
@@ -105,7 +106,7 @@ export class SessionService {
     this.sessionRepo.create(sessionId, guildId, campaignId, now);
 
     if (location) {
-      this.updateLocation(guildId, sessionId, location.macro || null, location.micro || null);
+      this.updateLocation(campaignId, sessionId, location.macro || null, location.micro || null);
     }
 
     await this.audioService.connectToChannel(voiceChannel, sessionId);
@@ -175,8 +176,8 @@ export class SessionService {
     this.logger.log(`Nota aggiunta alla sessione ${sessionId} da ${userId}`);
   }
 
-  updateLocation(guildId: string, sessionId: string | null, macro: string | null, micro: string | null): void {
-    this.sessionRepo.addLocationHistory(guildId, sessionId, macro, micro);
+  updateLocation(campaignId: number, sessionId: string | null, macro: string | null, micro: string | null): void {
+    this.sessionRepo.addLocationHistory(campaignId, sessionId, macro, micro);
     this.logger.log(`Posizione aggiornata: ${macro} | ${micro}`);
   }
 

@@ -1,20 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { CampaignRepository, Campaign } from './campaign.repository';
-import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class CampaignService {
   constructor(private readonly campaignRepo: CampaignRepository) {}
 
   create(guildId: string, name: string): Campaign {
-    const id = uuidv4();
-    this.campaignRepo.setActive(guildId, ''); // Disattiva tutte (hacky ma efficace se id vuoto non matcha nulla)
-    // Meglio: implementare deactivateAll in repo, ma setActive fa già switch se implementato bene.
-    // Guardando il repo: setActive fa update is_active=0 per guild, poi is_active=1 per id.
-    // Quindi chiamiamo create poi setActive.
+    // Disattiva tutte le altre campagne prima di crearne una nuova attiva
+    // Usiamo un ID fittizio -1 per disattivare tutto senza attivare nulla di esistente
+    this.campaignRepo.setActive(guildId, -1);
     
-    this.campaignRepo.create(id, guildId, name);
-    this.campaignRepo.setActive(guildId, id);
+    const id = this.campaignRepo.create(guildId, name);
+    // La nuova campagna viene creata con is_active=1 dal repository
 
     return { id, guild_id: guildId, name, created_at: Date.now(), is_active: 1, current_year: 0 };
   }
@@ -27,7 +24,7 @@ export class CampaignService {
     return this.campaignRepo.findActive(guildId);
   }
 
-  setActive(guildId: string, campaignId: string): boolean {
+  setActive(guildId: string, campaignId: number): boolean {
     const exists = this.campaignRepo.findById(campaignId);
     if (!exists || exists.guild_id !== guildId) return false;
 
@@ -35,7 +32,7 @@ export class CampaignService {
     return true;
   }
 
-  delete(campaignId: string): void {
+  delete(campaignId: number): void {
     this.campaignRepo.delete(campaignId);
   }
 }

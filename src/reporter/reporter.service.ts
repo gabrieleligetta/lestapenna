@@ -153,7 +153,7 @@ export class ReporterService {
         if (fs.existsSync(logPath)) try { fs.unlinkSync(logPath); } catch {}
     }
 
-    async sendSessionRecap(sessionId: string, campaignId: string, summaryText: string, lootGained: string[] = [], lootLost: string[] = [], narrative?: string) {
+    async sendSessionRecap(sessionId: string, campaignId: number, summaryText: string, lootGained: string[] = [], lootLost: string[] = [], narrative?: string) {
         const campaign = this.campaignRepo.findById(campaignId);
         const campaignName = campaign ? campaign.name : "Sconosciuta";
 

@@ -188,7 +188,8 @@ export class LoreCommands {
 
       await interaction.deferReply();
       try {
-          const answer = await this.aiService.askBard(active.id, question);
+          // FIX: active.id is number, askBard expects string
+          const answer = await this.aiService.askBard(active.id.toString(), question);
           return interaction.followUp(`**❓ ${question}**\n\n📜 ${answer}`);
       } catch (e) {
           return interaction.followUp("❌ Il Bardo ha avuto un vuoto di memoria.");
@@ -203,7 +204,8 @@ export class LoreCommands {
       await interaction.deferReply();
       
       try {
-          const fragments = await this.aiService.searchKnowledge(active.id, term, 3);
+          // FIX: active.id is number, searchKnowledge expects string
+          const fragments = await this.aiService.searchKnowledge(active.id.toString(), term, 3);
 
           if (fragments.length === 0) {
               return interaction.followUp("Non ho trovato nulla negli archivi su questo argomento.");

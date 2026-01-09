@@ -28,10 +28,11 @@ export interface LocationState {
 export class CampaignRepository {
   constructor(private readonly dbService: DatabaseService) {}
 
-  create(guildId: string, name: string): void {
-    this.dbService.getDb().prepare(
+  create(guildId: string, name: string): number {
+    const res = this.dbService.getDb().prepare(
       'INSERT INTO campaigns (guild_id, name, created_at, is_active) VALUES (?, ?, ?, 1)'
     ).run(guildId, name, Date.now());
+    return res.lastInsertRowid as number;
   }
 
   findAll(guildId: string): Campaign[] {

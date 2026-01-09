@@ -59,7 +59,8 @@ export class CampaignCommands {
   @SlashCommand({ name: 'selezionacampagna', description: 'Seleziona la campagna attiva', defaultMemberPermissions: PermissionFlagsBits.Administrator })
   public async onSelect(@Context() [interaction]: SlashCommandContext, @Options() { nameOrId }: SelectCampaignDto) {
     const campaigns = this.campaignService.findAll(interaction.guildId!);
-    const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id === nameOrId);
+    // FIX: c.id is number, nameOrId is string
+    const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
 
     if (!target) return interaction.reply({ content: "⚠️ Campagna non trovata.", ephemeral: true });
 
@@ -70,7 +71,8 @@ export class CampaignCommands {
   @SlashCommand({ name: 'eliminacampagna', description: 'Elimina definitivamente una campagna', defaultMemberPermissions: PermissionFlagsBits.Administrator })
   public async onDelete(@Context() [interaction]: SlashCommandContext, @Options() { nameOrId }: DeleteCampaignDto) {
       const campaigns = this.campaignService.findAll(interaction.guildId!);
-      const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id === nameOrId);
+      // FIX: c.id is number, nameOrId is string
+      const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
 
       if (!target) return interaction.reply({ content: "⚠️ Campagna non trovata.", ephemeral: true });
 
@@ -103,7 +105,8 @@ export class CampaignCommands {
 
       await interaction.deferReply();
       try {
-          const answer = await this.aiService.askBard(active.id, question);
+          // FIX: active.id is number, askBard expects string
+          const answer = await this.aiService.askBard(active.id.toString(), question);
           return interaction.editReply(`**❓ ${question}**\n\n📜 ${answer}`);
       } catch (e) {
           return interaction.editReply("❌ Il Bardo ha avuto un vuoto di memoria.");
@@ -118,10 +121,11 @@ export class CampaignCommands {
       await interaction.deferReply({ ephemeral: true });
       try {
           if (type?.toLowerCase() === 'mondo') {
-              await this.aiService.ingestWorldEvent(active.id, "MANUAL", text, "LORE");
+              // FIX: active.id is number, ingestWorldEvent expects string
+              await this.aiService.ingestWorldEvent(active.id.toString(), "MANUAL", text, "LORE");
           } else {
               // Default generico
-              await this.aiService.ingestWorldEvent(active.id, "MANUAL", text, type || "GENERIC");
+              await this.aiService.ingestWorldEvent(active.id.toString(), "MANUAL", text, type || "GENERIC");
           }
           return interaction.editReply("✅ Conoscenza acquisita con successo.");
       } catch (e) {

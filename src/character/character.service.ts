@@ -9,21 +9,21 @@ export class CharacterService {
     private readonly logger: LoggerService
   ) {}
 
-  getUserProfile(userId: string, campaignId: string): Partial<Character> {
+  getUserProfile(userId: string, campaignId: number): Partial<Character> {
     const char = this.characterRepo.findByUser(userId, campaignId);
     return char || {};
   }
 
-  updateUserCharacter(userId: string, campaignId: string, field: string, value: string): void {
+  updateUserCharacter(userId: string, campaignId: number, field: string, value: string): void {
     this.characterRepo.upsert(userId, campaignId, field, value);
     this.logger.log(`Aggiornato personaggio utente ${userId}: ${field} = ${value}`);
   }
 
-  getCampaignCharacters(campaignId: string): Character[] {
+  getCampaignCharacters(campaignId: number): Character[] {
     return this.characterRepo.findByCampaign(campaignId);
   }
 
-  deleteUserCharacter(userId: string, campaignId: string): void {
+  deleteUserCharacter(userId: string, campaignId: number): void {
     this.characterRepo.delete(userId, campaignId);
     this.logger.log(`Eliminato personaggio utente ${userId} dalla campagna ${campaignId}`);
   }

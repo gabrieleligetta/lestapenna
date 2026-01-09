@@ -166,7 +166,8 @@ export class CharacterCommands {
       if (targetPG) {
           await interaction.editReply(`📖 **Saga dell'Eroe: ${targetPG.character_name}**\nIl Bardo sta scrivendo...`);
           try {
-              const bio = await this.aiService.generateCharacterBiography(active.id, targetPG.character_name, targetPG.class, targetPG.race);
+              // FIX: active.id is number, generateCharacterBiography expects string
+              const bio = await this.aiService.generateCharacterBiography(active.id.toString(), targetPG.character_name, targetPG.class, targetPG.race);
               return interaction.followUp(bio);
           } catch (e) {
               return interaction.followUp("❌ Errore durante la scrittura della saga.");
@@ -178,7 +179,8 @@ export class CharacterCommands {
       if (targetNPC) {
           await interaction.editReply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
           try {
-              const bio = await this.aiService.generateNpcBiography(active.id, targetNPC.name, targetNPC.role, targetNPC.description);
+              // FIX: active.id is number, generateNpcBiography expects string
+              const bio = await this.aiService.generateNpcBiography(active.id.toString(), targetNPC.name, targetNPC.role, targetNPC.description);
               return interaction.followUp(bio);
           } catch (e) {
               return interaction.followUp("❌ Errore durante la stesura del dossier.");

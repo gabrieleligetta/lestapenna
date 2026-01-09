@@ -12,15 +12,15 @@ export class LoreService {
   ) {}
 
   // --- NPC ---
-  listNpcs(campaignId: string): Npc[] {
+  listNpcs(campaignId: number): Npc[] {
     return this.loreRepo.findAllNpcs(campaignId);
   }
 
-  getNpcEntry(campaignId: string, name: string): Npc | undefined {
+  getNpcEntry(campaignId: number, name: string): Npc | undefined {
     return this.loreRepo.findNpcByName(campaignId, name);
   }
 
-  updateNpcEntry(campaignId: string, name: string, description: string, role?: string, status?: string): void {
+  updateNpcEntry(campaignId: number, name: string, description: string, role?: string, status?: string): void {
     this.loreRepo.upsertNpc(campaignId, name, role || 'Sconosciuto', description, status || 'ALIVE');
     this.logger.log(`Aggiornato/Creato NPC ${name}`);
   }
@@ -30,59 +30,59 @@ export class LoreService {
   }
 
   // --- TIMELINE ---
-  getWorldTimeline(campaignId: string): WorldEvent[] {
+  getWorldTimeline(campaignId: number): WorldEvent[] {
     return this.loreRepo.getTimeline(campaignId);
   }
 
-  addWorldEvent(campaignId: string, sessionId: string | null, description: string, type: string, year: number): void {
+  addWorldEvent(campaignId: number, sessionId: string | null, description: string, type: string, year: number): void {
     this.loreRepo.addEvent(campaignId, sessionId, description, type, year);
     this.logger.log(`Aggiunto evento storico anno ${year}: ${description}`);
   }
 
-  setCampaignYear(campaignId: string, year: number): void {
+  setCampaignYear(campaignId: number, year: number): void {
     this.campaignRepo.setYear(campaignId, year);
     this.logger.log(`Anno corrente campagna ${campaignId} impostato a ${year}`);
   }
 
   // --- ATLAS ---
-  updateAtlasEntry(campaignId: string, macro: string, micro: string, description: string): void {
+  updateAtlasEntry(campaignId: number, macro: string, micro: string, description: string): void {
       this.loreRepo.upsertAtlasEntry(campaignId, macro, micro, description);
       this.logger.log(`Aggiornato Atlante: ${macro} - ${micro}`);
   }
 
-  getAtlasEntry(campaignId: string, macro: string, micro: string): AtlasEntry | undefined {
+  getAtlasEntry(campaignId: number, macro: string, micro: string): AtlasEntry | undefined {
       return this.loreRepo.getAtlasEntry(campaignId, macro, micro);
   }
 
   // --- QUESTS ---
-  addQuest(campaignId: string, title: string): void {
+  addQuest(campaignId: number, title: string): void {
       this.loreRepo.addQuest(campaignId, title);
       this.logger.log(`Quest aggiunta: ${title}`);
   }
 
-  getOpenQuests(campaignId: string): Quest[] {
+  getOpenQuests(campaignId: number): Quest[] {
       return this.loreRepo.getOpenQuests(campaignId);
   }
 
-  completeQuest(campaignId: string, titleSearch: string): boolean {
+  completeQuest(campaignId: number, titleSearch: string): boolean {
       const success = this.loreRepo.updateQuestStatus(campaignId, titleSearch, 'COMPLETED');
       if (success) this.logger.log(`Quest completata: ${titleSearch}`);
       return success;
   }
 
   // --- INVENTORY ---
-  addLoot(campaignId: string, item: string): void {
+  addLoot(campaignId: number, item: string): void {
       this.loreRepo.addLoot(campaignId, item);
       this.logger.log(`Loot aggiunto: ${item}`);
   }
 
-  removeLoot(campaignId: string, itemSearch: string): boolean {
+  removeLoot(campaignId: number, itemSearch: string): boolean {
       const success = this.loreRepo.removeLoot(campaignId, itemSearch);
       if (success) this.logger.log(`Loot rimosso: ${itemSearch}`);
       return success;
   }
 
-  getInventory(campaignId: string): InventoryItem[] {
+  getInventory(campaignId: number): InventoryItem[] {
       return this.loreRepo.getInventory(campaignId);
   }
 }

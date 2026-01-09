@@ -188,11 +188,16 @@ export class SessionCommands {
 
   @SlashCommand({ name: 'location', description: 'Aggiorna il luogo corrente' })
   public async onLocation(@Context() [interaction]: SlashCommandContext, @Options() { place }: LocationDto) {
+    const active = this.campaignService.getActive(interaction.guildId!);
+    if (!active) return interaction.reply("⚠️ Nessuna campagna attiva.");
+
     const sessionId = this.sessionService.getActiveSession(interaction.guildId!);
     const parts = place.split('|').map(s => s.trim());
     const macro = parts[0];
     const micro = parts[1] || null;
-    this.sessionService.updateLocation(interaction.guildId!, sessionId || null, macro, micro);
+    
+    // FIX: updateLocation requires campaignId (number)
+    this.sessionService.updateLocation(active.id, sessionId || null, macro, micro);
     return interaction.reply(`📍 Posizione aggiornata: **${macro}** | **${micro || '-'}**`);
   }
 
@@ -399,7 +404,8 @@ export class SessionCommands {
       if (description) {
           this.loreRepo.upsertAtlasEntry(active.id, loc.macro, loc.micro, description);
           this.logger.log(`Aggiornato Atlante: ${loc.macro} - ${loc.micro}`);
-          await this.aiService.ingestLocationDescription(active.id, loc.macro, loc.micro, description);
+          // FIX: active.id is number, ingestLocationDescription expects string
+          await this.aiService.ingestLocationDescription(active.id.toString(), loc.macro, loc.micro, description);
           return interaction.reply(`📖 **Atlante Aggiornato** per *${loc.micro}*:\n"${description}"`);
       } else {
           const entry = this.loreRepo.getAtlasEntry(active.id, loc.macro, loc.micro);

@@ -8,9 +8,10 @@ import { QueueModule } from '../queue/queue.module';
 import { MonitorModule } from '../monitor/monitor.module';
 import { ReporterModule } from '../reporter/reporter.module';
 import { DiscordClientProvider } from '../discord/discord-client.provider';
+import { LoreModule } from '../lore/lore.module';
 
 @Module({
-  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule],
+  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule, LoreModule],
   providers: [TranscriptionProcessor, SummaryProcessor, DiscordClientProvider],
 })
 export class WorkerModule {}

@@ -57,17 +57,17 @@ export class RecordingRepository {
 
   getUnprocessed(): Recording[] {
     return this.dbService.getDb().prepare(
-      'SELECT * FROM recordings WHERE status = "PENDING" OR status = "SECURED"'
+      'SELECT * FROM recordings WHERE status = \'PENDING\' OR status = \'SECURED\''
     ).all() as Recording[];
   }
 
   resetUnfinished(sessionId: string): Recording[] {
     this.dbService.getDb().prepare(
-        'UPDATE recordings SET status = "SECURED" WHERE session_id = ? AND (status = "PROCESSING" OR status = "ERROR")'
+        'UPDATE recordings SET status = \'SECURED\' WHERE session_id = ? AND (status = \'PROCESSING\' OR status = \'ERROR\')'
     ).run(sessionId);
     
     return this.dbService.getDb().prepare(
-        'SELECT * FROM recordings WHERE session_id = ? AND status = "SECURED"'
+        'SELECT * FROM recordings WHERE session_id = ? AND status = \'SECURED\''
     ).all(sessionId) as Recording[];
   }
 

@@ -8,7 +8,6 @@ import { QueueModule } from '../queue/queue.module';
 import { CampaignModule } from '../campaign/campaign.module';
 import { MonitorModule } from '../monitor/monitor.module';
 import { BackupModule } from '../backup/backup.module';
-import { SessionRepository } from './session.repository';
 
 @Module({
   imports: [
@@ -20,7 +19,7 @@ import { SessionRepository } from './session.repository';
     MonitorModule,
     BackupModule
   ],
-  providers: [SessionService, SessionCommands, SessionRepository],
-  exports: [SessionService, SessionRepository],
+  providers: [SessionService, SessionCommands],
+  exports: [SessionService],
 })
 export class SessionModule {}

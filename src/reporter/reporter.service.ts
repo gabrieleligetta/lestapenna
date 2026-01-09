@@ -134,12 +134,17 @@ export class ReporterService {
             FROM npcs n 
             JOIN recordings r ON r.present_npcs LIKE '%' || n.name || '%' 
             WHERE r.session_id = ?
-        `).all(sessionId) as any[]; // Query approssimativa, nel legacy era diversa ma simile
+        `).all(sessionId) as any[];
+
+        const sessionStart = this.dbService.getDb().prepare('SELECT MIN(timestamp) as start FROM recordings WHERE session_id = ?').get(sessionId) as { start: number };
+        const sessionDate = sessionStart && sessionStart.start 
+            ? new Date(sessionStart.start).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+            : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
         // Genera Link
         let audioUrl = "";
         try {
-            audioUrl = await this.backupService.getPresignedUrl(`PODCAST-${sessionId}.mp3`, sessionId, 604800) || "";
+            audioUrl = await this.backupService.getPresignedUrl(`MASTER-${sessionId}.mp3`, sessionId, 604800) || "";
         } catch {}
 
         // Genera Transcript TXT per email
@@ -154,6 +159,7 @@ export class ReporterService {
                     ${audioUrl ? `<a href="${audioUrl}" style="background-color: #1abc9c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">🎧 Scarica Podcast (MP3)</a>` : ''}
                     ${transcriptUrl ? `<a href="${transcriptUrl}" style="background-color: #3498db; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">📜 Scarica Trascrizione (TXT)</a>` : ''}
                 </div>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #7f8c8d;">Link validi per 7 giorni</p>
             </div>
             `;
         }
@@ -161,20 +167,67 @@ export class ReporterService {
         let htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
             <h1 style="color: #d35400;">📜 Report Sessione: ${campaignName}</h1>
-            <p style="font-style: italic;">ID: ${sessionId}</p>
+            <p style="font-style: italic; margin-bottom: 5px;">ID Sessione: ${sessionId}</p>
+            <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
             <hr style="border: 1px solid #d35400;">
             ${downloadLinksHtml}
         `;
 
-        if (narrative) {
-            htmlContent += `<h2>📖 Racconto</h2><div style="background-color: #fff8e1; padding: 15px; border-radius: 5px;">${narrative}</div>`;
+        if (narrative && narrative.length > 10) {
+            htmlContent += `
+            <h2>📖 Racconto</h2>
+            <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">
+                ${narrative}
+            </div>`;
         }
 
-        htmlContent += `<h2>📝 Riassunto</h2><div style="background-color: #f9f9f9; padding: 15px;">${summaryText}</div>`;
-        
-        // Aggiungere Loot, Viaggi, NPC... (omesso per brevità ma presente nel legacy)
-        
-        htmlContent += `</div>`;
+        htmlContent += `
+            <h2>📝 Riassunto Eventi (Log)</h2>
+            <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-line;">
+                ${summaryText}
+            </div>
+            
+            <div style="display: flex; gap: 20px; margin-top: 20px;">
+                <div style="flex: 1;">
+                    <h3 style="color: #2980b9;">🗺️ Cronologia Luoghi</h3>
+                    <ul>
+                        ${travels.map(t => {
+                            const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
+                            return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
+                        }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
+                    </ul>
+                </div>
+                
+                <div style="flex: 1;">
+                    <h3 style="color: #27ae60;">💰 Bilancio Oggetti</h3>
+                    ${lootGained.length > 0 ? `<b>Ottenuti:</b><ul>${lootGained.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
+                    ${lootLost.length > 0 ? `<b>Persi/Usati:</b><ul>${lootLost.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
+                    ${lootGained.length === 0 && lootLost.length === 0 ? '<p>Nessun cambio inventario.</p>' : ''}
+                </div>
+            </div>
+
+            <h3>👥 NPC Incontrati</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr style="background-color: #eee;">
+                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Nome</th>
+                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Ruolo</th>
+                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Note / Status</th>
+                </tr>
+                ${npcs.map(n => `
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>${n.name}</b></td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">${n.role || '-'}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">
+                            ${n.status === 'DEAD' ? '💀 MORT' : ''} 
+                            ${n.description ? `<i>${n.description.substring(0, 100)}${n.description.length > 100 ? '...' : ''}</i>` : ''}
+                        </td>
+                    </tr>
+                `).join('') || '<tr><td colspan="3" style="padding: 8px;">Nessun NPC rilevato nel Dossier.</td></tr>'}
+            </table>
+
+            <br>
+            <p style="font-size: 12px; color: #999;">Generato automaticamente dal Bardo AI Lestapenna.</p>
+        </div>`;
 
         const recipient = this.configService.get<string>('REPORT_RECIPIENT');
         if (!recipient) return;
@@ -183,7 +236,7 @@ export class ReporterService {
             await this.transporter.sendMail({
                 from: `"${this.configService.get('SMTP_FROM_NAME') || 'Lestapenna'}" <${this.configService.get('SMTP_USER')}>`,
                 to: recipient,
-                subject: `[D&D Report] ${campaignName}`,
+                subject: `[D&D Report] ${campaignName} - ${sessionDate}`,
                 html: htmlContent
             });
             this.logger.log(`[Reporter] 📧 Email recap inviata a ${recipient}`);
@@ -193,8 +246,56 @@ export class ReporterService {
     }
 
     private async generateAndUploadTranscript(sessionId: string): Promise<string | null> {
-        // Logica simile a SessionCommands.onTranscript ma salva su Oracle e ritorna URL
-        // ... (Implementazione semplificata per brevità)
-        return null; 
+        try {
+            const transcripts = this.dbService.getDb().prepare(
+                'SELECT * FROM recordings WHERE session_id = ? AND transcription_text IS NOT NULL ORDER BY timestamp ASC'
+            ).all(sessionId) as any[];
+
+            if (!transcripts || transcripts.length === 0) return null;
+
+            const sessionStart = this.dbService.getDb().prepare('SELECT MIN(timestamp) as start FROM recordings WHERE session_id = ?').get(sessionId) as { start: number };
+            const startTime = sessionStart?.start || 0;
+
+            const formattedText = transcripts.map(t => {
+                let text = "";
+                try {
+                    const segments = JSON.parse(t.transcription_text);
+                    if (Array.isArray(segments)) {
+                        text = segments.map(s => {
+                            if (typeof s.start !== 'number' || !s.text) return "";
+                            const absTime = t.timestamp + (s.start * 1000);
+                            const mins = Math.floor((absTime - startTime) / 60000);
+                            const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
+                            return `[${mins}:${secs.toString().padStart(2, '0')}] ${s.text}`;
+                        }).filter(line => line !== "").join('\n');
+                    } else {
+                        text = t.transcription_text;
+                    }
+                } catch (e) {
+                    text = t.transcription_text;
+                }
+                // Recupera nome personaggio se possibile (qui semplificato, si potrebbe fare join con users/characters)
+                const charName = t.user_id || 'Sconosciuto'; 
+                return `--- ${charName} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}\n`;
+            }).join('\n');
+
+            const fileName = `transcript-${sessionId}.txt`;
+            const recordingsDir = path.join(process.cwd(), 'recordings');
+            if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+            
+            const filePath = path.join(recordingsDir, fileName);
+            fs.writeFileSync(filePath, formattedText);
+
+            const customKey = `recordings/${sessionId}/transcript/${fileName}`;
+            await this.backupService.uploadToOracle(filePath, fileName, sessionId, customKey);
+            
+            try { fs.unlinkSync(filePath); } catch (e) {}
+
+            // URL valido per 7 giorni
+            return await this.backupService.getPresignedUrl(fileName, sessionId, 604800);
+        } catch (e) {
+            this.logger.error(`[Reporter] ❌ Errore generazione transcript per email:`, e);
+            return null;
+        }
     }
 }

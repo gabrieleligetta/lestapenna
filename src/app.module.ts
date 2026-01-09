@@ -4,6 +4,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { NecordModule } from 'necord';
 import { IntentsBitField } from 'discord.js';
 import { DatabaseModule } from './database/database.module';
+import { RepositoryModule } from './database/repository.module';
 import { LoggerModule } from './logger/logger.module';
 import { CampaignModule } from './campaign/campaign.module';
 import { CharacterModule } from './character/character.module';
@@ -39,6 +40,7 @@ import { ReporterModule } from './reporter/reporter.module';
       inject: [ConfigService],
     }),
     DatabaseModule,
+    RepositoryModule,
     LoggerModule,
     QueueModule,
     CampaignModule,

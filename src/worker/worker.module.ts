@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TranscriptionProcessor } from './transcription.processor';
 import { SummaryProcessor } from './summary.processor';
+import { CorrectionProcessor } from './correction.processor';
 import { AiModule } from '../ai/ai.module';
 import { DatabaseModule } from '../database/database.module';
 import { LoggerModule } from '../logger/logger.module';
@@ -9,9 +10,11 @@ import { MonitorModule } from '../monitor/monitor.module';
 import { ReporterModule } from '../reporter/reporter.module';
 import { DiscordClientProvider } from '../discord/discord-client.provider';
 import { LoreModule } from '../lore/lore.module';
+import { SessionModule } from '../session/session.module';
+import { CampaignModule } from '../campaign/campaign.module';
 
 @Module({
-  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule, LoreModule],
-  providers: [TranscriptionProcessor, SummaryProcessor, DiscordClientProvider],
+  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule, LoreModule, SessionModule, CampaignModule],
+  providers: [TranscriptionProcessor, SummaryProcessor, CorrectionProcessor, DiscordClientProvider],
 })
 export class WorkerModule {}

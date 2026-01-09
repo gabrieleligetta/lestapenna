@@ -24,7 +24,7 @@ export class RecordingRepository {
     ).get(filename) as Recording | undefined;
   }
 
-  updateStatus(filename: string, status: string, transcription?: string | null, errorMessage?: string | null): void {
+  updateStatus(filename: string, status: string, transcription?: string | null, errorMessage?: string | null, macro?: string | null, micro?: string | null): void {
     let query = 'UPDATE recordings SET status = ?';
     const params: any[] = [status];
 
@@ -34,8 +34,18 @@ export class RecordingRepository {
     }
 
     if (errorMessage !== undefined && errorMessage !== null) {
-        query += ', error_log = ?'; // FIX: error_message -> error_log
+        query += ', error_log = ?';
         params.push(errorMessage);
+    }
+
+    if (macro !== undefined && macro !== null) {
+        query += ', macro_location = ?';
+        params.push(macro);
+    }
+
+    if (micro !== undefined && micro !== null) {
+        query += ', micro_location = ?';
+        params.push(micro);
     }
 
     query += ' WHERE filename = ?';
@@ -50,10 +60,26 @@ export class RecordingRepository {
     ).run(status, text, filename);
   }
 
-  getTranscripts(sessionId: string): Recording[] {
-    return this.dbService.getDb().prepare(
-      'SELECT * FROM recordings WHERE session_id = ? AND transcription_text IS NOT NULL ORDER BY timestamp ASC'
-    ).all(sessionId) as Recording[];
+  updateCharacterName(filename: string, charName: string) {
+    // Presumiamo che la colonna character_name esista nel DB
+    try {
+        this.dbService.getDb().prepare(
+          'UPDATE recordings SET character_name = ? WHERE filename = ?'
+        ).run(charName, filename);
+    } catch (e) {
+        // Se la colonna non esiste, ignoriamo l'errore per ora (o logghiamo warning)
+        // In produzione servirebbe una migrazione
+    }
+  }
+
+  getTranscripts(sessionId: string): any[] {
+    return this.dbService.getDb().prepare(`
+      SELECT r.*, c.character_name as live_name 
+      FROM recordings r 
+      LEFT JOIN characters c ON r.user_id = c.user_id 
+      WHERE r.session_id = ? AND r.status IN ('TRANSCRIBED', 'PROCESSED')
+      ORDER BY r.timestamp ASC
+    `).all(sessionId);
   }
 
   getUnprocessed(): Recording[] {

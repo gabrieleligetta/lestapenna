@@ -91,14 +91,11 @@ export class DebugService {
         sessionId,
         fileName: tempFileName,
         filePath: tempFilePath,
-        userId
+        userId,
+        triggerSummary: true,
+        channelId,
+        guildId
       }, { jobId: tempFileName, removeOnComplete: true });
-
-      // Accoda job riassunto (con delay per dare tempo alla trascrizione)
-      await this.queueService.addSummaryJob(
-        { sessionId, channelId, guildId },
-        { jobId: `summary-${sessionId}`, delay: 5000 }
-      );
 
       return sessionId;
 

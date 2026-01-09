@@ -8,6 +8,7 @@ import { MonitorService } from '../monitor/monitor.service';
 import { TranscriptionService } from '../ai/transcription.service';
 import { BackupService } from '../backup/backup.service';
 import { QueueService } from '../queue/queue.service';
+import { CharacterRepository } from '../character/character.repository';
 
 @Processor('audio-processing')
 export class TranscriptionProcessor extends WorkerHost {
@@ -20,15 +21,55 @@ export class TranscriptionProcessor extends WorkerHost {
     private readonly monitorService: MonitorService,
     private readonly transcriptionService: TranscriptionService,
     private readonly backupService: BackupService,
-    private readonly queueService: QueueService
+    private readonly queueService: QueueService,
+    private readonly characterRepo: CharacterRepository
   ) {
     super();
     this.ENABLE_AI_CORRECTION = this.configService.get<string>('ENABLE_AI_TRANSCRIPTION_CORRECTION') !== 'false';
   }
 
   async process(job: Job): Promise<any> {
-    const { sessionId, fileName, filePath, userId } = job.data;
-    const campaignId = job.data.campaignId; // Assumiamo che venga passato o recuperato
+    // --- 1. GESTIONE SENTINELLA (AGGIORNATA) ---
+    if (job.data.isSentinel) {
+        const { sessionId, channelId, guildId } = job.data;
+        this.logger.log(`[Scriba] 🛑 Sentinel Job processato per ${sessionId}.`);
+
+        if (this.ENABLE_AI_CORRECTION) {
+            // CASO A: Correzione Attiva.
+            // Passiamo la palla al worker di correzione.
+            this.logger.log(`[Scriba] 🔗 Correzione attiva: inoltro la Sentinella alla coda Correzione.`);
+            
+            await this.queueService.addCorrectionJob({
+                isSentinel: true, // Flag mantenuto
+                sessionId,
+                channelId,
+                guildId,
+                // Dati dummy
+                fileName: 'SENTINEL-CORRECTION',
+                segments: [] 
+            }, {
+                jobId: `sentinel-correction-${sessionId}`,
+                removeOnComplete: true
+            });
+            
+            return { status: 'sentinel_forwarded_to_correction' };
+        } else {
+            // CASO B: Correzione Disabilitata.
+            // Possiamo lanciare direttamente il riassunto (come facevamo prima).
+            this.logger.log(`[Scriba] ⏩ Correzione disabilitata: avvio diretto del Riassunto.`);
+            
+            await this.queueService.addSummaryJob({
+                sessionId,
+                channelId,
+                guildId
+            });
+            
+            return { status: 'sentinel_triggered_summary' };
+        }
+    }
+    // -------------------------------------------
+
+    const { sessionId, fileName, filePath, userId, campaignId } = job.data;
     
     this.logger.log(`[Scriba] 🔨 Inizio elaborazione: ${fileName} (Sessione: ${sessionId})`);
     const startJob = Date.now();
@@ -94,6 +135,27 @@ export class TranscriptionProcessor extends WorkerHost {
       if (result.segments && result.segments.length > 0) {
           const rawJson = JSON.stringify(result.segments);
           this.recordingRepo.updateTranscription(fileName, rawJson, 'TRANSCRIBED');
+
+          // --- FIX IDENTITÀ STORICA ---
+          // Recuperiamo il nome ORA e lo salviamo per sempre
+          if (campaignId && userId) {
+             const char = this.characterRepo.findByUser(userId, campaignId);
+             if (char && char.character_name) {
+                 this.recordingRepo.updateCharacterName(fileName, char.character_name);
+                 this.logger.log(`[Scriba] 🧊 Identità congelata per ${fileName}: ${char.character_name}`);
+             }
+          }
+          // ----------------------------
+
+          // Logica "Legacy-Style" (Sequenziale)
+          if (job.data.triggerSummary && job.data.channelId && job.data.guildId) {
+              this.logger.log(`[Scriba] 🔗 Trascrizione salvata. Attivo generazione riassunto per ${sessionId}...`);
+              await this.queueService.addSummaryJob({
+                  sessionId: sessionId,
+                  channelId: job.data.channelId,
+                  guildId: job.data.guildId
+              });
+          }
 
           // Backup su Oracle (Se non è già stato fatto dal recorder)
           const isBackedUp = await this.backupService.uploadToOracle(filePath, fileName, sessionId);

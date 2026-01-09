@@ -137,18 +137,29 @@ export class SessionService {
 
     // RIPRESA CODA
     await this.queueService.getAudioQueue().resume();
-    this.logger.log(`[Flow] Coda RIPRESA.`);
+    this.logger.log(`[Flow] Coda RIPRESA per ${sessionId}.`);
 
     if (channelId) {
-        await this.queueService.addSummaryJob(
-            { sessionId, channelId, guildId },
-            { 
-                jobId: `summary-${sessionId}`,
-                attempts: 10, 
-                backoff: { type: 'fixed', delay: 10000 }
-            }
-        );
-        this.logger.log(`Job di riassunto accodato per ${sessionId}`);
+        // --- MODIFICA FLUSSO LEGACY ---
+        // Invece di lanciare subito il riassunto (che fallirebbe perché l'audio non è finito),
+        // mettiamo un "Job Sentinella" in fondo alla coda audio.
+        // Verrà eseguito SOLO dopo che tutti gli audio precedenti sono stati elaborati.
+        
+        await this.queueService.addAudioJob({
+            sessionId,
+            channelId,
+            guildId,
+            isSentinel: true,       // <--- FLAG SPECIALE
+            // Dati dummy per passare la validazione del job, se presente
+            fileName: 'SENTINEL',   
+            filePath: 'SENTINEL',
+            userId: 'SYSTEM'
+        }, { 
+            jobId: `sentinel-${sessionId}`, // ID unico
+            removeOnComplete: true 
+        });
+
+        this.logger.log(`[Flow] 🛡️ Sentinel Job accodato: Il riassunto partirà alla fine della coda audio.`);
     }
 
     this.activeSessions.delete(guildId);

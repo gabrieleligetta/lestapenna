@@ -18,6 +18,10 @@ const TONES = {
     DM: "Sei un assistente per il Dungeon Master. Punti salienti, loot e NPC."
 };
 
+// Costanti di sicurezza
+const TOKEN_SAFETY_MARGIN = 1000; 
+const CHARS_PER_TOKEN = 3.5; 
+
 @Injectable()
 export class AiService {
   private openai: OpenAI;
@@ -69,6 +73,36 @@ export class AiService {
     });
   }
 
+  // --- HELPER: Ottieni Limite Modello ---
+  private getModelContextLimit(isOllama: boolean, modelName: string): number {
+      if (isOllama) {
+          // --- OLLAMA (Locale) ---
+          // Llama 3.2 supporta teoricamente 128k, ma è limitato dalla VRAM/RAM assegnata.
+          // Con 24GB RAM, 64k è il punto dolce (safe). 
+          if (modelName.includes("llama3.2")) return 65536; 
+          
+          return 8192; // Fallback per modelli vecchi (Llama 2, Mistral)
+      } else {
+          // --- OPENAI (Cloud) ---
+          // GPT-5 Nano: 400k Context / 128k Output
+          if (modelName.includes('nano')) return 400000; 
+          
+          // GPT-4o / GPT-5 Mini: Spesso 128k Context
+          if (modelName.includes('gpt-4o') || modelName.includes('gpt-5')) return 128000;
+          
+          // GPT-3.5 Turbo / Mini vecchi: 16k
+          if (modelName.includes('gpt-3.5') || modelName.includes('mini')) return 16385;
+          
+          return 4096; // Fallback legacy
+      }
+  }
+
+  // --- HELPER: Stima Token ---
+  private estimateTokens(text: string): number {
+      if (!text) return 0;
+      return Math.ceil(text.length / CHARS_PER_TOKEN);
+  }
+
   // --- GENERAZIONE RIASSUNTO (MAP-REDUCE) ---
   async generateSummary(sessionId: string, toneKey: string = 'DM'): Promise<any> {
     try {
@@ -112,7 +146,8 @@ export class AiService {
         // 2. Ricostruzione Dialogo
         let fullText = "";
         for (const t of transcripts) {
-            const char = this.getCharacterName(t.user_id, sessionId);
+            // FIX: Priorità al nome congelato
+            const char = t.character_name || this.getCharacterName(t.user_id, sessionId);
             try {
                 const segments = JSON.parse(t.transcription_text || '[]');
                 const text = segments.map((s: any) => s.text).join(' ');
@@ -212,74 +247,138 @@ export class AiService {
       }
   }
 
-  // --- CORREZIONE TRASCRIZIONE ---
+  // --- CORREZIONE TRASCRIZIONE (Logica Doppia Configurazione) ---
   async correctTranscription(segments: any[], campaignId?: string): Promise<any> {
       if (!this.enableTranscriptionCorrection) {
           this.logger.log("[AI] ⏩ Correzione AI disabilitata.");
           return { segments };
       }
 
-      const useOllamaForCorrection = this.configService.get<string>('TRANSCRIPTION_PROVIDER') === 'ollama';
-      const activeClient = useOllamaForCorrection ? this.ollama : this.openai;
-      const activeModel = useOllamaForCorrection ? this.localCorrectionModel : this.openAiModelNano;
-      const activeConcurrency = useOllamaForCorrection ? 1 : 5;
+      const useOllama = this.configService.get<string>('TRANSCRIPTION_PROVIDER') === 'ollama';
+      const activeClient = useOllama ? this.ollama : this.openai;
+      const activeModel = useOllama ? this.localCorrectionModel : this.openAiModelNano;
+      
+      // 1. Recupera il Limite Tecnico del Modello (es. 64k o 400k)
+      const rawModelLimit = this.getModelContextLimit(useOllama, activeModel);
+      
+      // 2. Calcola il "Safe Input Limit" (La vera doppia configurazione)
+      let maxInputTokens = 0;
 
-      this.logger.log(`[AI] 🛠️ Correzione via ${useOllamaForCorrection ? 'OLLAMA' : 'OPENAI'} (Model: ${activeModel})`);
+      if (useOllama) {
+          // --- LOGICA LOCALE (Llama 3.2) ---
+          // Problema: Context Window condivisa tra Input e Output.
+          // Regola: Input + Output <= Context.
+          // Poiché Output ~= Input (correzione testo), allora 2 * Input <= Context.
+          // Limite: Context / 2.
+          maxInputTokens = Math.floor(rawModelLimit / 2) - TOKEN_SAFETY_MARGIN;
+          this.logger.log(`[AI] 🧠 Config Locale (${activeModel}): Split Context 50/50. Max Input: ${maxInputTokens}`);
+      } else {
+          // --- LOGICA CLOUD (GPT-5 Nano) ---
+          if (activeModel.includes('nano')) {
+               // GPT-5 Nano ha 400k Context ma "solo" 128k Output.
+               // Il collo di bottiglia è l'Output. Non possiamo mandare più di 128k token
+               // perché il modello non riuscirebbe a riscriverli tutti in output prima di fermarsi.
+               maxInputTokens = 128000 - TOKEN_SAFETY_MARGIN;
+               this.logger.log(`[AI] ☁️ Config Cloud (Nano): Limitato da Max Output. Max Input: ${maxInputTokens}`);
+          } else {
+               // Altri modelli OpenAI (es. GPT-4o spesso ha output limitato a 4k o 16k!)
+               // Fallback conservativo per evitare troncamenti brutali.
+               maxInputTokens = 4096 - TOKEN_SAFETY_MARGIN;
+               this.logger.warn(`[AI] ⚠️ Modello Cloud non-Nano rilevato (${activeModel}). Limito input a 4k per sicurezza output.`);
+          }
+      }
 
-      // Costruzione Contesto
+      // 3. Calcolo Spazio Obbligatorio (Prompt Base + Segmenti)
+      const baseInstructions = `Sei l'assistente ufficiale di trascrizione per una campagna di D&D.
+OBIETTIVI:
+1. Correggere la trascrizione (nomi propri, incantesimi, punteggiatura).
+2. Rimuovere allucinazioni.
+3. Mantieni la coerenza del discorso globale.
+4. Restituisci JSON valido con chiave "segments".
+5. Non modificare timestamp.`;
+
+      const segmentsJson = JSON.stringify({ segments: segments });
+      
+      const mandatoryTokens = this.estimateTokens(baseInstructions) + this.estimateTokens(segmentsJson) + 200;
+      let availableTokens = maxInputTokens - mandatoryTokens;
+
+      this.logger.log(`[AI] 🧮 Token Calc: Obbligatori ~${mandatoryTokens}, Spazio Contesto Extra ~${availableTokens} (Safe Limit: ${maxInputTokens})`);
+
+      // 4. Costruzione Contesto Dinamico (Pruning)
       let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
-      if (campaignId) {
-          const campaign = this.campaignRepo.findById(Number(campaignId));
+      
+      if (campaignId && availableTokens > 500) {
+          const cId = Number(campaignId);
+          const campaign = this.campaignRepo.findById(cId);
           if (campaign) contextInfo += `\nCampagna: "${campaign.name}".`;
-          const chars = this.characterRepo.findAll(Number(campaignId));
+
+          const chars = this.characterRepo.findAll(cId);
           if (chars.length > 0) {
-              contextInfo += "\nPersonaggi Giocanti (PG): " + chars.map(c => c.character_name).join(', ');
-          }
-      }
-
-      // Batch Processing
-      const BATCH_SIZE = useOllamaForCorrection ? 10 : 20;
-      const allBatches = [];
-      for (let i = 0; i < segments.length; i += BATCH_SIZE) {
-          allBatches.push(segments.slice(i, i + BATCH_SIZE));
-      }
-
-      const results = await this.processInBatches(allBatches, activeConcurrency, async (batch, idx) => {
-          const prompt = `Sei l'assistente ufficiale di trascrizione per una campagna di D&D.
-          ${contextInfo}
-          
-          OBIETTIVI:
-          1. Correggere la trascrizione (nomi propri, incantesimi, punteggiatura).
-          2. Rimuovere allucinazioni.
-          3. Restituire JSON valido.
-          
-          Input: ${JSON.stringify({ segments: batch })}`;
-
-          try {
-              const response = await activeClient.chat.completions.create({
-                  model: activeModel,
-                  messages: [
-                      { role: "system", content: "Sei un assistente che parla solo JSON valido." },
-                      { role: "user", content: prompt }
-                  ],
-                  response_format: { type: "json_object" }
-              });
-              
-              if (response.usage?.total_tokens) {
-                  this.monitorService.logTokenUsage(response.usage.total_tokens);
+              const charsText = "\nPersonaggi: " + chars.map(c => c.character_name).join(', ');
+              if (this.estimateTokens(charsText) < availableTokens) {
+                  contextInfo += charsText;
+                  availableTokens -= this.estimateTokens(charsText);
               }
-
-              const content = response.choices[0].message.content;
-              return JSON.parse(content || "{}");
-          } catch (e: any) {
-              this.logger.warn(`[AI] ⚠️ Errore batch ${idx}: ${e}`);
-              this.monitorService.logError('AI-Correction', e.message);
-              return { segments: batch }; // Fallback
           }
-      });
+          
+          const loc = this.campaignRepo.getCurrentLocation(cId);
+          if ((loc.macro || loc.micro) && availableTokens > 300) {
+             const locHeader = `\nLuogo: ${loc.macro || ''} - ${loc.micro || ''}`;
+             contextInfo += locHeader;
+             availableTokens -= this.estimateTokens(locHeader);
+             if (loc.macro && loc.micro) {
+                  const atlasEntry = this.campaignRepo.getAtlasEntry(cId, loc.macro, loc.micro);
+                  if (atlasEntry) {
+                      const maxChars = availableTokens * CHARS_PER_TOKEN;
+                      let atlasText = `\nInfo Atlante: "${atlasEntry}"`;
+                      if (atlasText.length > maxChars) atlasText = `\nInfo Atlante: "${atlasEntry.substring(0, Math.floor(maxChars))}..."`;
+                      contextInfo += atlasText;
+                  }
+             }
+          }
+      }
 
-      const allSegments = results.flatMap(r => r.segments || []).filter(s => s && typeof s.start === 'number');
-      return { segments: allSegments };
+      // 5. Esecuzione Chiamata
+      const prompt = `${baseInstructions}
+
+${contextInfo}
+
+Input JSON:
+${segmentsJson}`;
+
+      try {
+          // Configurazione opzioni dinamica
+          const completionOptions: any = {
+              model: activeModel,
+              messages: [
+                  { role: "system", content: "Sei un assistente JSON." },
+                  { role: "user", content: prompt }
+              ],
+              response_format: { type: "json_object" },
+              temperature: 0.1,
+              // IMPORTANTE: Per GPT-5 Nano possiamo osare max_tokens alti (fino a 128k), per Llama stiamo nel context.
+              // Usiamo maxInputTokens come stima sicura per l'output massimo richiesto.
+              max_tokens: useOllama ? 4096 : 16000 
+          };
+
+          const response = await activeClient.chat.completions.create(completionOptions);
+          
+           if (response.usage?.total_tokens) {
+              this.monitorService.logTokenUsage(response.usage.total_tokens);
+          }
+
+          const content = response.choices[0].message.content;
+          const parsed = JSON.parse(content || "{}");
+          
+          if (!parsed.segments || !Array.isArray(parsed.segments)) throw new Error("JSON invalido");
+          
+          this.logger.log(`[AI] ✅ Correzione completata: ${parsed.segments.length} segmenti.`);
+          return parsed;
+
+      } catch (e: any) {
+          this.logger.error(`[AI] Errore API: ${e.message}`);
+          return { segments: segments };
+      }
   }
 
   // --- GENERATORI BIOGRAFIE ---

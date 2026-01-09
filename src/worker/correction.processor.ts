@@ -40,7 +40,8 @@ export class CorrectionProcessor extends WorkerHost {
     // ------------------------------
 
     // --- 2. ELABORAZIONE CORREZIONE NORMALE ---
-    const { sessionId, fileName, segments, campaignId } = job.data;
+    // Aggiungi channelId, guildId, triggerSummary al destructuring
+    const { sessionId, fileName, segments, campaignId, triggerSummary, channelId, guildId } = job.data;
     this.logger.log(`[Correttore] 🧠 Analisi AI per ${fileName}...`);
 
     try {
@@ -85,6 +86,19 @@ export class CorrectionProcessor extends WorkerHost {
         this.recordingRepo.updateStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro);
         
         this.logger.log(`[Correttore] ✅ Completato ${fileName}.`);
+
+        // --- 4. CHAINING RIASSUNTO ---
+        // Se richiesto dalla fase precedente, attiviamo il riassunto ORA che i dati sono corretti.
+        if (triggerSummary && channelId && guildId) {
+            this.logger.log(`[Correttore] 🔗 Dati corretti salvati. Attivo generazione riassunto per ${sessionId}...`);
+            await this.queueService.addSummaryJob({
+                sessionId,
+                channelId,
+                guildId
+            });
+        }
+        // -----------------------------
+
         return { status: 'ok', segmentsCount: aiResult.segments.length };
 
     } catch (e: any) {

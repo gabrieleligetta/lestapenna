@@ -270,43 +270,50 @@ export class AudioService implements OnModuleDestroy {
     }
 
     async disconnect(guildId: string): Promise<boolean> {
-        const connection = getVoiceConnection(guildId);
-        if (connection) {
-            this.logger.log(`[Recorder] Disconnessione Guild ${guildId}...`);
+        this.logger.log(`[Recorder] Richiesta disconnessione per Guild ${guildId}...`);
 
-            let sessionId: string | undefined;
-            const keysToClose: string[] = [];
+        let sessionId: string | undefined;
+        const keysToClose: string[] = [];
 
-            for (const [key, stream] of this.activeStreams) {
-                if (key.startsWith(`${guildId}-`)) {
-                    keysToClose.push(key);
-                    if (!sessionId) sessionId = stream.sessionId;
-                }
+        // 1. Identifica gli stream attivi per questa gilda
+        for (const [key, stream] of this.activeStreams) {
+            if (key.startsWith(`${guildId}-`)) {
+                keysToClose.push(key);
+                if (!sessionId) sessionId = stream.sessionId;
             }
+        }
 
+        // 2. Chiudi gli stream (indipendentemente dalla connessione vocale)
+        if (keysToClose.length > 0) {
+            this.logger.log(`[Recorder] Chiusura di ${keysToClose.length} stream attivi...`);
             const closePromises = keysToClose.map(key => this.closeStream(key));
             await Promise.all(closePromises);
-
             await new Promise(resolve => setTimeout(resolve, 1500));
-
-            if (sessionId) {
-                try {
-                    const masterPath = await this.podcastMixerService.mixSession(sessionId);
-                    if (masterPath) {
-                        const outputFilename = path.basename(masterPath);
-                        const customKey = `recordings/${sessionId}/master/${outputFilename}`;
-                        await this.backupService.uploadToOracle(masterPath, outputFilename, sessionId, customKey);
-                        this.logger.log(`[Recorder] 🎹 Master Mix creato: ${outputFilename}`);
-                    }
-                } catch (e) {
-                    this.logger.error(`[Recorder] ❌ Errore Master Mix:`, e);
-                }
-            }
-
-            connection.destroy();
-            return true;
         }
-        return false;
+
+        // 3. Avvia il mixaggio se c'era una sessione attiva
+        if (sessionId) {
+            try {
+                const masterPath = await this.podcastMixerService.mixSession(sessionId);
+                if (masterPath) {
+                    const outputFilename = path.basename(masterPath);
+                    const customKey = `recordings/${sessionId}/master/${outputFilename}`;
+                    await this.backupService.uploadToOracle(masterPath, outputFilename, sessionId, customKey);
+                    this.logger.log(`[Recorder] 🎹 Master Mix creato: ${outputFilename}`);
+                }
+            } catch (e) {
+                this.logger.error(`[Recorder] ❌ Errore Master Mix:`, e);
+            }
+        }
+
+        // 4. Disconnetti dal canale vocale se connesso
+        const connection = getVoiceConnection(guildId);
+        if (connection) {
+            this.logger.log(`[Recorder] Chiusura connessione vocale Discord.`);
+            connection.destroy();
+        }
+
+        return keysToClose.length > 0 || !!connection;
     }
 
     private async mergeAndUploadSession(userId: string, chunks: string[], sessionId: string, guildId: string, startTime: number) {

@@ -88,7 +88,15 @@ export class TranscriptionProcessor extends WorkerHost {
                  const segments = JSON.parse(currentRecording.transcription_text || '[]');
                  if (segments.length > 0) {
                      await this.queueService.addCorrectionJob({
-                         sessionId, fileName, segments, campaignId, userId
+                         sessionId, 
+                         fileName, 
+                         segments, 
+                         campaignId, 
+                         userId,
+                         // Passiamo anche i dati per il riassunto nel caso di recupero
+                         triggerSummary: job.data.triggerSummary,
+                         channelId: job.data.channelId,
+                         guildId: job.data.guildId
                      }, { jobId: `correct-${fileName}-${Date.now()}`, removeOnComplete: true });
                      return { status: 'recovered_to_correction' };
                  }
@@ -147,16 +155,6 @@ export class TranscriptionProcessor extends WorkerHost {
           }
           // ----------------------------
 
-          // Logica "Legacy-Style" (Sequenziale)
-          if (job.data.triggerSummary && job.data.channelId && job.data.guildId) {
-              this.logger.log(`[Scriba] 🔗 Trascrizione salvata. Attivo generazione riassunto per ${sessionId}...`);
-              await this.queueService.addSummaryJob({
-                  sessionId: sessionId,
-                  channelId: job.data.channelId,
-                  guildId: job.data.guildId
-              });
-          }
-
           // Backup su Oracle (Se non è già stato fatto dal recorder)
           const isBackedUp = await this.backupService.uploadToOracle(filePath, fileName, sessionId);
           if (isBackedUp) {
@@ -168,15 +166,40 @@ export class TranscriptionProcessor extends WorkerHost {
 
           // 4. Accodamento Correzione
           if (this.ENABLE_AI_CORRECTION) {
-              this.logger.log(`[Scriba] 🧠 Invio a Correzione AI...`);
+              this.logger.log(`[Scriba] 🧠 Invio a Correzione AI (Il riassunto sarà scatenato dopo)...`);
+              
+              // Passiamo triggerSummary e i dati del canale al job di correzione
               await this.queueService.addCorrectionJob({
-                  sessionId, fileName, segments: result.segments, campaignId, userId
+                  sessionId, 
+                  fileName, 
+                  segments: result.segments, 
+                  campaignId, 
+                  userId,
+                  // Dati aggiuntivi per concatenare il riassunto dopo
+                  triggerSummary: job.data.triggerSummary, 
+                  channelId: job.data.channelId, 
+                  guildId: job.data.guildId
               }, { jobId: `correct-${fileName}-${Date.now()}`, removeOnComplete: true });
 
               return { status: 'transcribed_queued_correction', segmentsCount: result.segments.length };
+
           } else {
+              // CASO B: Correzione AI OFF.
+              // Procediamo alla vecchia maniera: salviamo raw e lanciamo il riassunto subito.
+              
               this.logger.log(`[Scriba] ⏩ Correzione AI OFF. Completato.`);
               this.recordingRepo.updateStatus(fileName, 'PROCESSED', rawJson);
+
+              // Logica "Legacy-Style" (Sequenziale Immediata)
+              if (job.data.triggerSummary && job.data.channelId && job.data.guildId) {
+                  this.logger.log(`[Scriba] 🔗 Trascrizione Raw salvata. Attivo generazione riassunto per ${sessionId}...`);
+                  await this.queueService.addSummaryJob({
+                      sessionId: sessionId,
+                      channelId: job.data.channelId,
+                      guildId: job.data.guildId
+                  });
+              }
+
               return { status: 'completed_raw', segmentsCount: result.segments.length };
           }
 

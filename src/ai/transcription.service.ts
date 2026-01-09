@@ -83,12 +83,25 @@ export class TranscriptionService {
         return new Promise((resolve, reject) => {
             if (!fs.existsSync(audioPath)) return reject(new Error(`File audio non trovato: ${audioPath}`));
 
+            /*
+            // OLD with nice
             const args = [
                 '-n', '10', this.whisperBin, '-m', this.whisperModel, '-f', audioPath, '-l', 'it', '-t', '3', '-oj'
             ];
-
             const proc = spawn('nice', args);
+            */
+
+            // NEW direct execution
+            const args = [
+                '-m', this.whisperModel, '-f', audioPath, '-l', 'it', '-t', '3', '-oj'
+            ];
+            const proc = spawn(this.whisperBin, args);
+
             let stderr = '';
+
+            proc.stdout.on('data', (data) => {
+                // this.logger.debug(`[Whisper Native] ${data.toString()}`); 
+            });
 
             proc.stderr.on('data', (data) => { stderr += data.toString(); });
 

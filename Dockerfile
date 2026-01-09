@@ -71,4 +71,4 @@ RUN chmod +x /app/whisper/main
 # Cartelle dati
 RUN mkdir -p recordings batch_processing data
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/main.js"]

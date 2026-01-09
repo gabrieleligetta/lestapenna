@@ -44,12 +44,12 @@ export const getCampaignById = (id: number): Campaign | undefined => {
 export const deleteCampaign = (campaignId: number) => {
     // 1. Trova sessioni
     const sessions = db.prepare('SELECT session_id FROM sessions WHERE campaign_id = ?').all(campaignId) as { session_id: string }[];
-    
+
     // 2. Elimina registrazioni e sessioni
     const deleteRec = db.prepare('DELETE FROM recordings WHERE session_id = ?');
     const deleteSess = db.prepare('DELETE FROM sessions WHERE session_id = ?');
     const deleteNotes = db.prepare('DELETE FROM session_notes WHERE session_id = ?');
-    
+
     for (const s of sessions) {
         deleteRec.run(s.session_id);
         deleteNotes.run(s.session_id);
@@ -68,7 +68,7 @@ export const deleteCampaign = (campaignId: number) => {
 
     // 3. Elimina campagna (Cascade farà il resto per characters e knowledge, ma meglio essere sicuri sopra)
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
-    
+
     console.log(`[DB] Campagna ${campaignId} e tutti i dati correlati (Atlante, Storia, NPC, Quest, Loot) eliminati.`);
 };
 
@@ -77,7 +77,7 @@ export const deleteCampaign = (campaignId: number) => {
 export const updateLocation = (campaignId: number, macro: string | null, micro: string | null, sessionId?: string): void => {
     // 1. Aggiorna lo stato corrente della campagna
     const current = getCampaignLocationById(campaignId);
-    
+
     // Se è identico, non facciamo nulla (evita spam nella history)
     if (current && current.macro === macro && current.micro === micro) return;
 
@@ -101,7 +101,7 @@ export const updateLocation = (campaignId: number, macro: string | null, micro: 
         VALUES (?, ?, ?, ?, date('now'), ?, ?)
     `);
     historyStmt.run(campaignId, legacyLocation, macro, micro, Date.now(), sessionId || null);
-    
+
     console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
 };
 
@@ -159,7 +159,7 @@ export const updateAtlasEntry = (campaignId: number, macro: string, micro: strin
         ON CONFLICT(campaign_id, macro_location, micro_location) 
         DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP
     `).run({ campaignId, macro, micro, desc: safeDesc });
-    
+
     console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
 };
 
@@ -176,10 +176,10 @@ export const getCampaignSnapshot = (campaignId: number): CampaignSnapshot => {
 
     // 3. Recupera Luogo e descrizione Atlante
     const locRow = db.prepare(`SELECT current_macro_location as macro, current_micro_location as micro FROM campaigns WHERE id = ?`).get(campaignId) as any;
-    
+
     let atlasDesc = null;
     let location_context = "Sconosciuto.";
-    
+
     if (locRow) {
         const atlas = db.prepare(`SELECT description FROM location_atlas WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?`)
             .get(campaignId, locRow.macro, locRow.micro) as any;

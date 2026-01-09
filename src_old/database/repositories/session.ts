@@ -74,7 +74,7 @@ export const resetUnfinishedRecordings = (sessionId: string): Recording[] => {
 
 export const getSessionTranscript = (sessionId: string) => {
     const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as { campaign_id: number } | undefined;
-    
+
     if (!session) {
         return db.prepare(`
             SELECT r.transcription_text, r.user_id, r.timestamp, COALESCE(r.character_name_snapshot, 'Sconosciuto') as character_name, r.macro_location, r.micro_location, r.present_npcs
@@ -109,7 +109,7 @@ export const getAvailableSessions = (guildId?: string, campaignId?: number, limi
         LEFT JOIN recordings r ON s.session_id = r.session_id
         LEFT JOIN campaigns c ON s.campaign_id = c.id
     `;
-    
+
     const params: any[] = [];
     const conditions: string[] = [];
 
@@ -127,7 +127,7 @@ export const getAvailableSessions = (guildId?: string, campaignId?: number, limi
     }
 
     query += ` GROUP BY s.session_id ORDER BY start_time DESC`;
-    
+
     if (limit > 0) {
         query += ` LIMIT ?`;
         params.push(limit);
@@ -190,7 +190,7 @@ export const addSessionNote = (sessionId: string, user_id: string, content: stri
     // Recupera luogo attuale
     const session = db.prepare('SELECT campaign_id FROM sessions WHERE session_id = ?').get(sessionId) as {campaign_id: number};
     let macro = null, micro = null;
-    
+
     if (session) {
         const loc = getCampaignLocationById(session.campaign_id);
         macro = loc?.macro;
@@ -242,7 +242,7 @@ export const getSessionEncounteredNPCs = (sessionId: string) => {
     // 3. Recupera i dettagli dal Dossier per questi nomi (case insensitive)
     const namesArray = Array.from(uniqueNames);
     const placeholders = namesArray.map(() => 'lower(name) = lower(?)').join(' OR ');
-    
+
     if (!placeholders) return [];
 
     const details = db.prepare(`

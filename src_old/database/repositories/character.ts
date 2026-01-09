@@ -50,7 +50,7 @@ export const updateNpcEntry = (campaignId: number, name: string, description: st
             status = CASE WHEN $status IS NOT NULL THEN $status ELSE status END,
             last_updated = CURRENT_TIMESTAMP
     `).run({ campaignId, name, description: safeDesc, role: role || null, status: status || null });
-    
+
     console.log(`[Dossier] 👤 Aggiornato NPC: ${name}`);
 };
 
@@ -105,7 +105,7 @@ export const getOpenQuests = (campaignId: number): Quest[] => {
 export const addLoot = (campaignId: number, itemName: string, qty: number = 1) => {
     // Cerca se esiste già (case insensitive)
     const existing = db.prepare("SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)").get(campaignId, itemName) as {id: number, quantity: number} | undefined;
-    
+
     if (existing) {
         db.prepare("UPDATE inventory SET quantity = quantity + ?, last_updated = ? WHERE id = ?").run(qty, Date.now(), existing.id);
     } else {
@@ -116,7 +116,7 @@ export const addLoot = (campaignId: number, itemName: string, qty: number = 1) =
 
 export const removeLoot = (campaignId: number, itemName: string, qty: number = 1) => {
     const existing = db.prepare("SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) LIKE lower(?)").get(campaignId, `%${itemName}%`) as {id: number, quantity: number} | undefined;
-    
+
     if (existing) {
         const newQty = existing.quantity - qty;
         if (newQty <= 0) {

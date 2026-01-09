@@ -48,7 +48,7 @@ export async function ingestSessionRaw(sessionId: string) {
         try {
             const segments = JSON.parse(t.transcription_text);
             const npcs = t.present_npcs ? t.present_npcs.split(',') : [];
-            
+
             // NOTA: t.character_name è già il risultato di COALESCE(snapshot, current) dalla query SQL in db.ts
             // Quindi qui stiamo usando correttamente l'identità storica se disponibile.
             const charName = t.character_name || "Sconosciuto";
@@ -59,9 +59,9 @@ export async function ingestSessionRaw(sessionId: string) {
                     const mins = Math.floor((absTime - startTime) / 60000);
                     const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
                     const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-                    
-                    lines.push({ 
-                        timestamp: absTime, 
+
+                    lines.push({
+                        timestamp: absTime,
                         text: `[${timeStr}] ${charName}: ${seg.text}`,
                         macro: t.macro_location,
                         micro: t.micro_location,
@@ -101,7 +101,7 @@ export async function ingestSessionRaw(sessionId: string) {
         const firstLine = lines.find(l => l.text.includes(chunkText.substring(0, 50)));
         const macro = firstLine?.macro || null;
         const micro = firstLine?.micro || null;
-        
+
         // MERGE INTELLIGENTE NPC:
         // Uniamo gli NPC esplicitamente taggati nel DB (present_npcs) con quelli trovati nel testo
         const dbNpcs = firstLine?.present_npcs || [];
@@ -165,7 +165,7 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
         // 1. Calcolo Embedding Query
         const resp = await client.embeddings.create({ model: model, input: query });
         const queryVector = resp.data[0].embedding;
-        
+
         // 2. Recupero Frammenti (già ordinati per timestamp ASC dal DB)
         let fragments = getKnowledgeFragments(campaignId, model);
         if (fragments.length === 0) return [];
@@ -174,10 +174,10 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
         // Identifichiamo se la query menziona NPC specifici per filtrare i risultati
         const allNpcs = listNpcs(campaignId, 1000);
         const mentionedNpcs = allNpcs.filter(npc => query.toLowerCase().includes(npc.name.toLowerCase()));
-        
+
         if (mentionedNpcs.length > 0) {
             console.log(`[RAG] 🕵️ Rilevati NPC nella query: ${mentionedNpcs.map(n => n.name).join(', ')}. Attivo filtro investigativo.`);
-            
+
             // Filtriamo i frammenti: teniamo solo quelli che hanno ALMENO UNO degli NPC menzionati
             // nella colonna associated_npcs
             const filteredFragments = fragments.filter(f => {
@@ -222,7 +222,7 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 
         topK.forEach(item => {
             finalIndices.add(item.originalIndex);
-            
+
             // Espansione CAUSALE (Prima) - Solo se stessa sessione
             if (item.originalIndex - 1 >= 0) {
                 const prev = fragments[item.originalIndex - 1];
@@ -257,7 +257,7 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 // --- RAG: ASK BARD ---
 export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
     const context = await searchKnowledge(campaignId, question, 5);
-    
+
     // SAFETY CHECK: Troncatura contesto per evitare overflow token
     let contextText = context.length > 0
         ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
@@ -288,7 +288,7 @@ export async function askBard(campaignId: number, question: string, history: { r
         } else if (micro.includes('bosco') || micro.includes('foresta') || micro.includes('giungla')) {
             atmosphere = "Sei un bardo naturalista. Parli con meraviglia della natura, noti i suoni degli animali e il fruscio delle foglie.";
         }
-        
+
         atmosphere += `\nLUOGO ATTUALE: ${loc.macro || "Sconosciuto"} - ${loc.micro || "Sconosciuto"}.`;
     }
     // -------------------------------------
@@ -296,7 +296,7 @@ export async function askBard(campaignId: number, question: string, history: { r
     // --- RAG SOCIALE: Iniezione Dossier NPC ---
     const relevantNpcs = findNpcDossierByName(campaignId, question);
     let socialContext = "";
-    
+
     if (relevantNpcs.length > 0) {
         socialContext = "\n\n[[DOSSIER PERSONAGGI RILEVANTI]]\n";
         relevantNpcs.forEach((npc: any) => {
@@ -363,11 +363,11 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
             const val = res.value as any;
             if (!val.error) {
                 insertKnowledgeFragment(
-                    campaignId, 
-                    sessionId, 
-                    content, 
-                    val.data, 
-                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
+                    campaignId,
+                    sessionId,
+                    content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
                     0, // timestamp fittizio
                     null, // macro
                     null, // micro
@@ -408,14 +408,14 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string | n
             const val = res.value as any;
             if (!val.error) {
                 insertKnowledgeFragment(
-                    campaignId, 
-                    sessionId || "MANUAL_ENTRY", 
-                    content, 
-                    val.data, 
-                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
-                    0, 
-                    null, 
-                    null, 
+                    campaignId,
+                    sessionId || "MANUAL_ENTRY",
+                    content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    0,
+                    null,
+                    null,
                     ['MONDO', 'LORE', 'STORIA'] // Tag generici
                 );
             } else {
@@ -453,14 +453,14 @@ export async function ingestNpcDossier(campaignId: number, npcName: string, desc
             const val = res.value as any;
             if (!val.error) {
                 insertKnowledgeFragment(
-                    campaignId, 
-                    "MANUAL_ENTRY", 
-                    content, 
-                    val.data, 
-                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
-                    0, 
-                    null, 
-                    null, 
+                    campaignId,
+                    "MANUAL_ENTRY",
+                    content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    0,
+                    null,
+                    null,
                     [npcName] // Tag NPC
                 );
             } else {
@@ -498,15 +498,15 @@ export async function ingestLocationDescription(campaignId: number, macro: strin
             const val = res.value as any;
             if (!val.error) {
                 insertKnowledgeFragment(
-                    campaignId, 
-                    "MANUAL_ENTRY", 
-                    content, 
-                    val.data, 
-                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA, 
-                    0, 
-                    macro, 
-                    micro, 
-                    [] 
+                    campaignId,
+                    "MANUAL_ENTRY",
+                    content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    0,
+                    macro,
+                    micro,
+                    []
                 );
             } else {
                 console.warn(`[RAG] ⚠️ Errore ingestione luogo (${val.provider}): ${val.error}`);

@@ -1,0 +1,16 @@
+import { Module } from '@nestjs/common';
+import { TranscriptionProcessor } from './transcription.processor';
+import { SummaryProcessor } from './summary.processor';
+import { AiModule } from '../ai/ai.module';
+import { DatabaseModule } from '../database/database.module';
+import { LoggerModule } from '../logger/logger.module';
+import { QueueModule } from '../queue/queue.module';
+import { MonitorModule } from '../monitor/monitor.module';
+import { ReporterModule } from '../reporter/reporter.module';
+import { DiscordClientProvider } from '../discord/discord-client.provider';
+
+@Module({
+  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule],
+  providers: [TranscriptionProcessor, SummaryProcessor, DiscordClientProvider],
+})
+export class WorkerModule {}

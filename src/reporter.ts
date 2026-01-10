@@ -479,73 +479,73 @@ export async function sendSessionRecap(
 
         // ✉️ HTML EMAIL (VERSIONE COMPLETA)
         const htmlContent = `
-    <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
-        <h1 style="color: #d35400;">📜 Report Sessione: ${campaign?.name || 'Campagna'}</h1>
-        <p style="font-style: italic; margin-bottom: 5px;">ID Sessione: ${sessionId}</p>
-        <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
-        <p><strong>Sessione #${sessionNum}</strong></p>
-        <hr style="border: 1px solid #d35400;">
-        
-        ${narrative && narrative.length > 10 ? `
-        <h2>📖 Racconto</h2>
-        <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">
-            ${narrative}
-        </div>
-        ` : ''}
+<div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
+    <h1 style="color: #d35400;">📜 Report Sessione: ${campaign?.name || 'Campagna'}</h1>
+    <p style="font-style: italic; margin-bottom: 5px;">ID Sessione: ${sessionId}</p>
+    <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
+    <p><strong>Sessione #${sessionNum}</strong></p>
+    <hr style="border: 1px solid #d35400;">
+    
+    ${narrative && narrative.length > 10 ? `
+    <h2>📖 Racconto</h2>
+    <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">
+        ${narrative}
+    </div>
+    ` : ''}
 
-        <h2>📝 Riassunto Eventi (Log)</h2>
-        <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-line;">
-            ${summary}
-        </div>
+    <h2>📝 Riassunto Eventi (Log)</h2>
+    <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-line;">
+        ${summary}
+    </div>
 
-        <div style="display: flex; gap: 20px; margin-top: 20px;">
-            <div style="flex: 1;">
-                <h3 style="color: #2980b9;">🗺️ Cronologia Luoghi</h3>
-                <ul>
-                    ${travels.map(t => {
+    <div style="margin-top: 20px;">
+        <div style="margin-bottom: 20px;">
+            <h3 style="color: #2980b9;">🗺️ Cronologia Luoghi</h3>
+            <ul>
+                ${travels.map(t => {
             const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
             return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
         }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
-                </ul>
-            </div>
-            
-            <div style="flex: 1;">
-                <h3 style="color: #27ae60;">💰 Bilancio Oggetti</h3>
-                ${loot && loot.length > 0 ? `<p style="margin: 5px 0;"><b>Ottenuti:</b></p><ul style="margin-top: 5px;">${loot.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
-                ${lootRemoved && lootRemoved.length > 0 ? `<p style="margin: 5px 0;"><b>Persi/Usati:</b></p><ul style="margin-top: 5px;">${lootRemoved.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
-                ${(!loot || loot.length === 0) && (!lootRemoved || lootRemoved.length === 0) ? '<p>Nessun cambio inventario.</p>' : ''}
-            </div>
+            </ul>
         </div>
-
-        <h3>👥 NPC Incontrati</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-            <tr style="background-color: #eee;">
-                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Nome</th>
-                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Ruolo</th>
-                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Note / Status</th>
-            </tr>
-            ${npcs.map(n => `
-                <tr>
-                    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>${n.name}</b></td>
-                    <td style="padding: 8px; border-bottom: 1px solid #ddd;">${n.role || '-'}</td>
-                    <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                        ${n.status === 'DEAD' ? '💀 MORTO' : ''} 
-                        ${n.description ? `<i>${n.description}</i>` : ''}
-                    </td>
-                </tr>
-            `).join('') || '<tr><td colspan="3" style="padding: 8px;">Nessun NPC rilevato nel Dossier.</td></tr>'}
-        </table>
-
-        <hr>
-        <h3>🎙️ Allegati</h3>
-        <ul>
-          <li><strong>Trascrizioni Corrette:</strong> Testo rivisto dall'AI con ortografia e punteggiatura corrette</li>
-          <li><strong>Trascrizioni Grezze:</strong> Output originale di Whisper senza modifiche</li>
-        </ul>
         
-        <p style="font-size: 12px; color: #999; margin-top: 30px;">Generato automaticamente dal Bardo AI Lestapenna.</p>
+        <div>
+            <h3 style="color: #27ae60;">💰 Bilancio Oggetti</h3>
+            ${loot && loot.length > 0 ? `<p style="margin: 5px 0;"><b>Ottenuti:</b></p><ul style="margin-top: 5px;">${loot.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
+            ${lootRemoved && lootRemoved.length > 0 ? `<p style="margin: 5px 0;"><b>Persi/Usati:</b></p><ul style="margin-top: 5px;">${lootRemoved.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
+            ${(!loot || loot.length === 0) && (!lootRemoved || lootRemoved.length === 0) ? '<p>Nessun cambio inventario.</p>' : ''}
+        </div>
     </div>
-    `;
+
+    <h3 style="margin-top: 20px;">👥 NPC Incontrati</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background-color: #eee;">
+            <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Nome</th>
+            <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Ruolo</th>
+            <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Note / Status</th>
+        </tr>
+        ${npcs.map(n => `
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>${n.name}</b></td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;">${n.role || '-'}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;">
+                    ${n.status === 'DEAD' ? '💀 MORTO' : ''} 
+                    ${n.description ? `<i>${n.description}</i>` : ''}
+                </td>
+            </tr>
+        `).join('') || '<tr><td colspan="3" style="padding: 8px;">Nessun NPC rilevato nel Dossier.</td></tr>'}
+    </table>
+
+    <hr>
+    <h3>🎙️ Allegati</h3>
+    <ul>
+      <li><strong>Trascrizioni Corrette:</strong> Testo rivisto dall'AI con ortografia e punteggiatura corrette</li>
+      <li><strong>Trascrizioni Grezze:</strong> Output originale di Whisper senza modifiche</li>
+    </ul>
+    
+    <p style="font-size: 12px; color: #999; margin-top: 30px;">Generato automaticamente dal Bardo AI Lestapenna.</p>
+</div>
+`;
 
         const mailOptions = {
             from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,

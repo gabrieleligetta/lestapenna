@@ -1882,7 +1882,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
+                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrative);
                     }
                     
                     // Invia email DM

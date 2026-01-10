@@ -1020,25 +1020,223 @@ export const getChatHistory = (channelId: string, limit: number = 10): { role: '
 
 export const wipeDatabase = () => {
     console.log("[DB] 🧹 Svuotamento database (Sessioni) in corso...");
-    db.prepare('DELETE FROM recordings').run();
-    db.prepare('DELETE FROM sessions').run();
-    db.prepare('DELETE FROM campaigns').run();
-    db.prepare('DELETE FROM characters').run();
-    db.prepare('DELETE FROM knowledge_fragments').run();
-    db.prepare('DELETE FROM chat_history').run();
-    db.prepare('DELETE FROM session_notes').run();
-    db.prepare('DELETE FROM location_history').run();
-    db.prepare('DELETE FROM location_atlas').run();
-    db.prepare('DELETE FROM npc_dossier').run();
-    db.prepare('DELETE FROM quests').run();
-    db.prepare('DELETE FROM inventory').run();
-    db.prepare('DELETE FROM character_history').run();
-    db.prepare('DELETE FROM npc_history').run();
-    db.prepare('DELETE FROM world_history').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('recordings', 'sessions', 'campaigns', 'characters', 'knowledge_fragments', 'chat_history', 'session_notes', 'location_history', 'location_atlas', 'npc_dossier', 'quests', 'inventory', 'character_history', 'npc_history', 'world_history')").run();
+
+    // 🆕 DROPPA LE TABELLE INVECE DI DELETE (per ricostruire lo schema completo)
+    db.exec('DROP TABLE IF EXISTS recordings');
+    db.exec('DROP TABLE IF EXISTS sessions');
+    db.exec('DROP TABLE IF EXISTS session_notes');
+    db.exec('DROP TABLE IF EXISTS knowledge_fragments');
+    db.exec('DROP TABLE IF EXISTS location_history');
+    db.exec('DROP TABLE IF EXISTS location_atlas');
+    db.exec('DROP TABLE IF EXISTS npc_dossier');
+    db.exec('DROP TABLE IF EXISTS quests');
+    db.exec('DROP TABLE IF EXISTS inventory');
+    db.exec('DROP TABLE IF EXISTS character_history');
+    db.exec('DROP TABLE IF EXISTS npc_history');
+    db.exec('DROP TABLE IF EXISTS world_history');
+    db.exec('DROP TABLE IF EXISTS campaigns');
+    db.exec('DROP TABLE IF EXISTS characters');
+    db.exec('DROP TABLE IF EXISTS chat_history');
+
+    // 🆕 RICREA LE TABELLE CON LO SCHEMA COMPLETO
+
+    // --- TABELLA CAMPAGNE ---
+    db.exec(`CREATE TABLE IF NOT EXISTS campaigns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_active INTEGER DEFAULT 0,
+        created_at INTEGER,
+        current_location TEXT,
+        current_macro_location TEXT,
+        current_micro_location TEXT,
+        current_year INTEGER
+    )`);
+
+    // --- TABELLA PERSONAGGI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS characters (
+        user_id TEXT NOT NULL,
+        campaign_id INTEGER NOT NULL,
+        character_name TEXT,
+        race TEXT,
+        class TEXT,
+        description TEXT,
+        PRIMARY KEY (user_id, campaign_id),
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA SESSIONI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        guild_id TEXT,
+        campaign_id INTEGER,
+        session_number INTEGER,
+        title TEXT,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
+    )`);
+
+    // --- TABELLA REGISTRAZIONI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS recordings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT,
+        filename TEXT NOT NULL,
+        filepath TEXT NOT NULL,
+        user_id TEXT,
+        timestamp INTEGER,
+        status TEXT DEFAULT 'PENDING',
+        transcription_text TEXT,
+        raw_transcription_text TEXT,
+        error_log TEXT,
+        macro_location TEXT,
+        micro_location TEXT,
+        present_npcs TEXT,
+        character_name_snapshot TEXT,
+        year INTEGER
+    )`);
+
+    // --- TABELLA NOTE SESSIONE ---
+    db.exec(`CREATE TABLE IF NOT EXISTS session_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        user_id TEXT,
+        content TEXT NOT NULL,
+        timestamp INTEGER,
+        created_at INTEGER,
+        macro_location TEXT,
+        micro_location TEXT
+    )`);
+
+    // --- TABELLA MEMORIA RAG ---
+    db.exec(`CREATE TABLE IF NOT EXISTS knowledge_fragments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        session_id TEXT,
+        content TEXT NOT NULL,
+        embedding_json TEXT NOT NULL,
+        embedding_model TEXT NOT NULL,
+        vector_dimension INTEGER,
+        start_timestamp INTEGER,
+        created_at INTEGER,
+        macro_location TEXT,
+        micro_location TEXT,
+        associated_npcs TEXT,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA CHAT HISTORY ---
+    db.exec(`CREATE TABLE IF NOT EXISTS chat_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp INTEGER
+    )`);
+
+    // --- TABELLA STORICO LUOGHI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS location_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        location TEXT,
+        macro_location TEXT,
+        micro_location TEXT,
+        session_date TEXT,
+        session_id TEXT,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA ATLANTE ---
+    db.exec(`CREATE TABLE IF NOT EXISTS location_atlas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        macro_location TEXT NOT NULL,
+        micro_location TEXT NOT NULL,
+        description TEXT,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(campaign_id, macro_location, micro_location)
+    )`);
+
+    // --- TABELLA DOSSIER NPC ---
+    db.exec(`CREATE TABLE IF NOT EXISTS npc_dossier (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT,
+        description TEXT,
+        status TEXT DEFAULT 'ALIVE',
+        last_seen_location TEXT,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(campaign_id, name)
+    )`);
+
+    // --- TABELLA QUESTS ---
+    db.exec(`CREATE TABLE IF NOT EXISTS quests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT DEFAULT 'OPEN',
+        created_at INTEGER,
+        last_updated INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA INVENTORY ---
+    db.exec(`CREATE TABLE IF NOT EXISTS inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        item_name TEXT NOT NULL,
+        quantity INTEGER DEFAULT 1,
+        acquired_at INTEGER,
+        last_updated INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA STORIA PERSONAGGI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS character_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        character_name TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT,
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA STORIA NPC ---
+    db.exec(`CREATE TABLE IF NOT EXISTS npc_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        npc_name TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT,
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA STORIA MONDO ---
+    db.exec(`CREATE TABLE IF NOT EXISTS world_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        session_id TEXT,
+        event_type TEXT,
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        year INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // 🆕 RICREA GLI INDICI
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_session_id ON recordings (session_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions (campaign_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_campaign_model ON knowledge_fragments (campaign_id, embedding_model)`);
+
     db.exec('VACUUM');
-    console.log("[DB] ✅ Database sessioni svuotato.");
+    console.log("[DB] ✅ Database ricreato con schema completo.");
 };
+
 
 // --- REPORTING HELPERS ---
 

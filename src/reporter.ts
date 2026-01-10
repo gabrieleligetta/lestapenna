@@ -413,8 +413,7 @@ export async function sendSessionRecap(
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
             });
 
-        // 🆕 HELPER PER TIMESTAMP
-// 🆕 HELPER PER TIMESTAMP (VERSIONE SICURA)
+        // 🆕 HELPER PER TIMESTAMP (VERSIONE SICURA)
         const formatSegment = (seg: any, fileTimestamp: number) => {
             if (!startTime) return seg.text; // Fallback se manca startTime
 
@@ -423,7 +422,6 @@ export async function sendSessionRecap(
             const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
             return `[${mins}:${secs.toString().padStart(2, '0')}] ${seg.text}`;
         };
-
 
         // 🆕 GENERA ALLEGATI TXT
         const correctedText = transcripts.map(t => {
@@ -513,8 +511,8 @@ export async function sendSessionRecap(
             
             <div style="flex: 1;">
                 <h3 style="color: #27ae60;">💰 Bilancio Oggetti</h3>
-                ${loot && loot.length > 0 ? `<b>Ottenuti:</b><ul>${loot.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
-                ${lootRemoved && lootRemoved.length > 0 ? `<b>Persi/Usati:</b><ul>${lootRemoved.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
+                ${loot && loot.length > 0 ? `<p style="margin: 5px 0;"><b>Ottenuti:</b></p><ul style="margin-top: 5px;">${loot.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
+                ${lootRemoved && lootRemoved.length > 0 ? `<p style="margin: 5px 0;"><b>Persi/Usati:</b></p><ul style="margin-top: 5px;">${lootRemoved.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
                 ${(!loot || loot.length === 0) && (!lootRemoved || lootRemoved.length === 0) ? '<p>Nessun cambio inventario.</p>' : ''}
             </div>
         </div>
@@ -532,7 +530,7 @@ export async function sendSessionRecap(
                     <td style="padding: 8px; border-bottom: 1px solid #ddd;">${n.role || '-'}</td>
                     <td style="padding: 8px; border-bottom: 1px solid #ddd;">
                         ${n.status === 'DEAD' ? '💀 MORTO' : ''} 
-                        ${n.description ? `<i>${n.description.substring(0, 100)}${n.description.length > 100 ? '...' : ''}</i>` : ''}
+                        ${n.description ? `<i>${n.description}</i>` : ''}
                     </td>
                 </tr>
             `).join('') || '<tr><td colspan="3" style="padding: 8px;">Nessun NPC rilevato nel Dossier.</td></tr>'}

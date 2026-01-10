@@ -76,7 +76,7 @@ import {
     addNpcEvent,
     addWorldEvent,
     getWorldTimeline,
-    setCampaignYear // NUOVO IMPORT
+    setCampaignYear, getSessionRecordings // NUOVO IMPORT
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -1524,6 +1524,16 @@ client.on('messageCreate', async (message: Message) => {
         createSession(sessionId, message.guild.id, activeCampaign!.id);
         monitor.startSession(sessionId);
 
+        // Assegna subito un numero di sessione progressivo
+        const lastNumber = db.prepare(`
+            SELECT MAX(CAST(session_number AS INTEGER)) as maxnum 
+            FROM sessions 
+            WHERE campaign_id = ? AND session_number IS NOT NULL
+        `).get(activeCampaign!.id) as { maxnum: number | null } | undefined;
+
+        const nextNumber = (lastNumber?.maxnum || 0) + 1;
+        setSessionNumber(sessionId, nextNumber);
+
         await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nAnalisi del link in corso...`);
 
         const recordingsDir = path.join(__dirname, '..', 'recordings');
@@ -1808,154 +1818,109 @@ client.on('messageCreate', async (message: Message) => {
 });
 
 // --- FUNZIONE MONITORAGGIO CODA ---
-async function waitForCompletionAndSummarize(sessionId: string, discordChannel: TextChannel) {
-    console.log(`[Monitor] Avviato monitoraggio per sessione ${sessionId}...`);
-
-    // Attesa iniziale per permettere ai file di essere accodati
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    const checkInterval = setInterval(async () => {
-        const audioJobs = await audioQueue.getJobs(['waiting', 'active', 'delayed']);
-        const correctionJobs = await correctionQueue.getJobs(['waiting', 'active', 'delayed']);
-
-        const sessionAudioJobs = audioJobs.filter(j => !!j && j.data && j.data.sessionId === sessionId);
-        const sessionCorrectionJobs = correctionJobs.filter(j => !!j && j.data && j.data.sessionId === sessionId);
-
-        const totalPending = sessionAudioJobs.length + sessionCorrectionJobs.length;
-
-        if (totalPending > 0) {
-            const details = [];
-            if (sessionAudioJobs.length > 0) details.push(`${sessionAudioJobs.length} audio`);
-            if (sessionCorrectionJobs.length > 0) details.push(`${sessionCorrectionJobs.length} correction`);
-
-            console.log(`[Monitor] Sessione ${sessionId}: ancora ${totalPending} file... (${details.join(', ')})`);
-        } else {
-            process.stdout.write(`\n✅ [Monitor] Sessione ${sessionId}: Elaborazione completata.\n`);
-            clearInterval(checkInterval);
-
-            const startSummary = Date.now();
-
-            // FASE 1: INGESTIONE (Separata)
+async function waitForCompletionAndSummarize(sessionId: string, channel?: TextChannel): Promise<void> {
+    return new Promise<void>(async (resolve, reject) => {
+        const CHECK_INTERVAL = 5000; // 5s
+        const MAX_WAIT_TIME = 3600000; // 1 ora max
+        const startTime = Date.now();
+        
+        const checkCompletion = async () => {
             try {
-                await discordChannel.send("🧠 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
-                await ingestSessionRaw(sessionId);
-                await discordChannel.send("✅ Memoria aggiornata.");
-            } catch (ingestErr: any) {
-                console.error(`⚠️ Errore ingestione ${sessionId}:`, ingestErr);
-                await discordChannel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`$memorizza ${sessionId}\`.`);
-                // Non blocchiamo il riassunto
-            }
-
-            // FASE 2: RIASSUNTO
-            try {
-                await discordChannel.send("✍️ Inizio stesura del racconto...");
-                const result = await generateSummary(sessionId, 'DM');
-
-                // SALVATAGGIO TITOLO
-                updateSessionTitle(sessionId, result.title);
-
-                // --- AUTOMAZIONE DB: LOOT & QUEST ---
-                const activeCampaignId = getSessionCampaignId(sessionId);
-                if (activeCampaignId) {
-                    if (result.loot && result.loot.length > 0) {
-                        result.loot.forEach((item: string) => addLoot(activeCampaignId, item));
+                // Controlla timeout
+                if (Date.now() - startTime > MAX_WAIT_TIME) {
+                    console.error(`[Monitor] ⏱️ Timeout sessione ${sessionId} (1h superata)`);
+                    if (channel) {
+                        await channel.send(`⚠️ Timeout sessione \`${sessionId}\`. Elaborazione interrotta.`);
                     }
-
-                    if (result.loot_removed && result.loot_removed.length > 0) {
-                        result.loot_removed.forEach((item: string) => removeLoot(activeCampaignId, item));
-                    }
-
-                    if (result.quests && result.quests.length > 0) {
-                        result.quests.forEach((q: string) => addQuest(activeCampaignId, q));
-                    }
-
-                    // --- GESTIONE CRESCITA PG ---
-                    if (result.character_growth && Array.isArray(result.character_growth)) {
-                        for (const growth of result.character_growth) {
-                            if (growth.name && growth.event) {
-                                // 1. Salva nella tabella storica dedicata
-                                addCharacterEvent(activeCampaignId, growth.name, sessionId, growth.event, growth.type || 'GENERIC');
-
-                                // 2. INTEGRAZIONE RAG (Per il comando $chiedialbardo) [ORA IMPLEMENTATO]
-                                // Vettorializza l'evento così il Bardo "capisce" e "ricorda" i cambiamenti psicologici
-                                // Lo eseguiamo senza await per non bloccare l'invio del riassunto in chat
-                                ingestBioEvent(activeCampaignId, sessionId, growth.name, growth.event, growth.type || 'GENERIC')
-                                    .catch(err => console.error(`Errore ingestione bio per ${growth.name}:`, err));
-                            }
-                        }
-                    }
-                    // ----------------------------
-
-                    // --- GESTIONE EVENTI NPC ---
-                    if (result.npc_events && Array.isArray(result.npc_events)) {
-                        for (const evt of result.npc_events) {
-                            if (evt.name && evt.event) {
-                                // 1. STORIA NARRATIVA NPC
-                                addNpcEvent(activeCampaignId, evt.name, sessionId, evt.event, evt.type || 'GENERIC');
-
-                                // 2. INTEGRAZIONE RAG (Così il Bardo sa cosa ha fatto l'NPC)
-                                ingestBioEvent(activeCampaignId, sessionId, evt.name, evt.event, evt.type || 'GENERIC')
-                                    .catch(err => console.error(`Errore ingestione bio NPC ${evt.name}:`, err));
-                            }
-                        }
-                    }
-                    // ---------------------------
-
-                    // --- GESTIONE EVENTI MONDO ---
-                    if (result.world_events && Array.isArray(result.world_events)) {
-                        for (const w of result.world_events) {
-                            if (w.event) {
-                                // 1. TIMELINE CRONOLOGICA
-                                addWorldEvent(activeCampaignId, sessionId, w.event, w.type || 'GENERIC');
-
-                                // 2. RAG (Lore Generale)
-                                ingestWorldEvent(activeCampaignId, sessionId, w.event, w.type || 'GENERIC')
-                                    .catch(err => console.error(`Errore ingestione mondo:`, err));
-                            }
-                        }
-                    }
-                    // -----------------------------
+                    return reject(new Error('Timeout'));
                 }
-                // ------------------------------------
-
-                monitor.logSummarizationTime(Date.now() - startSummary);
-                monitor.logTokenUsage(result.tokens);
-
-                await publishSummary(sessionId, result.summary, discordChannel, false, result.title, result.loot, result.quests, result.narrative);
-
-                // --- INVIO EMAIL DM ---
-                if (activeCampaignId) {
-                    // Inviamo l'email in background senza bloccare il bot
-                    sendSessionRecap(
-                        sessionId,
-                        activeCampaignId,
-                        result.summary,
-                        result.loot,
-                        result.loot_removed,
-                        result.narrative // NUOVO PARAMETRO
-                    ).catch(e => console.error("Errore async email:", e));
-
-                    await discordChannel.send("📧 Ho inviato una pergamena (email) di riepilogo al Dungeon Master.");
+                
+                // Controlla stato file
+                const recordings = getSessionRecordings(sessionId);
+                const pending = recordings.filter(r => ['PENDING', 'SECURED', 'QUEUED', 'PROCESSING', 'TRANSCRIBED'].includes(r.status));
+                const errors = recordings.filter(r => r.status === 'ERROR');
+                
+                if (pending.length > 0) {
+                    console.log(`[Monitor] ⏳ Sessione ${sessionId}: ${pending.length} file in elaborazione...`);
+                    setTimeout(checkCompletion, CHECK_INTERVAL);
+                    return;
                 }
-                // ---------------------
+                
+                // Tutti completati o con errori
+                console.log(`[Monitor] ✅ Sessione ${sessionId}: Tutti i file processati.`);
+                
+                if (errors.length > 0) {
+                    console.warn(`[Monitor] ⚠️ ${errors.length} file con errori`);
+                }
+                
+                // Genera riassunto
+                const campaignId = getSessionCampaignId(sessionId);
+                if (!campaignId) {
+                    console.error(`[Monitor] ❌ Nessuna campagna per sessione ${sessionId}`);
+                    return reject(new Error('No campaign found'));
+                }
+                
+                if (channel) {
+                    await channel.send(`📝 Trascrizione completata. Generazione riassunto...`);
+                }
+                
+                try {
+                    // Ingestione memoria
+                    await ingestSessionRaw(sessionId);
+                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
+                    
+                    // Genera riassunto
+                    const result = await generateSummary(sessionId, 'DM');
+                    
+                    // Salva titolo
+                    updateSessionTitle(sessionId, result.title);
+                    
+                    // Salva loot/quest nel DB
+                    if (result.loot) result.loot.forEach(item => addLoot(campaignId, item));
+                    if (result.loot_removed) result.loot_removed.forEach(item => removeLoot(campaignId, item));
+                    if (result.quests) result.quests.forEach(q => addQuest(campaignId, q));
+                    
+                    // Pubblica in Discord
+                    if (channel) {
+                        await publishSummary(sessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
+                    }
+                    
+                    // Invia email DM
+                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrative);
 
+                    // CHIUSURA SESSIONE E INVIO REPORT TECNICO
+                    const metrics = monitor.endSession();
+                    if (metrics) {
+                        processSessionReport(metrics).catch(e => console.error("[Monitor] Errore report:", e));
+                    }
+
+                    // Se è una sessione di test, avvisiamo in chat
+                    if (sessionId.startsWith("test-") && channel) {
+                        await channel.send("✅ Report sessione di test inviato via email!");
+                    }
+                    
+                    console.log(`[Monitor] ✅ Sessione ${sessionId} completata!`);
+                    
+                    // 🆕 RISOLVI LA PROMISE
+                    resolve();
+                    
+                } catch (err: any) {
+                    console.error(`[Monitor] ❌ Errore generazione riassunto:`, err);
+                    if (channel) {
+                        await channel.send(`❌ Errore generazione riassunto: ${err.message}`);
+                    }
+                    reject(err);
+                }
+                
             } catch (err: any) {
-                console.error(`❌ Errore riassunto finale ${sessionId}:`, err);
-                monitor.logError('Summary', err.message);
-                await discordChannel.send(`⚠️ Errore riassunto. Riprova: \`$racconta ${sessionId}\`.`);
+                console.error(`[Monitor] ❌ Errore check:`, err);
+                reject(err);
             }
-
-            // 🆕 CHIUSURA SESSIONE E INVIO REPORT (FIX TESTSTREAM)
-            const metrics = monitor.endSession();
-            if (metrics) {
-                processSessionReport(metrics).catch(e => console.error(e));
-                // Se è una sessione di test (teststream), avvisiamo in chat
-                if (sessionId.startsWith('test-')) {
-                    await discordChannel.send("📧 Report sessione di test inviato via email!");
-                }
-            }
-        }
-    }, 10000);
+        };
+        
+        // Avvia il check
+        checkCompletion();
+    });
 }
 
 async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId?: string): Promise<{ lastRealNumber: number, sessionNumber?: number }> {
@@ -2273,23 +2238,30 @@ async function ensureTestEnvironment(guildId: string, userId: string, message: M
     return campaign;
 }
 
-client.once('ready', async () => {
-    console.log(`🤖 Bot TS online: ${client.user?.tag}`);
-
-    await recoverOrphanedFiles();
-
-    console.log("🔍 Controllo lavori interrotti nel database...");
-    const orphanJobs = getUnprocessedRecordings();
-
-    if (orphanJobs.length > 0) {
-        const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
-        console.log(`📦 Trovati ${orphanJobs.length} file orfani appartenenti a ${sessionIds.length} sessioni.`);
-
-        for (const sessionId of sessionIds) {
-            console.log(`🔄 Ripristino automatico sessione ${sessionId}...`);
+// 🆕 FUNZIONE PER PROCESSING SEQUENZIALE
+async function processOrphanedSessionsSequentially(sessionIds: string[]): Promise<void> {
+    for (let i = 0; i < sessionIds.length; i++) {
+        const sessionId = sessionIds[i];
+        
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`📊 [${i+1}/${sessionIds.length}] Inizio recupero sessione: ${sessionId}`);
+        console.log(`${'='.repeat(60)}\n`);
+        
+        try {
+            // 1️⃣ PULIZIA CODA (rimuovi eventuali job vecchi)
             await removeSessionJobs(sessionId);
+            
+            // 2️⃣ RESET DB E RECUPERO FILE
             const filesToProcess = resetUnfinishedRecordings(sessionId);
-
+            
+            if (filesToProcess.length === 0) {
+                console.log(`⚠️ Nessun file da processare per ${sessionId}. Skip.`);
+                continue;
+            }
+            
+            console.log(`📁 Trovati ${filesToProcess.length} file da processare.`);
+            
+            // 3️⃣ ACCODA FILE UNO PER VOLTA
             for (const job of filesToProcess) {
                 await audioQueue.add('transcribe-job', {
                     sessionId: job.session_id,
@@ -2304,52 +2276,82 @@ client.once('ready', async () => {
                     removeOnFail: false
                 });
             }
-            console.log(`✅ Sessione ${sessionId}: ${filesToProcess.length} file riaccodati.`);
-        }
-        
-        await audioQueue.resume();
-
-        // 🆕 AGGIUNTA: MONITORING AUTOMATICO PER OGNI SESSIONE RECUPERATA
-        for (const sessionId of sessionIds) {
-            console.log(`📊 Avvio monitoring automatico per sessione recuperata: ${sessionId}`);
             
-            // Recupera il canale per i riassunti (fallback a console log se non disponibile)
+            console.log(`✅ ${filesToProcess.length} file accodati. Avvio processing...`);
+            
+            // 4️⃣ RESUME CODA (se era in pausa)
+            await audioQueue.resume();
+            
+            // 5️⃣ TROVA CANALE DISCORD
             const session = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?').get(sessionId) as { guild_id: string } | undefined;
             
+            let channel: TextChannel | null = null;
+            
             if (session) {
-                const summaryChannelId = getSummaryChannelId(session.guild_id);
-                const cmdChannelId = getCmdChannelId(session.guild_id);
-                const targetChannelId = summaryChannelId || cmdChannelId;
+                const targetChannelId = getSummaryChannelId(session.guild_id) || getCmdChannelId(session.guild_id);
                 
                 if (targetChannelId) {
                     try {
-                        const channel = await client.channels.fetch(targetChannelId) as TextChannel;
-                        
-                        // Messaggio informativo
-                        await channel.send(`🔄 **Sessione Recuperata**: \`${sessionId}\`\nElaborazione automatica in corso...`);
-                        
-                        // Avvia il monitoring (come in !termina)
-                        waitForCompletionAndSummarize(sessionId, channel).catch(err => {
-                            console.error(`❌ Errore monitoring sessione recuperata ${sessionId}:`, err);
-                            channel.send(`⚠️ Errore durante l'elaborazione della sessione \`${sessionId}\`. Usa \`$racconta ${sessionId}\` per riprovare manualmente.`).catch(() => {});
-                        });
-                        
+                        channel = await client.channels.fetch(targetChannelId) as TextChannel;
+                        await channel.send(`🔄 **Sessione Recuperata** [${i+1}/${sessionIds.length}]: \`${sessionId}\`\nElaborazione in corso...`);
                     } catch (err) {
-                        console.warn(`⚠️ Impossibile recuperare il canale per ${sessionId}. Monitoring saltato.`);
+                        console.warn(`⚠️ Impossibile accedere al canale ${targetChannelId}`);
                     }
-                } else {
-                    console.warn(`⚠️ Nessun canale configurato per guild ${session.guild_id}. Monitoring saltato per ${sessionId}.`);
                 }
-            } else {
-                console.warn(`⚠️ Sessione ${sessionId} non ha guild_id. Monitoring saltato.`);
             }
+            
+            // 6️⃣ ASPETTA COMPLETAMENTO (BLOCCANTE)
+            console.log(`⏳ Attendo completamento sessione ${sessionId}...`);
+            
+            try {
+                await waitForCompletionAndSummarize(sessionId, channel || undefined);
+                console.log(`✅ Sessione ${sessionId} completata con successo!`);
+            } catch (err: any) {
+                console.error(`❌ Errore durante elaborazione ${sessionId}:`, err.message);
+                
+                if (channel) {
+                    await channel.send(`⚠️ Errore durante elaborazione sessione \`${sessionId}\`. Usa \`$racconta ${sessionId}\` per riprovare.`).catch(() => {});
+                }
+            }
+            
+            // 7️⃣ PAUSA TRA SESSIONI (opzionale, per sicurezza)
+            if (i < sessionIds.length - 1) {
+                console.log(`⏸️ Pausa 5s prima della prossima sessione...\n`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
+        } catch (err: any) {
+            console.error(`❌ Errore critico sessione ${sessionId}:`, err.message);
+            // Continua con la prossima sessione
         }
-
-    } else {
-        console.log("✨ Nessun lavoro in sospeso trovato.");
     }
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`✅ Tutte le ${sessionIds.length} sessioni orfane sono state elaborate!`);
+    console.log(`${'='.repeat(60)}\n`);
+}
 
+client.once('ready', async () => {
+    console.log(`✅ Bot online: ${client.user?.tag}`);
+    
+    // Avvia il worker PRIMA di processare le sessioni, altrimenti il processing sequenziale si blocca
     startWorker();
+    
+    await recoverOrphanedFiles();
+    
+    console.log('🔍 Controllo lavori interrotti nel database...');
+    const orphanJobs = getUnprocessedRecordings();
+    
+    if (orphanJobs.length > 0) {
+        const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
+        console.log(`📦 Trovati ${orphanJobs.length} file orfani in ${sessionIds.length} sessioni.`);
+        
+        // 🆕 PROCESSING SEQUENZIALE
+        await processOrphanedSessionsSequentially(sessionIds);
+        
+    } else {
+        console.log('✅ Nessun lavoro in sospeso trovato.');
+    }
 });
 
 (async () => {

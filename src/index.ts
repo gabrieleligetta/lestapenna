@@ -2285,9 +2285,6 @@ client.once('ready', async () => {
         const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
         console.log(`📦 Trovati ${orphanJobs.length} file orfani appartenenti a ${sessionIds.length} sessioni.`);
 
-        // Nota: Il recupero automatico potrebbe non avere il canale corretto se multi-guild.
-        // Per ora logghiamo e basta, il recupero avverrà ma senza notifica in chat se non riusciamo a dedurre il canale.
-
         for (const sessionId of sessionIds) {
             console.log(`🔄 Ripristino automatico sessione ${sessionId}...`);
             await removeSessionJobs(sessionId);
@@ -2309,7 +2306,45 @@ client.once('ready', async () => {
             }
             console.log(`✅ Sessione ${sessionId}: ${filesToProcess.length} file riaccodati.`);
         }
+        
         await audioQueue.resume();
+
+        // 🆕 AGGIUNTA: MONITORING AUTOMATICO PER OGNI SESSIONE RECUPERATA
+        for (const sessionId of sessionIds) {
+            console.log(`📊 Avvio monitoring automatico per sessione recuperata: ${sessionId}`);
+            
+            // Recupera il canale per i riassunti (fallback a console log se non disponibile)
+            const session = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?').get(sessionId) as { guild_id: string } | undefined;
+            
+            if (session) {
+                const summaryChannelId = getSummaryChannelId(session.guild_id);
+                const cmdChannelId = getCmdChannelId(session.guild_id);
+                const targetChannelId = summaryChannelId || cmdChannelId;
+                
+                if (targetChannelId) {
+                    try {
+                        const channel = await client.channels.fetch(targetChannelId) as TextChannel;
+                        
+                        // Messaggio informativo
+                        await channel.send(`🔄 **Sessione Recuperata**: \`${sessionId}\`\nElaborazione automatica in corso...`);
+                        
+                        // Avvia il monitoring (come in !termina)
+                        waitForCompletionAndSummarize(sessionId, channel).catch(err => {
+                            console.error(`❌ Errore monitoring sessione recuperata ${sessionId}:`, err);
+                            channel.send(`⚠️ Errore durante l'elaborazione della sessione \`${sessionId}\`. Usa \`$racconta ${sessionId}\` per riprovare manualmente.`).catch(() => {});
+                        });
+                        
+                    } catch (err) {
+                        console.warn(`⚠️ Impossibile recuperare il canale per ${sessionId}. Monitoring saltato.`);
+                    }
+                } else {
+                    console.warn(`⚠️ Nessun canale configurato per guild ${session.guild_id}. Monitoring saltato per ${sessionId}.`);
+                }
+            } else {
+                console.warn(`⚠️ Sessione ${sessionId} non ha guild_id. Monitoring saltato.`);
+            }
+        }
+
     } else {
         console.log("✨ Nessun lavoro in sospeso trovato.");
     }

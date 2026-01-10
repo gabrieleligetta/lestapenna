@@ -18,6 +18,7 @@ export function startWorker() {
         const campaignId = getSessionCampaignId(sessionId);
         const userName = (campaignId ? getUserName(userId, campaignId) : null) || userId;
         const startJob = Date.now();
+        const waitTime = startJob - job.timestamp; // BullMQ fornisce job.timestamp
 
         // Idempotenza & Recupero "Buco Nero"
         const currentRecording = getRecording(fileName);
@@ -26,6 +27,7 @@ export function startWorker() {
             // 1. Caso Completato o Skippato -> Esci
             if (currentRecording.status === 'PROCESSED' || currentRecording.status === 'SKIPPED') {
                 console.log(`[Scriba] ⏩ File ${fileName} già elaborato (stato: ${currentRecording.status}). Salto.`);
+                monitor.logJobProcessed(waitTime, job.attemptsMade);
                 return { status: 'already_done', reason: currentRecording.status };
             }
 
@@ -36,20 +38,29 @@ export function startWorker() {
                 try {
                     const segments = JSON.parse(currentRecording.transcription_text || '[]');
                     if (segments.length > 0) {
-                         await correctionQueue.add('correction-job', {
-                            sessionId,
-                            fileName,
-                            segments: segments,
-                            campaignId,
-                            userId // Passiamo userId per recuperare lo snapshot nel correction worker
-                        }, {
-                            jobId: `correct-${fileName}-${Date.now()}`,
-                            attempts: 3,
-                            backoff: { type: 'exponential', delay: 2000 },
-                            removeOnComplete: true
-                        });
-                        console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
-                        return { status: 'recovered_to_correction' };
+                         // Controllo se la correzione è abilitata
+                         if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION !== 'false') {
+                             await correctionQueue.add('correction-job', {
+                                sessionId,
+                                fileName,
+                                segments: segments,
+                                campaignId,
+                                userId // Passiamo userId per recuperare lo snapshot nel correction worker
+                            }, {
+                                jobId: `correct-${fileName}-${Date.now()}`,
+                                attempts: 3,
+                                backoff: { type: 'exponential', delay: 2000 },
+                                removeOnComplete: true
+                            });
+                            console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
+                            monitor.logJobProcessed(waitTime, job.attemptsMade);
+                            return { status: 'recovered_to_correction' };
+                         } else {
+                             // Se disabilitata, non possiamo fare molto qui perché il file è già TRANSCRIBED
+                             // ma non PROCESSED. Potremmo forzare il processamento manuale, ma per ora lasciamo così
+                             // o lo riprocessiamo come se fosse nuovo.
+                             console.log(`[Scriba] ⚠️ Correzione disabilitata, ma file in limbo. Procedo con logica standard.`);
+                         }
                     }
                 } catch (e) {
                     console.error(`[Scriba] ❌ Errore recupero JSON per ${fileName}, procedo con ritrascrizione.`);
@@ -70,6 +81,7 @@ export function startWorker() {
                     console.error(`[Scriba] ❌ File non trovato nemmeno su Oracle: ${fileName}`);
                     updateRecordingStatus(fileName, 'ERROR', null, 'File non trovato su disco né su Cloud');
                     monitor.logError('Worker', `File non trovato: ${fileName}`);
+                    monitor.logJobFailed();
                     return { status: 'failed', reason: 'file_not_found' };
                 }
             }
@@ -79,6 +91,7 @@ export function startWorker() {
                 console.log(`[Scriba] 🗑️  File ${fileName} scartato (troppo piccolo: ${stats.size} bytes)`);
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'File troppo piccolo');
                 try { fs.unlinkSync(filePath); } catch(e) {}
+                monitor.logJobProcessed(waitTime, job.attemptsMade);
                 return { status: 'skipped', reason: 'too_small' };
             }
 
@@ -121,27 +134,55 @@ export function startWorker() {
                     try {
                         fs.unlinkSync(filePath);
                         console.log(`[Scriba] 🧹 File locale eliminato dopo backup: ${fileName}`);
+                        monitor.logFileDeleted();
                     } catch (err) {
                         console.error(`[Scriba] ❌ Errore durante eliminazione locale ${fileName}:`, err);
                     }
                 }
 
-                // 4. Accodamento per Correzione AI
-                console.log(`[Scriba] 🧠 Accodo ${fileName} per correzione AI...`);
-                await correctionQueue.add('correction-job', {
-                    sessionId,
-                    fileName,
-                    segments: result.segments,
-                    campaignId,
-                    userId // Passiamo userId per recuperare lo snapshot nel correction worker
-                }, {
-                    jobId: `correct-${fileName}-${Date.now()}`,
-                    attempts: 3,
-                    backoff: { type: 'exponential', delay: 2000 },
-                    removeOnComplete: true
-                });
+                // 4. Decisione: Correzione AI o Bypass?
+                if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION === 'false') {
+                    console.log(`[Scriba] ⏩ Correzione AI disabilitata. Salvo direttamente come PROCESSED.`);
+                    
+                    // Recuperiamo contesto minimo per salvare metadati coerenti
+                    let finalMacro = null;
+                    let finalMicro = null;
+                    let frozenCharName = null;
 
-                return { status: 'transcribed', segmentsCount: result.segments.length };
+                    if (campaignId) {
+                        const currentLoc = getCampaignLocationById(campaignId);
+                        finalMacro = currentLoc?.macro || null;
+                        finalMicro = currentLoc?.micro || null;
+
+                        if (userId) {
+                            const profile = getUserProfile(userId, campaignId);
+                            frozenCharName = profile.character_name || null;
+                        }
+                    }
+
+                    updateRecordingStatus(fileName, 'PROCESSED', rawJson, null, finalMacro, finalMicro, [], frozenCharName);
+                    monitor.logJobProcessed(waitTime, job.attemptsMade);
+                    return { status: 'processed_no_ai', segmentsCount: result.segments.length };
+
+                } else {
+                    // Accodamento per Correzione AI (Standard Flow)
+                    console.log(`[Scriba] 🧠 Accodo ${fileName} per correzione AI...`);
+                    await correctionQueue.add('correction-job', {
+                        sessionId,
+                        fileName,
+                        segments: result.segments,
+                        campaignId,
+                        userId // Passiamo userId per recuperare lo snapshot nel correction worker
+                    }, {
+                        jobId: `correct-${fileName}-${Date.now()}`,
+                        attempts: 3,
+                        backoff: { type: 'exponential', delay: 2000 },
+                        removeOnComplete: true
+                    });
+
+                    monitor.logJobProcessed(waitTime, job.attemptsMade);
+                    return { status: 'transcribed', segmentsCount: result.segments.length };
+                }
 
             } else {
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');
@@ -151,6 +192,7 @@ export function startWorker() {
                 if (isBackedUp) {
                     try { fs.unlinkSync(filePath); } catch(e) {}
                 }
+                monitor.logJobProcessed(waitTime, job.attemptsMade);
                 return { status: 'skipped', reason: 'silence' };
             }
 
@@ -158,6 +200,7 @@ export function startWorker() {
             console.error(`[Scriba] ❌ Errore trascrizione ${fileName}: ${e.message}`);
             updateRecordingStatus(fileName, 'ERROR', null, e.message);
             monitor.logError('Worker', `File: ${fileName} - ${e.message}`);
+            monitor.logJobFailed();
             throw e; 
         }
     }, { 
@@ -177,6 +220,8 @@ export function startWorker() {
     // --- WORKER 2: CORRECTION PROCESSING ---
     const correctionWorker = new Worker('correction-processing', async job => {
         const { sessionId, fileName, segments, campaignId, userId } = job.data;
+        const startJob = Date.now();
+        const waitTime = startJob - job.timestamp;
         
         console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`);
         
@@ -248,12 +293,14 @@ export function startWorker() {
             
             console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..." [Luogo: ${finalMacro}|${finalMicro}] [NPC: ${presentNpcs.length}] [PG: ${frozenCharName}]`);
             
+            monitor.logJobProcessed(waitTime, job.attemptsMade);
             return { status: 'ok', segments: correctedSegments };
 
         } catch (e: any) {
             console.error(`[Correttore] ❌ Errore correzione ${fileName}: ${e.message}`);
             // Non segniamo come ERROR bloccante, ma magari riproviamo o lasciamo TRANSCRIBED?
             // Per ora lanciamo errore per far scattare il retry di BullMQ
+            monitor.logJobFailed();
             throw e;
         }
     }, {
@@ -261,7 +308,7 @@ export function startWorker() {
             host: process.env.REDIS_HOST || 'redis', 
             port: parseInt(process.env.REDIS_PORT || '6379') 
         },
-        concurrency: 5 // Più alto perché è I/O bound (chiamate API)
+        concurrency: 2 // Più alto perché è I/O bound (chiamate API)
     });
 
     // Gestione Errori Globale

@@ -251,7 +251,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     let activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche'];
 
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -341,7 +341,8 @@ client.on('messageCreate', async (message: Message) => {
                     value:
                         "`$setcmd`: Imposta questo canale per i comandi.\n" +
                         "`$setsummary`: Set this channel for summaries.\n" +
-                        "`$stato`: Mostra lo stato delle code di elaborazione."
+                        "`$stato`: Mostra lo stato delle code di elaborazione.\n" +
+                        "`$metriche`: Mostra le metriche live della sessione."
                 },
                 {
                     name: "🧪 Test & Debug",
@@ -430,7 +431,8 @@ client.on('messageCreate', async (message: Message) => {
                     value:
                         "`$setcmd`: Set this channel for commands.\n" +
                         "`$setsummary`: Set this channel for summaries.\n" +
-                        "`$status`: Show processing queue status."
+                        "`$status`: Show processing queue status.\n" +
+                        "`$metrics`: Show live session metrics."
                 },
                 {
                     name: "🧪 Test & Debug",
@@ -825,6 +827,33 @@ client.on('messageCreate', async (message: Message) => {
             .addFields(
                 { name: "🎙️ Coda Audio", value: `In attesa: ${audioCounts.waiting}\nAttivi: ${audioCounts.active}\nCompletati: ${audioCounts.completed}\nFalliti: ${audioCounts.failed}`, inline: true },
                 { name: "🧠 Coda Correzione", value: `In attesa: ${correctionCounts.waiting}\nAttivi: ${correctionCounts.active}\nCompletati: ${correctionCounts.completed}\nFalliti: ${correctionCounts.failed}`, inline: true }
+            )
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !metriche ---
+    if (command === 'metrics' || command === 'metriche') {
+        // Recupera la sessione attiva dal monitor
+        // Nota: monitor.currentSession è privato, ma possiamo esporre un getter o usare un trucco
+        // Per ora usiamo un cast a any per accedere alla proprietà privata (solo per questo comando di debug)
+        const m = (monitor as any).currentSession as SessionMetrics | null;
+
+        if (!m) {
+            return await message.reply("⚠️ Nessuna sessione attiva monitorata al momento.");
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`📊 Metriche Live: Sessione ${m.sessionId.substring(0, 8)}...`)
+            .setColor("#3498DB")
+            .addFields(
+                { name: "🎙️ File Processati", value: `${m.totalFiles}`, inline: true },
+                { name: "⚡ Whisper Speed", value: `${(m.whisperMetrics?.avgProcessingRatio || 0).toFixed(2)}x`, inline: true },
+                { name: "⏳ Coda (Avg Wait)", value: `${((m.queueMetrics?.avgWaitTimeMs || 0) / 1000).toFixed(1)}s`, inline: true },
+                { name: "💻 CPU (Last)", value: `${m.resourceUsage.cpuSamples.slice(-1)[0] || 0}%`, inline: true },
+                { name: "🧠 RAM (Last)", value: `${m.resourceUsage.ramSamplesMB.slice(-1)[0] || 0} MB`, inline: true },
+                { name: "💾 DB Growth", value: `${((m.dbEndSizeBytes || 0) - (m.dbStartSizeBytes || 0) / (1024 * 1024)).toFixed(2)} MB`, inline: true }
             )
             .setTimestamp();
 
@@ -1916,9 +1945,14 @@ async function waitForCompletionAndSummarize(sessionId: string, discordChannel: 
                 await discordChannel.send(`⚠️ Errore riassunto. Riprova: \`$racconta ${sessionId}\`.`);
             }
 
+            // 🆕 CHIUSURA SESSIONE E INVIO REPORT (FIX TESTSTREAM)
             const metrics = monitor.endSession();
             if (metrics) {
                 processSessionReport(metrics).catch(e => console.error(e));
+                // Se è una sessione di test (teststream), avvisiamo in chat
+                if (sessionId.startsWith('test-')) {
+                    await discordChannel.send("📧 Report sessione di test inviato via email!");
+                }
             }
         }
     }, 10000);

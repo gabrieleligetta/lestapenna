@@ -11,6 +11,8 @@ import * as path from 'path';
 import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign } from './db';
 import { audioQueue } from './queue';
 import { uploadToOracle } from './backupService';
+import { monitor } from './monitor';
+import { startStreamingMixer, addFileToStreamingMixer, stopStreamingMixer } from './streamingMixer';
 
 // Struttura per tracciare lo stato completo dello stream
 interface ActiveStream {
@@ -26,6 +28,7 @@ interface ActiveStream {
 const activeStreams = new Map<string, ActiveStream>();
 const connectionErrors = new Map<string, number>();
 const pausedGuilds = new Set<string>();
+const sessionMixers = new Map<string, boolean>();
 
 export function pauseRecording(guildId: string) {
     pausedGuilds.add(guildId);
@@ -68,6 +71,12 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     });
 
     console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
+
+    if (!sessionMixers.has(sessionId)) {
+        startStreamingMixer(sessionId);
+        sessionMixers.set(sessionId, true);
+        console.log(`[Recorder] 🎵 Streaming mixer avviato per ${sessionId}`);
+    }
 
     connection.receiver.speaking.on('start', (userId: string) => {
         // --- CHECK PAUSA ---
@@ -195,13 +204,23 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
 
     // 2. BACKUP CLOUD (Il "Custode" mette al sicuro l'audio grezzo)
     // Attendiamo l'upload per garantire la sicurezza del file prima di proseguire
+    let fileSizeMB = 0;
+    try {
+        const stats = fs.statSync(filePath);
+        fileSizeMB = stats.size / (1024 * 1024);
+    } catch (e) {}
+
     try {
         const uploaded = await uploadToOracle(filePath, fileName, sessionId);
         if (uploaded) {
             updateRecordingStatus(fileName, 'SECURED');
+            monitor.logFileUpload(fileSizeMB, fileSizeMB, true); // Assumiamo compressione 1:1 se non sappiamo l'originale
+        } else {
+            monitor.logFileUpload(fileSizeMB, 0, false);
         }
     } catch (err) {
         console.error(`[Custode] Fallimento upload per ${fileName}:`, err);
+        monitor.logFileUpload(fileSizeMB, 0, false);
     }
 
     // 3. ACCODA (Il job rimarrà in 'waiting' finché non facciamo resume)
@@ -218,6 +237,8 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         removeOnFail: false
     });
     
+    addFileToStreamingMixer(sessionId, userId, filePath, timestamp);
+
     console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${sessionId}.`);
 }
 
@@ -258,6 +279,25 @@ export async function disconnect(guildId: string): Promise<boolean> {
             console.log(`[Recorder] ${closingPromises.length} stream chiusi correttamente.`);
         }
 
+        let sessionId: string | undefined;
+        for (const [sid, active] of sessionMixers) {
+            if (active) {
+                sessionId = sid;
+                break; // Assumiamo una sessione per volta
+            }
+        }
+
+        if (sessionId && sessionMixers.has(sessionId)) {
+            try {
+                console.log(`[Recorder] 🎵 Finalizzazione mixer streaming per ${sessionId}...`);
+                const mixPath = await stopStreamingMixer(sessionId);
+                console.log(`[Recorder] ✅ Mix streaming completato: ${mixPath}`);
+                sessionMixers.delete(sessionId);
+            } catch (e: any) {
+                console.error(`[Recorder] ❌ Errore finalizzazione mixer:`, e.message);
+            }
+        }
+
         connection.destroy();
         console.log("👋 Disconnesso.");
         return true;
@@ -289,6 +329,7 @@ export function wipeLocalFiles() {
                 if (file.startsWith('.')) continue;
 
                 fs.unlinkSync(path.join(recordingsDir, file));
+                monitor.logFileDeleted();
             }
             console.log(`[Recorder] 🧹 File locali eliminati (${files.length} file).`);
         } catch (e) {

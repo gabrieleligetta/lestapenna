@@ -12,12 +12,15 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - TZ=Europe/Rome
+      - NODE_OPTIONS=--max-old-space-size=5120  # 5GB per Node.js
 
     deploy:
       resources:
         limits:
-          # Rimosso limite CPU per permettere la gestione interna tramite 'nice' e '-t 3'
-          memory: 22G
+          # NON limitiamo CPU: Whisper usa nice + -t 3, self-limiting
+          memory: 8G  # 🔧 Ridotto da 22G: sufficiente per Node + Whisper + buffer
+        reservations:
+          memory: 4G
 
     logging:
       driver: "json-file"
@@ -34,9 +37,17 @@ services:
     image: redis:alpine
     container_name: redis-server-prod
     restart: always
+
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
     logging:
       driver: "json-file"
       options:
@@ -47,10 +58,28 @@ services:
     image: ollama/ollama:latest
     container_name: ollama-server
     restart: always
+
+    environment:
+      # 🔧 CONFIGURAZIONE CRITICA
+      - OLLAMA_NUM_PARALLEL=1           # Una inferenza alla volta
+      - OLLAMA_MAX_LOADED_MODELS=2      # 🆕 Llama3.2 + nomic-embed-text
+      - OLLAMA_FLASH_ATTENTION=1        # Ottimizzazione memoria
+      - OLLAMA_NUM_THREADS=4            # Usa tutti i core quando attivo
+      - OLLAMA_MAX_QUEUE=10             # Aumentato per embedding batch
+
+    deploy:
+      resources:
+        limits:
+          # NON limitiamo CPU: lasciamo che nice di Whisper gestisca la priorità
+          memory: 14G  # 🔧 Spazio per 2 modelli + overhead
+        reservations:
+          memory: 8G
+
     volumes:
       - ollama_data:/root/.ollama
     ports:
       - "11434"
+
     logging:
       driver: "json-file"
       options:
@@ -66,7 +95,12 @@ services:
     environment:
       - OLLAMA_HOST=ollama:11434
     entrypoint: /bin/sh
-    command: -c "echo 'Waiting for Ollama server...'; until ollama list > /dev/null 2>&1; do sleep 2; done; echo 'Ollama is ready. Pulling models...'; ollama pull nomic-embed-text; ollama pull llama3.2; echo 'All models pulled successfully!'"
+    command: -c "echo 'Waiting for Ollama server...';
+      until ollama list > /dev/null 2>&1; do sleep 2; done;
+      echo 'Pulling models...';
+      ollama pull nomic-embed-text;
+      ollama pull llama3.2:latest;
+      echo 'Done!'"
 
 volumes:
   ollama_data:

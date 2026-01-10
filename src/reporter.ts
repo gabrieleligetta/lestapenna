@@ -10,10 +10,10 @@ import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSes
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || "smtp.porkbun.com",
     port: parseInt(process.env.SMTP_PORT || "465"),
-    secure: true, 
+    secure: true,
     auth: {
-        user: process.env.SMTP_USER, 
-        pass: process.env.SMTP_PASS  
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
     }
 });
 
@@ -28,11 +28,11 @@ export async function processSessionReport(metrics: SessionMetrics) {
 
     // 1. Calcolo Statistiche
     const durationMin = metrics.startTime && metrics.endTime ? (metrics.endTime - metrics.startTime) / 60000 : 0;
-    const avgCpu = metrics.resourceUsage.cpuSamples.length > 0 
-        ? metrics.resourceUsage.cpuSamples.reduce((a, b) => a + b, 0) / metrics.resourceUsage.cpuSamples.length 
+    const avgCpu = metrics.resourceUsage.cpuSamples.length > 0
+        ? metrics.resourceUsage.cpuSamples.reduce((a, b) => a + b, 0) / metrics.resourceUsage.cpuSamples.length
         : 0;
-    const maxRam = metrics.resourceUsage.ramSamplesMB.length > 0 
-        ? Math.max(...metrics.resourceUsage.ramSamplesMB) 
+    const maxRam = metrics.resourceUsage.ramSamplesMB.length > 0
+        ? Math.max(...metrics.resourceUsage.ramSamplesMB)
         : 0;
 
     // Calcolo DB Growth
@@ -45,40 +45,75 @@ export async function processSessionReport(metrics: SessionMetrics) {
     const diskFree = metrics.diskUsage?.freeGB || 0;
     const diskUsedPct = metrics.diskUsage?.usedPercent || 0;
 
+    // 🆕 NUOVE STATISTICHE
+    const whisperRatio = metrics.whisperMetrics?.avgProcessingRatio || 0;
+    const whisperEfficiency = whisperRatio < 0.5 ? '✅ Excellent' : whisperRatio < 1 ? '⚠️ Good' : '❌ Slow';
+
+    const queueHealth = metrics.queueMetrics
+        ? `${metrics.queueMetrics.totalJobsProcessed} processed, ${metrics.queueMetrics.totalJobsFailed} failed (${metrics.queueMetrics.totalJobsProcessed > 0 ? ((metrics.queueMetrics.totalJobsFailed / metrics.queueMetrics.totalJobsProcessed) * 100).toFixed(1) + '%' : '0%'})`
+        : 'N/A';
+
+    const aiPerformance = metrics.aiMetrics
+        ? `${metrics.aiMetrics.provider.toUpperCase()} - ${metrics.aiMetrics.tokensPerSecond.toFixed(1)} tok/s (avg: ${(metrics.aiMetrics.avgLatencyMs / 1000).toFixed(1)}s)`
+        : 'N/A';
+
+    const storageEfficiency = metrics.storageMetrics
+        ? `${metrics.storageMetrics.totalUploadedMB.toFixed(1)} MB uploaded (${metrics.storageMetrics.uploadSuccessRate.toFixed(0)}% success, ${metrics.storageMetrics.avgCompressionRatio.toFixed(1)}x compression)`
+        : 'N/A';
+
+    const thermalWarning = metrics.performanceTrend?.thermalThrottlingDetected
+        ? '🔥 THERMAL THROTTLING DETECTED! CPU performance degraded by ' + metrics.performanceTrend.cpuDegradation + '%'
+        : '';
+
     const statsJson = JSON.stringify(metrics, null, 2);
-    
+
     // 2. Generazione testo email con AI
     const prompt = `
     Sei un ingegnere DevOps che analizza i log di un bot Discord ("Lestapenna").
     Ecco le metriche della sessione:
-    - ID Sessione: ${metrics.sessionId}
+    
+    **SYSTEM RESOURCES**
     - Durata: ${durationMin.toFixed(2)} min
-    - File Audio: ${metrics.totalFiles}
-    - Durata Audio Totale: ${metrics.totalAudioDurationSec} sec
-    - Tempo Trascrizione Totale: ${(metrics.transcriptionTimeMs / 1000).toFixed(2)} sec
-    - Token AI Utilizzati (Summ): ${metrics.totalTokensUsed}
     - CPU Media: ${avgCpu.toFixed(1)}%
     - RAM Max: ${maxRam} MB
-    - DB Start: ${dbStartMB.toFixed(2)} MB
-    - DB End: ${dbEndMB.toFixed(2)} MB
     - DB Growth: ${dbGrowthMB.toFixed(3)} MB
-    - Disk Total: ${diskTotal} GB
-    - Disk Free: ${diskFree} GB
-    - Disk Used: ${diskUsedPct}%
-    - Errori: ${metrics.errors.length}
-
+    - Disk Used: ${diskUsedPct}% (${diskFree}GB free)
+    ${thermalWarning}
+    
+    **WHISPER PERFORMANCE**
+    - File Audio: ${metrics.totalFiles}
+    - Processing Ratio: ${whisperRatio.toFixed(2)}x (${whisperEfficiency})
+    - Throughput: ${metrics.whisperMetrics?.filesPerHour.toFixed(1) || 'N/A'} file/h
+    - Fastest: ${metrics.whisperMetrics?.minProcessingTime.toFixed(1) || 'N/A'}s
+    - Slowest: ${metrics.whisperMetrics?.maxProcessingTime.toFixed(1) || 'N/A'}s
+    
+    **QUEUE HEALTH**
+    - ${queueHealth}
+    - Avg Wait Time: ${metrics.queueMetrics?.avgWaitTimeMs ? (metrics.queueMetrics.avgWaitTimeMs / 1000).toFixed(1) + 's' : 'N/A'}
+    - Retried Jobs: ${metrics.queueMetrics?.retriedJobs || 0}
+    
+    **AI PERFORMANCE**
+    - ${aiPerformance}
+    - Failed Requests: ${metrics.aiMetrics?.failedRequests || 0}
+    
+    **STORAGE**
+    - ${storageEfficiency}
+    
+    **ERRORS**: ${metrics.errors.length}
+    
     Analizza brevemente la stabilità del sistema e segnala eventuali anomalie.
     
-    ISTRUZIONI SPECIFICHE:
-    1. Se il disco è pieno oltre l'80%, lancia un allarme critico e suggerisci azioni specifiche (es. "Cancellare log vecchi in /var/log", "Spostare registrazioni su Oracle").
-    2. Se la RAM supera i 500MB, suggerisci di controllare memory leak.
-    3. Se ci sono errori, riassumili brevemente.
+    FOCUS SU:
+    1. Se Whisper ratio > 1.0, suggerisci di ridurre concurrency o controllare thermal throttling
+    2. Se disk > 80%, lancia ALLARME e suggerisci cleanup
+    3. Se AI latency > 30s (Ollama), suggerisci di passare a OpenAI per alcuni task
+    4. Se queue failure rate > 5%, indaga errori specifici
     `;
 
     let emailBody = "";
     try {
-        const modelToUse = process.env.AI_PROVIDER === 'ollama' 
-            ? (process.env.OLLAMA_MODEL || "llama3.2") 
+        const modelToUse = process.env.AI_PROVIDER === 'ollama'
+            ? (process.env.OLLAMA_MODEL || "llama3.2")
             : (process.env.OPEN_AI_MODEL || "gpt-5-mini");
 
         const response = await openai.chat.completions.create({
@@ -93,6 +128,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
     // 3. Generazione HTML Table
     const htmlTable = `
     <h2>📊 Session Metrics Report</h2>
+    ${thermalWarning ? `<p style="color: red; font-weight: bold;">${thermalWarning}</p>` : ''}
     <p><strong>Session ID:</strong> ${metrics.sessionId}</p>
     <p><strong>Analysis:</strong><br/>${emailBody.replace(/\n/g, '<br/>')}</p>
     
@@ -149,6 +185,91 @@ export async function processSessionReport(metrics: SessionMetrics) {
             <td>Errors</td>
             <td style="color: ${metrics.errors.length > 0 ? 'red' : 'green'};">${metrics.errors.length}</td>
         </tr>
+
+        <!-- 🆕 NUOVE RIGHE -->
+        <tr style="background-color: #e3f2fd;">
+            <td colspan="2"><strong>🎙️ WHISPER PERFORMANCE</strong></td>
+        </tr>
+        <tr>
+            <td>Processing Ratio</td>
+            <td style="color: ${whisperRatio < 0.5 ? 'green' : whisperRatio < 1 ? 'orange' : 'red'};">
+                <strong>${whisperRatio.toFixed(2)}x</strong> (${whisperEfficiency})
+            </td>
+        </tr>
+        <tr>
+            <td>Throughput</td>
+            <td>${metrics.whisperMetrics?.filesPerHour.toFixed(1) || 'N/A'} file/hour</td>
+        </tr>
+        <tr>
+            <td>Fastest File</td>
+            <td>${metrics.whisperMetrics?.minProcessingTime.toFixed(1) || 'N/A'}s</td>
+        </tr>
+        <tr>
+            <td>Slowest File</td>
+            <td>${metrics.whisperMetrics?.maxProcessingTime.toFixed(1) || 'N/A'}s</td>
+        </tr>
+        
+        <tr style="background-color: #e3f2fd;">
+            <td colspan="2"><strong>📦 QUEUE HEALTH</strong></td>
+        </tr>
+        <tr>
+            <td>Jobs Processed</td>
+            <td>${metrics.queueMetrics?.totalJobsProcessed || 0}</td>
+        </tr>
+        <tr>
+            <td>Jobs Failed</td>
+            <td style="color: ${(metrics.queueMetrics?.totalJobsFailed || 0) > 0 ? 'red' : 'green'};">
+                ${metrics.queueMetrics?.totalJobsFailed || 0}
+            </td>
+        </tr>
+        <tr>
+            <td>Avg Wait Time</td>
+            <td>${metrics.queueMetrics?.avgWaitTimeMs ? (metrics.queueMetrics.avgWaitTimeMs / 1000).toFixed(1) + 's' : 'N/A'}</td>
+        </tr>
+        <tr>
+            <td>Retried Jobs</td>
+            <td>${metrics.queueMetrics?.retriedJobs || 0}</td>
+        </tr>
+        
+        <tr style="background-color: #e3f2fd;">
+            <td colspan="2"><strong>🤖 AI PERFORMANCE</strong></td>
+        </tr>
+        <tr>
+            <td>Provider</td>
+            <td><strong>${metrics.aiMetrics?.provider.toUpperCase() || 'N/A'}</strong></td>
+        </tr>
+        <tr>
+            <td>Avg Latency</td>
+            <td>${metrics.aiMetrics?.avgLatencyMs ? (metrics.aiMetrics.avgLatencyMs / 1000).toFixed(1) + 's' : 'N/A'}</td>
+        </tr>
+        <tr>
+            <td>Tokens/Second</td>
+            <td>${metrics.aiMetrics?.tokensPerSecond.toFixed(1) || 'N/A'}</td>
+        </tr>
+        <tr>
+            <td>Failed Requests</td>
+            <td style="color: ${(metrics.aiMetrics?.failedRequests || 0) > 0 ? 'red' : 'green'};">
+                ${metrics.aiMetrics?.failedRequests || 0}
+            </td>
+        </tr>
+        
+        <tr style="background-color: #e3f2fd;">
+            <td colspan="2"><strong>💾 STORAGE</strong></td>
+        </tr>
+        <tr>
+            <td>Files Uploaded</td>
+            <td>${metrics.storageMetrics?.totalUploadedMB.toFixed(1) || 0} MB</td>
+        </tr>
+        <tr>
+            <td>Upload Success Rate</td>
+            <td style="color: ${(metrics.storageMetrics?.uploadSuccessRate || 100) > 95 ? 'green' : 'orange'};">
+                ${metrics.storageMetrics?.uploadSuccessRate.toFixed(0) || 100}%
+            </td>
+        </tr>
+        <tr>
+            <td>Compression Ratio</td>
+            <td>${metrics.storageMetrics?.avgCompressionRatio.toFixed(1) || 'N/A'}x</td>
+        </tr>
     </table>
     
     ${metrics.errors.length > 0 ? `<h3>⚠️ Errors</h3><pre>${metrics.errors.join('\n')}</pre>` : ''}
@@ -188,7 +309,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
     } catch (e) {
         console.error("[Reporter] ❌ Errore invio email:", e);
     }
-    
+
     if (fs.existsSync(logPath)) {
         try { fs.unlinkSync(logPath); } catch (e) {}
     }
@@ -211,8 +332,8 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
 }
 
 export async function sendSessionRecap(
-    sessionId: string, 
-    campaignId: number, 
+    sessionId: string,
+    campaignId: number,
     summaryText: string,
     lootGained: string[] = [],
     lootLost: string[] = [],
@@ -220,14 +341,14 @@ export async function sendSessionRecap(
 ) {
     const campaign = getCampaignById(campaignId);
     const campaignName = campaign ? campaign.name : "Sconosciuta";
-    
+
     // 1. Recupera Dati DB
     const travels = getSessionTravelLog(sessionId);
     const npcs = getSessionEncounteredNPCs(sessionId);
     const startTime = getSessionStartTime(sessionId);
-    
+
     // Formatta la data
-    const sessionDate = startTime 
+    const sessionDate = startTime
         ? new Date(startTime).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
         : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -262,9 +383,9 @@ export async function sendSessionRecap(
                 <h3 style="color: #2980b9;">🗺️ Cronologia Luoghi</h3>
                 <ul>
                     ${travels.map(t => {
-                        const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
-                        return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
-                    }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
+        const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
+        return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
+    }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
                 </ul>
             </div>
             

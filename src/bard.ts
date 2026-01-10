@@ -22,6 +22,7 @@ import {
     getNpcHistory,
     getCampaignSnapshot
 } from './db';
+import { monitor } from './monitor';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -34,48 +35,134 @@ export const TONES = {
 
 export type ToneKey = keyof typeof TONES;
 
-// Configurazione Provider
-const useOllama = process.env.AI_PROVIDER === 'ollama';
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
 
-// --- CONFIGURAZIONE LIMITI (DINAMICA) ---
-const MAX_CHUNK_SIZE = useOllama ? 15000 : 800000;
-const CHUNK_OVERLAP = useOllama ? 1000 : 5000;
+/**
+ * Determina il provider per una fase specifica
+ * @param phaseEnvVar Nome variabile env specifica (es: METADATA_PROVIDER)
+ * @param fallbackEnvVar Fallback (es: AI_PROVIDER)
+ * @returns 'ollama' | 'openai'
+ */
+function getProvider(phaseEnvVar: string, fallbackEnvVar: string = 'AI_PROVIDER'): 'ollama' | 'openai' {
+    const phase = process.env[phaseEnvVar];
+    if (phase === 'ollama' || phase === 'openai') return phase;
 
-// MODEL_NAME = Modello "Smart" (Costoso, per prosa finale - REDUCE)
-// Default su GPT-5.2 se non specificato diversamente
-const MODEL_NAME = useOllama ? (process.env.OLLAMA_MODEL || "llama3.2") : (process.env.OPEN_AI_MODEL || "gpt-5.2");
+    const fallback = process.env[fallbackEnvVar];
+    if (fallback === 'ollama') return 'ollama';
 
-// FAST_MODEL_NAME = Modello "Fast" (Economico, per MAP, CHAT e CORREZIONI)
-// Default su GPT-5-mini per risparmiare token e tempo
-const FAST_MODEL_NAME = useOllama ? MODEL_NAME : (process.env.OPEN_AI_MODEL_MINI || "gpt-5-mini");
+    return 'openai'; // Default sicuro
+}
 
-// Concurrency: 1 per locale, 5 per Cloud
-const CONCURRENCY_LIMIT = useOllama ? 1 : 5;
+/**
+ * Ottiene il modello corretto per una fase
+ * @param provider Provider attivo ('ollama' | 'openai')
+ * @param openAIModelEnv Nome variabile OpenAI (es: OPEN_AI_MODEL_METADATA)
+ * @param openAIFallback Fallback OpenAI (es: gpt-5-mini)
+ * @param ollamaModel Modello Ollama (default: llama3.2)
+ */
+function getModel(
+    provider: 'ollama' | 'openai',
+    openAIModelEnv: string,
+    openAIFallback: string,
+    ollamaModel: string = process.env.OLLAMA_MODEL || 'llama3.2'
+): string {
+    if (provider === 'ollama') return ollamaModel;
+    return process.env[openAIModelEnv] || openAIFallback;
+}
 
-// URL Base
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1';
+/**
+ * Crea un client OpenAI (Ollama o Cloud)
+ */
+function createClient(provider: 'ollama' | 'openai'): OpenAI {
+    if (provider === 'ollama') {
+        return new OpenAI({
+            baseURL: process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1',
+            apiKey: 'ollama',
+            timeout: 600 * 1000,
+        });
+    }
 
-// Client Principale (Chat)
-const openai = new OpenAI({
-    baseURL: useOllama ? OLLAMA_BASE_URL : undefined,
-    project: useOllama ? undefined : process.env.OPENAI_PROJECT_ID,
-    apiKey: useOllama ? 'ollama' : process.env.OPENAI_API_KEY,
-    timeout: 600 * 1000,
-});
+    return new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY || 'dummy',
+        project: process.env.OPENAI_PROJECT_ID,
+        timeout: 600 * 1000,
+    });
+}
 
-// --- CLIENT DEDICATI PER EMBEDDING ---
+// ============================================
+// PROVIDER CONFIGURATION (Per-Phase)
+// ============================================
+
+const TRANSCRIPTION_PROVIDER = getProvider('TRANSCRIPTION_PROVIDER', 'AI_PROVIDER');
+const METADATA_PROVIDER = getProvider('METADATA_PROVIDER', 'AI_PROVIDER');
+const MAP_PROVIDER = getProvider('MAP_PROVIDER', 'AI_PROVIDER');
+const SUMMARY_PROVIDER = getProvider('SUMMARY_PROVIDER', 'AI_PROVIDER');
+const CHAT_PROVIDER = getProvider('CHAT_PROVIDER', 'AI_PROVIDER');
+const EMBEDDING_PROVIDER = getProvider('EMBEDDING_PROVIDER', 'AI_PROVIDER');
+
+// ============================================
+// MODEL CONFIGURATION (Per-Phase)
+// ============================================
+
+const TRANSCRIPTION_MODEL = getModel(TRANSCRIPTION_PROVIDER, 'OPEN_AI_MODEL_TRANSCRIPTION', 'gpt-5-nano');
+const METADATA_MODEL = getModel(METADATA_PROVIDER, 'OPEN_AI_MODEL_METADATA', 'gpt-5-mini');
+const MAP_MODEL = getModel(MAP_PROVIDER, 'OPEN_AI_MODEL_MAP', 'gpt-5-mini');
+const SUMMARY_MODEL = getModel(SUMMARY_PROVIDER, 'OPEN_AI_MODEL_SUMMARY', 'gpt-5.2');
+const CHAT_MODEL = getModel(CHAT_PROVIDER, 'OPEN_AI_MODEL_CHAT', 'gpt-5-mini');
+
+const EMBEDDING_MODEL_OPENAI = 'text-embedding-3-small';
+const EMBEDDING_MODEL_OLLAMA = 'nomic-embed-text';
+// NON creare EMBEDDING_MODEL unificato
+
+// ============================================
+// CLIENT CONFIGURATION (Per-Phase)
+// ============================================
+
+const transcriptionClient = createClient(TRANSCRIPTION_PROVIDER);
+const metadataClient = createClient(METADATA_PROVIDER);
+const mapClient = createClient(MAP_PROVIDER);
+const summaryClient = createClient(SUMMARY_PROVIDER);
+const chatClient = createClient(CHAT_PROVIDER);
+
+// --- CLIENT DEDICATI PER EMBEDDING (DOPPIO) ---
 const openaiEmbedClient = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || 'dummy',
-    project: process.env.OPENAI_PROJECT_ID,
+  apiKey: process.env.OPENAI_API_KEY || 'dummy',
+  project: process.env.OPENAI_PROJECT_ID,
 });
 
 const ollamaEmbedClient = new OpenAI({
-    baseURL: OLLAMA_BASE_URL,
-    apiKey: 'ollama',
+  baseURL: process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1',
+  apiKey: 'ollama',
 });
 
-const EMBEDDING_MODEL_OPENAI = "text-embedding-3-small";
-const EMBEDDING_MODEL_OLLAMA = "nomic-embed-text";
+// ============================================
+// CONCURRENCY LIMITS
+// ============================================
+
+const TRANSCRIPTION_CONCURRENCY = TRANSCRIPTION_PROVIDER === 'ollama' ? 1 : 5;
+const MAP_CONCURRENCY = MAP_PROVIDER === 'ollama' ? 1 : 5;
+const EMBEDDING_BATCH_SIZE = EMBEDDING_PROVIDER === 'ollama' ? 1 : 5;
+
+// ============================================
+// CHUNK SIZE (Dynamic based on MAP_PROVIDER)
+// ============================================
+
+const MAX_CHUNK_SIZE = MAP_PROVIDER === 'ollama' ? 15000 : 800000;
+const CHUNK_OVERLAP = MAP_PROVIDER === 'ollama' ? 1000 : 5000;
+
+// ============================================
+// DEBUG LOG (Startup)
+// ============================================
+
+console.log('\n🎭 BARDO AI - CONFIG GRANULARE');
+console.log(`Correzione:  ${TRANSCRIPTION_PROVIDER.padEnd(8)} → ${TRANSCRIPTION_MODEL.padEnd(20)}`);
+console.log(`Metadati:    ${METADATA_PROVIDER.padEnd(8)} → ${METADATA_MODEL.padEnd(20)}`);
+console.log(`Map:         ${MAP_PROVIDER.padEnd(8)} → ${MAP_MODEL.padEnd(20)}`);
+console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${SUMMARY_MODEL.padEnd(20)}`);
+console.log(`Chat/RAG:    ${CHAT_PROVIDER.padEnd(8)} → ${CHAT_MODEL.padEnd(20)}`);
+console.log(`Embeddings:  DOPPIO      → OpenAI (${EMBEDDING_MODEL_OPENAI}) + Ollama (${EMBEDDING_MODEL_OLLAMA})`);
 
 // Interfaccia per la risposta dell'AI
 interface AIResponse {
@@ -101,11 +188,10 @@ export interface SummaryResponse {
     title: string;
     tokens: number;
     loot?: string[];
-    loot_removed?: string[]; // NUOVO: Oggetti consumati/persi
+    loot_removed?: string[];
     quests?: string[];
-    narrative?: string; // NUOVO: Racconto narrativo
-    log?: string[]; // NUOVO: Log schematico
-    // NUOVO CAMPO
+    narrative?: string;
+    log?: string[];
     character_growth?: Array<{
         name: string;
         event: string;
@@ -171,10 +257,6 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
 
 /**
  * Batch Processing con Progress Bar Integrata
- * @param items Array di elementi da processare
- * @param batchSize Quanti elementi processare in parallelo
- * @param fn Funzione da eseguire per ogni elemento
- * @param taskName Nome del task per il log (es. "Correzione", "Embeddings")
  */
 async function processInBatches<T, R>(
     items: T[],
@@ -206,7 +288,6 @@ async function processInBatches<T, R>(
             const filledLen = Math.round((20 * completedBatches) / totalBatches);
             const bar = '█'.repeat(filledLen) + '░'.repeat(20 - filledLen);
 
-            // Logghiamo sempre se i batch sono pochi (<50), altrimenti ogni 5 step per non intasare
             if (totalBatches < 50 || completedBatches % 5 === 0 || completedBatches === totalBatches) {
                 console.log(`[Bardo] ⏳ ${taskName}: ${completedBatches}/${totalBatches} [${bar}] ${percent}%`);
             }
@@ -235,34 +316,30 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 
 // --- FASE 1: MAP ---
 async function extractFactsFromChunk(chunk: string, index: number, total: number, castContext: string): Promise<{text: string, title: string, tokens: number}> {
-    const mapPrompt = `Sei un analista di D&D.
-    ${castContext}
-    Estrai un elenco puntato cronologico strutturato esattamente così:
-    1. Nomi di NPC incontrati e le frasi chiave che hanno pronunciato (anche se lette dalla voce del DM);
-    2. Luoghi visitati;
-    3. Oggetti ottenuti (Loot) con dettagli;
-    4. Numeri/Danni rilevanti;
-    5. Decisioni chiave dei giocatori.
-    6. Dialoghi importanti e il loro contenuto.
-    
-    Sii conciso. Se per una categoria non ci sono dati, scrivi "Nessuno".`;
+    const mapPrompt = `Sei un analista di D&D.\n    ${castContext}\n    Estrai un elenco puntato cronologico strutturato esattamente così:\n    1. Nomi di NPC incontrati e le frasi chiave che hanno pronunciato (anche se lette dalla voce del DM);\n    2. Luoghi visitati;\n    3. Oggetti ottenuti (Loot) con dettagli;\n    4. Numeri/Danni rilevanti;\n    5. Decisioni chiave dei giocatori.\n    6. Dialoghi importanti e il loro contenuto.\n    \n    Sii conciso. Se per una categoria non ci sono dati, scrivi "Nessuno".`;
 
+    const startAI = Date.now();
     try {
-        const response = await withRetry(() => openai.chat.completions.create({
-            model: FAST_MODEL_NAME, // USA IL MODELLO VELOCE ED ECONOMICO
+        const response = await withRetry(() => mapClient.chat.completions.create({
+            model: MAP_MODEL,
             messages: [
                 { role: "system", content: mapPrompt },
                 { role: "user", content: chunk }
             ],
         }));
 
+        const latency = Date.now() - startAI;
+        const tokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequest(MAP_PROVIDER, latency, tokens, false);
+
         return {
             text: response.choices[0].message.content || "",
-            title: "", // Placeholder, il titolo viene generato nella fase REDUCE
+            title: "",
             tokens: response.usage?.total_tokens || 0
         };
     } catch (err) {
-        console.error(`[Bardo] ❌ Errore Map chunk ${index + 1}:`, err);
+        console.error(`[Map] ❌ Errore chunk ${index + 1}:`, err);
+        monitor.logAIRequest(MAP_PROVIDER, Date.now() - startAI, 0, true);
         return { text: "", title: "", tokens: 0 };
     }
 }
@@ -275,7 +352,7 @@ export async function ingestSessionRaw(sessionId: string) {
         return;
     }
 
-    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId}...`);
+    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Doppio Embedding)...`);
 
     // 1. Pulisci vecchi frammenti per ENTRAMBI i modelli
     deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
@@ -294,9 +371,6 @@ export async function ingestSessionRaw(sessionId: string) {
         try {
             const segments = JSON.parse(t.transcription_text);
             const npcs = t.present_npcs ? t.present_npcs.split(',') : [];
-            
-            // NOTA: t.character_name è già il risultato di COALESCE(snapshot, current) dalla query SQL in db.ts
-            // Quindi qui stiamo usando correttamente l'identità storica se disponibile.
             const charName = t.character_name || "Sconosciuto";
 
             if (Array.isArray(segments)) {
@@ -305,9 +379,9 @@ export async function ingestSessionRaw(sessionId: string) {
                     const mins = Math.floor((absTime - startTime) / 60000);
                     const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
                     const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-                    
-                    lines.push({ 
-                        timestamp: absTime, 
+
+                    lines.push({
+                        timestamp: absTime,
                         text: `[${timeStr}] ${charName}: ${seg.text}`,
                         macro: t.macro_location,
                         micro: t.micro_location,
@@ -320,8 +394,7 @@ export async function ingestSessionRaw(sessionId: string) {
 
     lines.sort((a, b) => a.timestamp - b.timestamp);
 
-    // 2b. Recupera lista NPC per tagging (fallback se present_npcs è vuoto)
-    const allNpcs = listNpcs(campaignId, 1000); // Recupera tutti gli NPC
+    const allNpcs = listNpcs(campaignId, 1000);
     const npcNames = allNpcs.map(n => n.name);
 
     // 3. Sliding Window Chunking
@@ -342,14 +415,10 @@ export async function ingestSessionRaw(sessionId: string) {
         const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
         if (timeMatch) chunkTimestamp = startTime + (parseInt(timeMatch[1]) * 60000) + (parseInt(timeMatch[2]) * 1000);
 
-        // Recuperiamo il luogo e gli NPC dal primo segmento del chunk (approssimazione accettabile)
-        // Cerchiamo la riga corrispondente nel array originale
         const firstLine = lines.find(l => l.text.includes(chunkText.substring(0, 50)));
         const macro = firstLine?.macro || null;
         const micro = firstLine?.micro || null;
-        
-        // MERGE INTELLIGENTE NPC:
-        // Uniamo gli NPC esplicitamente taggati nel DB (present_npcs) con quelli trovati nel testo
+
         const dbNpcs = firstLine?.present_npcs || [];
         const textNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
         const mergedNpcs = Array.from(new Set([...dbNpcs, ...textNpcs]));
@@ -359,143 +428,129 @@ export async function ingestSessionRaw(sessionId: string) {
         i = end - OVERLAP;
     }
 
-    // 4. Embedding con Progress Bar
-    // Usiamo una concorrenza sicura per gli embedding (5 richieste parallele)
-    await processInBatches(chunks, 5, async (chunk, idx) => {
-        const promises = [];
+    // 4. Embedding con Progress Bar (DOPPIO - OpenAI + Ollama)
+    await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, idx) => {
+        const promises: any[] = [];
 
         // OpenAI Task
         promises.push(
-            openaiEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OPENAI, input: chunk.text })
-                .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
-                .catch(err => ({ provider: 'openai', error: err.message }))
+            openaiEmbedClient.embeddings.create({
+                model: EMBEDDING_MODEL_OPENAI,
+                input: chunk.text
+            })
+            .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'openai', error: err.message }))
         );
 
         // Ollama Task
         promises.push(
-            ollamaEmbedClient.embeddings.create({ model: EMBEDDING_MODEL_OLLAMA, input: chunk.text })
-                .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
-                .catch(err => ({ provider: 'ollama', error: err.message }))
+            ollamaEmbedClient.embeddings.create({
+                model: EMBEDDING_MODEL_OLLAMA,
+                input: chunk.text
+            })
+            .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+            .catch(err => ({ provider: 'ollama', error: err.message }))
         );
 
         const results = await Promise.allSettled(promises);
 
+        // Salva entrambi gli embedding se riusciti
         for (const res of results) {
             if (res.status === 'fulfilled') {
                 const val = res.value as any;
                 if (!val.error) {
                     insertKnowledgeFragment(
-                        campaignId, sessionId, chunk.text, val.data,
+                        campaignId, sessionId, chunk.text,
+                        val.data,
                         val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
-                        chunk.timestamp,
-                        chunk.macro,
-                        chunk.micro,
-                        chunk.npcs
+                        chunk.timestamp, chunk.macro, chunk.micro, chunk.npcs
                     );
                 }
             }
         }
-    }, "Calcolo Embeddings (RAG)");
+    }, 'Calcolo Embeddings RAG');
 }
 
 // --- RAG: SEARCH ---
 export async function searchKnowledge(campaignId: number, query: string, limit: number = 5): Promise<string[]> {
+    // Determina quale provider usare dalla variabile ambiente (runtime)
     const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
     const isOllama = provider === 'ollama';
     const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
     const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
 
-    console.log(`[RAG] 🔍 Ricerca con modello: ${model} (${provider})`);
+    console.log(`[RAG] 🔍 Ricerca con ${model} (${provider})`);
 
+    const startAI = Date.now();
     try {
         // 1. Calcolo Embedding Query
-        const resp = await client.embeddings.create({ model: model, input: query });
+        const resp = await client.embeddings.create({
+            model: model,
+            input: query
+        });
+
         const queryVector = resp.data[0].embedding;
-        
-        // 2. Recupero Frammenti (già ordinati per timestamp ASC dal DB)
+        monitor.logAIRequest(provider === 'ollama' ? 'ollama' : 'openai', Date.now() - startAI, 0, false);
+
+        // 2. Recupero Frammenti già ordinati per timestamp ASC dal DB
         let fragments = getKnowledgeFragments(campaignId, model);
         if (fragments.length === 0) return [];
 
-        // --- RAG INVESTIGATIVO (Cross-Ref) ---
-        // Identifichiamo se la query menziona NPC specifici per filtrare i risultati
         const allNpcs = listNpcs(campaignId, 1000);
         const mentionedNpcs = allNpcs.filter(npc => query.toLowerCase().includes(npc.name.toLowerCase()));
-        
+
         if (mentionedNpcs.length > 0) {
-            console.log(`[RAG] 🕵️ Rilevati NPC nella query: ${mentionedNpcs.map(n => n.name).join(', ')}. Attivo filtro investigativo.`);
-            
-            // Filtriamo i frammenti: teniamo solo quelli che hanno ALMENO UNO degli NPC menzionati
-            // nella colonna associated_npcs
             const filteredFragments = fragments.filter(f => {
                 if (!f.associated_npcs) return false;
                 const fragmentNpcs = f.associated_npcs.split(',').map(n => n.toLowerCase());
                 return mentionedNpcs.some(mn => fragmentNpcs.includes(mn.name.toLowerCase()));
             });
 
-            // Se il filtro è troppo aggressivo (0 risultati), torniamo al set completo (fallback)
             if (filteredFragments.length > 0) {
-                console.log(`[RAG] 📉 Filtro applicato: da ${fragments.length} a ${filteredFragments.length} frammenti.`);
                 fragments = filteredFragments;
-            } else {
-                console.log(`[RAG] ⚠️ Filtro investigativo ha prodotto 0 risultati. Fallback su ricerca completa.`);
             }
         }
-        // -------------------------------------
 
-        // 3. Recupero Contesto Attuale (per Boosting)
         const currentLocation = getCampaignLocationById(campaignId);
         const currentMacro = currentLocation?.macro || "";
         const currentMicro = currentLocation?.micro || "";
 
-        // 4. Scoring & Boosting
         const scored = fragments.map((f, index) => {
             const vector = JSON.parse(f.embedding_json);
             let score = cosineSimilarity(queryVector, vector);
 
-            // Boost Contestuale: Se il ricordo è avvenuto nel luogo dove sono ora, aumento la rilevanza
             if (currentMacro && f.macro_location === currentMacro) score += 0.05;
             if (currentMicro && f.micro_location === currentMicro) score += 0.10;
 
             return { ...f, score, originalIndex: index };
         });
 
-        // 5. Ordinamento per Rilevanza
         scored.sort((a, b) => b.score - a.score);
 
-        // 6. Selezione Top K + Espansione Temporale ("Cosa succede prima e dopo?")
         const topK = scored.slice(0, limit);
         const finalIndices = new Set<number>();
 
         topK.forEach(item => {
             finalIndices.add(item.originalIndex);
-            
-            // Espansione CAUSALE (Prima) - Solo se stessa sessione
             if (item.originalIndex - 1 >= 0) {
                 const prev = fragments[item.originalIndex - 1];
-                if (prev.session_id === item.session_id) {
-                    finalIndices.add(item.originalIndex - 1);
-                }
+                if (prev.session_id === item.session_id) finalIndices.add(item.originalIndex - 1);
             }
-
-            // Espansione CONSEGUENZIALE (Dopo) - Solo se stessa sessione
             if (item.originalIndex + 1 < fragments.length) {
                 const next = fragments[item.originalIndex + 1];
-                if (next.session_id === item.session_id) {
-                    finalIndices.add(item.originalIndex + 1);
-                }
+                if (next.session_id === item.session_id) finalIndices.add(item.originalIndex + 1);
             }
         });
 
-        // 7. Recupero Finale Ordinato Cronologicamente
-        // È cruciale che l'AI legga la storia in ordine temporale, non di rilevanza
         const finalFragments = Array.from(finalIndices)
-            .sort((a, b) => a - b) // Ordina per indice (che corrisponde al timestamp)
+            .sort((a, b) => a - b)
             .map(idx => fragments[idx].content);
 
         return finalFragments;
 
     } catch (e) {
         console.error("[RAG] ❌ Errore ricerca:", e);
+        monitor.logAIRequest(provider === 'ollama' ? 'ollama' : 'openai', Date.now() - startAI, 0, true);
         return [];
     }
 }
@@ -503,19 +558,16 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 // --- RAG: ASK BARD ---
 export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
     const context = await searchKnowledge(campaignId, question, 5);
-    
-    // SAFETY CHECK: Troncatura contesto per evitare overflow token
+
     let contextText = context.length > 0
         ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
         : "Nessuna memoria specifica trovata.";
 
     const MAX_CONTEXT_CHARS = 12000;
     if (contextText.length > MAX_CONTEXT_CHARS) {
-        console.warn(`[Bardo] ⚠️ Contesto troppo lungo (${contextText.length} chars). Troncatura di sicurezza.`);
         contextText = contextText.substring(0, MAX_CONTEXT_CHARS) + "\n... [TESTO TRONCATO PER LIMITI DI MEMORIA]";
     }
 
-    // --- GENIUS LOCI: Adattamento Tono ---
     const loc = getCampaignLocationById(campaignId);
     let atmosphere = "Sei il Bardo della campagna. Rispondi in modo neutrale ma evocativo.";
 
@@ -534,15 +586,13 @@ export async function askBard(campaignId: number, question: string, history: { r
         } else if (micro.includes('bosco') || micro.includes('foresta') || micro.includes('giungla')) {
             atmosphere = "Sei un bardo naturalista. Parli con meraviglia della natura, noti i suoni degli animali e il fruscio delle foglie.";
         }
-        
+
         atmosphere += `\nLUOGO ATTUALE: ${loc.macro || "Sconosciuto"} - ${loc.micro || "Sconosciuto"}.`;
     }
-    // -------------------------------------
 
-    // --- RAG SOCIALE: Iniezione Dossier NPC ---
     const relevantNpcs = findNpcDossierByName(campaignId, question);
     let socialContext = "";
-    
+
     if (relevantNpcs.length > 0) {
         socialContext = "\n\n[[DOSSIER PERSONAGGI RILEVANTI]]\n";
         relevantNpcs.forEach((npc: any) => {
@@ -550,9 +600,7 @@ export async function askBard(campaignId: number, question: string, history: { r
         });
         socialContext += "Usa queste informazioni per arricchire la risposta, ma dai priorità ai fatti accaduti nelle trascrizioni.\n";
     }
-    // ------------------------------------------
 
-    // Prompt Ricco Ripristinato
     const systemPrompt = `${atmosphere}
     Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
     
@@ -569,177 +617,186 @@ export async function askBard(campaignId: number, question: string, history: { r
 
     const messages: any[] = [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: question }];
 
+    const startAI = Date.now();
     try {
-        const response = await withRetry(() => openai.chat.completions.create({
-            model: FAST_MODEL_NAME, // Fast per le chat
+        const response = await withRetry(() => chatClient.chat.completions.create({
+            model: CHAT_MODEL,
             messages: messages as any
         }));
+        const latency = Date.now() - startAI;
+        const tokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequest(CHAT_PROVIDER, latency, tokens, false);
+
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
-        console.error("[Bardo] Errore risposta:", e);
+        console.error("[Chat] Errore risposta:", e);
+        monitor.logAIRequest(CHAT_PROVIDER, Date.now() - startAI, 0, true);
         return "La mia mente è annebbiata...";
     }
 }
 
-// --- CORREZIONE TRASCRIZIONE ---
-export async function correctTranscription(segments: any[], campaignId?: number): Promise<AIResponse> {
-    // 1. Costruzione Contesto (una tantum)
-    let contextInfo = "Contesto: Sessione di gioco di ruolo (Dungeons & Dragons).";
-    let currentLocationMsg = "Luogo attuale: Sconosciuto.";
-    let atlasContext = "";
-    let currentMacro = "";
-    let currentMicro = "";
-
-    if (campaignId) {
-        const campaign = getCampaignById(campaignId);
-        if (campaign) {
-            contextInfo += `\nCampagna: "${campaign.name}".`;
-            
-            // @ts-ignore (se TS si lamenta dei campi nuovi non ancora nell'interfaccia type Campaign)
-            const loc: LocationState = { macro: campaign.current_macro_location, micro: campaign.current_micro_location };
-            
-            if (loc.macro || loc.micro) {
-                currentMacro = loc.macro || "";
-                currentMicro = loc.micro || "";
-                
-                currentLocationMsg = `LUOGO ATTUALE CONOSCIUTO:
-                - Macro-Regione/Città: "${loc.macro || 'Non specificato'}"
-                - Micro-Luogo (Stanza/Edificio): "${loc.micro || 'Non specificato'}"`;
-
-                // RECUPERO MEMORIA ATLANTE
-                if (currentMacro && currentMicro) {
-                    const lore = getAtlasEntry(campaignId, currentMacro, currentMicro);
-                    if (lore) {
-                        atlasContext = `\n\n[[MEMORIA DEL LUOGO (ATLANTE)]]\nEcco cosa sappiamo già di questo posto:\n"${lore}"\nUsa queste info per riconoscere nomi e contesto.`;
-                    } else {
-                        atlasContext = `\n\n[[MEMORIA DEL LUOGO (ATLANTE)]]\nNon abbiamo ancora informazioni su questo luogo. Se vengono descritti dettagli importanti (NPC, atmosfera, oggetti chiave), annotali.`;
-                    }
-                }
-            }
-
-            const characters = getCampaignCharacters(campaignId);
-            if (characters.length > 0) {
-                contextInfo += "\nPersonaggi Giocanti (PG):";
-                characters.forEach(c => {
-                    if (c.character_name) {
-                        let charDesc = `\n- ${c.character_name}`;
-                        if (c.race || c.class) charDesc += ` (${[c.race, c.class].filter(Boolean).join(' ')})`;
-                        contextInfo += charDesc;
-                    }
-                });
-            }
-        }
-    }
-
-    // 2. Prepariamo i batch (gruppi di segmenti)
+// --- FASE 1: CORREZIONE TESTO GREZZO ---
+async function correctTextOnly(segments: any[]): Promise<any[]> {
     const BATCH_SIZE = 20;
     const allBatches: any[][] = [];
     for (let i = 0; i < segments.length; i += BATCH_SIZE) {
         allBatches.push(segments.slice(i, i + BATCH_SIZE));
     }
 
-    // 3. Usiamo la funzione centralizzata processInBatches per gestire parallelismo e progress bar
-    const results = await processInBatches(allBatches, CONCURRENCY_LIMIT, async (batch, idx) => {
-        const batchInput = { segments: batch };
+    const cleanText = (text: string): string => {
+        if (!text) return "";
+        return text.trim()
+            .replace(/^["']|["']$/g, '')
+            .replace(/Ã¨/g, 'è').replace(/Ã©/g, 'é')
+            .replace(/Ã/g, 'à').replace(/Ã¬/g, 'ì')
+            .replace(/Ã²/g, 'ò').replace(/Ã¹/g, 'ù')
+            .trim();
+    };
 
-        // Prompt Ricco Ripristinato
-        const prompt = `Sei l'assistente ufficiale di trascrizione per una campagna di D&D.
-${contextInfo}
-${currentLocationMsg}
-${atlasContext}
+    const results = await processInBatches(
+        allBatches,
+        TRANSCRIPTION_CONCURRENCY,
+        async (batch, idx) => {
+            const prompt = `Correggi ortografia e punteggiatura in italiano.\nRimuovi riempitivi (ehm, uhm).\nNON aggiungere commenti.\nRestituisci SOLO il testo corretto, un segmento per riga.\n\nInput (${batch.length} righe):\n${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
 
-OBIETTIVI:
-1. Correggere la trascrizione fornita (nomi propri, incantesimi, punteggiatura).
-2. [CARTOGRAFO] Rilevare se i personaggi si SPOSTANO fisicamente in un nuovo luogo.
-   - **Macro-Luogo**: Cambia solo se viaggiano tra città, regioni o piani (es. da "Neverwinter" a "Waterdeep").
-   - **Micro-Luogo**: Cambia se entrano in un edificio, una stanza o un'area specifica (es. da "Strada" a "Taverna").
-3. [STORICO] Aggiorna la descrizione del luogo ATTUALE nell'Atlante SE:
-   - Ci sono nuovi dettagli significativi (nomi NPC, stato della stanza, eventi chiave).
-   - O se la descrizione vecchia è obsoleta.
-   - Sii conciso ma descrittivo. Se non cambia nulla di rilevante, lascia 'atlas_update' vuoto.
-4. [BIOGRAFO] Rilevare informazioni sugli NPC (Non-Player Characters).
-   - Se viene introdotto un nuovo NPC (es. "Sono il capitano Vane"), estrai nome e ruolo.
-   - Se un NPC subisce un cambiamento drastico (es. muore, si rivela un traditore), aggiorna lo status o la descrizione.
-   - Ignora i Personaggi Giocanti (PG) già noti.
-5. [OSSERVATORE] Elenca TUTTI gli NPC presenti nella scena (anche se non parlano ma vengono nominati come presenti).
-   - Restituisci una lista semplice di nomi in "present_npcs".
+            const startAI = Date.now();
+            try {
+                const response = await withRetry(() => transcriptionClient.chat.completions.create({
+                    model: TRANSCRIPTION_MODEL,
+                    messages: [
+                        { role: "system", content: "Correttore ortografico conciso." },
+                        { role: "user", content: prompt }
+                    ]
+                }));
 
-REGOLE CARTOGRAFO:
-- Se rimangono dove sono, NON includere "detected_location" nel JSON.
-- Se si spostano, cerca di dedurre sia il Macro che il Micro. Se il Macro non cambia, ripeti quello attuale o lascialo null.
-- Sii conservativo: cambia luogo solo se i giocatori dicono esplicitamente "Andiamo alla Taverna", "Entriamo nel dungeon", etc.
+                const latency = Date.now() - startAI;
+                const tokens = response.usage?.completion_tokens || 0;
+                monitor.logAIRequest(TRANSCRIPTION_PROVIDER, latency, tokens, false);
 
-ISTRUZIONI SPECIFICHE PER LA CORREZIONE:
-1. Rimuovi riempitivi verbali come "ehm", "uhm", "cioè", ripetizioni inutili e balbettii.
-2. Correggi i termini tecnici di D&D (es. incantesimi, mostri) usando la grafia corretta (es. "Dardo Incantato" invece di "dardo incantato").
-3. Usa i nomi dei Personaggi forniti nel contesto per correggere eventuali storpiature.
-4. Mantieni il tono colloquiale ma rendilo leggibile.
-5. Se il testo contiene un chiaro cambio di interlocutore (es. il DM parla in prima persona come un NPC), inserisci il nome dell'NPC tra parentesi quadre all'inizio della frase. Esempio: "[Locandiere] Benvenuti!".
+                const rawOutput = response.choices[0].message.content || "";
+                const lines = rawOutput.split('\n')
+                    .map(l => l.replace(/^\d+\.\s*/, '').trim())
+                    .filter(l => l.length > 0);
 
-IMPORTANTE:
-1. Non modificare "start" e "end".
-2. Non unire o dividere segmenti. Il numero di oggetti in output deve essere identico all'input.
-3. Restituisci un oggetto JSON con la chiave "segments", opzionalmente "detected_location", opzionalmente "atlas_update", opzionalmente "npc_updates" e opzionalmente "present_npcs".
+                if (lines.length !== batch.length) {
+                    console.warn(`[Correzione] ⚠️ Batch ${idx+1}: Mismatch (${lines.length}≠${batch.length}). Uso originale.`);
+                    return batch;
+                }
 
-Input:
-${JSON.stringify(batchInput)}`;
+                return batch.map((orig, i) => ({
+                    ...orig,
+                    text: cleanText(lines[i])
+                }));
 
-        try {
-            const response = await withRetry(() => openai.chat.completions.create({
-                model: FAST_MODEL_NAME,
-                messages: [
-                    { role: "system", content: "Sei un assistente che parla solo JSON valido." },
-                    { role: "user", content: prompt }
-                ],
-                response_format: { type: "json_object" }
-            }));
+            } catch (err) {
+                console.error(`[Correzione] ❌ Errore batch ${idx+1}:`, err);
+                monitor.logAIRequest(TRANSCRIPTION_PROVIDER, Date.now() - startAI, 0, true);
+                return batch;
+            }
+        },
+        `Correzione (${TRANSCRIPTION_PROVIDER})`
+    );
 
-            const content = response.choices[0].message.content;
-            if (!content) throw new Error("Empty");
-            const parsed = JSON.parse(content);
-            return parsed; // Ritorna l'oggetto completo { segments, detected_location?, atlas_update?, npc_updates?, present_npcs? }
-        } catch (err) {
-            console.error(`[Bardo] ⚠️ Errore batch ${idx+1}, uso originale.`);
-            return { segments: batch };
-        }
-    }, "Correzione Trascrizione");
+    return results.flat();
+}
 
-    // Appiattiamo il risultato (array di oggetti -> array unico di segmenti e merge location)
-    const allSegments = results.flatMap(r => r.segments || []);
-    
-    // Cerchiamo l'ultima location rilevata (se ce ne sono multiple, l'ultima vince)
-    let lastDetectedLocation = undefined;
-    let lastAtlasUpdate = undefined;
-    const allNpcUpdates: any[] = [];
-    const allPresentNpcs: Set<string> = new Set();
+// --- FASE 2: ESTRAZIONE METADATI ---
+async function extractMetadata(
+    correctedSegments: any[],
+    campaignId?: number
+): Promise<{
+    detected_location?: any;
+    atlas_update?: string;
+    npc_updates?: any[];
+    present_npcs?: string[];
+}> {
+    const fullText = correctedSegments.map(s => s.text).join('\n');
 
-    for (const res of results) {
-        if (res.detected_location) {
-            lastDetectedLocation = res.detected_location;
-        }
-        if (res.atlas_update) {
-            lastAtlasUpdate = res.atlas_update;
-        }
-        if (res.npc_updates && Array.isArray(res.npc_updates)) {
-            allNpcUpdates.push(...res.npc_updates);
-        }
-        if (res.present_npcs && Array.isArray(res.present_npcs)) {
-            res.present_npcs.forEach((n: string) => allPresentNpcs.add(n));
+    let contextInfo = "Contesto: Sessione D&D.";
+    let currentLocationMsg = "Luogo: Sconosciuto.";
+    let atlasContext = "";
+
+    if (campaignId) {
+        const campaign = getCampaignById(campaignId);
+        if (campaign) {
+            contextInfo += `\nCampagna: "${campaign.name}".`;
+            // @ts-ignore
+            const loc: LocationState = {
+                macro: campaign.current_macro_location!,
+                micro: campaign.current_micro_location!
+            };
+
+            if (loc.macro || loc.micro) {
+                currentLocationMsg = `LUOGO ATTUALE: ${loc.macro || ''} - ${loc.micro || ''}`;
+                if (loc.macro && loc.micro) {
+                    const lore = getAtlasEntry(campaignId, loc.macro, loc.micro);
+                    atlasContext = lore ? `\nINFO LUOGO: ${lore}` : "";
+                }
+            }
+
+            const characters = getCampaignCharacters(campaignId);
+            if (characters.length > 0) {
+                contextInfo += "\nPG: " + characters.map(c => c.character_name).join(", ");
+            }
         }
     }
 
+    const prompt = `Analizza questa trascrizione D&D.\n${contextInfo}\n${currentLocationMsg}\n${atlasContext}\n\nCOMPITI:\n1. Rileva cambio luogo (macro/micro).\n2. Identifica NPC menzionati.\n3. Rileva aggiornamenti alle descrizioni dei luoghi.\n4. Rileva nuove informazioni sugli NPC (ruolo, status).\n\nTESTO:\n${fullText}\n\nRispondi SOLO con JSON:\n{\n  "detected_location": {"macro": "...", "micro": "...", "confidence": "high/low"},\n  "atlas_update": "Nuova descrizione luogo (se cambiata)",\n  "npc_updates": [{"name": "...", "description": "...", "role": "...", "status": "..."}],\n  "present_npcs": ["NPC1", "NPC2"]\n}`;
+
+    const startAI = Date.now();
+    try {
+        const options: any = {
+            model: METADATA_MODEL,
+            messages: [
+                { role: "system", content: "Analista D&D. Solo JSON." },
+                { role: "user", content: prompt }
+            ]
+        };
+
+        // Solo OpenAI supporta response_format
+        if (METADATA_PROVIDER === 'openai') {
+            options.response_format = { type: "json_object" };
+        }
+
+        const response = await withRetry(() => metadataClient.chat.completions.create(options));
+        const latency = Date.now() - startAI;
+        const tokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequest(METADATA_PROVIDER, latency, tokens, false);
+
+        const content = response.choices[0].message.content;
+        if (!content) throw new Error("Empty response");
+
+        return JSON.parse(content);
+
+    } catch (err) {
+        console.error(`[Metadati] ❌ Errore:`, err);
+        monitor.logAIRequest(METADATA_PROVIDER, Date.now() - startAI, 0, true);
+        return {};
+    }
+}
+
+// --- FUNZIONE PRINCIPALE REFACTORATA ---
+export async function correctTranscription(
+    segments: any[],
+    campaignId?: number
+): Promise<AIResponse> {
+    console.log(`[Bardo] 🔧 Avvio correzione (Provider: ${TRANSCRIPTION_PROVIDER})...`);
+
+    // STEP 1: Correzione Testuale Bulk
+    const correctedSegments = await correctTextOnly(segments);
+
+    // STEP 2: Estrazione Metadati
+    const metadata = await extractMetadata(correctedSegments, campaignId);
+
     return {
-        segments: allSegments,
-        detected_location: lastDetectedLocation,
-        atlas_update: lastAtlasUpdate,
-        npc_updates: allNpcUpdates,
-        present_npcs: Array.from(allPresentNpcs)
+        segments: correctedSegments,
+        ...metadata
     };
 }
 
 // --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<SummaryResponse> {
-    console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${MODEL_NAME})...`);
+    console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
 
     const transcriptions = getSessionTranscript(sessionId);
     const notes = getSessionNotes(sessionId);
@@ -775,35 +832,18 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     let memoryContext = "";
     if (campaignId) {
         console.log(`[Bardo] 🧠 Avvio Total Recall per campagna ${campaignId}...`);
-        
-        // Chiamiamo la funzione che ora restituisce l'oggetto strutturato
         const snapshot = getCampaignSnapshot(campaignId);
-        
-        // Estraiamo i dati per il RAG
         const activeCharNames = snapshot.characters.map((c: any) => c.character_name).filter(Boolean);
         const activeQuestTitles = snapshot.quests.map((q: any) => q.title);
         const locationQuery = snapshot.location ? `${snapshot.location.macro || ''} ${snapshot.location.micro || ''}`.trim() : "";
 
         const promises = [];
-        
-        // A. Ricerca Luogo
-        if (locationQuery) {
-            promises.push(searchKnowledge(campaignId, `Eventi passati a ${locationQuery}`, 3).then(res => ({ type: 'LUOGO', data: res })));
-        }
-        
-        // B. Ricerca Personaggi
-        if (activeCharNames.length > 0) {
-            promises.push(searchKnowledge(campaignId, `Fatti su ${activeCharNames.join(', ')}`, 3).then(res => ({ type: 'PERSONAGGI', data: res })));
-        }
-
-        // C. Ricerca Quest
-        if (activeQuestTitles.length > 0) {
-            promises.push(searchKnowledge(campaignId, `Dettagli quest: ${activeQuestTitles.join(', ')}`, 3).then(res => ({ type: 'MISSIONI', data: res })));
-        }
+        if (locationQuery) promises.push(searchKnowledge(campaignId, `Eventi passati a ${locationQuery}`, 3).then(res => ({ type: 'LUOGO', data: res })));
+        if (activeCharNames.length > 0) promises.push(searchKnowledge(campaignId, `Fatti su ${activeCharNames.join(', ')}`, 3).then(res => ({ type: 'PERSONAGGI', data: res })));
+        if (activeQuestTitles.length > 0) promises.push(searchKnowledge(campaignId, `Dettagli quest: ${activeQuestTitles.join(', ')}`, 3).then(res => ({ type: 'MISSIONI', data: res })));
 
         const ragResults = await Promise.all(promises);
 
-        // Costruiamo la stringa finale che andrà nel prompt
         memoryContext = `\n[[MEMORIA DEL MONDO]]\n`;
         memoryContext += `📍 LUOGO: ${snapshot.location_context}\n`;
         if (snapshot.atlasDesc) memoryContext += `📖 DESCRIZIONE AMBIENTE: ${snapshot.atlasDesc}\n`;
@@ -814,19 +854,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
                 memoryContext += `\nRICORDI (${res.type}):\n${res.data.map(s => `- ${s}`).join('\n')}\n`;
             }
         });
-        
         memoryContext += `\n--------------------------------------------------\n`;
     }
-    // ----------------------------------------
 
     // Ricostruzione dialogo lineare
     const allFragments = [];
     for (const t of transcriptions) {
         try {
             const segments = JSON.parse(t.transcription_text);
-            // NOTA: t.character_name è già il risultato di COALESCE(snapshot, current) dalla query SQL in db.ts
             const charName = t.character_name || "Sconosciuto";
-
             if (Array.isArray(segments)) {
                 for (const seg of segments) {
                     allFragments.push({
@@ -842,7 +878,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         } catch (e) {}
     }
 
-    // Aggiunta Note
     for (const n of notes) {
         const p = getUserProfile(n.user_id, campaignId || 0);
         allFragments.push({
@@ -865,8 +900,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
         const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
         const prefix = f.type === 'note' ? '📝 ' : '';
-        
-        // Inserimento Marker di Scena
+
         let sceneMarker = "";
         if (f.type === 'audio' && (f.macro !== lastMacro || f.micro !== lastMicro)) {
             if (f.macro || f.micro) {
@@ -885,11 +919,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     // FASE MAP: Analisi frammenti
     if (fullDialogue.length > MAX_CHUNK_SIZE) {
         console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars). Avvio Map-Reduce.`);
-
         const chunks = splitTextInChunks(fullDialogue, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
-
-        // Usiamo processInBatches con barra di avanzamento
-        const mapResults = await processInBatches(chunks, CONCURRENCY_LIMIT, async (chunk, index) => {
+        const mapResults = await processInBatches(chunks, MAP_CONCURRENCY, async (chunk, index) => {
             return await extractFactsFromChunk(chunk, index, chunks.length, castContext);
         }, "Analisi Frammenti (Map Phase)");
 
@@ -903,9 +934,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     console.log(`[Bardo] ✍️  Fase REDUCE: Scrittura racconto finale (${tone})...`);
 
     let reducePrompt = "";
-
     if (tone === 'DM') {
-        // --- PROMPT IBRIDO (LOG + NARRATIVA) ---
         reducePrompt = `Sei un assistente esperto di D&D (Dungeons & Dragons). 
 Analizza la seguente trascrizione grezza di una sessione di gioco.
 Il tuo compito è estrarre informazioni strutturate E scrivere un riassunto narrativo.
@@ -951,40 +980,8 @@ REGOLE IMPORTANTI:
 2. "loot": Solo oggetti di valore, monete o oggetti magici.
 3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
 4. Rispondi SEMPRE in ITALIANO.
-
-REGOLE IMPORTANTI PER 'character_growth':
-- Estrai SOLO eventi che cambiano la vita o la personalità del personaggio.
-- Tipi validi: 
-  - 'BACKGROUND' (Rivelazioni sul passato, es. 'Incontra il padre perduto').
-  - 'TRAUMA' (Eventi emotivi negativi forti, es. 'Uccide un innocente per sbaglio', 'Perde un braccio').
-  - 'RELATIONSHIP' (Cambiamenti nelle relazioni chiave, es. 'Si innamora di X', 'Tradisce Y').
-  - 'ACHIEVEMENT' (Grandi successi personali, non solo uccidere mostri).
-  - 'GOAL_CHANGE' (Cambia obiettivo di vita).
-- IGNORA: Danni in combattimento, acquisti, battute, interazioni minori. Vogliamo la "Storia", non la cronaca.
-
-REGOLE PER 'npc_events':
-- Registra eventi importanti che riguardano gli NPC (Non Giocanti).
-- Tipi validi:
-  - 'REVELATION' (Si scopre un segreto su di lui).
-  - 'BETRAYAL' (Tradisce il party o qualcuno).
-  - 'DEATH' (Muore).
-  - 'ALLIANCE' (Si allea con il party).
-  - 'STATUS_CHANGE' (Diventa Re, viene arrestato, cambia lavoro).
-- Ignora semplici interazioni commerciali o chiacchiere.
-
-REGOLE PER 'world_events':
-- Estrai SOLO eventi che cambiano il mondo di gioco o la regione.
-- Tipi validi:
-  - 'WAR' (Inizio/Fine guerre, battaglie campali).
-  - 'POLITICS' (Incoronazioni, leggi, alleanze tra nazioni).
-  - 'DISCOVERY' (Scoperta di nuove terre, antiche rovine, artefatti leggendari).
-  - 'CALAMITY' (Terremoti, piaghe, distruzioni di città).
-  - 'SUPERNATURAL' (Intervento di divinità, rottura del velo magico).
-- Non includere le azioni dei giocatori a meno che non abbiano conseguenze su scala regionale/globale.
 `;
-
     } else {
-        // --- PROMPT NARRATIVO (BARDO) ---
         reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
         ${castContext}
         ${memoryContext}
@@ -1012,58 +1009,60 @@ REGOLE PER 'world_events':
         5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
     }
 
+    const startAI = Date.now();
     try {
-        const response = await withRetry(() => openai.chat.completions.create({
-            model: MODEL_NAME, // USA IL MODELLO SMART
+        const options: any = {
+            model: SUMMARY_MODEL,
             messages: [
-                { role: "system", content: reducePrompt },
-                { role: "user", content: contextForFinalStep }
-            ],
-            response_format: { type: "json_object" }
-        }));
+                { role: "system", content: "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido." },
+                { role: "user", content: `${reducePrompt}\n\nTRASCRIZIONE:\n${contextForFinalStep}` }
+            ]
+        };
+
+        if (SUMMARY_PROVIDER === 'openai') {
+            options.response_format = { type: "json_object" };
+        }
+
+        const response = await withRetry(() => summaryClient.chat.completions.create(options));
+        const latency = Date.now() - startAI;
+        const tokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequest(SUMMARY_PROVIDER, latency, tokens, false);
 
         const content = response.choices[0].message.content || "{}";
         accumulatedTokens += response.usage?.total_tokens || 0;
 
         let parsed;
         try {
-            // SANITIZZAZIONE: Rimuove i backtick del markdown se presenti (```json ... ```)
             const cleanContent = content.replace(/```json\n?|```/g, '').trim();
             parsed = JSON.parse(cleanContent);
         } catch (e) {
             console.error("[Bardo] ⚠️ Errore parsing JSON:", e);
-            console.error("[Bardo] Content ricevuto:", content); // Utile per debug
-            
-            // Fallback: proviamo a salvare il contenuto come summary testuale
             parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], loot_removed: [], quests: [] };
         }
 
-        // MAPPING INTELLIGENTE PER RETROCOMPATIBILITÀ
-        // Se il prompt ha generato "log" (nuovo formato DM), lo usiamo come "summary" (che è il campo principale visualizzato)
-        // E "narrative" lo passiamo come campo extra.
         let finalSummary = parsed.summary;
         if (Array.isArray(parsed.log)) {
             finalSummary = parsed.log.join('\n');
         } else if (!finalSummary && parsed.narrative) {
-            // Fallback se manca summary ma c'è narrative
             finalSummary = parsed.narrative;
         }
 
-        return { 
-            summary: finalSummary || "Errore generazione.", 
+        return {
+            summary: finalSummary || "Errore generazione.",
             title: parsed.title || "Sessione Senza Titolo",
             tokens: accumulatedTokens,
             loot: Array.isArray(parsed.loot) ? parsed.loot : [],
             loot_removed: Array.isArray(parsed.loot_removed) ? parsed.loot_removed : [],
             quests: Array.isArray(parsed.quests) ? parsed.quests : [],
-            narrative: parsed.narrative, // NUOVO CAMPO
-            log: Array.isArray(parsed.log) ? parsed.log : [], // NUOVO CAMPO
-            character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [], // NUOVO CAMPO
-            npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [], // NUOVO CAMPO
-            world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [] // NUOVO CAMPO
+            narrative: parsed.narrative,
+            log: Array.isArray(parsed.log) ? parsed.log : [],
+            character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
+            npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],
+            world_events: Array.isArray(parsed.world_events) ? parsed.world_events : []
         };
     } catch (err: any) {
         console.error("Errore finale:", err);
+        monitor.logAIRequest(SUMMARY_PROVIDER, Date.now() - startAI, 0, true);
         throw err;
     }
 }
@@ -1091,14 +1090,20 @@ export async function generateCharacterBiography(campaignId: number, charName: s
     4. Usa un tono solenne e introspettivo.
     5. Concludi con una frase sullo stato attuale del personaggio.`;
 
+    const startAI = Date.now();
     try {
-        const response = await openai.chat.completions.create({
-            model: MODEL_NAME, // Usa un modello intelligente per la scrittura
+        const response = await summaryClient.chat.completions.create({
+            model: SUMMARY_MODEL,
             messages: [{ role: "user", content: prompt }]
         });
+        const latency = Date.now() - startAI;
+        const tokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequest(SUMMARY_PROVIDER, latency, tokens, false);
+
         return response.choices[0].message.content || "Impossibile scrivere la biografia.";
     } catch (e) {
         console.error("Errore generazione bio:", e);
+        monitor.logAIRequest(SUMMARY_PROVIDER, Date.now() - startAI, 0, true);
         return "Il biografo ha finito l'inchiostro.";
     }
 }
@@ -1107,8 +1112,7 @@ export async function generateCharacterBiography(campaignId: number, charName: s
 export async function generateNpcBiography(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
     const history = getNpcHistory(campaignId, npcName);
 
-    // Combiniamo i dati statici (Dossier) con quelli storici (History)
-    const historyText = history.length > 0 
+    const historyText = history.length > 0
         ? history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n')
         : "Nessun evento storico registrato.";
 
@@ -1127,78 +1131,112 @@ export async function generateNpcBiography(campaignId: number, npcName: string, 
     3. Se non ci sono eventi storici, basati sulla descrizione generale espandendola leggermente.
     4. Usa un tono descrittivo, come una voce di enciclopedia o un dossier segreto.`;
 
+    const startAI = Date.now();
     try {
-        const response = await openai.chat.completions.create({
-            model: MODEL_NAME,
+        const response = await summaryClient.chat.completions.create({
+            model: SUMMARY_MODEL,
             messages: [{ role: "user", content: prompt }]
         });
+        const latency = Date.now() - startAI;
+        const tokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequest(SUMMARY_PROVIDER, latency, tokens, false);
+
         return response.choices[0].message.content || "Impossibile scrivere il dossier.";
     } catch (e) {
         console.error("Errore generazione bio NPC:", e);
+        monitor.logAIRequest(SUMMARY_PROVIDER, Date.now() - startAI, 0, true);
         return "Il dossier è bruciato.";
     }
 }
 
 // --- RAG: INGESTIONE BIOGRAFIA ---
 export async function ingestBioEvent(campaignId: number, sessionId: string, charName: string, event: string, type: string) {
-    const content = `[BIOGRAFIA: ${charName}] TIPO: ${type}. EVENTO: ${event}`;
-    console.log(`[RAG] 🧠 Indicizzazione evento bio per ${charName}...`);
+    const content = `BIOGRAFIA ${charName}: TIPO ${type}. EVENTO: ${event}`;
+    console.log(`[RAG] 🎭 Indicizzazione evento bio per ${charName}...`);
 
-    // Determina provider e client (riutilizza la logica esistente in bard.ts)
-    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
-    const isOllama = provider === 'ollama';
-    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
-    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+    const promises: any[] = [];
 
-    try {
-        const resp = await client.embeddings.create({ model: model, input: content });
-        const vector = resp.data[0].embedding;
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OPENAI,
+            input: content
+        })
+        .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+        .catch(err => ({ provider: 'openai', error: err.message }))
+    );
 
-        // Inseriamo nel DB come frammento di conoscenza
-        // Nota: Usiamo macro/micro null perché è un evento legato alla persona, non al luogo
-        insertKnowledgeFragment(
-            campaignId, 
-            sessionId, 
-            content, 
-            vector, 
-            model, 
-            0, // timestamp fittizio
-            null, // macro
-            null, // micro
-            [charName] // associamo esplicitamente l'NPC/PG
-        );
-    } catch (e) {
-        console.error(`[RAG] ❌ Errore ingestione bio ${charName}:`, e);
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OLLAMA,
+            input: content
+        })
+        .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+        .catch(err => ({ provider: 'ollama', error: err.message }))
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, sessionId, content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    0, // timestamp fittizio
+                    null, // macro
+                    null, // micro
+                    [charName] // associamo esplicitamente il NPC/PG
+                );
+            }
+        }
     }
 }
 
 // --- RAG: INGESTIONE CRONACA MONDIALE ---
 export async function ingestWorldEvent(campaignId: number, sessionId: string, event: string, type: string) {
-    const content = `[STORIA DEL MONDO] TIPO: ${type}. EVENTO: ${event}`;
+    const content = `STORIA DEL MONDO: TIPO ${type}. EVENTO: ${event}`;
     console.log(`[RAG] 🌍 Indicizzazione evento globale...`);
 
-    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
-    const isOllama = provider === 'ollama';
-    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
-    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
+    const promises: any[] = [];
 
-    try {
-        const resp = await client.embeddings.create({ model: model, input: content });
-        const vector = resp.data[0].embedding;
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OPENAI,
+            input: content
+        })
+        .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
+        .catch(err => ({ provider: 'openai', error: err.message }))
+    );
 
-        // Inseriamo nel DB (macro/micro null perché è un evento storico generale)
-        insertKnowledgeFragment(
-            campaignId, 
-            sessionId, 
-            content, 
-            vector, 
-            model, 
-            0, 
-            null, 
-            null, 
-            ['MONDO', 'LORE', 'STORIA'] // Tag generici
-        );
-    } catch (e) {
-        console.error(`[RAG] ❌ Errore ingestione mondo:`, e);
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OLLAMA,
+            input: content
+        })
+        .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
+        .catch(err => ({ provider: 'ollama', error: err.message }))
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, sessionId, content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    0, null, null,
+                    ['MONDO', 'LORE', 'STORIA']
+                );
+            }
+        }
     }
 }

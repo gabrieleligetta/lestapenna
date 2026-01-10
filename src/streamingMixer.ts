@@ -259,11 +259,22 @@ export async function stopStreamingMixer(sessionId: string): Promise<string> {
         
         // Forza flush anche se isMixing è true (finalizzazione)
         state.isMixing = false;
-        await flushPendingFiles(sessionId);
+        
+        // 🆕 TIMEOUT: Max 60s per flush finale
+        const flushPromise = flushPendingFiles(sessionId);
+        const timeoutPromise = new Promise<void>((_, reject) => 
+            setTimeout(() => reject(new Error('Flush timeout')), 60000)
+        );
+        
+        try {
+            await Promise.race([flushPromise, timeoutPromise]);
+        } catch (e: any) {
+            console.error(`[StreamMixer] ⚠️ Flush finale fallito: ${e.message}`);
+        }
         
         // Aspetta che finisca il mix
         let retries = 0;
-        while (state.isMixing && retries < 30) {
+        while (state.isMixing && retries < 10) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             retries++;
         }
@@ -299,6 +310,10 @@ export async function stopStreamingMixer(sessionId: string): Promise<string> {
     } catch (e) {
         console.error(`[StreamMixer] ⚠️ Errore upload Oracle (file locale comunque disponibile):`, e);
     }
+
+    const stats = fs.statSync(state.finalMp3Path);
+    const sizeMB = stats.size / (1024 * 1024);
+    console.log(`[StreamMixer] 📊 Statistiche: ${sizeMB.toFixed(2)} MB, ${state.pendingFiles.length} file processati`);
 
     activeMixers.delete(sessionId);
     console.log(`[StreamMixer] ✅ Mix completato: ${state.finalMp3Path}`);

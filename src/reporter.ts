@@ -45,12 +45,24 @@ export async function processSessionReport(metrics: SessionMetrics) {
     const diskFree = metrics.diskUsage?.freeGB || 0;
     const diskUsedPct = metrics.diskUsage?.usedPercent || 0;
 
-    // 🆕 NUOVE STATISTICHE
+    // 🆕 STATISTICHE FIXATE
     const whisperRatio = metrics.whisperMetrics?.avgProcessingRatio || 0;
-    const whisperEfficiency = whisperRatio < 0.5 ? '✅ Excellent' : whisperRatio < 1 ? '⚠️ Good' : '❌ Slow';
+    // FIX: Ratio > 1.0 = LENTO (ci mette più del realtime)
+    const whisperEfficiency = whisperRatio > 3.0
+        ? '🔴 Critical'
+        : whisperRatio > 1.8
+            ? '🟡 Slow (check thermal)'
+            : whisperRatio > 1.0
+                ? '⚠️ Normal (ARM64)'
+                : '✅ Fast';
+
+    // FIX: Calcola SUCCESS RATE, non failure rate
+    const queueSuccessRate = metrics.queueMetrics && metrics.queueMetrics.totalJobsProcessed > 0
+        ? (((metrics.queueMetrics.totalJobsProcessed - metrics.queueMetrics.totalJobsFailed) / metrics.queueMetrics.totalJobsProcessed) * 100).toFixed(1)
+        : '100';
 
     const queueHealth = metrics.queueMetrics
-        ? `${metrics.queueMetrics.totalJobsProcessed} processed, ${metrics.queueMetrics.totalJobsFailed} failed (${metrics.queueMetrics.totalJobsProcessed > 0 ? ((metrics.queueMetrics.totalJobsFailed / metrics.queueMetrics.totalJobsProcessed) * 100).toFixed(1) + '%' : '0%'})`
+        ? `${metrics.queueMetrics.totalJobsProcessed} processed, ${metrics.queueMetrics.totalJobsFailed} failed (Success: ${queueSuccessRate}%)`
         : 'N/A';
 
     const aiPerformance = metrics.aiMetrics
@@ -67,54 +79,76 @@ export async function processSessionReport(metrics: SessionMetrics) {
 
     const statsJson = JSON.stringify(metrics, null, 2);
 
-    // 2. Generazione testo email con AI
+    // 2. 🆕 PROMPT AI FIXATO
     const prompt = `
-    Sei un ingegnere DevOps che analizza i log di un bot Discord ("Lestapenna").
-    Ecco le metriche della sessione:
-    
-    **SYSTEM RESOURCES**
-    - Durata: ${durationMin.toFixed(2)} min
-    - CPU Media: ${avgCpu.toFixed(1)}%
-    - RAM Max: ${maxRam} MB
-    - DB Growth: ${dbGrowthMB.toFixed(3)} MB
-    - Disk Used: ${diskUsedPct}% (${diskFree}GB free)
-    ${thermalWarning}
-    
-    **WHISPER PERFORMANCE**
-    - File Audio: ${metrics.totalFiles}
-    - Processing Ratio: ${whisperRatio.toFixed(2)}x (${whisperEfficiency})
-    - Throughput: ${metrics.whisperMetrics?.filesPerHour.toFixed(1) || 'N/A'} file/h
-    - Fastest: ${metrics.whisperMetrics?.minProcessingTime.toFixed(1) || 'N/A'}s
-    - Slowest: ${metrics.whisperMetrics?.maxProcessingTime.toFixed(1) || 'N/A'}s
-    
-    **QUEUE HEALTH**
-    - ${queueHealth}
-    - Avg Wait Time: ${metrics.queueMetrics?.avgWaitTimeMs ? (metrics.queueMetrics.avgWaitTimeMs / 1000).toFixed(1) + 's' : 'N/A'}
-    - Retried Jobs: ${metrics.queueMetrics?.retriedJobs || 0}
-    
-    **AI PERFORMANCE**
-    - ${aiPerformance}
-    - Failed Requests: ${metrics.aiMetrics?.failedRequests || 0}
-    
-    **STORAGE**
-    - ${storageEfficiency}
-    
-    **ERRORS**: ${metrics.errors.length}
-    
-    Analizza brevemente la stabilità del sistema e segnala eventuali anomalie.
-    
-    FOCUS SU:
-    1. Se Whisper ratio > 1.0, suggerisci di ridurre concurrency o controllare thermal throttling
-    2. Se disk > 80%, lancia ALLARME e suggerisci cleanup
-    3. Se AI latency > 30s (Ollama), suggerisci di passare a OpenAI per alcuni task
-    4. Se queue failure rate > 5%, indaga errori specifici
-    `;
+Sei un ingegnere DevOps che analizza i log di un bot Discord ("Lestapenna") su Oracle Cloud Free Tier ARM64.
+
+Ecco le metriche della sessione:
+
+**SYSTEM RESOURCES**
+- Durata: ${durationMin.toFixed(2)} min
+- CPU Media: ${avgCpu.toFixed(1)}%
+- RAM Max: ${maxRam} MB
+- DB Growth: ${dbGrowthMB.toFixed(3)} MB
+- Disk Used: ${diskUsedPct.toFixed(1)}% (${diskFree.toFixed(2)}GB free)
+${thermalWarning}
+
+**WHISPER PERFORMANCE**
+- File Audio: ${metrics.totalFiles}
+- Processing Ratio: ${whisperRatio.toFixed(2)}x (${whisperEfficiency})
+  [NOTA: Ratio = transcriptionTime/audioDuration. >1.0 = lento, <1.0 = veloce]
+- Throughput: ${metrics.whisperMetrics?.filesPerHour.toFixed(1) || 'N/A'} file/h
+- Fastest: ${metrics.whisperMetrics?.minProcessingTime.toFixed(1) || 'N/A'}s
+- Slowest: ${metrics.whisperMetrics?.maxProcessingTime.toFixed(1) || 'N/A'}s
+
+**QUEUE HEALTH**
+- ${queueHealth}
+- Avg Wait Time: ${metrics.queueMetrics?.avgWaitTimeMs ? (metrics.queueMetrics.avgWaitTimeMs / 1000).toFixed(1) + 's' : 'N/A'}
+- Retried Jobs: ${metrics.queueMetrics?.retriedJobs || 0}
+
+**AI PERFORMANCE**
+- ${aiPerformance}
+- Failed Requests: ${metrics.aiMetrics?.failedRequests || 0}
+
+**STORAGE**
+- ${storageEfficiency}
+
+**ERRORS**: ${metrics.errors.length}
+
+Analizza brevemente la stabilità del sistema e segnala eventuali anomalie REALI (non falsi positivi).
+
+⚠️ REGOLE DI INTERPRETAZIONE (CRITICHE):
+1. **Whisper Ratio**:
+   - < 1.0 = Veloce ✅ (processa più veloce del realtime)
+   - 1.0-1.8 = Normale per ARM64 ✅ (llama.cpp su ARM è più lento di x86)
+   - 1.8-3.0 = Lento 🟡 (controllare concurrency/thermal)
+   - > 3.0 = Critico 🔴 (problema serio)
+   
+2. **Disk Usage**:
+   - < 75% = OK ✅
+   - 75-85% = Warning 🟡 (pianifica cleanup)
+   - > 85% = Critico 🔴 (cleanup urgente!)
+   
+3. **AI Latency (Ollama su ARM64)**:
+   - < 15s = Veloce ✅
+   - 15-25s = Normale ✅ (llama3.2 su ARM64)
+   - 25-40s = Lento 🟡 (considerare OpenAI per task complessi)
+   - > 40s = Critico 🔴 (passare a OpenAI o ridurre context)
+   
+4. **Queue Success Rate**:
+   - > 95% = OK ✅
+   - 90-95% = Warning 🟡 (indagare log)
+   - < 90% = Critico 🔴 (problema serio)
+
+Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi REALI.
+Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problemi.
+`;
 
     let emailBody = "";
     try {
         const modelToUse = process.env.AI_PROVIDER === 'ollama'
             ? (process.env.OLLAMA_MODEL || "llama3.2")
-            : (process.env.OPEN_AI_MODEL || "gpt-5-mini");
+            : (process.env.OPEN_AI_MODEL || "gpt-4o-mini");
 
         const response = await openai.chat.completions.create({
             model: modelToUse,
@@ -125,7 +159,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
         emailBody = `Impossibile generare analisi AI: ${e.message}`;
     }
 
-    // 3. Generazione HTML Table
+    // 3. 🆕 HTML TABLE FIXATO
     const htmlTable = `
     <h2>📊 Session Metrics Report</h2>
     ${thermalWarning ? `<p style="color: red; font-weight: bold;">${thermalWarning}</p>` : ''}
@@ -147,7 +181,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
         </tr>
         <tr>
             <td>Total Audio</td>
-            <td>${metrics.totalAudioDurationSec} sec</td>
+            <td>${metrics.totalAudioDurationSec.toFixed(2)} sec</td>
         </tr>
         <tr>
             <td>Transcription Time</td>
@@ -177,22 +211,22 @@ export async function processSessionReport(metrics: SessionMetrics) {
             <td><strong>DB Growth</strong></td>
             <td><strong>+${dbGrowthMB.toFixed(3)} MB</strong></td>
         </tr>
-        <tr style="background-color: ${diskUsedPct > 80 ? '#ffcccc' : '#e6ffe6'};">
+        <tr style="background-color: ${diskUsedPct > 85 ? '#ffcccc' : diskUsedPct > 75 ? '#fff3cd' : '#e6ffe6'};">
             <td><strong>Disk Usage</strong></td>
-            <td><strong>${diskUsedPct}%</strong> (${diskFree} GB free / ${diskTotal} GB total)</td>
+            <td><strong>${diskUsedPct.toFixed(1)}%</strong> (${diskFree.toFixed(2)} GB free / ${diskTotal.toFixed(2)} GB total)</td>
         </tr>
         <tr>
             <td>Errors</td>
             <td style="color: ${metrics.errors.length > 0 ? 'red' : 'green'};">${metrics.errors.length}</td>
         </tr>
 
-        <!-- 🆕 NUOVE RIGHE -->
+        <!-- 🆕 WHISPER PERFORMANCE (FIXATO) -->
         <tr style="background-color: #e3f2fd;">
             <td colspan="2"><strong>🎙️ WHISPER PERFORMANCE</strong></td>
         </tr>
         <tr>
             <td>Processing Ratio</td>
-            <td style="color: ${whisperRatio < 0.5 ? 'green' : whisperRatio < 1 ? 'orange' : 'red'};">
+            <td style="color: ${whisperRatio > 3.0 ? 'red' : whisperRatio > 1.8 ? 'orange' : 'green'};">
                 <strong>${whisperRatio.toFixed(2)}x</strong> (${whisperEfficiency})
             </td>
         </tr>
@@ -209,6 +243,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
             <td>${metrics.whisperMetrics?.maxProcessingTime.toFixed(1) || 'N/A'}s</td>
         </tr>
         
+        <!-- 🆕 QUEUE HEALTH (FIXATO) -->
         <tr style="background-color: #e3f2fd;">
             <td colspan="2"><strong>📦 QUEUE HEALTH</strong></td>
         </tr>
@@ -223,6 +258,12 @@ export async function processSessionReport(metrics: SessionMetrics) {
             </td>
         </tr>
         <tr>
+            <td>Success Rate</td>
+            <td style="color: ${parseFloat(queueSuccessRate) < 95 ? 'orange' : 'green'}; font-weight: bold;">
+                ${queueSuccessRate}%
+            </td>
+        </tr>
+        <tr>
             <td>Avg Wait Time</td>
             <td>${metrics.queueMetrics?.avgWaitTimeMs ? (metrics.queueMetrics.avgWaitTimeMs / 1000).toFixed(1) + 's' : 'N/A'}</td>
         </tr>
@@ -231,6 +272,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
             <td>${metrics.queueMetrics?.retriedJobs || 0}</td>
         </tr>
         
+        <!-- AI PERFORMANCE -->
         <tr style="background-color: #e3f2fd;">
             <td colspan="2"><strong>🤖 AI PERFORMANCE</strong></td>
         </tr>
@@ -240,7 +282,9 @@ export async function processSessionReport(metrics: SessionMetrics) {
         </tr>
         <tr>
             <td>Avg Latency</td>
-            <td>${metrics.aiMetrics?.avgLatencyMs ? (metrics.aiMetrics.avgLatencyMs / 1000).toFixed(1) + 's' : 'N/A'}</td>
+            <td style="color: ${(metrics.aiMetrics?.avgLatencyMs || 0) > 40000 ? 'red' : (metrics.aiMetrics?.avgLatencyMs || 0) > 25000 ? 'orange' : 'green'};">
+                ${metrics.aiMetrics?.avgLatencyMs ? (metrics.aiMetrics.avgLatencyMs / 1000).toFixed(1) + 's' : 'N/A'}
+            </td>
         </tr>
         <tr>
             <td>Tokens/Second</td>
@@ -253,6 +297,7 @@ export async function processSessionReport(metrics: SessionMetrics) {
             </td>
         </tr>
         
+        <!-- STORAGE -->
         <tr style="background-color: #e3f2fd;">
             <td colspan="2"><strong>💾 STORAGE</strong></td>
         </tr>
@@ -337,7 +382,7 @@ export async function sendSessionRecap(
     summaryText: string,
     lootGained: string[] = [],
     lootLost: string[] = [],
-    narrative?: string // NUOVO PARAMETRO
+    narrative?: string
 ) {
     const campaign = getCampaignById(campaignId);
     const campaignName = campaign ? campaign.name : "Sconosciuta";
@@ -409,7 +454,7 @@ export async function sendSessionRecap(
                     <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>${n.name}</b></td>
                     <td style="padding: 8px; border-bottom: 1px solid #ddd;">${n.role || '-'}</td>
                     <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                        ${n.status === 'DEAD' ? '💀 MORT' : ''} 
+                        ${n.status === 'DEAD' ? '💀 MORTO' : ''} 
                         ${n.description ? `<i>${n.description.substring(0, 100)}${n.description.length > 100 ? '...' : ''}</i>` : ''}
                     </td>
                 </tr>

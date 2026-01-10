@@ -465,9 +465,9 @@ client.on('messageCreate', async (message: Message) => {
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
     if (command === 'listen' || command === 'ascolta' || command === 'testascolta') {
         if (command === 'testascolta') {
-             const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
-             if (setupCamp) activeCampaign = setupCamp;
-             else return;
+            const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
+            if (setupCamp) activeCampaign = setupCamp;
+            else return;
         }
 
         const member = message.member;
@@ -748,8 +748,8 @@ client.on('messageCreate', async (message: Message) => {
 
         // Recupera tutti gli NPC univoci visti nelle registrazioni della sessione
         const rows = db.prepare(`
-            SELECT DISTINCT present_npcs 
-            FROM recordings 
+            SELECT DISTINCT present_npcs
+            FROM recordings
             WHERE session_id = ? AND present_npcs IS NOT NULL
         `).all(sessionId) as { present_npcs: string }[];
 
@@ -1280,11 +1280,11 @@ client.on('messageCreate', async (message: Message) => {
 
         setCampaignYear(activeCampaign!.id, year);
         const label = year === 0 ? "Anno 0" : (year > 0 ? `${year} D.E.` : `${Math.abs(year)} P.E.`);
-        
+
         // --- NUOVO: Aggiorna anche l'anno corrente in memoria per le registrazioni attive ---
         // Nota: activeCampaign è un riferimento locale, aggiorniamolo
         activeCampaign!.current_year = year;
-        
+
         return await message.reply(`📅 Data campagna aggiornata a: **${label}**`);
     }
 

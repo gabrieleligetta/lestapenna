@@ -29,6 +29,7 @@ const activeStreams = new Map<string, ActiveStream>();
 const connectionErrors = new Map<string, number>();
 const pausedGuilds = new Set<string>();
 const sessionMixers = new Map<string, boolean>();
+const guildToSession = new Map<string, string>();
 
 export function pauseRecording(guildId: string) {
     pausedGuilds.add(guildId);
@@ -61,6 +62,9 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     
     // Reset stato pausa alla connessione
     pausedGuilds.delete(guildId);
+    
+    // 🆕 TRACCIA MAPPA GUILD->SESSION
+    guildToSession.set(guildId, sessionId);
 
     const connection: VoiceConnection = joinVoiceChannel({
         channelId: channel.id,
@@ -279,13 +283,8 @@ export async function disconnect(guildId: string): Promise<boolean> {
             console.log(`[Recorder] ${closingPromises.length} stream chiusi correttamente.`);
         }
 
-        let sessionId: string | undefined;
-        for (const [sid, active] of sessionMixers) {
-            if (active) {
-                sessionId = sid;
-                break; // Assumiamo una sessione per volta
-            }
-        }
+        // 🆕 USA MAPPA GUILD->SESSION
+        const sessionId = guildToSession.get(guildId);
 
         if (sessionId && sessionMixers.has(sessionId)) {
             try {
@@ -293,6 +292,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
                 const mixPath = await stopStreamingMixer(sessionId);
                 console.log(`[Recorder] ✅ Mix streaming completato: ${mixPath}`);
                 sessionMixers.delete(sessionId);
+                guildToSession.delete(guildId); // 🧹 Cleanup
             } catch (e: any) {
                 console.error(`[Recorder] ❌ Errore finalizzazione mixer:`, e.message);
             }

@@ -6,6 +6,7 @@ import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
 import { correctTranscription } from './bard';
 import { correctionQueue } from './queue';
+import { filterWhisperHallucinations } from './whisperHallucinationFilter';
 
 // Worker BullMQ - LO SCRIBA (Audio Worker)
 // Si occupa di: Download -> Trascrizione -> Backup -> Accodamento Correzione
@@ -14,7 +15,7 @@ export function startWorker() {
     // --- WORKER 1: AUDIO PROCESSING ---
     const audioWorker = new Worker('audio-processing', async job => {
         const { sessionId, fileName, filePath, userId } = job.data;
-        
+
         const campaignId = getSessionCampaignId(sessionId);
         const userName = (campaignId ? getUserName(userId, campaignId) : null) || userId;
         const startJob = Date.now();
@@ -22,7 +23,7 @@ export function startWorker() {
 
         // Idempotenza & Recupero "Buco Nero"
         const currentRecording = getRecording(fileName);
-        
+
         if (currentRecording) {
             // 1. Caso Completato o Skippato -> Esci
             if (currentRecording.status === 'PROCESSED' || currentRecording.status === 'SKIPPED') {
@@ -38,9 +39,9 @@ export function startWorker() {
                 try {
                     const segments = JSON.parse(currentRecording.transcription_text || '[]');
                     if (segments.length > 0) {
-                         // Controllo se la correzione è abilitata
-                         if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION !== 'false') {
-                             await correctionQueue.add('correction-job', {
+                        // Controllo se la correzione è abilitata
+                        if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION !== 'false') {
+                            await correctionQueue.add('correction-job', {
                                 sessionId,
                                 fileName,
                                 segments: segments,
@@ -55,12 +56,12 @@ export function startWorker() {
                             console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
                             monitor.logJobProcessed(waitTime, job.attemptsMade);
                             return { status: 'recovered_to_correction' };
-                         } else {
-                             // Se disabilitata, non possiamo fare molto qui perché il file è già TRANSCRIBED
-                             // ma non PROCESSED. Potremmo forzare il processamento manuale, ma per ora lasciamo così
-                             // o lo riprocessiamo come se fosse nuovo.
-                             console.log(`[Scriba] ⚠️ Correzione disabilitata, ma file in limbo. Procedo con logica standard.`);
-                         }
+                        } else {
+                            // Se disabilitata, non possiamo fare molto qui perché il file è già TRANSCRIBED
+                            // ma non PROCESSED. Potremmo forzare il processamento manuale, ma per ora lasciamo così
+                            // o lo riprocessiamo come se fosse nuovo.
+                            console.log(`[Scriba] ⚠️ Correzione disabilitata, ma file in limbo. Procedo con logica standard.`);
+                        }
                     }
                 } catch (e) {
                     console.error(`[Scriba] ❌ Errore recupero JSON per ${fileName}, procedo con ritrascrizione.`);
@@ -106,10 +107,10 @@ export function startWorker() {
                 await convertPcmToWav(filePath, wavPath);
                 transcriptionPath = wavPath;
             }
-            
+
             console.log(`[Scriba] 🗣️  Inizio trascrizione Whisper: ${fileName}`);
             const result = await transcribeLocal(transcriptionPath);
-            
+
             if (transcriptionPath !== filePath && fs.existsSync(transcriptionPath)) {
                 fs.unlinkSync(transcriptionPath);
             }
@@ -124,10 +125,41 @@ export function startWorker() {
             monitor.logFileProcessed(audioDuration, processingTime);
 
             if (result.segments && result.segments.length > 0) {
+                // 🆕 FILTRO ALLUCINAZIONI - Applica a ogni segmento
+                const filteredSegments = result.segments
+                    .map((s: any) => {
+                        const cleanedText = filterWhisperHallucinations(s.text, false);
+                        return {
+                            ...s,
+                            text: cleanedText.trim()
+                        };
+                    })
+                    .filter((s: any) => {
+                        // Rimuovi segmenti vuoti dopo il filtro
+                        return s.text.length > 0;
+                    });
+
+                if (filteredSegments.length === 0) {
+                    updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o allucinazioni rimosse');
+                    console.log(`[Scriba] 🔇 Audio ${fileName} scartato dopo filtro allucinazioni`);
+                    const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
+                    if (isBackedUp) {
+                        try { fs.unlinkSync(filePath); } catch(e) {}
+                    }
+                    monitor.logJobProcessed(waitTime, job.attemptsMade);
+                    return { status: 'skipped', reason: 'hallucinations_filtered' };
+                }
+
+                // Log statistiche filtro
+                const removedCount = result.segments.length - filteredSegments.length;
+                if (removedCount > 0) {
+                    console.log(`[Scriba] 🧹 Rimossi ${removedCount}/${result.segments.length} segmenti allucinati da ${fileName}`);
+                }
+
                 // Salviamo stato intermedio
-                const rawJson = JSON.stringify(result.segments);
+                const rawJson = JSON.stringify(filteredSegments);
                 updateRecordingStatus(fileName, 'TRANSCRIBED', rawJson);
-                
+
                 // Backup e Pulizia Locale
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
                 if (isBackedUp) {
@@ -143,7 +175,7 @@ export function startWorker() {
                 // 4. Decisione: Correzione AI o Bypass?
                 if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION === 'false') {
                     console.log(`[Scriba] ⏩ Correzione AI disabilitata. Salvo direttamente come PROCESSED.`);
-                    
+
                     // Recuperiamo contesto minimo per salvare metadati coerenti
                     let finalMacro = null;
                     let finalMicro = null;
@@ -162,7 +194,7 @@ export function startWorker() {
 
                     updateRecordingStatus(fileName, 'PROCESSED', rawJson, null, finalMacro, finalMicro, [], frozenCharName);
                     monitor.logJobProcessed(waitTime, job.attemptsMade);
-                    return { status: 'processed_no_ai', segmentsCount: result.segments.length };
+                    return { status: 'processed_no_ai', segmentsCount: filteredSegments.length };
 
                 } else {
                     // Accodamento per Correzione AI (Standard Flow)
@@ -170,7 +202,7 @@ export function startWorker() {
                     await correctionQueue.add('correction-job', {
                         sessionId,
                         fileName,
-                        segments: result.segments,
+                        segments: filteredSegments,
                         campaignId,
                         userId // Passiamo userId per recuperare lo snapshot nel correction worker
                     }, {
@@ -181,13 +213,13 @@ export function startWorker() {
                     });
 
                     monitor.logJobProcessed(waitTime, job.attemptsMade);
-                    return { status: 'transcribed', segmentsCount: result.segments.length };
+                    return { status: 'transcribed', segmentsCount: filteredSegments.length };
                 }
 
             } else {
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');
                 console.log(`[Scriba] 🔇 Audio ${fileName} scartato (silenzio o incomprensibile)`);
-                
+
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
                 if (isBackedUp) {
                     try { fs.unlinkSync(filePath); } catch(e) {}
@@ -201,15 +233,15 @@ export function startWorker() {
             updateRecordingStatus(fileName, 'ERROR', null, e.message);
             monitor.logError('Worker', `File: ${fileName} - ${e.message}`);
             monitor.logJobFailed();
-            throw e; 
+            throw e;
         }
-    }, { 
-        connection: { 
-            host: process.env.REDIS_HOST || 'redis', 
-            port: parseInt(process.env.REDIS_PORT || '6379') 
+    }, {
+        connection: {
+            host: process.env.REDIS_HOST || 'redis',
+            port: parseInt(process.env.REDIS_PORT || '6379')
         },
         concurrency: 1, // Teniamo basso per la CPU
-        
+
         // --- AGGIUNTA FONDAMENTALE PER EVITARE "JOB STALLED" ---
         lockDuration: 27200000, // 2 ORE
         lockRenewTime: 60000, // Rinnova il lock ogni minuto
@@ -222,33 +254,33 @@ export function startWorker() {
         const { sessionId, fileName, segments, campaignId, userId } = job.data;
         const startJob = Date.now();
         const waitTime = startJob - job.timestamp;
-        
+
         console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`);
-        
+
         try {
             const aiResult = await correctTranscription(segments, campaignId);
             const correctedSegments = aiResult.segments;
-            
+
             let finalMacro = null;
             let finalMicro = null;
 
             // Logica Aggiornamento Luogo
             if (campaignId) {
                 const current = getCampaignLocationById(campaignId);
-                
+
                 if (aiResult.detected_location) {
                     const loc = aiResult.detected_location;
-                    
+
                     // Logica di merge: se l'AI manda null, manteniamo il vecchio MACRO, 
                     // ma il MICRO spesso cambia totalmente, quindi se è null potrebbe significare "fuori"
                     const newMacro = loc.macro || current?.macro || null;
                     const newMicro = loc.micro || null; // Se l'AI dice cambio scena ma micro è null, siamo "in giro" nel macro
-                    
+
                     if (newMacro !== current?.macro || newMicro !== current?.micro) {
                         console.log(`[Worker] 🗺️ Cambio luogo rilevato: ${newMacro} - ${newMicro}`);
                         updateLocation(campaignId, newMacro, newMicro, sessionId);
                     }
-                    
+
                     finalMacro = newMacro;
                     finalMicro = newMicro;
                 } else {
@@ -276,7 +308,7 @@ export function startWorker() {
 
             const jsonStr = JSON.stringify(correctedSegments);
             const flatText = correctedSegments.map((s: any) => s.text).join(" ");
-            
+
             // Salviamo anche i metadati di luogo nel record
             // E ora anche la lista degli NPC presenti!
             const presentNpcs = aiResult.present_npcs || [];
@@ -290,9 +322,9 @@ export function startWorker() {
             // -------------------------
 
             updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro, presentNpcs, frozenCharName);
-            
+
             console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..." [Luogo: ${finalMacro}|${finalMicro}] [NPC: ${presentNpcs.length}] [PG: ${frozenCharName}]`);
-            
+
             monitor.logJobProcessed(waitTime, job.attemptsMade);
             return { status: 'ok', segments: correctedSegments };
 
@@ -304,9 +336,9 @@ export function startWorker() {
             throw e;
         }
     }, {
-        connection: { 
-            host: process.env.REDIS_HOST || 'redis', 
-            port: parseInt(process.env.REDIS_PORT || '6379') 
+        connection: {
+            host: process.env.REDIS_HOST || 'redis',
+            port: parseInt(process.env.REDIS_PORT || '6379')
         },
         concurrency: 2 // Più alto perché è I/O bound (chiamate API)
     });
@@ -315,10 +347,10 @@ export function startWorker() {
     const handleFailure = (workerName: string) => async (job: Job | undefined, err: Error) => {
         const attemptsMade = job?.attemptsMade || 0;
         const maxAttempts = job?.opts.attempts || 1;
-        
+
         if (attemptsMade >= maxAttempts) {
             console.error(`[${workerName}] 💀 Job ${job?.id} MORTO dopo ${attemptsMade} tentativi: ${err.message}`);
-            
+
             // AGGIORNAMENTO DB: Segniamo come ERROR per evitare il limbo
             if (job?.data?.fileName) {
                 try {
@@ -337,6 +369,6 @@ export function startWorker() {
     correctionWorker.on('failed', handleFailure('Correttore'));
 
     console.log("[System] Workers avviati: Scriba (Audio) e Correttore (AI).");
-    
+
     return { audioWorker, correctionWorker };
 }

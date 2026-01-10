@@ -24,6 +24,11 @@ export class CharacterService {
     return this.characterRepo.findByCampaign(campaignId);
   }
 
+    addCharacterEvent(campaignId: number | null, characterName: string, sessionId: string, eventType: string, description: string): void {
+      this.characterRepo.addHistory(campaignId, characterName, sessionId, eventType, description, Date.now());
+      this.logger.log(`Aggiunto evento storico per ${characterName}: [${eventType}] ${description}`);
+  }
+
   deleteUserCharacter(userId: string, campaignId: number): void {
     this.characterRepo.delete(userId, campaignId);
     this.logger.log(`Eliminato personaggio utente ${userId} dalla campagna ${campaignId}`);

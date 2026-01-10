@@ -49,6 +49,13 @@ export class CharacterRepository {
       }
   }
 
+    addHistory(campaignId: number | null, characterName: string, sessionId: string, eventType: string, description: string, timestamp: number): void {
+      this.dbService.getDb().prepare(
+          `INSERT INTO character_history (campaign_id, character_name, session_id, event_type, description, timestamp) 
+           VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(campaignId, characterName, sessionId, eventType, description, timestamp);
+  }
+
   delete(userId: string, campaignId: number): void {
     this.dbService.getDb().prepare(
       'DELETE FROM characters WHERE user_id = ? AND campaign_id = ?'

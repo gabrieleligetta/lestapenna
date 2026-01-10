@@ -93,7 +93,12 @@ export class TranscriptionService {
 
             // NEW direct execution
             const args = [
-                '-m', this.whisperModel, '-f', audioPath, '-l', 'it', '-t', '3', '-oj'
+                '-m', this.whisperModel, 
+                '-f', audioPath, 
+                '-l', 'it', 
+                '-t', '3', 
+                '-bs', '1', // Beam Size 1 (Greedy)
+                '-oj'
             ];
             const proc = spawn(this.whisperBin, args);
 

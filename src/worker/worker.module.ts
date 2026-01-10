@@ -12,9 +12,10 @@ import { DiscordClientProvider } from '../discord/discord-client.provider';
 import { LoreModule } from '../lore/lore.module';
 import { SessionModule } from '../session/session.module';
 import { CampaignModule } from '../campaign/campaign.module';
+import { CharacterModule } from '../character/character.module';
 
 @Module({
-  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule, LoreModule, SessionModule, CampaignModule],
+  imports: [AiModule, DatabaseModule, LoggerModule, QueueModule, MonitorModule, ReporterModule, LoreModule, SessionModule, CampaignModule, CharacterModule],
   providers: [TranscriptionProcessor, SummaryProcessor, CorrectionProcessor, DiscordClientProvider],
 })
 export class WorkerModule {}

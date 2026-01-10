@@ -57,6 +57,7 @@ export class WhisperCppService {
                 '-f', audioPath,  // Qui ci aspettiamo il file WAV temporaneo
                 '-l', 'it',
                 '-t', '3',        // Dobbiamo tenere 3 thread perchè il server di produzione ha 4 core e 1 serve per node!
+                '-bs', '1',       // Beam Size 1 (Greedy)
                 '-oj'           // Output JSON
             ];
 

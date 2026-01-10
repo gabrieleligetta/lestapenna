@@ -1,5 +1,5 @@
 # --- STAGE 1: NODE BUILDER ---
-FROM node:22-bullseye AS builder
+FROM node:22-bookworm AS builder
 WORKDIR /app
 
 # Tool di base
@@ -11,14 +11,14 @@ RUN yarn install --frozen-lockfile
 COPY . .
 RUN yarn build
 
-# --- STAGE 2: WHISPER COMPILER (ARM OPTIMIZED) ---
+# --- STAGE 2: WHISPER COMPILER (BULLSEYE = GCC 10, NO FP16 BUG) ---
 FROM debian:bullseye-slim AS whisper-builder
 WORKDIR /build
 
 # AGGIUNTO 'cmake': Richiesto per la compilazione delle nuove versioni di whisper.cpp
 RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
 
-# Clona e compila whisper.cpp (Rileva automaticamente ARM NEON su Oracle Cloud)
+# Clona e compila whisper.cpp con GCC 10 (Bullseye) che non ha il bug FP16
 # NOTA: Aggiunto -DBUILD_SHARED_LIBS=OFF per includere la libreria nell'eseguibile
 RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF && \
@@ -27,12 +27,12 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
 # Scarica il modello MEDIUM
 RUN bash ./models/download-ggml-model.sh medium
 
-# --- STAGE 3: PRODUCTION RUNNER ---
-FROM node:22-bullseye-slim
+# --- STAGE 3: PRODUCTION RUNNER (BOOKWORM = FFmpeg 5.1+) ---
+FROM node:22-bookworm-slim
 WORKDIR /app
 
 # Installiamo dipendenze runtime
-# - ffmpeg: audio processing
+# - ffmpeg: audio processing (BOOKWORM = v5.1+ con supporto normalize)
 # - python3: runtime per yt-dlp
 # - curl: download tool
 # - procps: monitoraggio processi (htop/top)
@@ -58,7 +58,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# Copia Whisper
+# Copia Whisper (compilato con Bullseye GCC 10)
 RUN mkdir -p /app/whisper
 # FIX: Copiamo 'whisper-cli' (il nuovo binario) ma lo salviamo come 'main'
 # per mantenere la compatibilità con il codice TypeScript esistente.
@@ -69,6 +69,6 @@ COPY --from=whisper-builder /build/models/ggml-medium.bin /app/whisper/model.bin
 RUN chmod +x /app/whisper/main
 
 # Cartelle dati
-RUN mkdir -p recordings batch_processing data
+RUN mkdir -p recordings batch_processing data mixed_sessions
 
 CMD ["node", "dist/index.js"]

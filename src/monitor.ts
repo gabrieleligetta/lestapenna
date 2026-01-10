@@ -4,6 +4,57 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 
+interface CostBreakdown {
+    phase: string;           // 'transcription', 'metadata', 'map', 'summary', 'chat', 'embeddings'
+    provider: 'ollama' | 'openai';
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens?: number;  // Per prompt caching
+    costUSD: number;
+}
+
+// Prezzi OpenAI (per 1M token)
+const OPENAI_PRICING: Record<string, { input: number; output: number; cachedInput: number }> = {
+    'gpt-5-nano': { input: 0.05, output: 0.40, cachedInput: 0.005 },
+    'gpt-5-mini': { input: 0.25, output: 2.00, cachedInput: 0.025 },
+    'gpt-5.2': { input: 1.75, output: 14.00, cachedInput: 0.175 },
+    'gpt-5': { input: 1.25, output: 10.00, cachedInput: 0.125 },
+    'text-embedding-3-small': { input: 0.020, output: 0, cachedInput: 0 },
+    'text-embedding-3-large': { input: 0.130, output: 0, cachedInput: 0 },
+    // Fallback for older models or aliases if needed
+    'gpt-4o-mini': { input: 0.15, output: 0.60, cachedInput: 0.075 },
+    'gpt-4o': { input: 2.50, output: 10.00, cachedInput: 1.25 },
+};
+
+function calculateCost(
+    model: string, 
+    inputTokens: number, 
+    outputTokens: number, 
+    cachedInputTokens: number = 0
+): number {
+    const pricing = OPENAI_PRICING[model];
+    if (!pricing) {
+        const key = Object.keys(OPENAI_PRICING).find(k => model.startsWith(k));
+        if (key) {
+             const p = OPENAI_PRICING[key];
+             const inputCost = (inputTokens / 1_000_000) * p.input;
+             const cachedCost = (cachedInputTokens / 1_000_000) * p.cachedInput;
+             const outputCost = (outputTokens / 1_000_000) * p.output;
+             return inputCost + cachedCost + outputCost;
+        }
+
+        console.warn(`[Cost] Pricing non disponibile per: ${model}`);
+        return 0;
+    }
+    
+    const inputCost = (inputTokens / 1_000_000) * pricing.input;
+    const cachedCost = (cachedInputTokens / 1_000_000) * pricing.cachedInput;
+    const outputCost = (outputTokens / 1_000_000) * pricing.output;
+    
+    return inputCost + cachedCost + outputCost;
+}
+
 export interface SessionMetrics {
     sessionId: string;
     startTime: number;
@@ -47,6 +98,14 @@ export interface SessionMetrics {
         maxLatencyMs: number;
         tokensPerSecond: number;
         failedRequests: number;
+    };
+    costMetrics?: {
+        totalCostUSD: number;
+        breakdown: CostBreakdown[];
+        byProvider: {
+            openai: number;
+            ollama: number;
+        };
     };
     storageMetrics?: {
         localFilesCreated: number;
@@ -306,6 +365,80 @@ class SystemMonitor {
             const prevTotal = (this.currentSession.aiMetrics.tokensPerSecond * (total - 1)) / total;
             this.currentSession.aiMetrics.tokensPerSecond = prevTotal + (tokensPerSec / total);
         }
+    }
+
+    /**
+     * Log chiamata AI con tracking costi
+     * @param phase - Fase del processo (transcription, metadata, map, summary, chat, embeddings)
+     * @param provider - ollama o openai
+     * @param model - Nome del modello
+     * @param inputTokens - Token di input
+     * @param outputTokens - Token di output
+     * @param cachedInputTokens - Token cached (opzionale)
+     * @param latencyMs - Latenza in millisecondi
+     * @param failed - Se la chiamata è fallita
+     */
+    logAIRequestWithCost(
+        phase: string,
+        provider: 'ollama' | 'openai',
+        model: string,
+        inputTokens: number,
+        outputTokens: number,
+        cachedInputTokens: number = 0,
+        latencyMs: number,
+        failed: boolean = false
+    ) {
+        if (!this.currentSession) return;
+
+        // Log standard AI metrics
+        this.logAIRequest(provider, latencyMs, outputTokens, failed);
+
+        if (failed) return;
+
+        // Inizializza costMetrics se necessario
+        if (!this.currentSession.costMetrics) {
+            this.currentSession.costMetrics = {
+                totalCostUSD: 0,
+                breakdown: [],
+                byProvider: { openai: 0, ollama: 0 }
+            };
+        }
+
+        // Calcola costo (Ollama = $0)
+        const cost = provider === 'openai' 
+            ? calculateCost(model, inputTokens, outputTokens, cachedInputTokens)
+            : 0;
+
+        // Aggiungi a breakdown
+        this.currentSession.costMetrics.breakdown.push({
+            phase,
+            provider,
+            model,
+            inputTokens,
+            outputTokens,
+            cachedInputTokens,
+            costUSD: cost
+        });
+
+        // Aggiorna totali
+        this.currentSession.costMetrics.totalCostUSD += cost;
+        this.currentSession.costMetrics.byProvider[provider] += cost;
+
+        console.log(`[Monitor] 💰 ${phase} (${model}): $${cost.toFixed(4)} USD`);
+    }
+
+    /**
+     * Ottieni summary dei costi per fase
+     */
+    getCostSummaryByPhase(): Record<string, number> {
+        if (!this.currentSession?.costMetrics) return {};
+
+        const summary: Record<string, number> = {};
+        for (const item of this.currentSession.costMetrics.breakdown) {
+            if (!summary[item.phase]) summary[item.phase] = 0;
+            summary[item.phase] += item.costUSD;
+        }
+        return summary;
     }
 
     // 🆕 AGGIUNGI QUESTO METODO

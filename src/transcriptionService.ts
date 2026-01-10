@@ -41,7 +41,9 @@ export class WhisperCppService {
                 '-l', 'it',
                 '-t', '3',
                 '-oj',
-                '-osrt', 'false'
+                '-osrt', 'false',
+                '-ml', '1',           // ✅ NUOVO
+                '--split-on-word',    // ✅ NUOVO
             ];
 
             // Manually wrap execFile to capture stdout and stderr even on error

@@ -329,8 +329,20 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
         }));
 
         const latency = Date.now() - startAI;
-        const tokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequest(MAP_PROVIDER, latency, tokens, false);
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'map',
+            MAP_PROVIDER,
+            MAP_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
 
         return {
             text: response.choices[0].message.content || "",
@@ -339,7 +351,7 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
         };
     } catch (err) {
         console.error(`[Map] ❌ Errore chunk ${index + 1}:`, err);
-        monitor.logAIRequest(MAP_PROVIDER, Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost('map', MAP_PROVIDER, MAP_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return { text: "", title: "", tokens: 0 };
     }
 }
@@ -431,6 +443,7 @@ export async function ingestSessionRaw(sessionId: string) {
     // 4. Embedding con Progress Bar (DOPPIO - OpenAI + Ollama)
     await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, idx) => {
         const promises: any[] = [];
+        const startAI = Date.now();
 
         // OpenAI Task
         promises.push(
@@ -438,8 +451,15 @@ export async function ingestSessionRaw(sessionId: string) {
                 model: EMBEDDING_MODEL_OPENAI,
                 input: chunk.text
             })
-            .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
-            .catch(err => ({ provider: 'openai', error: err.message }))
+            .then(resp => {
+                const inputTokens = resp.usage?.prompt_tokens || 0;
+                monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
+                return { provider: 'openai', data: resp.data[0].embedding };
+            })
+            .catch(err => {
+                monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
+                return { provider: 'openai', error: err.message };
+            })
         );
 
         // Ollama Task
@@ -448,8 +468,14 @@ export async function ingestSessionRaw(sessionId: string) {
                 model: EMBEDDING_MODEL_OLLAMA,
                 input: chunk.text
             })
-            .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
-            .catch(err => ({ provider: 'ollama', error: err.message }))
+            .then(resp => {
+                monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
+                return { provider: 'ollama', data: resp.data[0].embedding };
+            })
+            .catch(err => {
+                monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
+                return { provider: 'ollama', error: err.message };
+            })
         );
 
         const results = await Promise.allSettled(promises);
@@ -490,7 +516,18 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
         });
 
         const queryVector = resp.data[0].embedding;
-        monitor.logAIRequest(provider === 'ollama' ? 'ollama' : 'openai', Date.now() - startAI, 0, false);
+        const inputTokens = resp.usage?.prompt_tokens || 0;
+        
+        monitor.logAIRequestWithCost(
+            'embeddings',
+            provider === 'ollama' ? 'ollama' : 'openai',
+            model,
+            inputTokens,
+            0,
+            0,
+            Date.now() - startAI,
+            false
+        );
 
         // 2. Recupero Frammenti già ordinati per timestamp ASC dal DB
         let fragments = getKnowledgeFragments(campaignId, model);
@@ -550,7 +587,16 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 
     } catch (e) {
         console.error("[RAG] ❌ Errore ricerca:", e);
-        monitor.logAIRequest(provider === 'ollama' ? 'ollama' : 'openai', Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost(
+            'embeddings',
+            provider === 'ollama' ? 'ollama' : 'openai',
+            model,
+            0,
+            0,
+            0,
+            Date.now() - startAI,
+            true
+        );
         return [];
     }
 }
@@ -624,13 +670,25 @@ export async function askBard(campaignId: number, question: string, history: { r
             messages: messages as any
         }));
         const latency = Date.now() - startAI;
-        const tokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequest(CHAT_PROVIDER, latency, tokens, false);
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'chat',
+            CHAT_PROVIDER,
+            CHAT_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
 
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
         console.error("[Chat] Errore risposta:", e);
-        monitor.logAIRequest(CHAT_PROVIDER, Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return "La mia mente è annebbiata...";
     }
 }
@@ -682,8 +740,20 @@ ${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
                 );
 
                 const latency = Date.now() - startAI;
-                const tokens = response.usage?.completion_tokens || 0;
-                monitor.logAIRequest(TRANSCRIPTION_PROVIDER, latency, tokens, false);
+                const inputTokens = response.usage?.prompt_tokens || 0;
+                const outputTokens = response.usage?.completion_tokens || 0;
+                const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+                monitor.logAIRequestWithCost(
+                    'transcription',
+                    TRANSCRIPTION_PROVIDER,
+                    TRANSCRIPTION_MODEL,
+                    inputTokens,
+                    outputTokens,
+                    cachedTokens,
+                    latency,
+                    false
+                );
 
                 const rawOutput = response.choices[0].message.content || "";
                 const lines = rawOutput.split('\n')
@@ -716,7 +786,7 @@ ${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
 
             } catch (err) {
                 console.error(`[Correzione] ❌ Errore batch ${idx+1}:`, err);
-                monitor.logAIRequest(TRANSCRIPTION_PROVIDER, Date.now() - startAI, 0, true);
+                monitor.logAIRequestWithCost('transcription', TRANSCRIPTION_PROVIDER, TRANSCRIPTION_MODEL, 0, 0, 0, Date.now() - startAI, true);
                 return batch;
             }
         },
@@ -786,8 +856,20 @@ async function extractMetadata(
 
         const response = await withRetry(() => metadataClient.chat.completions.create(options));
         const latency = Date.now() - startAI;
-        const tokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequest(METADATA_PROVIDER, latency, tokens, false);
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'metadata',
+            METADATA_PROVIDER,
+            METADATA_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
 
         const content = response.choices[0].message.content;
         if (!content) throw new Error("Empty response");
@@ -796,7 +878,7 @@ async function extractMetadata(
 
     } catch (err) {
         console.error(`[Metadati] ❌ Errore:`, err);
-        monitor.logAIRequest(METADATA_PROVIDER, Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return {};
     }
 }
@@ -1051,8 +1133,20 @@ REGOLE IMPORTANTI:
 
         const response = await withRetry(() => summaryClient.chat.completions.create(options));
         const latency = Date.now() - startAI;
-        const tokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequest(SUMMARY_PROVIDER, latency, tokens, false);
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'summary',
+            SUMMARY_PROVIDER,
+            SUMMARY_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
 
         const content = response.choices[0].message.content || "{}";
         accumulatedTokens += response.usage?.total_tokens || 0;
@@ -1088,7 +1182,7 @@ REGOLE IMPORTANTI:
         };
     } catch (err: any) {
         console.error("Errore finale:", err);
-        monitor.logAIRequest(SUMMARY_PROVIDER, Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
         throw err;
     }
 }
@@ -1123,13 +1217,25 @@ export async function generateCharacterBiography(campaignId: number, charName: s
             messages: [{ role: "user", content: prompt }]
         });
         const latency = Date.now() - startAI;
-        const tokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequest(SUMMARY_PROVIDER, latency, tokens, false);
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'summary',
+            SUMMARY_PROVIDER,
+            SUMMARY_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
 
         return response.choices[0].message.content || "Impossibile scrivere la biografia.";
     } catch (e) {
         console.error("Errore generazione bio:", e);
-        monitor.logAIRequest(SUMMARY_PROVIDER, Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return "Il biografo ha finito l'inchiostro.";
     }
 }
@@ -1164,13 +1270,25 @@ export async function generateNpcBiography(campaignId: number, npcName: string, 
             messages: [{ role: "user", content: prompt }]
         });
         const latency = Date.now() - startAI;
-        const tokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequest(SUMMARY_PROVIDER, latency, tokens, false);
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'summary',
+            SUMMARY_PROVIDER,
+            SUMMARY_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
 
         return response.choices[0].message.content || "Impossibile scrivere il dossier.";
     } catch (e) {
         console.error("Errore generazione bio NPC:", e);
-        monitor.logAIRequest(SUMMARY_PROVIDER, Date.now() - startAI, 0, true);
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return "Il dossier è bruciato.";
     }
 }
@@ -1181,6 +1299,7 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
     console.log(`[RAG] 🎭 Indicizzazione evento bio per ${charName}...`);
 
     const promises: any[] = [];
+    const startAI = Date.now();
 
     // OpenAI Task
     promises.push(
@@ -1188,8 +1307,15 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
             model: EMBEDDING_MODEL_OPENAI,
             input: content
         })
-        .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
-        .catch(err => ({ provider: 'openai', error: err.message }))
+        .then(resp => {
+            const inputTokens = resp.usage?.prompt_tokens || 0;
+            monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
+            return { provider: 'openai', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
+            return { provider: 'openai', error: err.message };
+        })
     );
 
     // Ollama Task
@@ -1198,8 +1324,14 @@ export async function ingestBioEvent(campaignId: number, sessionId: string, char
             model: EMBEDDING_MODEL_OLLAMA,
             input: content
         })
-        .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
-        .catch(err => ({ provider: 'ollama', error: err.message }))
+        .then(resp => {
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
+            return { provider: 'ollama', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
+            return { provider: 'ollama', error: err.message };
+        })
     );
 
     const results = await Promise.allSettled(promises);
@@ -1228,6 +1360,7 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
     console.log(`[RAG] 🌍 Indicizzazione evento globale...`);
 
     const promises: any[] = [];
+    const startAI = Date.now();
 
     // OpenAI Task
     promises.push(
@@ -1235,8 +1368,15 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
             model: EMBEDDING_MODEL_OPENAI,
             input: content
         })
-        .then(resp => ({ provider: 'openai', data: resp.data[0].embedding }))
-        .catch(err => ({ provider: 'openai', error: err.message }))
+        .then(resp => {
+            const inputTokens = resp.usage?.prompt_tokens || 0;
+            monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
+            return { provider: 'openai', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
+            return { provider: 'openai', error: err.message };
+        })
     );
 
     // Ollama Task
@@ -1245,8 +1385,14 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
             model: EMBEDDING_MODEL_OLLAMA,
             input: content
         })
-        .then(resp => ({ provider: 'ollama', data: resp.data[0].embedding }))
-        .catch(err => ({ provider: 'ollama', error: err.message }))
+        .then(resp => {
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
+            return { provider: 'ollama', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
+            return { provider: 'ollama', error: err.message };
+        })
     );
 
     const results = await Promise.allSettled(promises);

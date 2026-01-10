@@ -31,6 +31,10 @@ const pausedGuilds = new Set<string>();
 const sessionMixers = new Map<string, boolean>();
 const guildToSession = new Map<string, string>();
 
+// ✅ NUOVO: Tracking file in elaborazione
+const pendingFileProcessing = new Map<string, Set<string>>(); // guildId -> Set<fileName>
+const fileProcessingResolvers = new Map<string, (() => void)[]>(); // guildId -> resolver callbacks
+
 export function pauseRecording(guildId: string) {
     pausedGuilds.add(guildId);
     console.log(`[Recorder] ⏸️ Registrazione in PAUSA per Guild ${guildId}`);
@@ -180,12 +184,33 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
 
     console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId} (Guild: ${guildId}): ${filename} (Sessione: ${sessionId})`);
 
-    // MODIFICA: Agganciamo il listener subito per gestire anche le chiusure forzate
+    // ✅ TRACKING: Registra file in elaborazione
     out.on('finish', async () => {
+        // 1. Segna come pending
+        if (!pendingFileProcessing.has(guildId)) {
+            pendingFileProcessing.set(guildId, new Set());
+        }
+        pendingFileProcessing.get(guildId)!.add(filename);
+        
         if (activeStreams.has(streamKey)) {
             activeStreams.delete(streamKey);
         }
+        
+        // 2. Esegui logica di chiusura (DB, Backup, Queue, Mixer)
         await onFileClosed(userId, filepath, filename, startTime, sessionId, guildId);
+        
+        // 3. Rimuovi dai pending e notifica se vuoto
+        const pending = pendingFileProcessing.get(guildId);
+        if (pending) {
+            pending.delete(filename);
+            
+            // Se non ci sono più file pending, notifica i resolver in attesa
+            if (pending.size === 0) {
+                const resolvers = fileProcessingResolvers.get(guildId) || [];
+                resolvers.forEach(resolve => resolve());
+                fileProcessingResolvers.delete(guildId);
+            }
+        }
     });
 
     opusStream.on('end', async () => {
@@ -241,6 +266,7 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         removeOnFail: false
     });
     
+    // 4. AGGIUNGI AL MIXER (Cruciale per il podcast completo)
     addFileToStreamingMixer(sessionId, userId, filePath, timestamp);
 
     console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${sessionId}.`);
@@ -282,6 +308,34 @@ export async function disconnect(guildId: string): Promise<boolean> {
             await Promise.all(closingPromises);
             console.log(`[Recorder] ${closingPromises.length} stream chiusi correttamente.`);
         }
+
+        // ✅ NUOVO: Aspetta che tutti i file siano processati (DB, Backup, Mixer)
+        const pendingFiles = pendingFileProcessing.get(guildId);
+        if (pendingFiles && pendingFiles.size > 0) {
+            console.log(`[Recorder] ⏳ In attesa del completamento di ${pendingFiles.size} file...`);
+            
+            const waitPromise = new Promise<void>((resolve) => {
+                if (!fileProcessingResolvers.has(guildId)) {
+                    fileProcessingResolvers.set(guildId, []);
+                }
+                fileProcessingResolvers.get(guildId)!.push(resolve);
+            });
+            
+            const timeoutPromise = new Promise<void>((resolve) => {
+                setTimeout(() => {
+                    console.warn(`[Recorder] ⚠️ Timeout attesa file, continuo comunque...`);
+                    resolve();
+                }, 30000);
+            });
+            
+            await Promise.race([waitPromise, timeoutPromise]);
+            
+            console.log(`[Recorder] ✅ Tutti i file sono stati processati (o timeout)`);
+        }
+        
+        // Cleanup tracking
+        pendingFileProcessing.delete(guildId);
+        fileProcessingResolvers.delete(guildId);
 
         // 🆕 USA MAPPA GUILD->SESSION
         const sessionId = guildToSession.get(guildId);

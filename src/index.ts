@@ -76,7 +76,7 @@ import {
     addNpcEvent,
     addWorldEvent,
     getWorldTimeline,
-    setCampaignYear, getSessionRecordings // NUOVO IMPORT
+    setCampaignYear, getSessionRecordings, Campaign // NUOVO IMPORT
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -464,7 +464,9 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- COMANDO LISTEN (INIZIO SESSIONE) ---
     if (command === 'listen' || command === 'ascolta' || command === 'testascolta') {
-        if (command === 'testascolta') {
+        const isTestMode = command === 'testascolta';
+
+        if (isTestMode) {
             const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
             if (setupCamp) activeCampaign = setupCamp;
             else return;
@@ -484,13 +486,10 @@ client.on('messageCreate', async (message: Message) => {
         // ---------------------------
 
         // --- NUOVO BLOCCO GESTIONE LUOGO ---
-        const locationArg = args.join(' '); // Prende tutto quello che scrivi dopo !ascolta
-
-        const sessionId = uuidv4(); // Generiamo subito l'ID per passarlo a updateLocation
+        const locationArg = args.join(' ');
+        const sessionId = uuidv4();
 
         if (locationArg) {
-            // Se il DM ha specificato un luogo, lo aggiorniamo subito
-            // Supporto sintassi Macro | Micro
             let newMacro = null;
             let newMicro = null;
 
@@ -499,14 +498,12 @@ client.on('messageCreate', async (message: Message) => {
                 newMacro = parts[0];
                 newMicro = parts[1];
             } else {
-                // Sintassi semplice: assume sia un cambio di Micro-luogo (stanza/edificio)
                 newMicro = locationArg.trim();
             }
 
             updateLocation(activeCampaign!.id, newMacro, newMicro, sessionId);
             await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
         } else {
-            // Altrimenti controlliamo se c'è un luogo in memoria
             const currentLoc = getCampaignLocation(message.guild.id);
             if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
                 await message.reply(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`$ascolta Macro | Micro\`)`);
@@ -523,21 +520,43 @@ client.on('messageCreate', async (message: Message) => {
             const humanMembers = voiceChannel.members.filter(m => !m.user.bot);
             const botMembers = voiceChannel.members.filter(m => m.user.bot);
 
-            // 2. CHECK NOMI OBBLIGATORI (Context Aware)
-            const missingNames: string[] = [];
-            humanMembers.forEach(m => {
-                const profile = getUserProfile(m.id, activeCampaign!.id);
-                if (!profile.character_name) {
-                    missingNames.push(m.displayName);
-                }
-            });
+            // 2. AUTO-ASSEGNAZIONE NOMI IN TEST MODE
+            if (isTestMode) {
+                const fantasyNames = [
+                    'Thorin', 'Elara', 'Gandor', 'Lyria', 'Draven', 'Aria',
+                    'Kael', 'Mira', 'Ragnar', 'Freya', 'Aldric', 'Seraphina'
+                ];
 
-            if (missingNames.length > 0) {
-                return await message.reply(
-                    `🛑 **ALT!** Non posso iniziare la cronaca per **${activeCampaign!.name}**.\n` +
-                    `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
-                    missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
-                );
+                let nameIndex = 0;
+                humanMembers.forEach(m => {
+                    const profile = getUserProfile(m.id, activeCampaign!.id);
+                    if (!profile.character_name) {
+                        const autoName = fantasyNames[nameIndex % fantasyNames.length];
+                        updateUserCharacter(m.id, activeCampaign!.id, 'character_name', autoName);
+                        nameIndex++;
+                    }
+                });
+
+                await message.reply(`🧪 **Modalità Test**: Nomi automatici assegnati a ${nameIndex} avventurieri.`);
+            }
+
+            // 3. CHECK NOMI OBBLIGATORI (Solo in modalità normale)
+            if (!isTestMode) {
+                const missingNames: string[] = [];
+                humanMembers.forEach(m => {
+                    const profile = getUserProfile(m.id, activeCampaign!.id);
+                    if (!profile.character_name) {
+                        missingNames.push(m.displayName);
+                    }
+                });
+
+                if (missingNames.length > 0) {
+                    return await message.reply(
+                        `🛑 **ALT!** Non posso iniziare la cronaca per **${activeCampaign!.name}**.\n` +
+                        `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
+                        missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
+                    );
+                }
             }
 
             if (botMembers.size > 0) {
@@ -546,11 +565,7 @@ client.on('messageCreate', async (message: Message) => {
             }
 
             guildSessions.set(message.guild.id, sessionId);
-
-            // CREAZIONE SESSIONE NEL DB
             createSession(sessionId, message.guild.id, activeCampaign!.id);
-
-            // START MONITOR
             monitor.startSession(sessionId);
 
             await audioQueue.pause();
@@ -2186,12 +2201,12 @@ function checkAutoLeave(channel: VoiceBasedChannel) {
     }
 }
 
-async function ensureTestEnvironment(guildId: string, userId: string, message: Message) {
+async function ensureTestEnvironment(guildId: string, userId: string, message: Message): Promise<Campaign | null> {
+    // 1. Campagna
     let campaign = getActiveCampaign(guildId);
-
     if (!campaign) {
         const campaigns = getCampaigns(guildId);
-        const testCampaignName = "Campagna di Test";
+        const testCampaignName = 'Campagna di Test';
         let testCampaign = campaigns.find(c => c.name === testCampaignName);
 
         if (!testCampaign) {
@@ -2203,36 +2218,48 @@ async function ensureTestEnvironment(guildId: string, userId: string, message: M
         if (testCampaign) {
             setActiveCampaign(guildId, testCampaign.id);
             campaign = getActiveCampaign(guildId);
-            await message.reply(`🧪 Campagna attiva impostata su: **${testCampaignName}**`);
+            await message.reply(`📋 Campagna attiva impostata su: **${testCampaignName}**`);
+        }
+
+        if (!campaign) {
+            await message.reply(`❌ Errore critico: Impossibile creare o recuperare la campagna di test.`);
+            return null;
         }
     }
 
-    if (!campaign) {
-        await message.reply("❌ Errore critico: Impossibile creare o recuperare la campagna di test.");
-        return null;
-    }
-
-    // Check Year
+    // 2. Anno
     if (campaign.current_year === undefined || campaign.current_year === null) {
         setCampaignYear(campaign.id, 1000);
         campaign.current_year = 1000;
-        await message.reply(`🧪 Anno impostato a **1000**.`);
+        await message.reply(`📅 Anno impostato a 1000.`);
     }
 
-    // Check Location
+    // 3. Luogo
     const loc = getCampaignLocation(guildId);
-    if (!loc || (!loc.macro && !loc.micro)) {
-        updateLocation(campaign.id, "Laboratorio", "Stanza dei Test", "SETUP");
-        await message.reply(`🧪 Luogo impostato: **Laboratorio | Stanza dei Test**`);
+    if (!loc || !loc.macro || !loc.micro) {
+        updateLocation(campaign.id, 'Laboratorio', 'Stanza dei Test', 'SETUP');
+        await message.reply(`📍 Luogo impostato: **Laboratorio | Stanza dei Test**`);
     }
 
-    // Check Character
-    const profile = getUserProfile(userId, campaign.id);
-    if (!profile.character_name) {
-        updateUserCharacter(userId, campaign.id, 'character_name', 'Test Subject');
-        updateUserCharacter(userId, campaign.id, 'class', 'Tester');
-        updateUserCharacter(userId, campaign.id, 'race', 'Construct');
-        await message.reply(`🧪 Personaggio creato: **Test Subject** (Tester/Construct)`);
+    // 4. Registra Developer come DM se è lui
+    const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID;
+    if (DEVELOPER_ID && userId === DEVELOPER_ID) {
+        const devProfile = getUserProfile(userId, campaign.id);
+        if (!devProfile.character_name || devProfile.character_name !== 'DM') {
+            updateUserCharacter(userId, campaign.id, 'character_name', 'DM');
+            updateUserCharacter(userId, campaign.id, 'class', 'Dungeon Master');
+            updateUserCharacter(userId, campaign.id, 'race', 'Narratore');
+            await message.reply(`🎲 **Saluti, Dungeon Master!** Il Bardo è ai tuoi ordini.`);
+        }
+    } else {
+        // 5. Personaggio per utenti normali
+        const profile = getUserProfile(userId, campaign.id);
+        if (!profile.character_name) {
+            updateUserCharacter(userId, campaign.id, 'character_name', 'Test Subject');
+            updateUserCharacter(userId, campaign.id, 'class', 'Tester');
+            updateUserCharacter(userId, campaign.id, 'race', 'Construct');
+            await message.reply(`🧪 Personaggio creato: **Test Subject** (Tester/Construct)`);
+        }
     }
 
     return campaign;

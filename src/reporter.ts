@@ -296,6 +296,52 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
                 ${metrics.aiMetrics?.failedRequests || 0}
             </td>
         </tr>
+
+        <!-- 💰 COST ANALYSIS -->
+        <tr style="background-color: #fff3cd;">
+            <td colspan="2"><strong>💰 COST ANALYSIS</strong></td>
+        </tr>
+        <tr>
+            <td><strong>Total Cost</strong></td>
+            <td style="font-weight: bold; font-size: 16px; color: #d35400;">
+                $${metrics.costMetrics?.totalCostUSD.toFixed(4) || '0.0000'} USD
+            </td>
+        </tr>
+        ${metrics.costMetrics ? `
+        <tr>
+            <td style="padding-left: 20px;">OpenAI</td>
+            <td><strong>$${metrics.costMetrics.byProvider.openai.toFixed(4)}</strong></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 20px;">Ollama (Self-hosted)</td>
+            <td>$${metrics.costMetrics.byProvider.ollama.toFixed(4)} (Free)</td>
+        </tr>
+        ` : ''}
+
+        <!-- Breakdown per fase -->
+        <tr style="background-color: #f9f9f9;">
+            <td colspan="2"><strong>📊 Cost Breakdown by Phase</strong></td>
+        </tr>
+        ${metrics.costMetrics?.breakdown.map(cost => `
+        <tr>
+            <td style="padding-left: 20px;">
+                <strong>${cost.phase}</strong>
+                <br/><small style="color: #666;">${cost.model} (${cost.provider})</small>
+            </td>
+            <td>
+                <small>
+                    In: ${cost.inputTokens.toLocaleString()} 
+                    ${cost.cachedInputTokens ? `(Cached: ${cost.cachedInputTokens.toLocaleString()})` : ''}
+                    <br/>
+                    Out: ${cost.outputTokens.toLocaleString()}
+                </small>
+                <br/>
+                <strong style="color: ${cost.costUSD > 0.01 ? '#d35400' : '#27ae60'};">
+                    $${cost.costUSD.toFixed(4)}
+                </strong>
+            </td>
+        </tr>
+        `).join('') || '<tr><td colspan="2" style="padding: 8px; color: #999;">Nessun dato disponibile</td></tr>'}
         
         <!-- STORAGE -->
         <tr style="background-color: #e3f2fd;">
@@ -582,4 +628,3 @@ export async function sendSessionRecap(
         return false;
     }
 }
-

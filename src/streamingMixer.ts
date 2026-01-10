@@ -37,7 +37,11 @@ export function startStreamingMixer(sessionId: string): void {
         return;
     }
 
-    const sessionStart = getSessionStartTime(sessionId);
+    let sessionStart = getSessionStartTime(sessionId);
+    if (!sessionStart) {
+        sessionStart = Date.now();
+        console.log(`[StreamMixer] ⚠️ Nessun recording ancora, uso timestamp corrente: ${sessionStart}`);
+    }
     if (!sessionStart) {
         console.error(`[StreamMixer] ❌ Session ${sessionId} non trovata nel DB`);
         return;
@@ -148,7 +152,7 @@ function mixBatch(
             // Controlla durata file prima di mixare
             const stats = fs.statSync(f.path);
             if (stats.size < 1024) {
-                console.warn(`File troppo piccolo, skip: ${f.path}`);
+                console.warn(`[StreamMixer] ⚠️ File troppo piccolo, skip: ${f.path}`);
                 return false;
             }
             return true;
@@ -183,7 +187,7 @@ function mixBatch(
         validFiles.forEach((f, idx) => {
             const realIndex = inputIndex + idx;
             const tag = `s${idx}`;
-            
+
             // Delay ASSOLUTO dalla start session
             filterComplex += `[${realIndex}]adelay=${f.delay}|${f.delay}[${tag}];`;
             outputTags.push(`[${tag}]`);
@@ -193,7 +197,8 @@ function mixBatch(
         const totalInputs = outputTags.length;
         filterComplex += `${outputTags.join('')}amix=inputs=${totalInputs}:dropout_transition=0:normalize=0[out]`;
 
-        const tempOutput = `${accumulatorPath}.tmp`;
+        // ✅ FIX: FFmpeg 5.1 non accetta .wav.tmp, usiamo _new.wav
+        const tempOutput = accumulatorPath.replace('.wav', '_new.wav');
 
         const ffmpegArgs = [
             ...args,
@@ -228,16 +233,31 @@ function mixBatch(
                 }
             } else {
                 console.error(`[StreamMixer] FFmpeg stderr:`, stderrData);
+
+                // ✅ NUOVO: Cleanup file temporaneo in caso di errore
+                try {
+                    if (fs.existsSync(tempOutput)) {
+                        fs.unlinkSync(tempOutput);
+                        console.log(`[StreamMixer] 🧹 File temporaneo pulito dopo errore`);
+                    }
+                } catch (cleanupErr) {
+                    console.warn(`[StreamMixer] Warning cleanup temp file:`, cleanupErr);
+                }
+
                 reject(new Error(`FFmpeg batch failed with code ${code}`));
             }
         });
 
         ffmpeg.on('error', (err) => {
+            // ✅ NUOVO: Cleanup anche in caso di spawn error
+            try {
+                if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+            } catch {}
+
             reject(new Error(`FFmpeg spawn error: ${err.message}`));
         });
     });
 }
-
 /**
  * Finalizza il mixer e converte in MP3
  * Chiamato da recorder.ts quando viene invocato disconnect()

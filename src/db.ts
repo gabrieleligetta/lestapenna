@@ -215,7 +215,9 @@ const migrations = [
     "ALTER TABLE campaigns ADD COLUMN current_year INTEGER",
     "ALTER TABLE world_history ADD COLUMN year INTEGER",
     // NUOVA COLONNA PER ANNO REGISTRAZIONE
-    "ALTER TABLE recordings ADD COLUMN year INTEGER"
+    "ALTER TABLE recordings ADD COLUMN year INTEGER",
+    // 🆕 NUOVO CAMPO PER TRASCRIZIONI GREZZE
+    "ALTER TABLE recordings ADD COLUMN raw_transcription_text TEXT"
 ];
 
 for (const m of migrations) {
@@ -260,6 +262,7 @@ export interface Recording {
     timestamp: number;
     status: string;
     transcription_text: string | null;
+    raw_transcription_text?: string | null; // 🆕 Grezzo di Whisper
     macro_location?: string | null;
     micro_location?: string | null;
     present_npcs?: string | null;
@@ -801,6 +804,10 @@ export const updateRecordingStatus = (filename: string, status: string, text: st
     } else {
         db.prepare('UPDATE recordings SET status = ? WHERE filename = ?').run(status, filename);
     }
+};
+
+export const saveRawTranscription = (filename: string, rawJson: string) => {
+    db.prepare('UPDATE recordings SET raw_transcription_text = ? WHERE filename = ?').run(rawJson, filename);
 };
 
 export const getUnprocessedRecordings = () => {

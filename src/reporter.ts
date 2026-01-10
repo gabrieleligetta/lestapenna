@@ -4,7 +4,7 @@ import { uploadToOracle } from './backupService';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime } from './db';
+import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript, getExplicitSessionNumber, db } from './db';
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -379,48 +379,125 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
 export async function sendSessionRecap(
     sessionId: string,
     campaignId: number,
-    summaryText: string,
-    lootGained: string[] = [],
-    lootLost: string[] = [],
+    summary: string,
+    loot?: string[],
+    lootRemoved?: string[],
     narrative?: string
-) {
-    const campaign = getCampaignById(campaignId);
-    const campaignName = campaign ? campaign.name : "Sconosciuta";
+): Promise<boolean> {
 
-    // 1. Recupera Dati DB
-    const travels = getSessionTravelLog(sessionId);
-    const npcs = getSessionEncounteredNPCs(sessionId);
-    const startTime = getSessionStartTime(sessionId);
+    if (!process.env.EMAIL_ENABLED || process.env.EMAIL_ENABLED !== 'true') {
+        console.log(`[Reporter] ✉️ Email disabilitata`);
+        return false;
+    }
 
-    // Formatta la data
-    const sessionDate = startTime
-        ? new Date(startTime).toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-        : new Date().toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    try {
+        // 🔄 DATI SESSIONE
+        const campaign = getCampaignById(campaignId);
+        const sessionNum = getExplicitSessionNumber(sessionId) || "?";
+        const startTime = getSessionStartTime(sessionId);
+        const travels = getSessionTravelLog(sessionId);
+        const npcs = getSessionEncounteredNPCs(sessionId);
+        const transcripts = getSessionTranscript(sessionId);
 
-    // 2. Costruisci HTML
-    let htmlContent = `
+        if (!transcripts || transcripts.length === 0) {
+            console.warn(`[Reporter] ⚠️ Nessuna trascrizione per ${sessionId}`);
+            return false;
+        }
+
+        // 📅 Data formattata
+        const sessionDate = startTime
+            ? new Date(startTime).toLocaleDateString('it-IT', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            })
+            : new Date().toLocaleDateString('it-IT', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            });
+
+        // 🆕 HELPER PER TIMESTAMP
+// 🆕 HELPER PER TIMESTAMP (VERSIONE SICURA)
+        const formatSegment = (seg: any, fileTimestamp: number) => {
+            if (!startTime) return seg.text; // Fallback se manca startTime
+
+            const absTime = fileTimestamp + (seg.start * 1000);
+            const mins = Math.floor((absTime - startTime) / 60000);
+            const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
+            return `[${mins}:${secs.toString().padStart(2, '0')}] ${seg.text}`;
+        };
+
+
+        // 🆕 GENERA ALLEGATI TXT
+        const correctedText = transcripts.map(t => {
+            let text = "";
+            try {
+                const segments = JSON.parse(t.transcription_text);
+                if (Array.isArray(segments)) {
+                    text = segments.map(s => formatSegment(s, t.timestamp)).join('\n');
+                } else {
+                    text = t.transcription_text;
+                }
+            } catch (e) {
+                text = t.transcription_text;
+            }
+            return `--- ${t.character_name || 'Sconosciuto'} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}`;
+        }).join('\n\n');
+
+        const rawTextParts: string[] = [];
+        for (const t of transcripts) {
+            const recording = db.prepare(`
+        SELECT raw_transcription_text, filename 
+        FROM recordings 
+        WHERE session_id = ? AND user_id = ? AND timestamp = ?
+      `).get(sessionId, t.user_id, t.timestamp) as { raw_transcription_text: string | null, filename: string } | undefined;
+
+            if (!recording || !recording.raw_transcription_text) {
+                rawTextParts.push(`--- ${t.character_name || 'Sconosciuto'} (${recording?.filename || '?'}) ---\n[Trascrizione grezza non disponibile]\n`);
+                continue;
+            }
+
+            let text = "";
+            try {
+                const segments = JSON.parse(recording.raw_transcription_text);
+                if (Array.isArray(segments)) {
+                    text = segments.map(s => formatSegment(s, t.timestamp)).join('\n');
+                } else {
+                    text = recording.raw_transcription_text;
+                }
+            } catch (e) {
+                text = recording.raw_transcription_text;
+            }
+            rawTextParts.push(`--- ${t.character_name || 'Sconosciuto'} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}`);
+        }
+        const rawText = rawTextParts.join('\n\n');
+
+        // 📁 SALVA FILE TEMPORANEI
+        const tempDir = path.join(__dirname, '..', 'temp_emails');
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+        const correctedPath = path.join(tempDir, `${sessionId}_corrected.txt`);
+        const rawPath = path.join(tempDir, `${sessionId}_raw_whisper.txt`);
+
+        fs.writeFileSync(correctedPath, correctedText, 'utf-8');
+        fs.writeFileSync(rawPath, rawText, 'utf-8');
+
+        // ✉️ HTML EMAIL (VERSIONE COMPLETA)
+        const htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
-        <h1 style="color: #d35400;">📜 Report Sessione: ${campaignName}</h1>
+        <h1 style="color: #d35400;">📜 Report Sessione: ${campaign?.name || 'Campagna'}</h1>
         <p style="font-style: italic; margin-bottom: 5px;">ID Sessione: ${sessionId}</p>
         <p style="font-weight: bold; margin-top: 0;">📅 Data: ${sessionDate}</p>
+        <p><strong>Sessione #${sessionNum}</strong></p>
         <hr style="border: 1px solid #d35400;">
-    `;
-
-    // --- SEZIONE RACCONTO ---
-    if (narrative && narrative.length > 10) {
-        htmlContent += `
+        
+        ${narrative && narrative.length > 10 ? `
         <h2>📖 Racconto</h2>
         <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">
             ${narrative}
         </div>
-        `;
-    }
-    // ------------------------
+        ` : ''}
 
-    htmlContent += `
         <h2>📝 Riassunto Eventi (Log)</h2>
         <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-line;">
-            ${summaryText}
+            ${summary}
         </div>
 
         <div style="display: flex; gap: 20px; margin-top: 20px;">
@@ -428,17 +505,17 @@ export async function sendSessionRecap(
                 <h3 style="color: #2980b9;">🗺️ Cronologia Luoghi</h3>
                 <ul>
                     ${travels.map(t => {
-        const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
-        return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
-    }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
+            const time = new Date(t.timestamp).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'});
+            return `<li><b>${time}</b>: ${t.macro_location || '-'} (${t.micro_location || 'Esterno'})</li>`;
+        }).join('') || '<li>Nessuno spostamento rilevato.</li>'}
                 </ul>
             </div>
             
             <div style="flex: 1;">
                 <h3 style="color: #27ae60;">💰 Bilancio Oggetti</h3>
-                ${lootGained.length > 0 ? `<b>Ottenuti:</b><ul>${lootGained.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
-                ${lootLost.length > 0 ? `<b>Persi/Usati:</b><ul>${lootLost.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
-                ${lootGained.length === 0 && lootLost.length === 0 ? '<p>Nessun cambio inventario.</p>' : ''}
+                ${loot && loot.length > 0 ? `<b>Ottenuti:</b><ul>${loot.map(i => `<li>+ ${i}</li>`).join('')}</ul>` : ''}
+                ${lootRemoved && lootRemoved.length > 0 ? `<b>Persi/Usati:</b><ul>${lootRemoved.map(i => `<li>- ${i}</li>`).join('')}</ul>` : ''}
+                ${(!loot || loot.length === 0) && (!lootRemoved || lootRemoved.length === 0) ? '<p>Nessun cambio inventario.</p>' : ''}
             </div>
         </div>
 
@@ -461,27 +538,50 @@ export async function sendSessionRecap(
             `).join('') || '<tr><td colspan="3" style="padding: 8px;">Nessun NPC rilevato nel Dossier.</td></tr>'}
         </table>
 
-        <br>
-        <p style="font-size: 12px; color: #999;">Generato automaticamente dal Bardo AI Lestapenna.</p>
+        <hr>
+        <h3>🎙️ Allegati</h3>
+        <ul>
+          <li><strong>Trascrizioni Corrette:</strong> Testo rivisto dall'AI con ortografia e punteggiatura corrette</li>
+          <li><strong>Trascrizioni Grezze:</strong> Output originale di Whisper senza modifiche</li>
+        </ul>
+        
+        <p style="font-size: 12px; color: #999; margin-top: 30px;">Generato automaticamente dal Bardo AI Lestapenna.</p>
     </div>
     `;
 
-    // 3. Invia
-    const recipient = process.env.REPORT_RECIPIENT;
-    if (!recipient) {
-        console.warn("[Reporter] REPORT_RECIPIENT non configurato. Salto invio email.");
-        return;
-    }
-
-    try {
-        await transporter.sendMail({
+        const mailOptions = {
             from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
-            to: recipient,
-            subject: `[D&D Report] ${campaignName} - ${sessionDate}`,
-            html: htmlContent
-        });
-        console.log(`[Reporter] 📧 Email di report inviata a ${recipient}`);
-    } catch (e) {
-        console.error("[Reporter] ❌ Errore invio email:", e);
+            to: process.env.REPORT_RECIPIENT || 'dm@example.com',
+            subject: `[D&D Report] ${campaign?.name || 'Campagna'} - Sessione #${sessionNum} - ${sessionDate}`,
+            html: htmlContent,
+            attachments: [
+                {
+                    filename: `Sessione_${sessionNum}_Corretta.txt`,
+                    path: correctedPath
+                },
+                {
+                    filename: `Sessione_${sessionNum}_Raw_Whisper.txt`,
+                    path: rawPath
+                }
+            ]
+        };
+
+        await transporter.sendMail(mailOptions);
+        console.log(`[Reporter] ✅ Email inviata con HTML completo + 2 allegati`);
+
+        // 🧹 PULIZIA
+        try {
+            fs.unlinkSync(correctedPath);
+            fs.unlinkSync(rawPath);
+        } catch (e) {
+            console.warn(`[Reporter] ⚠️ Errore pulizia temp:`, e);
+        }
+
+        return true;
+
+    } catch (err: any) {
+        console.error(`[Reporter] ❌ Errore:`, err.message);
+        return false;
     }
 }
+

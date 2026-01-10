@@ -1,6 +1,6 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry, getUserProfile } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry, getUserProfile, saveRawTranscription } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
@@ -159,6 +159,9 @@ export function startWorker() {
                 // Salviamo stato intermedio
                 const rawJson = JSON.stringify(filteredSegments);
                 updateRecordingStatus(fileName, 'TRANSCRIBED', rawJson);
+
+                // 🆕 SALVA SUBITO IL RAW IN CAMPO SEPARATO (backup preventivo)
+                saveRawTranscription(fileName, rawJson);
 
                 // Backup e Pulizia Locale
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);

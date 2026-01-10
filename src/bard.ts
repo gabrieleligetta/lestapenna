@@ -639,6 +639,7 @@ export async function askBard(campaignId: number, question: string, history: { r
 async function correctTextOnly(segments: any[]): Promise<any[]> {
     const BATCH_SIZE = 20;
     const allBatches: any[][] = [];
+    
     for (let i = 0; i < segments.length; i += BATCH_SIZE) {
         allBatches.push(segments.slice(i, i + BATCH_SIZE));
     }
@@ -646,10 +647,11 @@ async function correctTextOnly(segments: any[]): Promise<any[]> {
     const cleanText = (text: string): string => {
         if (!text) return "";
         return text.trim()
-            .replace(/^["']|["']$/g, '')
-            .replace(/Ã¨/g, 'è').replace(/Ã©/g, 'é')
-            .replace(/Ã/g, 'à').replace(/Ã¬/g, 'ì')
-            .replace(/Ã²/g, 'ò').replace(/Ã¹/g, 'ù')
+            .replace(/\[SILENZIO\]/g, "")
+            .replace(/Sottotitoli.*/gi, "")
+            .replace(/Amara\.org/gi, "")
+            .replace(/creati dalla comunità/gi, "")
+            .replace(/\s+/g, " ")
             .trim();
     };
 
@@ -657,17 +659,27 @@ async function correctTextOnly(segments: any[]): Promise<any[]> {
         allBatches,
         TRANSCRIPTION_CONCURRENCY,
         async (batch, idx) => {
-            const prompt = `Correggi ortografia e punteggiatura in italiano.\nRimuovi riempitivi (ehm, uhm).\nNON aggiungere commenti.\nRestituisci SOLO il testo corretto, un segmento per riga.\n\nInput (${batch.length} righe):\n${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
+            const prompt = `Correggi ortografia e punteggiatura in italiano.
+- Rimuovi riempitivi (ehm, uhm).
+- NON aggiungere commenti.
+- IMPORTANTE: Restituisci ESATTAMENTE ${batch.length} righe, una per riga.
+- NON unire né dividere frasi.
+- Se una riga è vuota o incomprensibile, scrivi "..."
+
+TESTO DA CORREGGERE (${batch.length} righe):
+${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
 
             const startAI = Date.now();
             try {
-                const response = await withRetry(() => transcriptionClient.chat.completions.create({
-                    model: TRANSCRIPTION_MODEL,
-                    messages: [
-                        { role: "system", content: "Correttore ortografico conciso." },
-                        { role: "user", content: prompt }
-                    ]
-                }));
+                const response = await withRetry(() =>
+                    transcriptionClient.chat.completions.create({
+                        model: TRANSCRIPTION_MODEL,
+                        messages: [
+                            { role: "system", content: "Correttore ortografico conciso." },
+                            { role: "user", content: prompt }
+                        ]
+                    })
+                );
 
                 const latency = Date.now() - startAI;
                 const tokens = response.usage?.completion_tokens || 0;
@@ -678,8 +690,22 @@ async function correctTextOnly(segments: any[]): Promise<any[]> {
                     .map(l => l.replace(/^\d+\.\s*/, '').trim())
                     .filter(l => l.length > 0);
 
+                // ✅ TOLLERANZA MISMATCH (±20%)
+                const tolerance = Math.ceil(batch.length * 0.2);
+                const diff = Math.abs(lines.length - batch.length);
+
                 if (lines.length !== batch.length) {
-                    console.warn(`[Correzione] ⚠️ Batch ${idx+1}: Mismatch (${lines.length}≠${batch.length}). Uso originale.`);
+                    if (diff <= tolerance) {
+                        console.warn(`[Correzione] ⚠️ Batch ${idx+1}: Mismatch tollerato (${lines.length}≠${batch.length}, diff: ${diff})`);
+                        
+                        // Padding o Truncate
+                        return batch.map((orig, i) => ({
+                            ...orig,
+                            text: cleanText(lines[i] || orig.text)
+                        }));
+                    }
+                    
+                    console.warn(`[Correzione] ⚠️ Batch ${idx+1}: Mismatch eccessivo (${lines.length}≠${batch.length}). Uso originale.`);
                     return batch;
                 }
 

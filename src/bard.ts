@@ -272,6 +272,7 @@ export interface SummaryResponse {
         event: string;
         type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
     }>;
+    monsters?: Array<{ name: string; status: string; count?: string }>;
 }
 
 /**
@@ -1271,6 +1272,16 @@ CONTESTO:
 ${castContext}
 ${memoryContext}
 
+"""
+FONTI DI DATI - LEGGI ATTENTAMENTE:
+1. [[MEMORIA DEL MONDO]]: Serve SOLO per contesto (capire chi sono i nomi citati). NON USARE QUESTI DATI PER IL REPORT.
+2. TRASCRIZIONE: È l'UNICA fonte di verità per gli eventi, il loot e le quest di QUESTA sessione.
+
+DIVIETO ASSOLUTO:
+- NON riportare oggetti, quest o eventi citati solo nella MEMORIA.
+- Se la trascrizione non menziona esplicitamente il ritrovamento di un oggetto, NON scriverlo nel loot.
+"""
+
 Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esatto:
 {
   "title": "Titolo evocativo della sessione",
@@ -1305,7 +1316,10 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
   ],
   "log": [
     "[luogo - stanza] Chi -> Azione -> Risultato"
-  ]
+  ],
+  "monsters": [
+       { "name": "Nome Mostro", "status": "DEFEATED" | "ALIVE" | "FLED", "count": "quantità approssimativa" }
+   ]
 }
 
 REGOLE IMPORTANTI:
@@ -1314,6 +1328,7 @@ REGOLE IMPORTANTI:
 3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
 4. Rispondi SEMPRE in ITALIANO.
 5. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
+6. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
 
 **REGOLE PER IL LOOT:**
 - Oggetti magici/unici: Descrivi proprietà e maledizioni.
@@ -1325,6 +1340,16 @@ REGOLE IMPORTANTI:
         ${castContext}
         ${memoryContext}
         
+        """
+        FONTI DI DATI - LEGGI ATTENTAMENTE:
+        1. [[MEMORIA DEL MONDO]]: Serve SOLO per contesto (capire chi sono i nomi citati). NON USARE QUESTI DATI PER IL REPORT.
+        2. TRASCRIZIONE: È l'UNICA fonte di verità per gli eventi, il loot e le quest di QUESTA sessione.
+
+        DIVIETO ASSOLUTO:
+        - NON riportare oggetti, quest o eventi citati solo nella MEMORIA.
+        - Se la trascrizione non menziona esplicitamente il ritrovamento di un oggetto, NON scriverlo nel loot.
+        """
+
         ISTRUZIONI DI STILE:
         - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
         - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità ai fatti accaduti nelle sessioni.
@@ -1345,8 +1370,10 @@ REGOLE IMPORTANTI:
            - "loot_removed": Array di stringhe contenente gli oggetti consumati, persi o venduti. Se nessuno, array vuoto.
            - "quests": Array di stringhe contenente le missioni accettate, aggiornate o concluse. Se nessuna, array vuoto.
            - "character_growth": Array di oggetti {name, event, type} per eventi significativi dei personaggi.
+           - "monsters": Array di oggetti {name, status, count} per le creature ostili.
         5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.
-        6. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.`;
+        6. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
+        7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.`;
     }
 
     const startAI = Date.now();
@@ -1428,7 +1455,8 @@ REGOLE IMPORTANTI:
             log: Array.isArray(parsed.log) ? parsed.log : [],
             character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
             npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],
-            world_events: Array.isArray(parsed.world_events) ? parsed.world_events : []
+            world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [],
+            monsters: Array.isArray(parsed.monsters) ? parsed.monsters : []
         };
     } catch (err: any) {
         console.error("Errore finale:", err);

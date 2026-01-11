@@ -482,7 +482,8 @@ export async function sendSessionRecap(
     summary: string,
     loot?: string[],
     lootRemoved?: string[],
-    narrative?: string
+    narrative?: string,
+    monsters?: Array<{ name: string; status: string; count?: string }>
 ): Promise<boolean> {
 
     if (!process.env.EMAIL_ENABLED || process.env.EMAIL_ENABLED !== 'true') {
@@ -661,6 +662,24 @@ export async function sendSessionRecap(
                 </td>
             </tr>
         `).join('') || '<tr><td colspan="3" style="padding: 8px;">Nessun NPC rilevato nel Dossier.</td></tr>'}
+    </table>
+
+    <h3 style="margin-top: 20px;">👹 Bestiario / Minacce</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background-color: #eee;">
+            <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Creatura</th>
+            <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Stato</th>
+            <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Quantità</th>
+        </tr>
+        ${monsters && monsters.length > 0 ? monsters.map(m => `
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;"><b>${m.name}</b></td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;">
+                    ${m.status === 'DEFEATED' ? '⚔️ SCONFITTO' : m.status === 'FLED' ? '💨 FUGGITO' : '👀 VIVO'}
+                </td>
+                <td style="padding: 8px; border-bottom: 1px solid #ddd;">${m.count || '1'}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="3" style="padding: 8px;">Nessuna minaccia rilevata.</td></tr>'}
     </table>
 
     <hr>

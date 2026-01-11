@@ -1169,6 +1169,12 @@ client.on('messageCreate', async (message: Message) => {
             // -----------------------------
 
             await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
+            
+            // Invia email DM con mostri
+            const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
+            if (currentCampaignId) {
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, result.narrative, result.monsters);
+            }
 
             const processingTime = Date.now() - startProcessing;
             const transcripts = getSessionTranscript(targetSessionId);
@@ -1963,7 +1969,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     }
                     
                     // Invia email DM
-                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrative);
+                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrative, result.monsters);
 
                     // 🆕 LOG DEBUG
                     console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');

@@ -125,43 +125,41 @@ export function startWorker() {
             monitor.logFileProcessed(audioDuration, processingTime);
 
             if (result.segments && result.segments.length > 0) {
-                // 🆕 FILTRO ALLUCINAZIONI - Applica a ogni segmento
-                const filteredSegments = result.segments
+                console.log(`[Worker] 📝 Ricevuti ${result.segments.length} segmenti word-level da Whisper`);
+                
+                // 🆕 STEP 1: Filtra allucinazioni a livello di parola
+                const filteredWords = result.segments
                     .map((s: any) => {
                         const cleanedText = filterWhisperHallucinations(s.text, false);
-                        return {
-                            ...s,
-                            text: cleanedText.trim()
-                        };
+                        return { ...s, text: cleanedText.trim() };
                     })
-                    .filter((s: any) => {
-                        // Rimuovi segmenti vuoti dopo il filtro
-                        return s.text.length > 0;
-                    });
+                    .filter((s: any) => s.text.length > 0);
 
-                if (filteredSegments.length === 0) {
-                    updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o allucinazioni rimosse');
-                    console.log(`[Scriba] 🔇 Audio ${fileName} scartato dopo filtro allucinazioni`);
+                if (filteredWords.length === 0) {
+                    updateRecordingStatus(fileName, 'SKIPPED', null, 'Tutte allucinazioni');
+                    console.log(`[Worker] 🔇 ${fileName}: tutto filtrato (allucinazioni)`);
                     const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
                     if (isBackedUp) {
                         try { fs.unlinkSync(filePath); } catch(e) {}
                     }
                     monitor.logJobProcessed(waitTime, job.attemptsMade);
-                    return { status: 'skipped', reason: 'hallucinations_filtered' };
+                    return { status: 'skipped', reason: 'all_hallucinations' };
                 }
+                
+                console.log(`[Worker] 🧹 Filtrate ${result.segments.length - filteredWords.length} allucinazioni`);
 
-                // Log statistiche filtro
-                const removedCount = result.segments.length - filteredSegments.length;
-                if (removedCount > 0) {
-                    console.log(`[Scriba] 🧹 Rimossi ${removedCount}/${result.segments.length} segmenti allucinati da ${fileName}`);
-                }
+                // 🆕 STEP 2: Raggruppa in frasi leggibili
+                const readableSentences = groupWordsIntoSentences(filteredWords);
+                
+                console.log(`[Worker] 📖 ${filteredWords.length} parole → ${readableSentences.length} frasi`);
 
-                // Salviamo stato intermedio
-                const rawJson = JSON.stringify(filteredSegments);
-                updateRecordingStatus(fileName, 'TRANSCRIBED', rawJson);
+                // STEP 3: Salva nel DB (frasi leggibili)
+                const readableJson = JSON.stringify(readableSentences);
+                updateRecordingStatus(fileName, 'TRANSCRIBED', readableJson);
 
-                // 🆕 SALVA SUBITO IL RAW IN CAMPO SEPARATO (backup preventivo)
-                saveRawTranscription(fileName, rawJson);
+                // STEP 4: Salva raw per debug
+                const wordLevelJson = JSON.stringify(filteredWords);
+                saveRawTranscription(fileName, wordLevelJson);
 
                 // Backup e Pulizia Locale
                 const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
@@ -195,9 +193,9 @@ export function startWorker() {
                         }
                     }
 
-                    updateRecordingStatus(fileName, 'PROCESSED', rawJson, null, finalMacro, finalMicro, [], frozenCharName);
+                    updateRecordingStatus(fileName, 'PROCESSED', readableJson, null, finalMacro, finalMicro, [], frozenCharName);
                     monitor.logJobProcessed(waitTime, job.attemptsMade);
-                    return { status: 'processed_no_ai', segmentsCount: filteredSegments.length };
+                    return { status: 'processed_no_ai', segmentsCount: readableSentences.length };
 
                 } else {
                     // Accodamento per Correzione AI (Standard Flow)
@@ -205,7 +203,7 @@ export function startWorker() {
                     await correctionQueue.add('correction-job', {
                         sessionId,
                         fileName,
-                        segments: filteredSegments,
+                        segments: readableSentences,
                         campaignId,
                         userId // Passiamo userId per recuperare lo snapshot nel correction worker
                     }, {
@@ -216,7 +214,7 @@ export function startWorker() {
                     });
 
                     monitor.logJobProcessed(waitTime, job.attemptsMade);
-                    return { status: 'transcribed', segmentsCount: filteredSegments.length };
+                    return { status: 'transcribed', segmentsCount: readableSentences.length };
                 }
 
             } else {
@@ -374,4 +372,41 @@ export function startWorker() {
     console.log("[System] Workers avviati: Scriba (Audio) e Correttore (AI).");
 
     return { audioWorker, correctionWorker };
+}
+
+// 🆕 FUNZIONE RAGGRUPPA PAROLE IN FRASI
+function groupWordsIntoSentences(wordSegments: any[]): any[] {
+    if (wordSegments.length === 0) return [];
+    
+    const PAUSE_THRESHOLD = 2.5; // secondi
+    const sentences: any[] = [];
+    let currentSentence = {
+        start: wordSegments[0].start,
+        end: wordSegments[0].end,
+        text: wordSegments[0].text.trim()
+    };
+    
+    for (let i = 1; i < wordSegments.length; i++) {
+        const pause = wordSegments[i].start - wordSegments[i - 1].end;
+        
+        if (pause > PAUSE_THRESHOLD) {
+            // Nuova frase
+            sentences.push(currentSentence);
+            currentSentence = {
+                start: wordSegments[i].start,
+                end: wordSegments[i].end,
+                text: wordSegments[i].text.trim()
+            };
+        } else {
+            // Continua frase corrente
+            currentSentence.text += ' ' + wordSegments[i].text.trim();
+            currentSentence.end = wordSegments[i].end;
+        }
+    }
+    
+    if (currentSentence.text) {
+        sentences.push(currentSentence);
+    }
+    
+    return sentences;
 }

@@ -42,8 +42,11 @@ export class WhisperCppService {
                 '-t', '3',
                 '-oj',
                 '-osrt', 'false',
-                '-ml', '1',           // ✅ NUOVO
-                '--split-on-word',    // ✅ NUOVO
+                '-ml', '1',
+                '--split-on-word',
+                '--condition-on-previous-text', 'false',  // Evita loop temporali
+                '--no-speech-threshold', '0.6',           // Soglia silenzio (default 0.6)
+                '--logprob-threshold', '-1.0',            // Confidence minima
             ];
 
             // Manually wrap execFile to capture stdout and stderr even on error

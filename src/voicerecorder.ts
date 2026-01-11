@@ -8,19 +8,69 @@ import { VoiceBasedChannel } from 'discord.js';
 import * as fs from 'fs';
 import * as prism from 'prism-media';
 import * as path from 'path';
+import { Transform, TransformCallback } from 'stream';
+import { spawn, ChildProcess } from 'child_process';
 import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign } from './db';
 import { audioQueue } from './queue';
 import { uploadToOracle } from './backupService';
 import { monitor } from './monitor';
 import { startStreamingMixer, addFileToStreamingMixer, stopStreamingMixer } from './streamingMixer';
 
+// ✅ CLASSE SILENCE INJECTOR
+class SilenceInjector extends Transform {
+    private lastPacketTime: number;
+    private readonly frameSize: number = 3840; // 20ms @ 48kHz stereo 16-bit
+    private readonly bytesPerMs: number = 192; // 48000 * 2 * 2 / 1000
+    private isFirstPacket: boolean = true;
+    private silenceInjected: number = 0;
+
+    constructor() {
+        super();
+        this.lastPacketTime = Date.now();
+    }
+
+    _transform(chunk: Buffer, encoding: string, callback: TransformCallback): void {
+        const now = Date.now();
+        
+        if (this.isFirstPacket) {
+            this.isFirstPacket = false;
+            this.lastPacketTime = now;
+            this.push(chunk);
+            callback();
+            return;
+        }
+        
+        const timeDelta = now - this.lastPacketTime;
+        const expectedBytes = timeDelta * this.bytesPerMs;
+        
+        // Inietta silenzio se il gap è significativo (> 1 frame + chunk size)
+        if (expectedBytes > (chunk.length + this.frameSize)) {
+            const missingBytes = Math.floor(expectedBytes - chunk.length);
+            const alignedMissingBytes = Math.floor(missingBytes / this.frameSize) * this.frameSize;
+
+            if (alignedMissingBytes > 0) {
+                this.silenceInjected += alignedMissingBytes;
+                const silenceBuffer = Buffer.alloc(alignedMissingBytes, 0);
+                this.push(silenceBuffer);
+            }
+        }
+
+        this.push(chunk);
+        this.lastPacketTime = now;
+        callback();
+    }
+    
+    getSilenceInjectedMs(): number {
+        return Math.floor(this.silenceInjected / this.bytesPerMs);
+    }
+}
+
 // Struttura per tracciare lo stato completo dello stream
 interface ActiveStream {
-    out: fs.WriteStream;
+    ffmpeg: ChildProcess;
     decoder: prism.opus.Decoder;
-    encoder: prism.FFmpeg;
+    silenceInjector: SilenceInjector;
     currentPath: string;
-    startTime: number;
     sessionId: string;
 }
 
@@ -43,7 +93,7 @@ export function pauseRecording(guildId: string) {
     for (const [key, stream] of activeStreams) {
         if (key.startsWith(`${guildId}-`)) {
             try {
-                stream.out.end();
+                stream.ffmpeg.stdin?.end();
             } catch (e) {}
             activeStreams.delete(key);
         }
@@ -121,20 +171,21 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     });
 
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
-    
-    // PIPELINE AGGIORNATA: Aggiunto filtro di normalizzazione audio (loudnorm)
-    // Questo aiuta a livellare i volumi tra utenti che urlano e utenti che sussurrano
-    const encoder = new prism.FFmpeg({
-        args: [
-            '-f', 's16le',
-            '-ar', '48000',
-            '-ac', '2',
-            '-i', '-',
-            '-filter:a', 'loudnorm', // Normalizzazione EBU R128
-            '-codec:a', 'libmp3lame',
-            '-b:a', '64k',
-            '-f', 'mp3',
-        ],
+    const silenceInjector = new SilenceInjector();
+
+    // Cattura timestamp del PRIMO chunk PCM
+    let firstChunkTimestamp: number | null = null;
+    let isFirstChunk = true;
+
+    const timestampCapture = new Transform({
+        transform(chunk, enc, cb) {
+            if (isFirstChunk) {
+                firstChunkTimestamp = Date.now();
+                isFirstChunk = false;
+                console.log(`[VoiceRec] 🎯 Primo chunk audio da ${userId} @ ${firstChunkTimestamp}`);
+            }
+            cb(null, chunk);
+        }
     });
 
     const getNewFile = () => {
@@ -147,16 +198,30 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
             fs.mkdirSync(recordingsDir, { recursive: true });
         }
 
-        const out = fs.createWriteStream(filepath);
-        return { out, filepath, filename };
+        // Nota: non creiamo più il WriteStream qui, lo fa ffmpeg
+        return { filepath, filename };
     };
 
-    const { out, filepath, filename } = getNewFile();
-    const startTime = Date.now();
+    const { filepath, filename } = getNewFile();
+
+    // Usa spawn invece di prism.FFmpeg per maggiore controllo
+    const ffmpeg = spawn('ffmpeg', [
+        '-f', 's16le',
+        '-ar', '48000',
+        '-ac', '2',
+        '-i', 'pipe:0',
+        '-filter:a', 'loudnorm',
+        '-codec:a', 'libmp3lame',
+        '-b:a', '64k',
+        '-ar', '16000',  // Downsample per Whisper
+        '-ac', '1',      // Mono per Whisper
+        '-f', 'mp3',
+        filepath,
+        '-y'
+    ]);
 
     // GESTIONE ERRORI PIPELINE (Prevenzione Crash)
     const handleError = (err: Error, source: string) => {
-        // Ignoriamo errori comuni di stream chiusi prematuramente
         if (err.message === 'Premature close') return;
         
         console.warn(`⚠️ Errore Audio (${source}) per utente ${userId}: ${err.message}`);
@@ -166,56 +231,72 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
             activeStreams.delete(streamKey);
             try { opusStream.destroy(); } catch {}
             try { decoder.destroy(); } catch {}
-            try { encoder.destroy(); } catch {}
-            try { out.end(); } catch {}
+            try { ffmpeg.stdin?.end(); } catch {}
         }
         connectionErrors.set(streamKey, Date.now());
     };
 
     decoder.on('error', (e) => handleError(e, 'Decoder'));
-    encoder.on('error', (e) => handleError(e, 'Encoder'));
-    out.on('error', (e) => handleError(e, 'FileWrite'));
+    ffmpeg.on('error', (e) => handleError(e, 'FFmpeg'));
     opusStream.on('error', (e: Error) => handleError(e, 'OpusStream'));
 
-    // PIPELINE: Discord (Opus) -> PCM -> Normalizzazione -> MP3 -> File
-    opusStream.pipe(decoder).pipe(encoder).pipe(out);
+    // NUOVA PIPELINE: Opus → Decoder → TimestampCapture → SilenceInjector → FFmpeg
+    opusStream
+        .pipe(decoder)
+        .pipe(timestampCapture)
+        .pipe(silenceInjector)
+        .pipe(ffmpeg.stdin!);
 
-    activeStreams.set(streamKey, { out, decoder, encoder, currentPath: filepath, startTime, sessionId });
+    activeStreams.set(streamKey, { ffmpeg, decoder, silenceInjector, currentPath: filepath, sessionId });
 
     console.log(`[Recorder] ⏺️  Registrazione iniziata per utente ${userId} (Guild: ${guildId}): ${filename} (Sessione: ${sessionId})`);
 
     // ✅ TRACKING: Registra file in elaborazione
-    out.on('finish', async () => {
-        // 1. Segna come pending
-        if (!pendingFileProcessing.has(guildId)) {
-            pendingFileProcessing.set(guildId, new Set());
-        }
-        pendingFileProcessing.get(guildId)!.add(filename);
-        
-        if (activeStreams.has(streamKey)) {
-            activeStreams.delete(streamKey);
-        }
-        
-        // 2. Esegui logica di chiusura (DB, Backup, Queue, Mixer)
-        await onFileClosed(userId, filepath, filename, startTime, sessionId, guildId);
-        
-        // 3. Rimuovi dai pending e notifica se vuoto
-        const pending = pendingFileProcessing.get(guildId);
-        if (pending) {
-            pending.delete(filename);
+    ffmpeg.on('close', async (code) => {
+        if (code === 0 && firstChunkTimestamp) {
+            const silenceMs = silenceInjector.getSilenceInjectedMs();
+            console.log(`[VoiceRec] ✅ ${filename}: +${silenceMs}ms silenzio iniettato`);
             
-            // Se non ci sono più file pending, notifica i resolver in attesa
-            if (pending.size === 0) {
-                const resolvers = fileProcessingResolvers.get(guildId) || [];
-                resolvers.forEach(resolve => resolve());
-                fileProcessingResolvers.delete(guildId);
+            if (activeStreams.has(streamKey)) {
+                activeStreams.delete(streamKey);
             }
+            
+            // Marca come pending per tracking
+            if (!pendingFileProcessing.has(guildId)) {
+                pendingFileProcessing.set(guildId, new Set());
+            }
+            pendingFileProcessing.get(guildId)!.add(filename);
+            
+            // USA TIMESTAMP REALE (primo chunk)
+            await onFileClosed(userId, filepath, filename, firstChunkTimestamp, sessionId, guildId);
+            
+            // Rimuovi dai pending e notifica
+            const pending = pendingFileProcessing.get(guildId);
+            if (pending) {
+                pending.delete(filename);
+                if (pending.size === 0) {
+                    const resolvers = fileProcessingResolvers.get(guildId) || [];
+                    resolvers.forEach(resolve => resolve());
+                    fileProcessingResolvers.delete(guildId);
+                }
+            }
+        } else if (!firstChunkTimestamp) {
+            console.warn(`[VoiceRec] ⚠️ ${filename}: Nessun chunk audio ricevuto, file vuoto`);
+            // Pulizia file vuoto se creato
+            if (fs.existsSync(filepath)) {
+                try { fs.unlinkSync(filepath); } catch {}
+            }
+        } else {
+            console.warn(`[VoiceRec] ⚠️ FFmpeg exited with code ${code} for ${filename}`);
         }
     });
 
     opusStream.on('end', async () => {
-        // La pipeline chiuderà 'out' automaticamente
-        // Non serve fare altro qui, il lavoro sporco lo fa out.on('finish')
+        // La pipeline chiuderà ffmpeg.stdin automaticamente se pipe è gestita correttamente,
+        // ma per sicurezza forziamo la chiusura dello stdin
+        if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
+            ffmpeg.stdin.end();
+        }
     });
 }
 
@@ -286,17 +367,16 @@ export async function disconnect(guildId: string): Promise<boolean> {
                 
                 const p = new Promise<void>((resolve) => {
                     // Se lo stream è già chiuso/in chiusura
-                    if (stream.out.writableEnded) {
+                    if (stream.ffmpeg.stdin?.writableEnded) {
                         resolve();
                         return;
                     }
                     
-                    // Attendiamo la fine della scrittura
-                    stream.out.once('finish', () => resolve());
+                    // Attendiamo la fine della scrittura (ffmpeg close)
+                    stream.ffmpeg.on('close', () => resolve());
                     
                     // Forziamo la chiusura dello stream di scrittura
-                    // Questo taglierà la pipeline ma salverà i dati bufferizzati
-                    stream.out.end(); 
+                    stream.ffmpeg.stdin?.end();
                 });
                 
                 closingPromises.push(p);

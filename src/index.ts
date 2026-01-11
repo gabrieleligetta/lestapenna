@@ -1168,7 +1168,7 @@ client.on('messageCreate', async (message: Message) => {
             }
             // -----------------------------
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative);
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative, result.monsters);
             
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
@@ -1760,10 +1760,12 @@ client.on('messageCreate', async (message: Message) => {
                 
                 const campaignId = campaign.id;
                 db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId);
-                db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM npc_dossier WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM npc_history WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM world_history WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM location_history WHERE campaign_id = ?').run(campaignId);
                 // Nota: knowledge_fragments viene pulito sessione per sessione dopo, ma potremmo pulirlo anche qui per sicurezza globale?
                 // Meglio farlo sessione per sessione come da richiesta "Deep Clean" nel loop.
 
@@ -2098,7 +2100,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrative);
+                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrative, result.monsters);
                     }
                     
                     // Invia email DM
@@ -2197,7 +2199,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string) {
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -2285,8 +2287,8 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         await targetChannel.send(chunk);
     }
 
-    // --- VISUALIZZAZIONE LOOT & QUEST ---
-    if ((loot && loot.length > 0) || (quests && quests.length > 0)) {
+    // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI ---
+    if ((loot && loot.length > 0) || (quests && quests.length > 0) || (monsters && monsters.length > 0)) {
         const embed = new EmbedBuilder()
             .setColor("#F1C40F")
             .setTitle("🎒 Riepilogo Tecnico");
@@ -2297,6 +2299,17 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
 
         if (quests && quests.length > 0) {
             embed.addFields({ name: "🗺️ Missioni (Quests)", value: quests.map(q => `• ${q}`).join('\n') });
+        }
+
+        if (monsters && monsters.length > 0) {
+            const monsterList = monsters.map(monster => {
+                const countText = monster.count ? ` (${monster.count})` : '';
+                const statusEmoji = monster.status === 'DEFEATED' ? '💀' : 
+                                   monster.status === 'FLED' ? '🏃' : 
+                                   monster.status === 'ALIVE' ? '⚔️' : '❓';
+                return `${statusEmoji} **${monster.name}**${countText} - \`${monster.status}\``;
+            }).join('\n');
+            embed.addFields({ name: "🐉 Mostri Combattuti", value: monsterList });
         }
 
         await targetChannel.send({ embeds: [embed] });

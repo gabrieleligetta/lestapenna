@@ -21,7 +21,7 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
     getAvailableSessions,
@@ -1063,11 +1063,40 @@ client.on('messageCreate', async (message: Message) => {
             const activeCampaignId = activeCampaign!.id;
 
             if (result.loot && result.loot.length > 0) {
-                result.loot.forEach((item: string) => addLoot(activeCampaignId, item));
+                console.log(`[Loot] 📦 Elaborazione ${result.loot.length} oggetti...`);
+                
+                for (const item of result.loot) {
+                    // 1. SALVA NEL DB SQL (Inventario)
+                    addLoot(activeCampaignId, item);
+                    console.log(`[Loot] 💰 Aggiunto al DB: ${item}`);
+                    
+                    // 2. 🆕 FILTRA E INDICIZZA NEL RAG
+                    // Ignoriamo valuta spicciola generica per non inquinare il RAG
+                    const isSimpleCurrency = (
+                        item.toLowerCase().match(/^\d+\s*(monet|oro|argent|ram|pezz)/i) &&
+                        item.length < 25
+                    );
+                    
+                    if (isSimpleCurrency) {
+                        console.log(`[Loot] 💸 Valuta semplice, skip RAG: ${item}`);
+                        continue;
+                    }
+                    
+                    // Indicizza oggetti significativi nel RAG
+                    try {
+                        await ingestLootEvent(activeCampaignId, targetSessionId, item);
+                        console.log(`[RAG] 💎 Indicizzato: ${item}`);
+                    } catch (err: any) {
+                        console.error(`[RAG] ❌ Errore indicizzazione "${item}":`, err.message);
+                    }
+                }
             }
 
             if (result.loot_removed && result.loot_removed.length > 0) {
-                result.loot_removed.forEach((item: string) => removeLoot(activeCampaignId, item));
+                result.loot_removed.forEach((item: string) => {
+                    removeLoot(activeCampaignId, item);
+                    console.log(`[Loot] 🗑️ Rimosso: ${item}`);
+                });
             }
 
             if (result.quests && result.quests.length > 0) {
@@ -1895,7 +1924,36 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     updateSessionTitle(sessionId, result.title);
                     
                     // Salva loot/quest nel DB
-                    if (result.loot) result.loot.forEach(item => addLoot(campaignId, item));
+                    if (result.loot && result.loot.length > 0) {
+                        console.log(`[Loot] 📦 Elaborazione ${result.loot.length} oggetti...`);
+                        
+                        for (const item of result.loot) {
+                            // 1. SALVA NEL DB SQL (Inventario)
+                            addLoot(campaignId, item);
+                            console.log(`[Loot] 💰 Aggiunto al DB: ${item}`);
+                            
+                            // 2. 🆕 FILTRA E INDICIZZA NEL RAG
+                            // Ignoriamo valuta spicciola generica per non inquinare il RAG
+                            const isSimpleCurrency = (
+                                item.toLowerCase().match(/^\d+\s*(monet|oro|argent|ram|pezz)/i) &&
+                                item.length < 25
+                            );
+                            
+                            if (isSimpleCurrency) {
+                                console.log(`[Loot] 💸 Valuta semplice, skip RAG: ${item}`);
+                                continue;
+                            }
+                            
+                            // Indicizza oggetti significativi nel RAG
+                            try {
+                                await ingestLootEvent(campaignId, sessionId, item);
+                                console.log(`[RAG] 💎 Indicizzato: ${item}`);
+                            } catch (err: any) {
+                                console.error(`[RAG] ❌ Errore indicizzazione "${item}":`, err.message);
+                            }
+                        }
+                    }
+
                     if (result.loot_removed) result.loot_removed.forEach(item => removeLoot(campaignId, item));
                     if (result.quests) result.quests.forEach(q => addQuest(campaignId, q));
                     

@@ -1257,7 +1257,12 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
 {
   "title": "Titolo evocativo della sessione",
   "narrative": "Scrivi qui un riassunto discorsivo e coinvolgente degli eventi, scritto come un racconto in terza persona al passato (es: 'Il gruppo è arrivato alla zona Ovest...'). Usa un tono epico ma conciso. Includi i colpi di scena e le interazioni principali.",
-  "loot": ["lista", "degli", "oggetti", "trovati"],
+  "loot": [
+    "Nome Oggetto (Descrizione breve con proprietà magiche/maledizioni se note)",
+    "Esempio: Spada delle Anime (+2 ATK, -1 HP per colpo, maledetta)",
+    "Esempio: Pergamena del Volo (Permette di volare per 10 minuti)",
+    "Valuta: 450 monete d'oro"
+  ],
   "loot_removed": ["lista", "oggetti", "persi/usati"],
   "quests": ["lista", "missioni", "accettate/completate"],
   "character_growth": [
@@ -1291,6 +1296,11 @@ REGOLE IMPORTANTI:
 3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
 4. Rispondi SEMPRE in ITALIANO.
 5. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
+
+**REGOLE PER IL LOOT:**
+- Oggetti magici/unici: Descrivi proprietà e maledizioni.
+- Valuta semplice: Scrivi solo "X monete d'oro".
+- Se un oggetto viene solo menzionato ma non descritto, scrivi il nome base.
 `;
     } else {
         reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
@@ -1629,6 +1639,107 @@ export async function ingestWorldEvent(campaignId: number, sessionId: string, ev
                     val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
                     0, null, null,
                     ['MONDO', 'LORE', 'STORIA']
+                );
+            }
+        }
+    }
+}
+
+/**
+ * Indicizza un oggetto importante nel RAG per ricerche future.
+ * Es. "Spada delle Anime (+2 ATK, -1 HP maledizione)"
+ */
+export async function ingestLootEvent(
+    campaignId: number,
+    sessionId: string,
+    itemDescription: string
+) {
+    // Formato strutturato per il RAG
+    const content = `OGGETTO OTTENUTO: ${itemDescription}. Acquisito nella sessione corrente.`;
+    
+    console.log(`[RAG] 💎 Indicizzazione oggetto: ${itemDescription.substring(0, 40)}...`);
+
+    const promises: any[] = [];
+    const startAI = Date.now();
+
+    // OpenAI Embedding
+    promises.push(
+        openaiEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OPENAI,
+            input: content
+        })
+        .then(resp => {
+            const inputTokens = resp.usage?.prompt_tokens || 0;
+            monitor.logAIRequestWithCost(
+                'embeddings',
+                'openai',
+                EMBEDDING_MODEL_OPENAI,
+                inputTokens, 0, 0,
+                Date.now() - startAI,
+                false
+            );
+            return { provider: 'openai', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost(
+                'embeddings',
+                'openai',
+                EMBEDDING_MODEL_OPENAI,
+                0, 0, 0,
+                Date.now() - startAI,
+                true
+            );
+            return { provider: 'openai', error: err.message };
+        })
+    );
+
+    // Ollama Embedding
+    promises.push(
+        ollamaEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OLLAMA,
+            input: content
+        })
+        .then(resp => {
+            monitor.logAIRequestWithCost(
+                'embeddings',
+                'ollama',
+                EMBEDDING_MODEL_OLLAMA,
+                0, 0, 0,
+                Date.now() - startAI,
+                false
+            );
+            return { provider: 'ollama', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost(
+                'embeddings',
+                'ollama',
+                EMBEDDING_MODEL_OLLAMA,
+                0, 0, 0,
+                Date.now() - startAI,
+                true
+            );
+            return { provider: 'ollama', error: err.message };
+        })
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    // Salva entrambi gli embedding se riusciti
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId,
+                    sessionId,
+                    content,
+                    val.data, // embedding vector
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    Date.now(), // timestamp
+                    null, // macro location (potrebbe essere utile se vuoi tracciare DOVE l'hanno trovato)
+                    'INVENTARIO', // micro location speciale per filtrare
+                    ['LOOT'] // NPC associati → usiamo come tag speciale
                 );
             }
         }

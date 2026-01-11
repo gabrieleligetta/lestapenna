@@ -127,6 +127,8 @@ const dbPath = path.join(__dirname, '..', 'data', 'dnd_bot.db');
 class SystemMonitor {
     private currentSession: SessionMetrics | null = null;
     private interval: NodeJS.Timeout | null = null;
+    private lastLogTime = 0;
+    private readonly LOG_INTERVAL = 15000; // 15 secondi
 
     startSession(sessionId: string) {
         let dbSize = 0;
@@ -172,6 +174,16 @@ class SystemMonitor {
             if (this.currentSession.resourceUsage.cpuSamples.length % 12 === 0) { // Ogni minuto circa
                 this.checkDiskSpace();
             }
+            
+            // Log periodico invece di ogni 2 secondi
+            const now = Date.now();
+            if (now - this.lastLogTime > this.LOG_INTERVAL) {
+                // Logga solo se c'è attività significativa o se è passato molto tempo
+                // Per ora logghiamo lo stato generale
+                // console.log(`[Monitor] 📊 Sessione attiva: ${this.currentSession.totalFiles} file processati`);
+                this.lastLogTime = now;
+            }
+
         } catch (e) {
             console.error("Errore campionamento risorse:", e);
         }

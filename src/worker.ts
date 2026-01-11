@@ -70,7 +70,7 @@ export function startWorker() {
             }
         }
 
-        console.log(`[Scriba] 🔨 Inizio elaborazione: ${fileName} (Sessione: ${sessionId}) - Utente: ${userName}`);
+        console.log(`[Scriba] 🗣️  Inizio trascrizione: ${fileName}`);
         updateRecordingStatus(fileName, 'PROCESSING');
 
         try {
@@ -108,7 +108,7 @@ export function startWorker() {
                 transcriptionPath = wavPath;
             }
 
-            console.log(`[Scriba] 🗣️  Inizio trascrizione Whisper: ${fileName}`);
+            // console.log(`[Scriba] 🗣️  Inizio trascrizione Whisper: ${fileName}`); // Rimosso per evitare doppio log
             const result = await transcribeLocal(transcriptionPath);
 
             // 🆕 GESTISCI ESPLICITAMENTE GLI ERRORI DI WHISPER
@@ -134,7 +134,7 @@ export function startWorker() {
             monitor.logFileProcessed(audioDuration, processingTime);
 
             if (result.segments && result.segments.length > 0) {
-                console.log(`[Worker] 📝 Ricevuti ${result.segments.length} segmenti word-level da Whisper`);
+                // console.log(`[Worker] 📝 Ricevuti ${result.segments.length} segmenti word-level da Whisper`); // Rimosso per pulizia
                 
                 // 🆕 STEP 1: Filtra allucinazioni a livello di parola
                 const filteredWords = result.segments
@@ -155,7 +155,7 @@ export function startWorker() {
                     return { status: 'skipped', reason: 'all_hallucinations' };
                 }
                 
-                console.log(`[Worker] 🧹 Filtrate ${result.segments.length - filteredWords.length} allucinazioni`);
+                console.log(`[Worker] 🧹 Filtrate ${result.segments.length - filteredWords.length} allucinazioni, ${filteredWords.length} parole rimaste`);
 
                 // 🆕 STEP 2: Raggruppa in frasi leggibili
                 const readableSentences = groupWordsIntoSentences(filteredWords);
@@ -175,7 +175,7 @@ export function startWorker() {
                 if (isBackedUp) {
                     try {
                         fs.unlinkSync(filePath);
-                        console.log(`[Scriba] 🧹 File locale eliminato dopo backup: ${fileName}`);
+                        // console.log(`[Scriba] 🧹 File locale eliminato dopo backup: ${fileName}`); // Rimosso per pulizia
                         monitor.logFileDeleted();
                     } catch (err) {
                         console.error(`[Scriba] ❌ Errore durante eliminazione locale ${fileName}:`, err);
@@ -208,7 +208,7 @@ export function startWorker() {
 
                 } else {
                     // Accodamento per Correzione AI (Standard Flow)
-                    console.log(`[Scriba] 🧠 Accodo ${fileName} per correzione AI...`);
+                    // console.log(`[Scriba] 🧠 Accodo ${fileName} per correzione AI...`); // Rimosso per pulizia
                     await correctionQueue.add('correction-job', {
                         sessionId,
                         fileName,
@@ -265,7 +265,7 @@ export function startWorker() {
         const startJob = Date.now();
         const waitTime = startJob - job.timestamp;
 
-        console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`);
+        // console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`); // Rimosso per pulizia
 
         try {
             const aiResult = await correctTranscription(segments, campaignId);
@@ -333,7 +333,7 @@ export function startWorker() {
 
             updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro, presentNpcs, frozenCharName);
 
-            console.log(`[Correttore] ✅ Corretto ${fileName} (${correctedSegments.length} segmenti): "${flatText.substring(0, 30)}..." [Luogo: ${finalMacro}|${finalMicro}] [NPC: ${presentNpcs.length}] [PG: ${frozenCharName}]`);
+            console.log(`[Correttore] 🧠 Correzione AI completata per ${fileName}`);
 
             monitor.logJobProcessed(waitTime, job.attemptsMade);
             return { status: 'ok', segments: correctedSegments };

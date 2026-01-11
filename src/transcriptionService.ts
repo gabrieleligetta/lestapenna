@@ -55,10 +55,14 @@ export class WhisperCppService {
             // Manually wrap execFile to capture stdout and stderr even on error
             await new Promise<void>((resolve, reject) => {
                 execFile('/usr/bin/nice', args, (error, stdout, stderr) => {
-                    // 🆕 LOGGA SEMPRE, anche se successo
-                    console.log(`[WhisperCpp] CMD: /usr/bin/nice ${args.join(' ')}`);
-                    console.log(`[WhisperCpp] STDOUT: ${stdout}`);
-                    if (stderr) console.log(`[WhisperCpp] STDERR: ${stderr}`);
+                    // 🆕 LOGGA SOLO ERRORI REALI
+                    if (stderr) {
+                        const stderrStr = stderr.toString();
+                        // Filtra log inutili di whisper.cpp
+                        if (stderrStr.includes('error:') || stderrStr.includes('ERROR') || stderrStr.includes('failed')) {
+                             console.error(`[WhisperCpp] ❌ ${stderrStr.trim()}`);
+                        }
+                    }
                     
                     if (error) {
                         console.error(`[WhisperCpp] Process execution failed.`);
@@ -67,6 +71,10 @@ export class WhisperCppService {
                         // Pass the stderr as part of the error message for better visibility
                         reject(new Error(`Whisper failed: ${stderr || error.message}`));
                     } else {
+                        // Log aggregato invece di ogni riga
+                        const lines = stdout.toString().split('\n');
+                        const segmentCount = lines.filter(l => l.includes('-->')).length;
+                        console.log(`[WhisperCpp] ✅ Trascrizione completata: ${segmentCount} segmenti`);
                         resolve();
                     }
                 });

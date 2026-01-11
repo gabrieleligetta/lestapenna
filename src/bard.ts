@@ -1257,12 +1257,12 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
 {
   "title": "Titolo evocativo della sessione",
   "narrative": "Scrivi qui un riassunto discorsivo e coinvolgente degli eventi, scritto come un racconto in terza persona al passato (es: 'Il gruppo è arrivato alla zona Ovest...'). Usa un tono epico ma conciso. Includi i colpi di scena e le interazioni principali.",
-  "loot": [
-    "Nome Oggetto (Descrizione breve con proprietà magiche/maledizioni se note)",
-    "Esempio: Spada delle Anime (+2 ATK, -1 HP per colpo, maledetta)",
-    "Esempio: Pergamena del Volo (Permette di volare per 10 minuti)",
-    "Valuta: 450 monete d'oro"
-  ],
+    "loot": [
+        "FORMATO: Nome Oggetto (proprietà magiche se presenti)",
+        "SE oggetto magico: Arma Magica (+bonus attacco, effetto speciale se presente)",
+        "SE valuta semplice: 100 monete d'oro",
+        "IMPORTANTE: Estrai SOLO oggetti menzionati nella trascrizione, NON inventare!"
+    ],
   "loot_removed": ["lista", "oggetti", "persi/usati"],
   "quests": ["lista", "missioni", "accettate/completate"],
   "character_growth": [

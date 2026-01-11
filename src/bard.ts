@@ -900,14 +900,74 @@ async function extractMetadataSingleBatch(
         }
     }
 
-    const prompt = `Analizza questa trascrizione D&D.\n${contextInfo}\n${currentLocationMsg}\n${atlasContext}\n\nCOMPITI:\n1. Rileva cambio luogo (macro/micro).\n2. Identifica NPC menzionati.\n3. Rileva aggiornamenti alle descrizioni dei luoghi.\n4. Rileva nuove informazioni sugli NPC (ruolo, status).\n\nTESTO:\n${text}\n\nRispondi SOLO con JSON:\n{\n  "detected_location": {"macro": "...", "micro": "...", "confidence": "high/low"},\n  "atlas_update": "Nuova descrizione luogo (se cambiata)",\n  "npc_updates": [{"name": "...", "description": "...", "role": "...", "status": "..."}],\n  "present_npcs": ["NPC1", "NPC2"]\n}`;
+    const prompt = `Analizza questa trascrizione di una sessione D&D.
+
+${contextInfo}
+${currentLocationMsg}
+${atlasContext}
+
+**ISTRUZIONI CRITICHE:**
+1. **Rispondi SEMPRE in italiano puro**
+2. Descrivi luoghi, personaggi e azioni in italiano
+3. Non mescolare inglese nelle descrizioni
+4. Usa termini italiani anche per concetti fantasy
+
+**COMPITI:**
+1. Rileva cambio di luogo (macro/micro-location)
+2. Identifica NPC menzionati (NON i personaggi giocanti!)
+3. Rileva aggiornamenti alle descrizioni dei luoghi
+4. Rileva nuove informazioni sugli NPC (ruolo, status)
+
+**TESTO DA ANALIZZARE:**
+${text}
+
+**FORMATO OUTPUT (JSON OBBLIGATORIO):**
+{
+  "detected_location": {
+    "macro": "Nome città/regione",
+    "micro": "Nome specifico luogo",
+    "confidence": "high" o "low",
+    "description": "Descrizione dettagliata in ITALIANO"
+  },
+  "atlas_update": "Aggiornamento descrizione luogo (se necessario, in ITALIANO)",
+  "npc_updates": [
+    {
+      "name": "Nome NPC",
+      "description": "Descrizione in ITALIANO",
+      "role": "Ruolo in ITALIANO (es. 'Mercante', 'Guardia')",
+      "status": "ALIVE o DEAD"
+    }
+  ],
+  "present_npcs": ["NPC1", "NPC2"]
+}
+
+**ESEMPIO CORRETTO:**
+{
+  "detected_location": {
+    "macro": "Waterdeep",
+    "micro": "Taverna del Drago Dorato",
+    "confidence": "high",
+    "description": "Locale affollato, odore di birra e arrosto, camino acceso"
+  },
+  "npc_updates": [
+    {
+      "name": "Elminster",
+      "description": "Mago anziano con barba bianca",
+      "role": "Arcimago",
+      "status": "ALIVE"
+    }
+  ],
+  "present_npcs": ["Elminster"]
+}
+
+Rispondi SOLO con il JSON, senza altro testo.`;
 
     const startAI = Date.now();
     try {
         const options: any = {
             model: METADATA_MODEL,
             messages: [
-                { role: "system", content: "Analista D&D. Solo JSON." },
+                { role: "system", content: "Sei un assistente esperto di D&D. Rispondi SEMPRE in italiano. Output: solo JSON valido, descrizioni dettagliate in italiano." },
                 { role: "user", content: prompt }
             ]
         };

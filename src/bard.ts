@@ -1283,6 +1283,11 @@ REGOLE IMPORTANTI:
 
         if (SUMMARY_PROVIDER === 'openai') {
             options.response_format = { type: "json_object" };
+        } else if (SUMMARY_PROVIDER === 'ollama') {
+            options.format = 'json';
+            options.options = {
+                num_ctx: 8192
+            };
         }
 
         const response = await withRetry(() => summaryClient.chat.completions.create(options));

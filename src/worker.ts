@@ -111,6 +111,15 @@ export function startWorker() {
             console.log(`[Scriba] 🗣️  Inizio trascrizione Whisper: ${fileName}`);
             const result = await transcribeLocal(transcriptionPath);
 
+            // 🆕 GESTISCI ESPLICITAMENTE GLI ERRORI DI WHISPER
+            if (result.error) {
+                console.error(`[Scriba] ❌ Errore Whisper per ${fileName}: ${result.error}`);
+                updateRecordingStatus(fileName, 'ERROR', null, `Whisper Error: ${result.error}`);
+                monitor.logError('Worker', `Whisper failed: ${fileName} - ${result.error}`);
+                monitor.logJobFailed();
+                throw new Error(result.error);
+            }
+
             if (transcriptionPath !== filePath && fs.existsSync(transcriptionPath)) {
                 fs.unlinkSync(transcriptionPath);
             }

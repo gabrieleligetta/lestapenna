@@ -253,24 +253,37 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
 
     // ✅ TRACKING: Registra file in elaborazione
     ffmpeg.on('close', async (code) => {
-        if (code === 0 && firstChunkTimestamp) {
-            const silenceMs = silenceInjector.getSilenceInjectedMs();
-            console.log(`[VoiceRec] ✅ ${filename}: +${silenceMs}ms silenzio iniettato`);
-            
-            if (activeStreams.has(streamKey)) {
-                activeStreams.delete(streamKey);
+        try {
+            if (code === 0 && firstChunkTimestamp) {
+                const silenceMs = silenceInjector.getSilenceInjectedMs();
+                console.log(`[VoiceRec] ✅ ${filename}: +${silenceMs}ms silenzio iniettato`);
+                
+                if (activeStreams.has(streamKey)) {
+                    activeStreams.delete(streamKey);
+                }
+                
+                // Marca come pending per tracking
+                if (!pendingFileProcessing.has(guildId)) {
+                    pendingFileProcessing.set(guildId, new Set());
+                }
+                pendingFileProcessing.get(guildId)!.add(filename);
+                
+                // USA TIMESTAMP REALE (primo chunk)
+                await onFileClosed(userId, filepath, filename, firstChunkTimestamp, sessionId, guildId);
+                
+            } else if (!firstChunkTimestamp) {
+                console.warn(`[VoiceRec] ⚠️ ${filename}: Nessun chunk audio ricevuto, file vuoto`);
+                // Pulizia file vuoto se creato
+                if (fs.existsSync(filepath)) {
+                    try { fs.unlinkSync(filepath); } catch {}
+                }
+            } else {
+                console.warn(`[VoiceRec] ⚠️ FFmpeg exited with code ${code} for ${filename}`);
             }
-            
-            // Marca come pending per tracking
-            if (!pendingFileProcessing.has(guildId)) {
-                pendingFileProcessing.set(guildId, new Set());
-            }
-            pendingFileProcessing.get(guildId)!.add(filename);
-            
-            // USA TIMESTAMP REALE (primo chunk)
-            await onFileClosed(userId, filepath, filename, firstChunkTimestamp, sessionId, guildId);
-            
-            // Rimuovi dai pending e notifica
+        } catch (error) {
+            console.error(`[VoiceRec] ❌ Errore in onFileClosed per ${filename}:`, error);
+        } finally {
+            // 🆕 SEMPRE rimuovi dai pending, anche in caso di errore
             const pending = pendingFileProcessing.get(guildId);
             if (pending) {
                 pending.delete(filename);
@@ -280,14 +293,6 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
                     fileProcessingResolvers.delete(guildId);
                 }
             }
-        } else if (!firstChunkTimestamp) {
-            console.warn(`[VoiceRec] ⚠️ ${filename}: Nessun chunk audio ricevuto, file vuoto`);
-            // Pulizia file vuoto se creato
-            if (fs.existsSync(filepath)) {
-                try { fs.unlinkSync(filepath); } catch {}
-            }
-        } else {
-            console.warn(`[VoiceRec] ⚠️ FFmpeg exited with code ${code} for ${filename}`);
         }
     });
 

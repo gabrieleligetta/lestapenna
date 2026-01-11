@@ -44,20 +44,24 @@ export class WhisperCppService {
                 '-osrt', 'false',
                 '-ml', '1',
                 '--split-on-word',
-                '--condition-on-previous-text', 'false',  // Evita loop temporali
-                '--no-speech-threshold', '0.6',           // Soglia silenzio (default 0.6)
-                '--logprob-threshold', '-1.0',            // Confidence minima
+
+                // Anti-allucinazione
+                '--no-speech-thold', '0.65',   // Slightly more aggressive
+                '--logprob-thold', '-0.9',     // Slightly more aggressive
+                '--entropy-thold', '2.2',      // Riduce loop di parole
+                '--suppress-nst',              // Sopprime token non-parlato
             ];
 
             // Manually wrap execFile to capture stdout and stderr even on error
             await new Promise<void>((resolve, reject) => {
                 execFile('/usr/bin/nice', args, (error, stdout, stderr) => {
+                    // 🆕 LOGGA SEMPRE, anche se successo
+                    console.log(`[WhisperCpp] CMD: /usr/bin/nice ${args.join(' ')}`);
+                    console.log(`[WhisperCpp] STDOUT: ${stdout}`);
+                    if (stderr) console.log(`[WhisperCpp] STDERR: ${stderr}`);
+                    
                     if (error) {
-                        // Log the full stderr from the process
                         console.error(`[WhisperCpp] Process execution failed.`);
-                        console.error(`[WhisperCpp] CMD: /usr/bin/nice ${args.join(' ')}`);
-                        console.error(`[WhisperCpp] STDERR: ${stderr}`); 
-                        console.error(`[WhisperCpp] STDOUT: ${stdout}`); // Sometimes error info is here
                         console.error(`[WhisperCpp] ERROR OBJ: ${error.message}`);
                         
                         // Pass the stderr as part of the error message for better visibility

@@ -922,6 +922,10 @@ client.on('messageCreate', async (message: Message) => {
 
         await message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Ripristino file e reinserimento in coda...`);
 
+        console.log(`[Monitor] 🔄 Avvio monitoring per sessione reset: ${targetSessionId}`);
+        monitor.startSession(targetSessionId);
+
+
         let restoredCount = 0;
 
         for (const job of filesToProcess) {

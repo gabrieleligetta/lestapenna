@@ -4,7 +4,8 @@ import { uploadToOracle, getPresignedUrl } from './backupService';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript, getExplicitSessionNumber, db } from './db';
+import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript, getExplicitSessionNumber, db, getSessionNotes } from './db';
+import { processChronologicalSession } from './transcriptUtils';
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -499,6 +500,7 @@ export async function sendSessionRecap(
         const travels = getSessionTravelLog(sessionId);
         const npcs = getSessionEncounteredNPCs(sessionId);
         const transcripts = getSessionTranscript(sessionId);
+        const notes = getSessionNotes(sessionId);
 
         if (!transcripts || transcripts.length === 0) {
             console.warn(`[Reporter] ⚠️ Nessuna trascrizione per ${sessionId}`);
@@ -514,132 +516,27 @@ export async function sendSessionRecap(
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
             });
 
-        // 🆕 LOGICA DI ORDINAMENTO CRONOLOGICO "INTRECCIATO"
-
-        // Definiamo un'interfaccia per i segmenti appiattiti
-        interface FlattenedSegment {
-            absoluteTime: number;      // Timestamp reale (ms) per l'ordinamento
-            text: string;              // Il testo del segmento
-            headerInfo: string;        // L'intestazione da mostrare (Chi parla e da quale file)
-            formattedTime: string;     // Il timestamp [mm:ss] da mostrare nel testo
-        }
-
-        // Funzione helper per parsare e appiattire i segmenti
-        const flattenSegments = (
-            jsonContent: string,
-            fileTimestamp: number,
-            characterName: string,
-            fileNameLabel: string
-        ): FlattenedSegment[] => {
-            const results: FlattenedSegment[] = [];
-            const header = `--- ${characterName || 'Sconosciuto'} (File: ${fileNameLabel}) ---`;
-
-            // Determiniamo il tempo di riferimento (se startTime è null, usiamo il primo file come 0)
-            const refTime = startTime || transcripts[0]?.timestamp || 0;
-
-            try {
-                const segments = JSON.parse(jsonContent);
-                if (Array.isArray(segments)) {
-                    segments.forEach((s: any) => {
-                        // Calcolo tempo assoluto del segmento
-                        const absTime = fileTimestamp + (Math.floor(s.start * 1000));
-
-                        // Calcolo stringa [mm:ss] relativa all'inizio sessione
-                        let timeStr = "";
-                        if (refTime > 0) {
-                            const diff = Math.max(0, absTime - refTime);
-                            const mins = Math.floor(diff / 60000);
-                            const secs = Math.floor((diff % 60000) / 1000);
-                            timeStr = `[${mins}:${secs.toString().padStart(2, '0')}]`;
-                        }
-
-                        results.push({
-                            absoluteTime: absTime,
-                            text: s.text,
-                            headerInfo: header,
-                            formattedTime: timeStr
-                        });
-                    });
-                } else {
-                    // Fallback se non è un array JSON (tutto il testo in blocco)
-                    results.push({
-                        absoluteTime: fileTimestamp,
-                        text: jsonContent,
-                        headerInfo: header,
-                        formattedTime: "[0:00]"
-                    });
-                }
-            } catch (e) {
-                // Fallback in caso di errore parsing
-                results.push({
-                    absoluteTime: fileTimestamp,
-                    text: jsonContent,
-                    headerInfo: header,
-                    formattedTime: "[?]"
-                });
-            }
-            return results;
-        };
-
-        // Funzione per ricostruire il testo ordinato
-        const buildOrderedText = (allSegments: FlattenedSegment[]): string => {
-            // Ordina per tempo assoluto
-            allSegments.sort((a, b) => a.absoluteTime - b.absoluteTime);
-
-            let output = "";
-            let lastHeader = "";
-
-            allSegments.forEach(seg => {
-                // Se cambia la fonte (file o persona), ristampa l'header
-                if (seg.headerInfo !== lastHeader) {
-                    output += `\n\n${seg.headerInfo}\n`;
-                    lastHeader = seg.headerInfo;
-                }
-                // Aggiungi la riga: [mm:ss] Testo
-                output += `${seg.formattedTime ? seg.formattedTime + ' ' : ''}${seg.text}\n`;
-            });
-
-            return output.trim();
-        };
-
         // --- ELABORAZIONE CORRECTED ---
-        let allCorrectedSegments: FlattenedSegment[] = [];
-
-        for (const t of transcripts) {
-            const fileLabel = new Date(t.timestamp).toLocaleTimeString();
-            const segs = flattenSegments(t.transcription_text, t.timestamp, t.character_name!, fileLabel);
-            allCorrectedSegments = allCorrectedSegments.concat(segs);
-        }
-
-        const correctedText = buildOrderedText(allCorrectedSegments);
+        const processedCorrected = processChronologicalSession(transcripts, notes, startTime, campaignId);
+        const correctedText = processedCorrected.formattedText;
 
         // --- ELABORAZIONE RAW ---
-        let allRawSegments: FlattenedSegment[] = [];
-
-        for (const t of transcripts) {
+        // Costruiamo un array di TranscriptEntry usando il raw_transcription_text
+        const rawTranscripts = transcripts.map(t => {
             const recording = db.prepare(`
-                SELECT raw_transcription_text, filename 
+                SELECT raw_transcription_text 
                 FROM recordings 
                 WHERE session_id = ? AND user_id = ? AND timestamp = ?
-            `).get(sessionId, t.user_id, t.timestamp) as { raw_transcription_text: string | null, filename: string } | undefined;
+            `).get(sessionId, t.user_id, t.timestamp) as { raw_transcription_text: string | null } | undefined;
 
-            const fileLabel = new Date(t.timestamp).toLocaleTimeString(); // O recording?.filename se preferisci il nome file
+            return {
+                ...t,
+                transcription_text: recording?.raw_transcription_text || "[Trascrizione grezza non disponibile]"
+            };
+        });
 
-            if (recording && recording.raw_transcription_text) {
-                const segs = flattenSegments(recording.raw_transcription_text, t.timestamp, t.character_name!, fileLabel);
-                allRawSegments = allRawSegments.concat(segs);
-            } else {
-                // Placeholder se manca il raw
-                allRawSegments.push({
-                    absoluteTime: t.timestamp,
-                    text: "[Trascrizione grezza non disponibile]",
-                    headerInfo: `--- ${t.character_name || 'Sconosciuto'} (File: ${fileLabel}) ---`,
-                    formattedTime: ""
-                });
-            }
-        }
-
-        const rawText = buildOrderedText(allRawSegments);
+        const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId);
+        const rawText = processedRaw.formattedText;
 
         // 📁 SALVA FILE TEMPORANEI
         const tempDir = path.join(__dirname, '..', 'temp_emails');

@@ -20,9 +20,11 @@ import {
     listNpcs,
     getCharacterHistory,
     getNpcHistory,
-    getCampaignSnapshot
+    getCampaignSnapshot,
+    db
 } from './db';
 import { monitor } from './monitor';
+import { processChronologicalSession } from './transcriptUtils';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -439,45 +441,19 @@ export async function ingestSessionRaw(sessionId: string) {
 
     // 2. Recupera e ricostruisci il dialogo completo
     const transcriptions = getSessionTranscript(sessionId);
-    if (transcriptions.length === 0) return;
-
+    const notes = getSessionNotes(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
 
-    interface DialogueLine { timestamp: number; text: string; macro?: string | null; micro?: string | null; present_npcs?: string[] }
-    const lines: DialogueLine[] = [];
+    if (transcriptions.length === 0 && notes.length === 0) return;
 
-    for (const t of transcriptions) {
-        try {
-            const segments = JSON.parse(t.transcription_text);
-            const npcs = t.present_npcs ? t.present_npcs.split(',') : [];
-            const charName = t.character_name || "Sconosciuto";
-
-            if (Array.isArray(segments)) {
-                for (const seg of segments) {
-                    const absTime = t.timestamp + (seg.start * 1000);
-                    const mins = Math.floor((absTime - startTime) / 60000);
-                    const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
-                    const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-
-                    lines.push({
-                        timestamp: absTime,
-                        text: `[${timeStr}] ${charName}: ${seg.text}`,
-                        macro: t.macro_location,
-                        micro: t.micro_location,
-                        present_npcs: npcs
-                    });
-                }
-            }
-        } catch (e) { /* Ignora errori parsing */ }
-    }
-
-    lines.sort((a, b) => a.timestamp - b.timestamp);
+    // Usa la nuova utility per ottenere il testo lineare
+    const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
+    const fullText = processed.linearText;
 
     const allNpcs = listNpcs(campaignId, 1000);
     const npcNames = allNpcs.map(n => n.name);
 
     // 3. Sliding Window Chunking
-    const fullText = lines.map(l => l.text).join("\n");
     const CHUNK_SIZE = 1000;
     const OVERLAP = 200;
 
@@ -494,13 +470,24 @@ export async function ingestSessionRaw(sessionId: string) {
         const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
         if (timeMatch) chunkTimestamp = startTime + (parseInt(timeMatch[1]) * 60000) + (parseInt(timeMatch[2]) * 1000);
 
-        const firstLine = lines.find(l => l.text.includes(chunkText.substring(0, 50)));
-        const macro = firstLine?.macro || null;
-        const micro = firstLine?.micro || null;
+        // Estrazione metadati dal chunk (approssimativa)
+        // Cerca l'ultimo marker di scena nel testo precedente o nel chunk corrente
+        const textUpToChunk = fullText.substring(0, end);
+        const lastSceneMatch = textUpToChunk.match(/--- CAMBIO SCENA: \[(.*?)\] - \[(.*?)\] ---/g);
+        let macro = null;
+        let micro = null;
+        
+        if (lastSceneMatch && lastSceneMatch.length > 0) {
+            const lastMatch = lastSceneMatch[lastSceneMatch.length - 1];
+            const groups = lastMatch.match(/--- CAMBIO SCENA: \[(.*?)\] - \[(.*?)\] ---/);
+            if (groups) {
+                macro = groups[1] !== "Invariato" ? groups[1] : null;
+                micro = groups[2] !== "Invariato" ? groups[2] : null;
+            }
+        }
 
-        const dbNpcs = firstLine?.present_npcs || [];
         const textNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
-        const mergedNpcs = Array.from(new Set([...dbNpcs, ...textNpcs]));
+        const mergedNpcs = Array.from(new Set(textNpcs));
 
         if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: mergedNpcs });
         if (end >= fullText.length) break;
@@ -1186,61 +1173,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         memoryContext += `\n--------------------------------------------------\n`;
     }
 
-    // Ricostruzione dialogo lineare
-    const allFragments = [];
-    for (const t of transcriptions) {
-        try {
-            const segments = JSON.parse(t.transcription_text);
-            const charName = t.character_name || "Sconosciuto";
-            if (Array.isArray(segments)) {
-                for (const seg of segments) {
-                    allFragments.push({
-                        absoluteTime: t.timestamp + (seg.start * 1000),
-                        character: charName,
-                        text: seg.text,
-                        type: 'audio',
-                        macro: t.macro_location,
-                        micro: t.micro_location
-                    });
-                }
-            }
-        } catch (e) {}
-    }
-
-    for (const n of notes) {
-        const p = getUserProfile(n.user_id, campaignId || 0);
-        allFragments.push({
-            absoluteTime: n.timestamp,
-            character: p.character_name || "Giocatore",
-            text: `[NOTA UTENTE] ${n.content}`,
-            type: 'note',
-            macro: null,
-            micro: null
-        });
-    }
-
-    allFragments.sort((a, b) => a.absoluteTime - b.absoluteTime);
-
-    let lastMacro: string | null | undefined = null;
-    let lastMicro: string | null | undefined = null;
-
-    let fullDialogue = allFragments.map(f => {
-        const minutes = Math.floor((f.absoluteTime - startTime) / 60000);
-        const seconds = Math.floor(((f.absoluteTime - startTime) % 60000) / 1000);
-        const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-        const prefix = f.type === 'note' ? '📝 ' : '';
-
-        let sceneMarker = "";
-        if (f.type === 'audio' && (f.macro !== lastMacro || f.micro !== lastMicro)) {
-            if (f.macro || f.micro) {
-                sceneMarker = `\n--- CAMBIO SCENA: [${f.macro || "Invariato"}] - [${f.micro || "Invariato"}] ---\n`;
-                lastMacro = f.macro;
-                lastMicro = f.micro;
-            }
-        }
-
-        return `${sceneMarker}${prefix}[${timeStr}] ${f.character}: ${f.text}`;
-    }).join("\n");
+    // Ricostruzione dialogo lineare usando la nuova utility
+    const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
+    const fullDialogue = processed.linearText;
 
     let contextForFinalStep = "";
     let accumulatedTokens = 0;

@@ -1731,6 +1731,138 @@ client.on('messageCreate', async (message: Message) => {
         await message.reply(`✅ Eliminate **${deletedCount}** sessioni di test dal database.`);
     }
 
+    // --- NUOVO: $rebuildcampaign (SOLO SVILUPPO) ---
+    if (command === 'rebuildcampaign' || command === 'ricostruiscicampagna') {
+        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
+        if (message.author.id !== DEVELOPER_ID) return;
+
+        const campaign = getActiveCampaign(message.guild.id);
+        if (!campaign) return await message.reply("⚠️ Nessuna campagna attiva da ricostruire.");
+
+        await message.reply(`⚠️ **ATTENZIONE**: Stai per ricostruire l'intera storia della campagna **${campaign.name}**.\n` +
+            `Verranno cancellati: Inventario, Quest, Storia PG/NPC, Timeline e Memoria RAG.\n` +
+            `Poi tutte le sessioni verranno riprocessate sequenzialmente.\n\n` +
+            `Scrivi \`CONFERMO\` entro 15 secondi per procedere.`);
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                const statusMsg = await message.reply(`🏗️ **Ricostruzione Campagna: ${campaign.name}** avviata...`);
+
+                // FASE 1: THE GREAT PURGE
+                await statusMsg.edit(`🏗️ **Fase 1: Tabula Rasa**\nCancellazione dati derivati...`);
+                
+                const campaignId = campaign.id;
+                db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM npc_history WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM world_history WHERE campaign_id = ?').run(campaignId);
+                // Nota: knowledge_fragments viene pulito sessione per sessione dopo, ma potremmo pulirlo anche qui per sicurezza globale?
+                // Meglio farlo sessione per sessione come da richiesta "Deep Clean" nel loop.
+
+                await statusMsg.edit(`🏗️ **Fase 1: Tabula Rasa** ✅\nRecupero sessioni...`);
+
+                // FASE 2: FETCH SESSIONI
+                // Query complessa per ordinamento: Prima per numero (se esiste), poi per data
+                // CASE WHEN session_number IS NULL THEN 1 ELSE 0 END mette i NULL alla fine
+                const sessions = db.prepare(`
+                    SELECT session_id, session_number, MIN(r.timestamp) as start_time 
+                    FROM sessions s
+                    LEFT JOIN recordings r ON s.session_id = r.session_id
+                    WHERE s.campaign_id = ?
+                    GROUP BY s.session_id
+                    ORDER BY 
+                        CASE WHEN s.session_number IS NULL THEN 1 ELSE 0 END, 
+                        s.session_number ASC, 
+                        MIN(r.timestamp) ASC
+                `).all(campaignId) as { session_id: string, session_number: number | null }[];
+
+                if (sessions.length === 0) {
+                    return await statusMsg.edit(`⚠️ Nessuna sessione trovata per questa campagna.`);
+                }
+
+                await statusMsg.edit(`🏗️ Trovate **${sessions.length}** sessioni da riprocessare.\nInizio sequenza...`);
+
+                // FASE 3: SEQUENTIAL LOOP
+                for (let i = 0; i < sessions.length; i++) {
+                    const sess = sessions[i];
+                    const progressStr = `[${i + 1}/${sessions.length}] Sessione ${sess.session_number || '?'} (${sess.session_id})`;
+                    
+                    await statusMsg.edit(`🏗️ **Elaborazione in corso...**\n${progressStr}\n- Pulizia e Ripristino...`);
+                    console.log(`[Rebuild] Inizio ${progressStr}`);
+
+                    try {
+                        // a. Deep Clean
+                        await removeSessionJobs(sess.session_id);
+                        db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(sess.session_id);
+                        const filesToProcess = resetSessionData(sess.session_id);
+
+                        if (filesToProcess.length === 0) {
+                            console.log(`[Rebuild] Skip ${sess.session_id} (Nessun file)`);
+                            continue;
+                        }
+
+                        // b. Restore & Queue
+                        let restoredCount = 0;
+                        for (const job of filesToProcess) {
+                            if (!fs.existsSync(job.filepath)) {
+                                const success = await downloadFromOracle(job.filename, job.filepath, sess.session_id);
+                                if (success) restoredCount++;
+                            }
+
+                            // Ensure SECURED status if file exists
+                            if (fs.existsSync(job.filepath)) {
+                                updateRecordingStatus(job.filename, 'SECURED');
+                            }
+
+                            // Add to Queue
+                            await audioQueue.add('transcribe-job', {
+                                sessionId: job.session_id,
+                                fileName: job.filename,
+                                filePath: job.filepath,
+                                userId: job.user_id
+                            }, {
+                                jobId: job.filename,
+                                attempts: 5,
+                                backoff: { type: 'exponential', delay: 2000 },
+                                removeOnComplete: true,
+                                removeOnFail: false
+                            });
+                        }
+
+                        await statusMsg.edit(`🏗️ **Elaborazione in corso...**\n${progressStr}\n- File: ${filesToProcess.length} (Ripristinati: ${restoredCount})\n- In attesa trascrizione e riassunto...`);
+                        
+                        // Resume queue just in case
+                        await audioQueue.resume();
+
+                        // c. Blocking Wait
+                        // Passiamo message.channel per avere i log progressivi anche in chat se serve, 
+                        // ma waitForCompletionAndSummarize manda già messaggi.
+                        // Per evitare spam eccessivo potremmo passare undefined, ma la richiesta dice "Log progress".
+                        // waitForCompletionAndSummarize manda il riassunto finale nel canale.
+                        await waitForCompletionAndSummarize(sess.session_id, message.channel as TextChannel);
+
+                    } catch (err: any) {
+                        console.error(`[Rebuild] ❌ Errore sessione ${sess.session_id}:`, err);
+                        await (message.channel as TextChannel).send(`❌ **Errore Critico** su sessione ${sess.session_id}: ${err.message}. Passo alla prossima.`);
+                    }
+                }
+
+                await statusMsg.edit(`✅ **Campagna Ricostruita Completamente.**\nTutte le ${sessions.length} sessioni sono state rigenerate.`);
+                await message.reply("Procedura terminata. Verifica la coerenza dei dati.");
+            }
+        } catch (e) {
+            await message.reply("⌛ Tempo scaduto o errore. Procedura annullata.");
+        }
+    }
+
     // --- NUOVO: !wipe (SOLO SVILUPPO) ---
     if (command === 'wipe') {
         if (message.author.id !== '310865403066712074') return;

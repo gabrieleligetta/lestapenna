@@ -1093,6 +1093,68 @@ export async function correctTranscription(
     };
 }
 
+/**
+ * AGENTIC RAG: Analizza la trascrizione e decide cosa cercare nella memoria a lungo termine.
+ */
+async function identifyRelevantContext(
+    campaignId: number, 
+    transcriptText: string, 
+    snapshot: any
+): Promise<string[]> {
+    console.log(`[RAG Agent] 🕵️ Analisi contesto dinamico...`);
+
+    // Limitiamo il testo per evitare token overflow in questa fase di analisi rapida
+    const analysisText = transcriptText.length > 15000 
+        ? transcriptText.substring(0, 15000) + "... [TRONCATO]" 
+        : transcriptText;
+
+    const prompt = `Sei l'archivista di una campagna D&D.
+    
+    CONTESTO ATTUALE (Statico):
+    - Luogo: ${snapshot.location?.macro} - ${snapshot.location?.micro}
+    - Quest Attive: ${snapshot.quest_context}
+    
+    TRASCRIZIONE SESSIONE (Parziale):
+    ${analysisText}
+    
+    Il tuo compito è identificare 3-5 elementi SPECIFICI menzionati in questa sessione di cui servirebbe recuperare la memoria storica dal database (RAG) per scrivere un riassunto migliore.
+    
+    Cerca:
+    1. NPC specifici menzionati che non sono nel party.
+    2. Luoghi passati o oggetti della lore citati.
+    3. Eventi passati a cui i giocatori fanno riferimento.
+    
+    Restituisci ESCLUSIVAMENTE un array JSON di stringhe (le query di ricerca).
+    Esempio: ["Chi è il Barone Vargas?", "Storia della Torre di Vallaki", "Profezia del Drago"]`;
+
+    try {
+        const response = await summaryClient.chat.completions.create({
+            model: SUMMARY_MODEL, // Usa un modello veloce (es. gpt-4o-mini)
+            messages: [
+                { role: "system", content: "Sei un analista di contesto JSON." },
+                { role: "user", content: prompt }
+            ],
+            response_format: { type: "json_object" }
+        });
+
+        const raw = response.choices[0].message.content || "{}";
+        const parsed = JSON.parse(raw);
+        
+        // Gestiamo formati diversi (es. { queries: [...] } o { list: [...] } o direttamente array)
+        const queries = Array.isArray(parsed) ? parsed : (parsed.queries || parsed.list || parsed.items || []);
+        
+        console.log(`[RAG Agent] 🔍 Query generate:`, queries);
+        if (queries.length === 0) {
+            console.log("[RAG Agent] 🤷 Nessun contesto aggiuntivo ritenuto necessario.");
+        }
+        return queries.slice(0, 5); // Max 5 ricerche per non intasare
+
+    } catch (e) {
+        console.warn(`[RAG Agent] ⚠️ Fallita generazione query dinamiche:`, e);
+        return []; // Fallback al contesto statico se fallisce
+    }
+}
+
 // --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<SummaryResponse> {
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
@@ -1127,32 +1189,48 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         castContext += "Nota: Profili personaggi non disponibili per questa sessione legacy.\n";
     }
 
-    // --- TOTAL RECALL (CONTEXT INJECTION) ---
+    // --- TOTAL RECALL (CONTEXT INJECTION HYBRID) ---
     let memoryContext = "";
     if (campaignId) {
-        console.log(`[Bardo] 🧠 Avvio Total Recall per campagna ${campaignId}...`);
+        console.log(`[Bardo] 🧠 Avvio Total Recall Ibrido (Statico + Agentico)...`);
         const snapshot = getCampaignSnapshot(campaignId);
-        const activeCharNames = snapshot.characters.map((c: any) => c.character_name).filter(Boolean);
-        const activeQuestTitles = snapshot.quests.map((q: any) => q.title);
+        
+        // 1. Contesto Statico (Base sicura)
+        const staticQueries = [];
+        // Se c'è un luogo, cerchiamo info su di esso
         const locationQuery = snapshot.location ? `${snapshot.location.macro || ''} ${snapshot.location.micro || ''}`.trim() : "";
-
-        const promises = [];
-        if (locationQuery) promises.push(searchKnowledge(campaignId, `Eventi passati a ${locationQuery}`, 3).then(res => ({ type: 'LUOGO', data: res })));
-        if (activeCharNames.length > 0) promises.push(searchKnowledge(campaignId, `Fatti su ${activeCharNames.join(', ')}`, 3).then(res => ({ type: 'PERSONAGGI', data: res })));
-        if (activeQuestTitles.length > 0) promises.push(searchKnowledge(campaignId, `Dettagli quest: ${activeQuestTitles.join(', ')}`, 3).then(res => ({ type: 'MISSIONI', data: res })));
-
-        const ragResults = await Promise.all(promises);
-
-        memoryContext = `\n[[MEMORIA DEL MONDO]]\n`;
+        if (locationQuery) staticQueries.push(searchKnowledge(campaignId, `Info su luogo: ${locationQuery}`, 2)); // Limitiamo a 2
+        
+        // 2. Contesto Dinamico (Agentic RAG)
+        // Ricostruiamo il testo grezzo per l'analisi (senza note, solo parlato)
+        const rawTranscript = transcriptions.map(t => t.transcription_text).join('\n');
+        
+        // L'agente decide cosa cercare
+        const dynamicQueries = await identifyRelevantContext(campaignId, rawTranscript, snapshot);
+        
+        // Eseguiamo le ricerche dinamiche
+        const dynamicPromises = dynamicQueries.map(q => searchKnowledge(campaignId, q, 3));
+        
+        // Eseguiamo tutto in parallelo
+        const [staticResults, ...dynamicResults] = await Promise.all([
+            Promise.all(staticQueries),
+            ...dynamicPromises
+        ]);
+        
+        // Costruzione Stringa Contesto
+        memoryContext = `\n[[MEMORIA DEL MONDO E CONTESTO]]\n`;
         memoryContext += `📍 LUOGO: ${snapshot.location_context}\n`;
-        if (snapshot.atlasDesc) memoryContext += `📖 DESCRIZIONE AMBIENTE: ${snapshot.atlasDesc}\n`;
-        memoryContext += `⚔️ MISSIONI ATTIVE: ${snapshot.quest_context}\n`;
-
-        ragResults.forEach(res => {
-            if (res.data && res.data.length > 0) {
-                memoryContext += `\nRICORDI (${res.type}):\n${res.data.map(s => `- ${s}`).join('\n')}\n`;
-            }
-        });
+        memoryContext += `⚔️ QUEST ATTIVE: ${snapshot.quest_context}\n`;
+        if (snapshot.atlasDesc) memoryContext += `📖 GUIDA ATLANTE: ${snapshot.atlasDesc}\n`;
+        
+        // Aggiungiamo i risultati RAG
+        const allMemories = [...staticResults.flat(), ...dynamicResults.flat()];
+        // Deduplica stringhe identiche
+        const uniqueMemories = Array.from(new Set(allMemories));
+        
+        if (uniqueMemories.length > 0) {
+            memoryContext += `\n🔍 RICORDI RILEVANTI (Dall'Archivio):\n${uniqueMemories.map(m => `- ${m}`).join('\n')}\n`;
+        }
         memoryContext += `\n--------------------------------------------------\n`;
     }
 

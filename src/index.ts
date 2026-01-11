@@ -1903,10 +1903,34 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     // Invia email DM
                     await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrative);
 
+                    // 🆕 LOG DEBUG
+                    console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');
+
                     // CHIUSURA SESSIONE E INVIO REPORT TECNICO
                     const metrics = await monitor.endSession();
+
+                    console.log('[Monitor] 📊 DEBUG: monitor.endSession() completato', { 
+                        hasMetrics: !!metrics, 
+                        sessionId: metrics?.sessionId 
+                    });
+
                     if (metrics) {
-                        processSessionReport(metrics).catch(e => console.error("[Monitor] Errore report:", e));
+                        console.log('[Monitor] 📊 DEBUG: Invio report via processSessionReport()...');
+                        
+                        try {
+                            await processSessionReport(metrics);  // ← CAMBIATO DA .catch() ad await
+                            console.log('[Monitor] ✅ Report metriche inviato con successo');
+                        } catch (e: any) {
+                            console.error('[Monitor] ❌ ERRORE INVIO REPORT:', e.message);
+                            console.error('[Monitor] ❌ Stack:', e.stack);
+                            
+                            // Informa in chat (opzionale)
+                            if (channel) {
+                                await channel.send(`⚠️ Report tecnico fallito: ${e.message}`);
+                            }
+                        }
+                    } else {
+                        console.warn('[Monitor] ⚠️ DEBUG: metrics è null/undefined!');
                     }
 
                     // Se è una sessione di test, avvisiamo in chat

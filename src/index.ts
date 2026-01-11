@@ -76,7 +76,8 @@ import {
     addNpcEvent,
     addWorldEvent,
     getWorldTimeline,
-    setCampaignYear, getSessionRecordings, Campaign // NUOVO IMPORT
+    setCampaignYear, getSessionRecordings, Campaign,
+    getSessionEncounteredNPCs // NUOVO IMPORT
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -1168,7 +1169,10 @@ client.on('messageCreate', async (message: Message) => {
             }
             // -----------------------------
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative, result.monsters);
+            // 🆕 Recupera NPC incontrati
+            const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
+
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative, result.monsters, encounteredNPCs);
             
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
@@ -1760,12 +1764,10 @@ client.on('messageCreate', async (message: Message) => {
                 
                 const campaignId = campaign.id;
                 db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId);
-                db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId);
-                db.prepare('DELETE FROM npc_dossier WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM npc_history WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM world_history WHERE campaign_id = ?').run(campaignId);
-                db.prepare('DELETE FROM location_history WHERE campaign_id = ?').run(campaignId);
                 // Nota: knowledge_fragments viene pulito sessione per sessione dopo, ma potremmo pulirlo anche qui per sicurezza globale?
                 // Meglio farlo sessione per sessione come da richiesta "Deep Clean" nel loop.
 
@@ -2098,9 +2100,12 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     if (result.loot_removed) result.loot_removed.forEach(item => removeLoot(campaignId, item));
                     if (result.quests) result.quests.forEach(q => addQuest(campaignId, q));
                     
+                    // 🆕 Recupera NPC incontrati
+                    const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
+
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrative, result.monsters);
+                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrative, result.monsters, encounteredNPCs);
                     }
                     
                     // Invia email DM
@@ -2199,7 +2204,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>) {
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -2287,8 +2292,8 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
         await targetChannel.send(chunk);
     }
 
-    // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI ---
-    if ((loot && loot.length > 0) || (quests && quests.length > 0) || (monsters && monsters.length > 0)) {
+    // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---
+    if ((loot && loot.length > 0) || (quests && quests.length > 0) || (monsters && monsters.length > 0) || (encounteredNPCs && encounteredNPCs.length > 0)) {
         const embed = new EmbedBuilder()
             .setColor("#F1C40F")
             .setTitle("🎒 Riepilogo Tecnico");
@@ -2310,6 +2315,24 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
                 return `${statusEmoji} **${monster.name}**${countText} - \`${monster.status}\``;
             }).join('\n');
             embed.addFields({ name: "🐉 Mostri Combattuti", value: monsterList });
+        }
+
+        // 🆕 SEZIONE NPC INCONTRATI
+        if (encounteredNPCs && encounteredNPCs.length > 0) {
+            const npcList = encounteredNPCs.map(npc => {
+                // Emoji in base allo status
+                const statusEmoji = npc.status === 'DEAD' ? '💀' :
+                                   npc.status === 'HOSTILE' ? '⚔️' :
+                                   npc.status === 'FRIENDLY' ? '🤝' :
+                                   npc.status === 'NEUTRAL' ? '🔷' : '✅';
+                
+                // Ruolo (se presente)
+                const roleText = npc.role ? ` - *${npc.role}*` : '';
+                
+                return `${statusEmoji} **${npc.name}**${roleText}`;
+            }).join('\n');
+            
+            embed.addFields({ name: '👥 NPC Incontrati', value: npcList });
         }
 
         await targetChannel.send({ embeds: [embed] });

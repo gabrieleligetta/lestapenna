@@ -1904,6 +1904,55 @@ client.on('messageCreate', async (message: Message) => {
         }
     }
 
+    // --- NUOVO: $softwipe (PULIZIA MEMORIA E CODA) ---
+    if (command === 'softwipe') {
+        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
+        if (message.author.id !== DEVELOPER_ID) return;
+
+        await message.reply(`⚠️ **SOFT WIPE**: Stai per cancellare **TUTTA** la memoria derivata (RAG, Inventario, Quest, Storia) e svuotare la Coda.\n` +
+            `Campagne, Sessioni, PG e Registrazioni rimarranno intatti.\n` +
+            `Scrivi \`CONFERMO\` entro 15 secondi per procedere.`);
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                const statusMsg = await message.reply("🧹 **Soft Wipe avviato...**");
+
+                // 1. Svuota Coda Redis
+                await clearQueue();
+                await statusMsg.edit("🧹 **Soft Wipe...**\n- Coda Redis svuotata ✅");
+
+                // 2. Cancella Tabelle Derivate (SQL)
+                // Non tocchiamo: campaigns, sessions, users, characters, recordings, locations, atlas, npcs
+                db.prepare('DELETE FROM knowledge_fragments').run();
+                db.prepare('DELETE FROM inventory').run();
+                db.prepare('DELETE FROM quests').run();
+                db.prepare('DELETE FROM character_history').run();
+                db.prepare('DELETE FROM npc_history').run();
+                db.prepare('DELETE FROM world_history').run();
+                db.prepare('DELETE FROM chat_history').run(); // Reset anche della chat col bardo
+
+                // 3. Reset stato registrazioni bloccate (ZOMBIE KILLER)
+                db.prepare("UPDATE recordings SET status = 'PENDING' WHERE status IN ('QUEUED', 'PROCESSING', 'TRANSCRIBED')").run();
+
+                await statusMsg.edit(`✅ **Soft Wipe Completato.**\n` +
+                    `- Coda svuotata.\n` +
+                    `- Memoria RAG e Dati Derivati cancellati.\n` +
+                    `- File bloccati resettati a PENDING.\n` +
+                    `- Struttura (Campagne/Sessioni) preservata.\n\n` +
+                    `Ora puoi lanciare \`$reset <ID_SESSIONE>\` per rigenerare i dati.`);
+            }
+        } catch (e) {
+            await message.reply("⌛ Tempo scaduto. Operazione annullata.");
+        }
+    }
+
     // --- NUOVO: !testmail (HIDDEN) ---
     if (command === 'testmail') {
         if (message.author.id !== '310865403066712074') return;

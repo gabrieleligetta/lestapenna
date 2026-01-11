@@ -1773,7 +1773,7 @@ client.on('messageCreate', async (message: Message) => {
                 // Query complessa per ordinamento: Prima per numero (se esiste), poi per data
                 // CASE WHEN session_number IS NULL THEN 1 ELSE 0 END mette i NULL alla fine
                 const sessions = db.prepare(`
-                    SELECT session_id, session_number, MIN(r.timestamp) as start_time 
+                    SELECT s.session_id, s.session_number, MIN(r.timestamp) as start_time 
                     FROM sessions s
                     LEFT JOIN recordings r ON s.session_id = r.session_id
                     WHERE s.campaign_id = ?
@@ -1858,8 +1858,9 @@ client.on('messageCreate', async (message: Message) => {
                 await statusMsg.edit(`✅ **Campagna Ricostruita Completamente.**\nTutte le ${sessions.length} sessioni sono state rigenerate.`);
                 await message.reply("Procedura terminata. Verifica la coerenza dei dati.");
             }
-        } catch (e) {
-            await message.reply("⌛ Tempo scaduto o errore. Procedura annullata.");
+        } catch (e: any) {
+            console.error("Errore rebuildcampaign:", e);
+            await message.reply(`⌛ Tempo scaduto o errore: ${e.message}. Procedura annullata.`);
         }
     }
 

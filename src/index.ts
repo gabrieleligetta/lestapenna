@@ -1904,7 +1904,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrative);
 
                     // CHIUSURA SESSIONE E INVIO REPORT TECNICO
-                    const metrics = monitor.endSession();
+                    const metrics = await monitor.endSession();
                     if (metrics) {
                         processSessionReport(metrics).catch(e => console.error("[Monitor] Errore report:", e));
                     }

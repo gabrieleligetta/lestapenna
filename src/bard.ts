@@ -813,7 +813,7 @@ async function extractMetadata(
     // Se il testo è breve, processiamo tutto insieme
     const fullText = correctedSegments.map(s => s.text).join('\n');
     if (fullText.length < 15000) { // Limite arbitrario sicuro per gpt-4o-mini
-        return extractMetadataSingleBatch(fullText, campaignId);
+        return extractMetadataSingleBatch(fullText, campaignId, METADATA_PROVIDER);
     }
 
     // Se è lungo, dividiamo in chunk logici
@@ -829,7 +829,7 @@ async function extractMetadata(
 
     const results = await processInBatches(chunks, 3, async (batch, idx) => {
         const batchText = batch.map(s => s.text).join('\n');
-        return extractMetadataSingleBatch(batchText, campaignId);
+        return extractMetadataSingleBatch(batchText, campaignId, METADATA_PROVIDER);
     }, "Estrazione Metadati (Batch)");
 
     // Aggregazione risultati
@@ -863,7 +863,8 @@ async function extractMetadata(
 
 async function extractMetadataSingleBatch(
     text: string,
-    campaignId?: number
+    campaignId?: number,
+    provider: 'openai' | 'ollama' = 'openai'
 ): Promise<{
     detected_location?: any;
     atlas_update?: string;
@@ -912,7 +913,7 @@ async function extractMetadataSingleBatch(
         };
 
         // Solo OpenAI supporta response_format
-        if (METADATA_PROVIDER === 'openai') {
+        if (provider === 'openai') {
             options.response_format = { type: "json_object" };
         }
 
@@ -933,10 +934,41 @@ async function extractMetadataSingleBatch(
             false
         );
 
-        const content = response.choices[0].message.content;
-        if (!content) throw new Error("Empty response");
-
-        return JSON.parse(content);
+        const rawContent = response.choices[0].message.content || "{}";
+        
+        // 🆕 SANITIZZA JSON (rimuove markdown se presente)
+        let cleanedContent = rawContent.trim();
+        
+        // Rimuovi code blocks markdown
+        if (cleanedContent.startsWith('```')) {
+            cleanedContent = cleanedContent
+                .replace(/^```(?:json)?\s*\n?/i, '')  // Rimuovi ```json o ```
+                .replace(/\n?```\s*$/i, '')            // Rimuovi ``` finale
+                .trim();
+        }
+        
+        // Parse con gestione errori
+        try {
+            const parsed = JSON.parse(cleanedContent);
+            return parsed;
+            
+        } catch (err: any) {
+            console.error(`[Metadati] ❌ JSON Parse Error con ${provider}:`);
+            console.error(`Raw: ${rawContent.substring(0, 200)}...`);
+            
+            // Se Ollama fallisce, fallback a OpenAI
+            if (provider === 'ollama') {
+                console.log(`[Metadati] 🔄 Fallback a OpenAI...`);
+                return extractMetadataSingleBatch(text, campaignId, 'openai');
+            }
+            
+            // Ritorna struttura vuota invece di crashare
+            return {
+                detected_location: null,
+                npc_updates: [],
+                present_npcs: []
+            };
+        }
 
     } catch (err) {
         console.error(`[Metadati] ❌ Errore:`, err);

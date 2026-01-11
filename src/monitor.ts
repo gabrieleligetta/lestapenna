@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
+import { processSessionReport } from './reporter';
 
 interface CostBreakdown {
     phase: string;           // 'transcription', 'metadata', 'map', 'summary', 'chat', 'embeddings'
@@ -495,7 +496,7 @@ class SystemMonitor {
         }
     }
 
-    endSession(): SessionMetrics | null {
+    async endSession(): Promise<SessionMetrics | null> {
         if (this.interval) clearInterval(this.interval);
 
         // Ultimo check disco sincrono o quasi (ma exec è async, quindi ci affidiamo all'ultimo valore salvato)
@@ -534,6 +535,16 @@ class SystemMonitor {
                     cpuDegradation: Math.round(degradation),
                     thermalThrottlingDetected: sessionIsActive && significantDrop && avgCpuWasHigh
                 };
+            }
+
+            // 🆕 INVIA REPORT EMAIL
+            console.log('[Monitor] 📧 Preparazione invio report metriche...');
+            try {
+                await processSessionReport(this.currentSession);
+                console.log('[Monitor] ✅ Report metriche inviato con successo');
+            } catch (err: any) {
+                console.error('[Monitor] ❌ Errore invio report:', err.message);
+                this.currentSession.errors.push(`Email report failed: ${err.message}`);
             }
         }
         const metrics = this.currentSession;

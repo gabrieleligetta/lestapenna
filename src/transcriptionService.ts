@@ -41,6 +41,7 @@ export class WhisperCppService {
                 '-l', 'it',
                 '-t', '3',
                 '-oj',
+                // '-osrt', 'false', // REMOVED: Causes issues with some whisper.cpp versions
                 '-ml', '1',
                 '--split-on-word',
 

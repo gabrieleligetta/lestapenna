@@ -41,7 +41,6 @@ export class WhisperCppService {
                 '-l', 'it',
                 '-t', '3',
                 '-oj',
-                '-osrt', 'false',
                 '-ml', '1',
                 '--split-on-word',
 

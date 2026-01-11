@@ -806,8 +806,70 @@ async function extractMetadata(
     npc_updates?: any[];
     present_npcs?: string[];
 }> {
+    // 🆕 BATCHING DEI METADATI
+    // Invece di processare tutto in un colpo solo (che potrebbe superare i limiti di token)
+    // o processare riga per riga (che è inefficiente), usiamo una finestra scorrevole.
+    
+    // Se il testo è breve, processiamo tutto insieme
     const fullText = correctedSegments.map(s => s.text).join('\n');
+    if (fullText.length < 15000) { // Limite arbitrario sicuro per gpt-4o-mini
+        return extractMetadataSingleBatch(fullText, campaignId);
+    }
 
+    // Se è lungo, dividiamo in chunk logici
+    console.log(`[Metadati] 🐘 Testo lungo (${fullText.length} chars). Batching attivato.`);
+    
+    const CHUNK_SIZE = 20; // Numero di segmenti per batch
+    const OVERLAP = 5;     // Sovrapposizione per non perdere contesto tra i batch
+    
+    const chunks: any[][] = [];
+    for (let i = 0; i < correctedSegments.length; i += (CHUNK_SIZE - OVERLAP)) {
+        chunks.push(correctedSegments.slice(i, i + CHUNK_SIZE));
+    }
+
+    const results = await processInBatches(chunks, 3, async (batch, idx) => {
+        const batchText = batch.map(s => s.text).join('\n');
+        return extractMetadataSingleBatch(batchText, campaignId);
+    }, "Estrazione Metadati (Batch)");
+
+    // Aggregazione risultati
+    const aggregated: any = {
+        detected_location: null, // Prendiamo l'ultimo valido o il più frequente? Per ora l'ultimo non nullo.
+        atlas_update: null,
+        npc_updates: [],
+        present_npcs: []
+    };
+
+    for (const res of results) {
+        if (res.detected_location && res.detected_location.confidence === 'high') {
+            aggregated.detected_location = res.detected_location;
+        }
+        if (res.atlas_update) aggregated.atlas_update = res.atlas_update; // Sovrascrive, forse meglio concatenare?
+        if (res.npc_updates) aggregated.npc_updates.push(...res.npc_updates);
+        if (res.present_npcs) aggregated.present_npcs.push(...res.present_npcs);
+    }
+
+    // Deduplica NPC
+    aggregated.present_npcs = Array.from(new Set(aggregated.present_npcs));
+    
+    // Se non abbiamo trovato location high confidence, proviamo con l'ultima low confidence
+    if (!aggregated.detected_location) {
+        const lastLow = results.reverse().find(r => r.detected_location);
+        if (lastLow) aggregated.detected_location = lastLow.detected_location;
+    }
+
+    return aggregated;
+}
+
+async function extractMetadataSingleBatch(
+    text: string,
+    campaignId?: number
+): Promise<{
+    detected_location?: any;
+    atlas_update?: string;
+    npc_updates?: any[];
+    present_npcs?: string[];
+}> {
     let contextInfo = "Contesto: Sessione D&D.";
     let currentLocationMsg = "Luogo: Sconosciuto.";
     let atlasContext = "";
@@ -837,7 +899,7 @@ async function extractMetadata(
         }
     }
 
-    const prompt = `Analizza questa trascrizione D&D.\n${contextInfo}\n${currentLocationMsg}\n${atlasContext}\n\nCOMPITI:\n1. Rileva cambio luogo (macro/micro).\n2. Identifica NPC menzionati.\n3. Rileva aggiornamenti alle descrizioni dei luoghi.\n4. Rileva nuove informazioni sugli NPC (ruolo, status).\n\nTESTO:\n${fullText}\n\nRispondi SOLO con JSON:\n{\n  "detected_location": {"macro": "...", "micro": "...", "confidence": "high/low"},\n  "atlas_update": "Nuova descrizione luogo (se cambiata)",\n  "npc_updates": [{"name": "...", "description": "...", "role": "...", "status": "..."}],\n  "present_npcs": ["NPC1", "NPC2"]\n}`;
+    const prompt = `Analizza questa trascrizione D&D.\n${contextInfo}\n${currentLocationMsg}\n${atlasContext}\n\nCOMPITI:\n1. Rileva cambio luogo (macro/micro).\n2. Identifica NPC menzionati.\n3. Rileva aggiornamenti alle descrizioni dei luoghi.\n4. Rileva nuove informazioni sugli NPC (ruolo, status).\n\nTESTO:\n${text}\n\nRispondi SOLO con JSON:\n{\n  "detected_location": {"macro": "...", "micro": "...", "confidence": "high/low"},\n  "atlas_update": "Nuova descrizione luogo (se cambiata)",\n  "npc_updates": [{"name": "...", "description": "...", "role": "...", "status": "..."}],\n  "present_npcs": ["NPC1", "NPC2"]\n}`;
 
     const startAI = Date.now();
     try {

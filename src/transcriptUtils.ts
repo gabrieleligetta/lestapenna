@@ -28,7 +28,7 @@ interface FlattenedSegment {
 /**
  * Tenta di parsare una stringa JSON (array o oggetto).
  */
-export export function safeJsonParse(input: string): any {
+export function safeJsonParse(input: string): any {
     if (!input) return null;
     
     let cleaned = input.replace(/```json/gi, '').replace(/```/g, '').trim();

@@ -476,6 +476,150 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
     }
 }
 
+// 🆕 TIMELINE UNIFICATA CON TIMESTAMP RANGE
+interface TimelineSegment {
+    absoluteTime: number;
+    sessionSeconds: number;
+    speaker: string;
+    text: string;
+    start: number;  // Secondi relativi alla sessione (inizio frase)
+    end: number;    // Secondi relativi alla sessione (fine frase)
+}
+
+function generateUnifiedTimeline(
+    transcripts: any[],
+    sessionStart: number,
+    sessionId: string,
+    useRaw: boolean = false
+): string {
+    if (!sessionStart) {
+        // Fallback se manca startTime
+        return transcripts.map(t => {
+            const text = useRaw 
+                ? (t.raw_transcription_text || t.transcription_text) 
+                : t.transcription_text;
+            return `--- ${t.character_name || 'Sconosciuto'} ---\n${text}`;
+        }).join('\n\n');
+    }
+
+    const timeline: TimelineSegment[] = [];
+
+    // 1. FLATTEN: Spacchetta tutti i segmenti
+    for (const rec of transcripts) {
+        try {
+            let textSource = rec.transcription_text;
+            
+            // Se raw, cerca nel DB
+            if (useRaw) {
+                const recording = db.prepare(`
+                    SELECT raw_transcription_text 
+                    FROM recordings 
+                    WHERE session_id = ? AND user_id = ? AND timestamp = ?
+                `).get(sessionId, rec.user_id, rec.timestamp) as { raw_transcription_text: string | null } | undefined;
+                
+                textSource = recording?.raw_transcription_text || rec.transcription_text;
+            }
+
+            const segments = JSON.parse(textSource);
+            const speaker = rec.character_name || "Sconosciuto";
+
+            if (Array.isArray(segments)) {
+                for (const seg of segments) {
+                    const absoluteTime = rec.timestamp + (seg.start * 1000);
+                    const sessionSeconds = (absoluteTime - sessionStart) / 1000;
+                    const duration = (seg.end - seg.start) || 0;
+
+                    timeline.push({
+                        absoluteTime,
+                        sessionSeconds,
+                        speaker,
+                        text: seg.text,
+                        start: sessionSeconds,
+                        end: sessionSeconds + duration
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn(`[Timeline] ⚠️ Parse error for ${rec.user_id}`);
+        }
+    }
+
+    // 2. SORT: Ordina per timestamp assoluto
+    timeline.sort((a, b) => a.absoluteTime - b.absoluteTime);
+
+    if (timeline.length === 0) {
+        return "Nessuna trascrizione disponibile.";
+    }
+
+    // 3. GROUP: Raggruppa segmenti consecutivi dello stesso speaker
+    const grouped: Array<{
+        speaker: string;
+        start: number;
+        end: number;
+        text: string;
+    }> = [];
+
+    let currentGroup: typeof grouped[0] | null = null;
+
+    for (const seg of timeline) {
+        if (!currentGroup || currentGroup.speaker !== seg.speaker) {
+            // Nuovo speaker → chiudi gruppo precedente
+            if (currentGroup) grouped.push(currentGroup);
+            currentGroup = {
+                speaker: seg.speaker,
+                start: seg.start,
+                end: seg.end,
+                text: seg.text
+            };
+        } else {
+            // Stesso speaker
+            const gap = seg.start - currentGroup.end;
+
+            if (gap > 3) {
+                // Gap > 3 secondi → nuova frase (anche se stesso speaker)
+                grouped.push(currentGroup);
+                currentGroup = {
+                    speaker: seg.speaker,
+                    start: seg.start,
+                    end: seg.end,
+                    text: seg.text
+                };
+            } else {
+                // Continua la frase
+                currentGroup.text += ' ' + seg.text;
+                currentGroup.end = seg.end;
+            }
+        }
+    }
+
+    if (currentGroup) grouped.push(currentGroup);
+
+    // 4. FORMAT: Output leggibile
+    let output = '';
+    let lastSpeaker = '';
+
+    for (const group of grouped) {
+        // Header speaker (solo se cambia)
+        if (group.speaker !== lastSpeaker) {
+            output += `\n--- ${group.speaker} ---\n`;
+            lastSpeaker = group.speaker;
+        }
+
+        // Timestamp range + testo
+        const startMins = Math.floor(group.start / 60);
+        const startSecs = Math.floor(group.start % 60);
+        const endMins = Math.floor(group.end / 60);
+        const endSecs = Math.floor(group.end % 60);
+
+        const startStr = `${startMins}:${startSecs.toString().padStart(2, '0')}`;
+        const endStr = `${endMins}:${endSecs.toString().padStart(2, '0')}`;
+
+        output += `[${startStr} → ${endStr}] ${group.text}\n`;
+    }
+
+    return output;
+}
+
 export async function sendSessionRecap(
     sessionId: string,
     campaignId: number,
@@ -513,152 +657,9 @@ export async function sendSessionRecap(
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
             });
 
-        // 🆕 TIMELINE UNIFICATA CON TIMESTAMP RANGE
-        interface TimelineSegment {
-            absoluteTime: number;
-            sessionSeconds: number;
-            speaker: string;
-            text: string;
-            start: number;  // Secondi relativi alla sessione (inizio frase)
-            end: number;    // Secondi relativi alla sessione (fine frase)
-        }
-
-        function generateUnifiedTimeline(
-            transcripts: any[],
-            sessionStart: number,
-            useRaw: boolean = false
-        ): string {
-            if (!sessionStart) {
-                // Fallback se manca startTime
-                return transcripts.map(t => {
-                    const text = useRaw 
-                        ? (t.raw_transcription_text || t.transcription_text) 
-                        : t.transcription_text;
-                    return `--- ${t.character_name || 'Sconosciuto'} ---\n${text}`;
-                }).join('\n\n');
-            }
-
-            const timeline: TimelineSegment[] = [];
-
-            // 1. FLATTEN: Spacchetta tutti i segmenti
-            for (const rec of transcripts) {
-                try {
-                    let textSource = rec.transcription_text;
-                    
-                    // Se raw, cerca nel DB
-                    if (useRaw) {
-                        const recording = db.prepare(`
-                            SELECT raw_transcription_text 
-                            FROM recordings 
-                            WHERE session_id = ? AND user_id = ? AND timestamp = ?
-                        `).get(sessionId, rec.user_id, rec.timestamp) as { raw_transcription_text: string | null } | undefined;
-                        
-                        textSource = recording?.raw_transcription_text || rec.transcription_text;
-                    }
-
-                    const segments = JSON.parse(textSource);
-                    const speaker = rec.character_name || "Sconosciuto";
-
-                    if (Array.isArray(segments)) {
-                        for (const seg of segments) {
-                            const absoluteTime = rec.timestamp + (seg.start * 1000);
-                            const sessionSeconds = (absoluteTime - sessionStart) / 1000;
-                            const duration = (seg.end - seg.start) || 0;
-
-                            timeline.push({
-                                absoluteTime,
-                                sessionSeconds,
-                                speaker,
-                                text: seg.text,
-                                start: sessionSeconds,
-                                end: sessionSeconds + duration
-                            });
-                        }
-                    }
-                } catch (e) {
-                    console.warn(`[Timeline] ⚠️ Parse error for ${rec.user_id}`);
-                }
-            }
-
-            // 2. SORT: Ordina per timestamp assoluto
-            timeline.sort((a, b) => a.absoluteTime - b.absoluteTime);
-
-            if (timeline.length === 0) {
-                return "Nessuna trascrizione disponibile.";
-            }
-
-            // 3. GROUP: Raggruppa segmenti consecutivi dello stesso speaker
-            const grouped: Array<{
-                speaker: string;
-                start: number;
-                end: number;
-                text: string;
-            }> = [];
-
-            let currentGroup: typeof grouped[0] | null = null;
-
-            for (const seg of timeline) {
-                if (!currentGroup || currentGroup.speaker !== seg.speaker) {
-                    // Nuovo speaker → chiudi gruppo precedente
-                    if (currentGroup) grouped.push(currentGroup);
-                    currentGroup = {
-                        speaker: seg.speaker,
-                        start: seg.start,
-                        end: seg.end,
-                        text: seg.text
-                    };
-                } else {
-                    // Stesso speaker
-                    const gap = seg.start - currentGroup.end;
-
-                    if (gap > 3) {
-                        // Gap > 3 secondi → nuova frase (anche se stesso speaker)
-                        grouped.push(currentGroup);
-                        currentGroup = {
-                            speaker: seg.speaker,
-                            start: seg.start,
-                            end: seg.end,
-                            text: seg.text
-                        };
-                    } else {
-                        // Continua la frase
-                        currentGroup.text += ' ' + seg.text;
-                        currentGroup.end = seg.end;
-                    }
-                }
-            }
-
-            if (currentGroup) grouped.push(currentGroup);
-
-            // 4. FORMAT: Output leggibile
-            let output = '';
-            let lastSpeaker = '';
-
-            for (const group of grouped) {
-                // Header speaker (solo se cambia)
-                if (group.speaker !== lastSpeaker) {
-                    output += `\n--- ${group.speaker} ---\n`;
-                    lastSpeaker = group.speaker;
-                }
-
-                // Timestamp range + testo
-                const startMins = Math.floor(group.start / 60);
-                const startSecs = Math.floor(group.start % 60);
-                const endMins = Math.floor(group.end / 60);
-                const endSecs = Math.floor(group.end % 60);
-
-                const startStr = `${startMins}:${startSecs.toString().padStart(2, '0')}`;
-                const endStr = `${endMins}:${endSecs.toString().padStart(2, '0')}`;
-
-                output += `[${startStr} → ${endStr}] ${group.text}\n`;
-            }
-
-            return output;
-        }
-
         // 🆕 GENERA ALLEGATI TXT CON TIMELINE UNIFICATA
-        const correctedText = generateUnifiedTimeline(transcripts, startTime || 0, false);
-        const rawText = generateUnifiedTimeline(transcripts, startTime || 0, true);
+        const correctedText = generateUnifiedTimeline(transcripts, startTime || 0, sessionId, false);
+        const rawText = generateUnifiedTimeline(transcripts, startTime || 0, sessionId, true);
 
         // 📁 SALVA FILE TEMPORANEI
         const tempDir = path.join(__dirname, '..', 'temp_emails');

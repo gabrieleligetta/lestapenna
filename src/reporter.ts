@@ -1,6 +1,6 @@
 import * as nodemailer from 'nodemailer';
 import { SessionMetrics } from './monitor';
-import { uploadToOracle } from './backupService';
+import { uploadToOracle, getPresignedUrl } from './backupService';
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -523,6 +523,31 @@ export async function sendSessionRecap(
         fs.writeFileSync(correctedPath, correctedText, 'utf-8');
         fs.writeFileSync(rawPath, rawText, 'utf-8');
 
+        // Genera Link Raw Full Session
+        let fullMixUrl = "";
+        try {
+            const mixKey = `mixed_sessions/${sessionId}/session_${sessionId}_full.mp3`;
+            fullMixUrl = await getPresignedUrl(mixKey, undefined, 604800) || "";
+        } catch (e) {
+            console.warn(`[Reporter] ⚠️ Traccia raw non disponibile per ${sessionId}`);
+        }
+
+        // HTML Download Button (SOLO Raw)
+        let downloadLinksHtml = "";
+        if (fullMixUrl) {
+            downloadLinksHtml = `
+            <div style="margin: 20px 0; padding: 15px; background-color: #e8f6f3; border: 1px solid #1abc9c; border-radius: 5px; text-align: center;">
+                <p style="margin: 0 0 10px 0; font-weight: bold; color: #16a085;">📥 Download Registrazione</p>
+                <a href="${fullMixUrl}" style="background-color: #e74c3c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                    🎙️ Traccia Raw Full (MP3)
+                </a>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #7f8c8d;">
+                    Registrazione completa non editata • Link valido per 7 giorni
+                </p>
+            </div>
+            `;
+        }
+
         // ✉️ HTML EMAIL (VERSIONE COMPLETA)
         const htmlContent = `
 <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333;">
@@ -532,6 +557,8 @@ export async function sendSessionRecap(
     <p><strong>Sessione #${sessionNum}</strong></p>
     <hr style="border: 1px solid #d35400;">
     
+    ${downloadLinksHtml}
+
     ${narrative && narrative.length > 10 ? `
     <h2>📖 Racconto</h2>
     <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">

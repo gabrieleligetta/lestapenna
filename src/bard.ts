@@ -36,6 +36,67 @@ export const TONES = {
 export type ToneKey = keyof typeof TONES;
 
 // ============================================
+// HELPER: SAFE JSON PARSING & NORMALIZATION
+// ============================================
+
+/**
+ * Tenta di parsare una stringa JSON sporca (con markdown, commenti, virgole extra).
+ * Restituisce null se fallisce.
+ */
+function safeJsonParse(input: string): any {
+    if (!input) return null;
+    
+    // 1. Pulizia Markdown e spazi
+    let cleaned = input.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+    // 2. Estrazione chirurgica del JSON (dal primo '{' all'ultimo '}')
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1) {
+        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    } else {
+        // Nessuna struttura JSON trovata
+        return null;
+    }
+
+    // 3. Parsing con tentativi di riparazione
+    try {
+        return JSON.parse(cleaned);
+    } catch (e) {
+        // Fallback per errori comuni di Llama (trailing commas, commenti)
+        try {
+            // Rimuovi commenti stile JS (// ...)
+            let fixed = cleaned.replace(/\s*\/\/.*$/gm, ''); 
+            // Rimuovi virgole appese (trailing commas) es: "a": 1, } -> "a": 1 }
+            fixed = fixed.replace(/,\s*([\]}])/g, '$1');
+            
+            return JSON.parse(fixed);
+        } catch (e2) {
+            console.warn("[SafeParse] Fallito parsing JSON anche dopo pulizia.");
+            return null;
+        }
+    }
+}
+
+/**
+ * Normalizza una lista mista (stringhe/oggetti) in una lista di sole stringhe.
+ * Utile per correggere output di LLM che restituiscono oggetti invece di stringhe.
+ */
+function normalizeStringList(list: any[]): string[] {
+    if (!Array.isArray(list)) return [];
+
+    return list.map(item => {
+        if (typeof item === 'string') return item;
+        if (typeof item === 'object' && item !== null) {
+            // Cerca chiavi comuni dove potrebbe essere nascosto il valore
+            return item.name || item.nome || item.item || item.description || item.value || JSON.stringify(item);
+        }
+        return String(item);
+    }).filter(s => s && s.trim().length > 0);
+}
+
+// ============================================
 // HELPER FUNCTIONS
 // ============================================
 
@@ -996,25 +1057,11 @@ Rispondi SOLO con il JSON, senza altro testo.`;
 
         const rawContent = response.choices[0].message.content || "{}";
         
-        // 🆕 SANITIZZA JSON (rimuove markdown se presente)
-        let cleanedContent = rawContent.trim();
+        // USO LA NUOVA FUNZIONE SAFE PARSE
+        const parsed = safeJsonParse(rawContent);
         
-        // Rimuovi code blocks markdown
-        if (cleanedContent.startsWith('```')) {
-            cleanedContent = cleanedContent
-                .replace(/^```(?:json)?\s*\n?/i, '')  // Rimuovi ```json o ```
-                .replace(/\n?```\s*$/i, '')            // Rimuovi ``` finale
-                .trim();
-        }
-        
-        // Parse con gestione errori
-        try {
-            const parsed = JSON.parse(cleanedContent);
-            return parsed;
-            
-        } catch (err: any) {
-            console.error(`[Metadati] ❌ JSON Parse Error con ${provider}:`);
-            console.error(`Raw: ${rawContent.substring(0, 200)}...`);
+        if (!parsed) {
+            console.error(`[Metadati] ❌ JSON Parse Error con ${provider}. Raw: ${rawContent.substring(0, 50)}...`);
             
             // Se Ollama fallisce, fallback a OpenAI
             if (provider === 'ollama') {
@@ -1022,13 +1069,14 @@ Rispondi SOLO con il JSON, senza altro testo.`;
                 return extractMetadataSingleBatch(text, campaignId, 'openai');
             }
             
-            // Ritorna struttura vuota invece di crashare
-            return {
-                detected_location: null,
-                npc_updates: [],
-                present_npcs: []
-            };
+            return { detected_location: null, npc_updates: [], present_npcs: [] };
         }
+
+        // Validazione minima
+        if (!parsed.detected_location && !parsed.present_npcs) {
+             // Se è vuoto ma valido, ok.
+        }
+        return parsed;
 
     } catch (err) {
         console.error(`[Metadati] ❌ Errore:`, err);
@@ -1242,6 +1290,7 @@ REGOLE IMPORTANTI:
 2. "loot": Solo oggetti di valore, monete o oggetti magici.
 3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
 4. Rispondi SEMPRE in ITALIANO.
+5. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
 `;
     } else {
         reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
@@ -1268,7 +1317,8 @@ REGOLE IMPORTANTI:
            - "loot_removed": Array di stringhe contenente gli oggetti consumati, persi o venduti. Se nessuno, array vuoto.
            - "quests": Array di stringhe contenente le missioni accettate, aggiornate o concluse. Se nessuna, array vuoto.
            - "character_growth": Array di oggetti {name, event, type} per eventi significativi dei personaggi.
-        5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.`;
+        5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.
+        6. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.`;
     }
 
     const startAI = Date.now();
@@ -1312,11 +1362,23 @@ REGOLE IMPORTANTI:
 
         let parsed;
         try {
-            const cleanContent = content.replace(/```json\n?|```/g, '').trim();
-            parsed = JSON.parse(cleanContent);
+            // USO LA NUOVA FUNZIONE SAFE PARSE
+            parsed = safeJsonParse(content);
+            
+            if (!parsed) {
+                throw new Error("JSON Parsing fallito (restituito null)");
+            }
+
         } catch (e) {
-            console.error("[Bardo] ⚠️ Errore parsing JSON:", e);
-            parsed = { title: "Sessione Senza Titolo", summary: content, loot: [], loot_removed: [], quests: [] };
+            console.error("[Bardo] ⚠️ Errore parsing JSON Riassunto:", e);
+            // Fallback: se il JSON fallisce, usa l'intero contenuto come testo narrativo
+            parsed = { 
+                title: "Sessione (Errore Parsing)", 
+                summary: content, // Salviamo tutto il testo grezzo per non perdere il lavoro
+                loot: [], 
+                loot_removed: [], 
+                quests: [] 
+            };
         }
 
         let finalSummary = parsed.summary;
@@ -1330,9 +1392,10 @@ REGOLE IMPORTANTI:
             summary: finalSummary || "Errore generazione.",
             title: parsed.title || "Sessione Senza Titolo",
             tokens: accumulatedTokens,
-            loot: Array.isArray(parsed.loot) ? parsed.loot : [],
-            loot_removed: Array.isArray(parsed.loot_removed) ? parsed.loot_removed : [],
-            quests: Array.isArray(parsed.quests) ? parsed.quests : [],
+            // NORMALIZZAZIONE LISTE (Evita oggetti nel DB)
+            loot: normalizeStringList(parsed.loot),
+            loot_removed: normalizeStringList(parsed.loot_removed),
+            quests: normalizeStringList(parsed.quests),
             narrative: parsed.narrative,
             log: Array.isArray(parsed.log) ? parsed.log : [],
             character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],

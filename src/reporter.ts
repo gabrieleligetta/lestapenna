@@ -159,6 +159,58 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
         emailBody = `Impossibile generare analisi AI: ${e.message}`;
     }
 
+    // 🆕 AGGREGA COSTI PER FASE
+    interface AggregatedCostByPhase {
+        phase: string;
+        models: string[];          // Tutti i modelli usati in questa fase
+        providers: Set<string>;    // Provider usati
+        inputTokens: number;
+        cachedInputTokens: number;
+        outputTokens: number;
+        costUSD: number;
+    }
+
+    const aggregatedByPhase: Record<string, AggregatedCostByPhase> = {};
+
+    if (metrics.costMetrics?.breakdown) {
+        metrics.costMetrics.breakdown.forEach(cost => {
+            if (!aggregatedByPhase[cost.phase]) {
+                aggregatedByPhase[cost.phase] = {
+                    phase: cost.phase,
+                    models: [cost.model],
+                    providers: new Set([cost.provider]),
+                    inputTokens: cost.inputTokens,
+                    cachedInputTokens: cost.cachedInputTokens || 0,
+                    outputTokens: cost.outputTokens,
+                    costUSD: cost.costUSD
+                };
+            } else {
+                // Aggiungi modello se non già presente
+                if (!aggregatedByPhase[cost.phase].models.includes(cost.model)) {
+                    aggregatedByPhase[cost.phase].models.push(cost.model);
+                }
+                aggregatedByPhase[cost.phase].providers.add(cost.provider);
+                
+                // Somma token e costi
+                aggregatedByPhase[cost.phase].inputTokens += cost.inputTokens;
+                aggregatedByPhase[cost.phase].cachedInputTokens += (cost.cachedInputTokens || 0);
+                aggregatedByPhase[cost.phase].outputTokens += cost.outputTokens;
+                aggregatedByPhase[cost.phase].costUSD += cost.costUSD;
+            }
+        });
+    }
+
+    // Ordina per fase (opzionale, per avere un ordine consistente)
+    const phaseOrder = ['transcription', 'metadata', 'embeddings', 'map', 'summary', 'chat'];
+    const sortedPhases = Object.values(aggregatedByPhase).sort((a, b) => {
+        const indexA = phaseOrder.indexOf(a.phase);
+        const indexB = phaseOrder.indexOf(b.phase);
+        if (indexA === -1 && indexB === -1) return a.phase.localeCompare(b.phase);
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+
     // 3. 🆕 HTML TABLE FIXATO
     const htmlTable = `
     <h2>📊 Session Metrics Report</h2>
@@ -318,20 +370,22 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
         </tr>
         ` : ''}
 
-        <!-- Breakdown per fase -->
+        <!-- Breakdown per fase (AGGREGATO) -->
         <tr style="background-color: #f9f9f9;">
             <td colspan="2"><strong>📊 Cost Breakdown by Phase</strong></td>
         </tr>
-        ${metrics.costMetrics?.breakdown.map(cost => `
+        ${sortedPhases.length > 0 ? sortedPhases.map(cost => `
         <tr>
             <td style="padding-left: 20px;">
-                <strong>${cost.phase}</strong>
-                <br/><small style="color: #666;">${cost.model} (${cost.provider})</small>
+                <strong>${cost.phase.charAt(0).toUpperCase() + cost.phase.slice(1)}</strong>
+                <br/><small style="color: #666;">
+                    ${Array.from(cost.providers).join(', ')} • ${cost.models.join(', ')}
+                </small>
             </td>
             <td>
                 <small>
                     In: ${cost.inputTokens.toLocaleString()} 
-                    ${cost.cachedInputTokens ? `(Cached: ${cost.cachedInputTokens.toLocaleString()})` : ''}
+                    ${cost.cachedInputTokens > 0 ? `(Cached: ${cost.cachedInputTokens.toLocaleString()})` : ''}
                     <br/>
                     Out: ${cost.outputTokens.toLocaleString()}
                 </small>
@@ -341,7 +395,7 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
                 </strong>
             </td>
         </tr>
-        `).join('') || '<tr><td colspan="2" style="padding: 8px; color: #999;">Nessun dato disponibile</td></tr>'}
+        `).join('') : '<tr><td colspan="2" style="padding: 8px; color: #999;">Nessun dato disponibile</td></tr>'}
         
         <!-- STORAGE -->
         <tr style="background-color: #e3f2fd;">

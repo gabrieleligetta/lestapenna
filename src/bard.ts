@@ -240,6 +240,11 @@ interface AIResponse {
         role?: string; // Opzionale
         status?: string; // Opzionale (es. "DEAD" se muore)
     }>;
+    monsters?: Array<{
+        name: string;
+        status: "DEFEATED" | "ALIVE" | "FLED";
+        count?: string; // Es. "1", "un branco", "molti"
+    }>;
     present_npcs?: string[]; // Lista semplice di NPC presenti nella scena
 }
 
@@ -865,6 +870,7 @@ async function extractMetadata(
     detected_location?: any;
     atlas_update?: string;
     npc_updates?: any[];
+    monsters?: any[];
     present_npcs?: string[];
 }> {
     // 🆕 BATCHING DEI METADATI
@@ -898,6 +904,7 @@ async function extractMetadata(
         detected_location: null, // Prendiamo l'ultimo valido o il più frequente? Per ora l'ultimo non nullo.
         atlas_update: null,
         npc_updates: [],
+        monsters: [],
         present_npcs: []
     };
 
@@ -907,6 +914,7 @@ async function extractMetadata(
         }
         if (res.atlas_update) aggregated.atlas_update = res.atlas_update; // Sovrascrive, forse meglio concatenare?
         if (res.npc_updates) aggregated.npc_updates.push(...res.npc_updates);
+        if (res.monsters) aggregated.monsters.push(...res.monsters);
         if (res.present_npcs) aggregated.present_npcs.push(...res.present_npcs);
     }
 
@@ -930,6 +938,7 @@ async function extractMetadataSingleBatch(
     detected_location?: any;
     atlas_update?: string;
     npc_updates?: any[];
+    monsters?: any[];
     present_npcs?: string[];
 }> {
     let contextInfo = "Contesto: Sessione D&D.";
@@ -975,7 +984,7 @@ ${atlasContext}
 
 **COMPITI:**
 1. Rileva cambio di luogo (macro/micro-location)
-2. Identifica NPC menzionati (NON i personaggi giocanti!)
+2. Distingui RIGOROSAMENTE tra NPC (Personaggi con nome, ruolo sociale, alleati o neutrali) e MOSTRI (Bestie, nemici anonimi, creature ostili).
 3. Rileva aggiornamenti alle descrizioni dei luoghi
 4. Rileva nuove informazioni sugli NPC (ruolo, status)
 
@@ -999,6 +1008,9 @@ ${text}
       "status": "ALIVE o DEAD"
     }
   ],
+  "monsters": [
+      { "name": "Nome Mostro", "status": "DEFEATED" | "ALIVE" | "FLED", "count": "numero o descrizione" }
+  ],
   "present_npcs": ["NPC1", "NPC2"]
 }
 
@@ -1018,8 +1030,14 @@ ${text}
       "status": "ALIVE"
     }
   ],
+  "monsters": [
+      { "name": "Goblin", "status": "DEFEATED", "count": "3" },
+      { "name": "Drago Rosso", "status": "FLED", "count": "1" }
+  ],
   "present_npcs": ["Elminster"]
 }
+
+Istruzione extra: "NON inserire mostri generici (es. 'Ragno', 'Orco') nella lista 'npc_updates'. Mettili solo in 'monsters'."
 
 Rispondi SOLO con il JSON, senza altro testo.`;
 

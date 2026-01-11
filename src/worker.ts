@@ -314,6 +314,16 @@ export function startWorker() {
                         }
                     }
                 }
+
+                // 4. GESTIONE BESTIARIO (Mostri)
+                if (aiResult.monsters && Array.isArray(aiResult.monsters)) {
+                    for (const m of aiResult.monsters) {
+                        if (m.name) {
+                            console.log(`[Bestiario] 👹 Rilevato Mostro: ${m.name} (${m.status})`);
+                            // NON salviamo nel DB NPC, solo log per ora (o futura tabella Bestiario)
+                        }
+                    }
+                }
             }
 
             const jsonStr = JSON.stringify(correctedSegments);

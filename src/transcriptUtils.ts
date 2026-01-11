@@ -28,7 +28,7 @@ interface FlattenedSegment {
 /**
  * Tenta di parsare una stringa JSON (array o oggetto).
  */
-function safeJsonParse(input: string): any {
+export export function safeJsonParse(input: string): any {
     if (!input) return null;
     
     let cleaned = input.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -159,12 +159,20 @@ export function processChronologicalSession(
     };
 }
 
-function formatRelativeTime(absTime: number, refTime: number): string {
-    if (refTime <= 0) return "[0:00]";
+export function formatRelativeTime(absTime: number, refTime: number): string {
+    if (refTime <= 0) return "[00:00]";
     const diff = Math.max(0, absTime - refTime);
-    const mins = Math.floor(diff / 60000);
-    const secs = Math.floor((diff % 60000) / 1000);
-    return `[${mins}:${secs.toString().padStart(2, '0')}]`;
+    
+    const totalSeconds = Math.floor(diff / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `[${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
+    } else {
+        return `[${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
+    }
 }
 
 function generateFormattedOutput(segments: FlattenedSegment[]): string {

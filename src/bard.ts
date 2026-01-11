@@ -21,10 +21,13 @@ import {
     getCharacterHistory,
     getNpcHistory,
     getCampaignSnapshot,
+    getSessionTravelLog,
+    getSessionEncounteredNPCs,
+    getExplicitSessionNumber,
     db
 } from './db';
 import { monitor } from './monitor';
-import { processChronologicalSession } from './transcriptUtils';
+import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -40,46 +43,6 @@ export type ToneKey = keyof typeof TONES;
 // ============================================
 // HELPER: SAFE JSON PARSING & NORMALIZATION
 // ============================================
-
-/**
- * Tenta di parsare una stringa JSON sporca (con markdown, commenti, virgole extra).
- * Restituisce null se fallisce.
- */
-function safeJsonParse(input: string): any {
-    if (!input) return null;
-    
-    // 1. Pulizia Markdown e spazi
-    let cleaned = input.replace(/```json/gi, '').replace(/```/g, '').trim();
-
-    // 2. Estrazione chirurgica del JSON (dal primo '{' all'ultimo '}')
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-
-    if (firstBrace !== -1 && lastBrace !== -1) {
-        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-    } else {
-        // Nessuna struttura JSON trovata
-        return null;
-    }
-
-    // 3. Parsing con tentativi di riparazione
-    try {
-        return JSON.parse(cleaned);
-    } catch (e) {
-        // Fallback per errori comuni di Llama (trailing commas, commenti)
-        try {
-            // Rimuovi commenti stile JS (// ...)
-            let fixed = cleaned.replace(/\s*\/\/.*$/gm, ''); 
-            // Rimuovi virgole appese (trailing commas) es: "a": 1, } -> "a": 1 }
-            fixed = fixed.replace(/,\s*([\]}])/g, '$1');
-            
-            return JSON.parse(fixed);
-        } catch (e2) {
-            console.warn("[SafeParse] Fallito parsing JSON anche dopo pulizia.");
-            return null;
-        }
-    }
-}
 
 /**
  * Normalizza una lista mista (stringhe/oggetti) in una lista di sole stringhe.
@@ -275,6 +238,26 @@ export interface SummaryResponse {
         type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
     }>;
     monsters?: Array<{ name: string; status: string; count?: string }>;
+    
+    // 🆕 AGGIUNGI QUESTO CAMPO
+    session_data?: {
+        travels: Array<{
+            timestamp: number;
+            macro_location: string | null;
+            micro_location: string | null;
+        }>;
+        encountered_npcs: Array<{
+            name: string;
+            role: string | null;
+            status: string;
+            description: string | null;
+        }>;
+        campaign_info: {
+            name: string;
+            session_number: string | number;
+            session_date: string;
+        };
+    };
 }
 
 /**
@@ -1378,6 +1361,50 @@ REGOLE IMPORTANTI:
             finalSummary = parsed.narrative;
         }
 
+        // ESTRAZIONE DATI STRUTTURATI DAL DB (identici alla mail)
+        let sessionData: SummaryResponse['session_data'] = undefined;
+        
+        if (campaignId) {
+            const campaign = getCampaignById(campaignId);
+            const sessionNum = getExplicitSessionNumber(sessionId) || "?";
+            const travels = getSessionTravelLog(sessionId);
+            const npcs = getSessionEncounteredNPCs(sessionId);
+            
+            // Formatta la data come nella mail
+            const sessionDate = startTime
+                ? new Date(startTime).toLocaleDateString('it-IT', {
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric'
+                })
+                : new Date().toLocaleDateString('it-IT', {
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric'
+                });
+            
+            sessionData = {
+                travels: travels.map(t => ({
+                    timestamp: t.timestamp,
+                    macro_location: t.macro_location,
+                    micro_location: t.micro_location
+                })),
+                encountered_npcs: npcs.map(n => ({
+                    name: n.name,
+                    role: n.role,
+                    status: n.status,
+                    description: n.description
+                })),
+                campaign_info: {
+                    name: campaign?.name || 'Campagna',
+                    session_number: sessionNum,
+                    session_date: sessionDate
+                }
+            };
+        }
+
         return {
             summary: finalSummary || "Errore generazione.",
             title: parsed.title || "Sessione Senza Titolo",
@@ -1391,7 +1418,8 @@ REGOLE IMPORTANTI:
             character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
             npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],
             world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [],
-            monsters: Array.isArray(parsed.monsters) ? parsed.monsters : []
+            monsters: Array.isArray(parsed.monsters) ? parsed.monsters : [],
+            session_data: sessionData
         };
     } catch (err: any) {
         console.error("Errore finale:", err);

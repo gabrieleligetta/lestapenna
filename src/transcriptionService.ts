@@ -132,7 +132,7 @@ export function convertPcmToWav(input: string, output: string): Promise<void> {
             '-i', input,
             '-ar', '16000', 
             '-ac', '1',
-            '-af', 'silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-30dB', 
+            '-af', 'loudnorm=I=-16:LRA=11:TP=-1.5',
             output,
             '-y'
         ]);

@@ -1889,3 +1889,30 @@ export async function ingestLootEvent(
         }
     }
 }
+
+// Add this helper function
+export async function resolveIdentityCandidate(campaignId: number, newName: string, newDesc: string): Promise<{ match: string | null, confidence: number }> {
+    const existingNpcs = listNpcs(campaignId);
+    if (existingNpcs.length === 0) return { match: null, confidence: 0 };
+
+    // Pass only minimal context to save tokens
+    const candidates = existingNpcs.map((n:any) => `- ${n.name} (${n.role})`).join('\n');
+
+    const prompt = `Analizza se il NUOVO NPC è un duplicato di uno ESISTENTE.
+    NUOVO: "${newName}" - ${newDesc}
+    ESISTENTI:
+    ${candidates}
+    
+    Rispondi JSON: { "match": "NomeEsattoEsistente" | null, "confidence": 0.0-1.0 }`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" }
+        });
+        return JSON.parse(response.choices[0].message.content || "{}");
+    } catch (e) {
+        return { match: null, confidence: 0 };
+    }
+}

@@ -89,6 +89,7 @@ import { monitor, SessionMetrics } from './monitor';
 import { processSessionReport, sendTestEmail, sendSessionRecap } from './reporter';
 import { exec } from 'child_process';
 import { pipeline } from 'stream/promises';
+import { initIdentityGuard, handleIdentityReply, checkAndPromptMerge } from './identityGuard';
 
 const client = new Client({
     intents: [
@@ -107,8 +108,13 @@ const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summar
 
 client.on('messageCreate', async (message: Message) => {
     // CAMBIO PREFISSO: ! -> $
-    if (!message.content.startsWith('$') || message.author.bot) return;
+    if (message.author.bot) return;
     if (!message.guild) return;
+
+    // --- IDENTITY GUARD REPLY HANDLER ---
+    await handleIdentityReply(message);
+
+    if (!message.content.startsWith('$')) return;
 
     const allowedChannelId = getCmdChannelId(message.guild.id);
     const isConfigCommand = message.content.startsWith('$setcmd');
@@ -2715,6 +2721,9 @@ async function processOrphanedSessionsSequentially(sessionIds: string[]): Promis
 client.once('ready', async () => {
     console.log(`✅ Bot online: ${client.user?.tag}`);
     
+    // Inizializza Identity Guard
+    initIdentityGuard();
+
     // Avvia il worker PRIMA di processare le sessioni, altrimenti il processing sequenziale si blocca
     startWorker();
     // --- CHECK RAM DISK (/dev/shm) ---

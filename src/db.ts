@@ -188,6 +188,17 @@ db.exec(`CREATE TABLE IF NOT EXISTS inventory (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
+// --- TABELLA PENDING MERGES ---
+db.exec(`CREATE TABLE IF NOT EXISTS pending_merges (
+    message_id TEXT PRIMARY KEY,
+    campaign_id INTEGER,
+    detected_name TEXT,
+    target_name TEXT,
+    new_description TEXT,
+    role TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+
 // --- MIGRATIONS ---
 const migrations = [
     "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
@@ -348,6 +359,15 @@ export interface InventoryItem {
     quantity: number;
     acquired_at: number;
     last_updated: number;
+}
+
+export interface PendingMerge {
+    message_id: string;
+    campaign_id: number;
+    detected_name: string;
+    target_name: string;
+    new_description: string;
+    role: string;
 }
 
 // Definiamo bene cosa contiene lo snapshot
@@ -695,6 +715,24 @@ export const updateNpcFields = (
         console.error('[DB] Errore aggiornamento NPC:', err);
         return false;
     }
+};
+
+// --- FUNZIONI PENDING MERGES ---
+
+export const addPendingMerge = (data: PendingMerge) => {
+    const stmt = db.prepare(`
+        INSERT INTO pending_merges (message_id, campaign_id, detected_name, target_name, new_description, role)
+        VALUES (@message_id, @campaign_id, @detected_name, @target_name, @new_description, @role)
+    `);
+    stmt.run(data);
+};
+
+export const removePendingMerge = (messageId: string) => {
+    db.prepare('DELETE FROM pending_merges WHERE message_id = ?').run(messageId);
+};
+
+export const getAllPendingMerges = (): PendingMerge[] => {
+    return db.prepare('SELECT * FROM pending_merges').all() as PendingMerge[];
 };
 
 // --- FUNZIONI QUESTS ---
@@ -1178,6 +1216,7 @@ export const wipeDatabase = () => {
     db.exec('DROP TABLE IF EXISTS campaigns');
     db.exec('DROP TABLE IF EXISTS characters');
     db.exec('DROP TABLE IF EXISTS chat_history');
+    db.exec('DROP TABLE IF EXISTS pending_merges');
 
     // 🆕 RICREA LE TABELLE CON LO SCHEMA COMPLETO
 
@@ -1366,6 +1405,17 @@ export const wipeDatabase = () => {
         timestamp INTEGER,
         year INTEGER,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA PENDING MERGES ---
+    db.exec(`CREATE TABLE IF NOT EXISTS pending_merges (
+        message_id TEXT PRIMARY KEY,
+        campaign_id INTEGER,
+        detected_name TEXT,
+        target_name TEXT,
+        new_description TEXT,
+        role TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
     // 🆕 RICREA GLI INDICI

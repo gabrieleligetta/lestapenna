@@ -1669,36 +1669,47 @@ export async function generateNpcBiography(campaignId: number, npcName: string, 
     }
 }
 
-// --- GENERATORE NOTE NPC (Conciso) ---
+// --- GENERATORE NOTE NPC (Adattivo & Lossless) ---
 export async function regenerateNpcNotes(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
     const history = getNpcHistory(campaignId, npcName);
 
     const historyText = history.length > 0
         ? history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n')
-        : "Nessun evento storico registrato.";
+        : "Nessun evento storico specifico registrato.";
 
-    const prompt = `Sei un archivista di D&D.
-    Devi riscrivere le NOTE del dossier per l'NPC: **${npcName}**.
+    // Calcoliamo la "densità" della storia per guidare l'AI
+    const complexityLevel = history.length > 5 ? "DETTAGLIATO" : "CONCISO";
+
+    const prompt = `Sei il Biografo Ufficiale di una campagna D&D.
+    Devi aggiornare il Dossier per l'NPC: **${npcName}**.
     
     RUOLO: ${role}
-    NOTE ATTUALI: ${staticDesc}
+    DESCRIZIONE PRECEDENTE (Usa questa SOLO per aspetto fisico e personalità): 
+    "${staticDesc}"
     
-    CRONOLOGIA EVENTI (Nuovi fatti):
+    CRONOLOGIA COMPLETA DEGLI EVENTI (Usa questa come fonte di verità per la storia):
     ${historyText}
     
-    ISTRUZIONI:
-    1. Sintetizza le note attuali e la cronologia in un unico testo descrittivo conciso.
-    2. Mantieni i fatti importanti (chi è, cosa ha fatto, stato attuale).
-    3. Elimina ridondanze.
-    4. Usa un tono da "Dossier" (informativo, diretto).
-    5. Lunghezza massima: 3-4 frasi dense di informazioni.
+    OBIETTIVO:
+    Scrivi una biografia aggiornata che integri coerentemente i nuovi eventi.
     
-    Restituisci SOLO il testo delle nuove note.`;
+    ISTRUZIONI DI SCRITTURA:
+    1. **Lunghezza Adattiva:** La lunghezza del testo DEVE essere proporzionale alla quantità di eventi nella cronologia. 
+       - Se ci sono pochi eventi, sii breve.
+       - Se ci sono molti eventi, scrivi una storia ricca e dettagliata. NON RIASSUMERE ECCESSIVAMENTE.
+    2. **Struttura:**
+       - Inizia con l'aspetto fisico e la personalità (presi dalla Descrizione Precedente).
+       - Prosegui con la narrazione delle sue gesta in ordine cronologico (prese dalla Cronologia).
+       - Concludi con la sua situazione attuale.
+    3. **Preservazione:** Non inventare fatti non presenti, ma collegali in modo logico.
+    4. **Stile:** ${complexityLevel === "DETTAGLIATO" ? "Epico, narrativo e approfondito." : "Diretto e informativo."}
+    
+    Restituisci SOLO il testo della nuova biografia.`;
 
     const startAI = Date.now();
     try {
         const response = await summaryClient.chat.completions.create({
-            model: SUMMARY_MODEL,
+            model: SUMMARY_MODEL, // Assicurati che questo modello supporti un buon output window (es. gpt-4o o simile)
             messages: [{ role: "user", content: prompt }]
         });
         

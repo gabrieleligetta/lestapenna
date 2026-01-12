@@ -29,17 +29,25 @@ export async function removeSessionJobs(sessionId: string) {
                 try {
                     const state = await job.getState();
                     
-                    // Se è attivo, lo rimuoviamo comunque per garantire un reset pulito.
-                    // Il worker potrebbe continuare a lavorare "a vuoto", ma il risultato sarà ignorato/non salvato correttamente
-                    // o sovrascritto dal nuovo job riaccodato.
                     if (state === 'active') {
-                        console.warn(`[Queue] ⚠️ Rimozione forzata job ATTIVO ${job.id} (${job.queueName}) per sessione ${sessionId}.`);
+                        console.warn(`[Queue] ⚠️ Job ATTIVO ${job.id} (${job.queueName}) per sessione ${sessionId}. Tento sblocco...`);
+                        try {
+                            // Tentiamo di forzare il fallimento per rilasciare il lock (se possibile)
+                            // Usiamo un token fittizio '0', se il lock è scaduto funzionerà.
+                            // Se il worker è vivo, questo potrebbe fallire, ma ci proviamo.
+                            await job.moveToFailed(new Error('Session Reset Forced'), '0');
+                        } catch (e) {
+                            // Ignoriamo errore token invalido
+                        }
                     }
 
                     await job.remove();
                     removedCount++;
                 } catch (err: any) {
                     console.warn(`[Queue] Impossibile rimuovere il job ${job.id}: ${err.message}`);
+                    
+                    // Fallback estremo: Se è bloccato, proviamo a cancellare la chiave Redis direttamente?
+                    // No, troppo rischioso. Lasciamo il warning.
                 }
             }
         }
@@ -49,19 +57,19 @@ export async function removeSessionJobs(sessionId: string) {
 
 /**
  * Svuota completamente le code e rimuove ogni metadato da Redis.
+ * Usa OBLITERATE per forzare la rimozione anche dei job bloccati.
  */
 export async function clearQueue() {
-    console.log("[Queue] 🧹 Svuotamento completo delle code in corso...");
+    console.log("[Queue] 🧹 Svuotamento completo delle code in corso (OBLITERATE)...");
     
     const queues = [audioQueue, correctionQueue];
     
     for (const queue of queues) {
         await queue.pause();
-        await queue.drain(true);
-        await queue.clean(0, 1000, 'completed');
-        await queue.clean(0, 1000, 'failed');
-        await queue.resume(); // Importante riprendere dopo il drain se vogliamo che la coda torni usabile
+        // Force: true permette di cancellare anche se ci sono job attivi
+        await queue.obliterate({ force: true });
+        await queue.resume();
     }
     
-    console.log("[Queue] ✅ Code svuotate.");
+    console.log("[Queue] ✅ Code obliterate e pronte.");
 }

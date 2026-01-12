@@ -1939,12 +1939,12 @@ client.on('messageCreate', async (message: Message) => {
                 db.prepare('DELETE FROM chat_history').run(); // Reset anche della chat col bardo
 
                 // 3. Reset stato registrazioni bloccate (ZOMBIE KILLER)
-                db.prepare("UPDATE recordings SET status = 'PENDING' WHERE status IN ('QUEUED', 'PROCESSING', 'TRANSCRIBED')").run();
+                db.prepare("UPDATE recordings SET status = 'PENDING', error_log = NULL").run();
 
                 await statusMsg.edit(`✅ **Soft Wipe Completato.**\n` +
                     `- Coda svuotata.\n` +
                     `- Memoria RAG e Dati Derivati cancellati.\n` +
-                    `- File bloccati resettati a PENDING.\n` +
+                    `- TUTTI i file resettati a PENDING (Pronti per rielaborazione).\n` +
                     `- Struttura (Campagne/Sessioni) preservata.\n\n` +
                     `Ora puoi lanciare \`$reset <ID_SESSIONE>\` per rigenerare i dati.`);
             }

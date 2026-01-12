@@ -24,7 +24,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS campaigns (
     guild_id TEXT NOT NULL,
     name TEXT NOT NULL,
     is_active INTEGER DEFAULT 0,
-    created_at INTEGER
+    created_at INTEGER,
+    current_location TEXT,
+    current_macro_location TEXT,
+    current_micro_location TEXT,
+    current_year INTEGER
 )`);
 
 // --- TABELLA PERSONAGGI ---
@@ -71,6 +75,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS world_history (
     event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC'
     description TEXT NOT NULL,
     timestamp INTEGER,
+    year INTEGER,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
@@ -84,7 +89,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS recordings (
     timestamp INTEGER,
     status TEXT DEFAULT 'PENDING', 
     transcription_text TEXT,
-    error_log TEXT
+    raw_transcription_text TEXT,
+    error_log TEXT,
+    macro_location TEXT,
+    micro_location TEXT,
+    present_npcs TEXT,
+    character_name_snapshot TEXT,
+    year INTEGER
 )`);
 
 // --- TABELLA SESSIONI ---
@@ -104,7 +115,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS session_notes (
     user_id TEXT,
     content TEXT NOT NULL,
     timestamp INTEGER,
-    created_at INTEGER
+    created_at INTEGER,
+    macro_location TEXT,
+    micro_location TEXT
 )`);
 
 // --- TABELLA MEMORIA A LUNGO TERMINE (RAG) ---
@@ -118,6 +131,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS knowledge_fragments (
     vector_dimension INTEGER,
     start_timestamp INTEGER,
     created_at INTEGER,
+    macro_location TEXT,
+    micro_location TEXT,
+    associated_npcs TEXT,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
@@ -138,6 +154,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS location_history (
     macro_location TEXT,
     micro_location TEXT,
     session_date TEXT,
+    session_id TEXT,
     timestamp INTEGER,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
@@ -715,6 +732,23 @@ export const updateNpcFields = (
         console.error('[DB] Errore aggiornamento NPC:', err);
         return false;
     }
+};
+
+export const migrateKnowledgeFragments = (campaignId: number, oldName: string, newName: string) => {
+    const fragments = db.prepare(`SELECT id, associated_npcs FROM knowledge_fragments WHERE campaign_id = ? AND associated_npcs LIKE ?`).all(campaignId, `%${oldName}%`) as {id: number, associated_npcs: string}[];
+
+    const updateStmt = db.prepare(`UPDATE knowledge_fragments SET associated_npcs = ? WHERE id = ?`);
+
+    for (const f of fragments) {
+        if (!f.associated_npcs) continue;
+        const npcs = f.associated_npcs.split(',').map(n => n.trim());
+        const index = npcs.findIndex(n => n.toLowerCase() === oldName.toLowerCase());
+        if (index !== -1) {
+            npcs[index] = newName;
+            updateStmt.run(npcs.join(','), f.id);
+        }
+    }
+    console.log(`[DB] 🧠 Migrati riferimenti RAG da "${oldName}" a "${newName}"`);
 };
 
 // --- FUNZIONI PENDING MERGES ---

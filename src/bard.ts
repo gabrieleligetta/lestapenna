@@ -2016,3 +2016,64 @@ export async function smartMergeBios(existingBio: string, newInfo: string): Prom
         return `${existingBio} | ${newInfo}`; // Fallback sicuro
     }
 }
+
+// --- RAG: SYNC DOSSIER ---
+export async function syncNpcDossier(campaignId: number, npcName: string, description: string, role: string | null, status: string | null) {
+    const content = `DOSSIER NPC: ${npcName}. RUOLO: ${role || 'Sconosciuto'}. STATO: ${status || 'Sconosciuto'}. DESCRIZIONE: ${description}`;
+    console.log(`[RAG] 🔄 Sync Dossier per ${npcName}...`);
+
+    const promises: any[] = [];
+    const startAI = Date.now();
+
+    // OpenAI Task
+    promises.push(
+        openaiEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OPENAI,
+            input: content
+        })
+        .then(resp => {
+            const inputTokens = resp.usage?.prompt_tokens || 0;
+            monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
+            return { provider: 'openai', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
+            return { provider: 'openai', error: err.message };
+        })
+    );
+
+    // Ollama Task
+    promises.push(
+        ollamaEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OLLAMA,
+            input: content
+        })
+        .then(resp => {
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
+            return { provider: 'ollama', data: resp.data[0].embedding };
+        })
+        .catch(err => {
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
+            return { provider: 'ollama', error: err.message };
+        })
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId, 'DOSSIER_SYNC', content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    Date.now(), // timestamp corrente
+                    null, // macro
+                    null, // micro
+                    [npcName] // associamo esplicitamente il NPC
+                );
+            }
+        }
+    }
+}

@@ -28,8 +28,11 @@ export async function checkAndPromptMerge(
             `🕵️ **Ipotesi Identità**\n` +
             `Ho trovato: **"${npc.name}"**\n` +
             `Credo sia: **"${resolution.match}"**\n` +
-            `*Descrizione: ${npc.description.substring(0, 100)}...*\n` +
-            `👉 **Rispondi:** "SI" per unire, "NO" per creare nuovo.`
+            `*Descrizione: ${npc.description.substring(0, 100)}...*\n\n` +
+            `👉 **Opzioni di Risposta:**\n` +
+            `- **SI**: Conferma il merge con **${resolution.match}**.\n` +
+            `- **NUOVO**: Crea come nuovo personaggio.\n` +
+            `- **[NomeReale]**: Scrivi il nome di un altro NPC esistente per unirlo a lui.`
         );
 
         const data: PendingMerge = {
@@ -52,34 +55,64 @@ export async function checkAndPromptMerge(
 }
 
 export async function handleIdentityReply(message: Message) {
+    // 1. Validate Reference
     if (!message.reference?.messageId) return;
-    
     const data = pendingMergesMap.get(message.reference.messageId);
-    if (!data) return; // Not a monitored message
+    if (!data) return; 
 
-    const content = message.content.trim().toUpperCase();
+    let content = message.content.trim();
+    const upperContent = content.toUpperCase();
     
-    if (['SI', 'SÌ', 'YES', 'Y'].includes(content)) {
-        // EXECUTE MERGE
+    // --- CASE 1: CONFIRM AI (SI) ---
+    if (['SI', 'SÌ', 'YES', 'Y'].includes(upperContent)) {
         const existing = getNpcEntry(data.campaign_id, data.target_name);
         if (existing) {
             const mergedDesc = `${existing.description} | [${data.detected_name}]: ${data.new_description}`;
             db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
               .run(mergedDesc, existing.id);
-            await message.reply(`✅ Unito **${data.detected_name}** in **${data.target_name}**.`);
+            await message.reply(`✅ **Unito!** Dati di "${data.detected_name}" aggiunti a **${data.target_name}**.`);
         } else {
-            await message.reply(`⚠️ Errore: ${data.target_name} non esiste più.`);
+            await message.reply(`⚠️ Errore: **${data.target_name}** non trovato nel DB.`);
         }
-    } else if (['NO', 'NEW', 'N'].includes(content)) {
-        // CREATE NEW
+        cleanup(data.message_id);
+        return;
+    } 
+    
+    // --- CASE 2: CREATE NEW (NO/NUOVO) ---
+    if (['NO', 'NEW', 'NUOVO', 'N'].includes(upperContent)) {
         db.prepare(`INSERT INTO npcdossier (campaign_id, name, description, role, status) VALUES (?, ?, ?, ?, 'ALIVE')`)
           .run(data.campaign_id, data.detected_name, data.new_description, data.role);
-        await message.reply(`🆕 Creato **${data.detected_name}**.`);
-    } else {
-        return; // Ignore invalid responses
+        await message.reply(`🆕 **Creato!** Benvenuto **${data.detected_name}**.`);
+        cleanup(data.message_id);
+        return;
     }
 
-    // Cleanup
-    removePendingMerge(data.message_id);
-    pendingMergesMap.delete(data.message_id);
+    // --- CASE 3: MANUAL OVERRIDE (Specific Name) ---
+    // Clean input (e.g. "No è Brom" -> "Brom")
+    const manualName = content.replace(/^(no|è|e'|is|it's)\s+/i, '').trim();
+    
+    // Check DB for manual match
+    const manualMatch = getNpcEntry(data.campaign_id, manualName);
+
+    if (manualMatch) {
+        // Merge into the MANUALLY selected NPC
+        const mergedDesc = `${manualMatch.description} | [${data.detected_name}]: ${data.new_description}`;
+        db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
+            .run(mergedDesc, manualMatch.id);
+        
+        await message.reply(`↩️ **Corretto!** Ho unito "${data.detected_name}" a **${manualMatch.name}** (invece di ${data.target_name}).`);
+        cleanup(data.message_id);
+    } else {
+        // Not found -> Warn user but keep listening
+        await message.reply(
+            `❓ Non trovo l'NPC **"${manualName}"** nel database.\n` +
+            `- Scrivi **NUOVO** per creare un personaggio nuovo.\n` +
+            `- Controlla il nome dell'NPC esistente.`
+        );
+    }
+}
+
+function cleanup(msgId: string) {
+    removePendingMerge(msgId);
+    pendingMergesMap.delete(msgId);
 }

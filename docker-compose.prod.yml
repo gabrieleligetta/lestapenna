@@ -12,7 +12,8 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - TZ=Europe/Rome
-      - NODE_OPTIONS=--max-old-space-size=5120  # 5GB per Node.js
+      # 🔧 TUNING GC: 5GB Heap, ottimizzazione size, GC frequente (100ms) per evitare lag
+      - NODE_OPTIONS=--max-old-space-size=5120 --optimize_for_size --gc_interval=100
 
     deploy:
       resources:

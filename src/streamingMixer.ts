@@ -5,7 +5,14 @@ import { getSessionStartTime } from './db';
 import { uploadToOracle } from './backupService';
 
 const OUTPUT_DIR = path.join(__dirname, '..', 'mixed_sessions');
-const TEMP_DIR = path.join(__dirname, '..', 'temp_mix');
+
+// OTTIMIZZAZIONE RAM DISK:
+// Se siamo su Linux, usiamo la RAM per i file temporanei del mixer (/dev/shm).
+// Questo azzera l'I/O su disco durante il mixing incrementale.
+const isLinux = process.platform === 'linux';
+const TEMP_DIR = isLinux 
+    ? path.join('/dev/shm', 'dnd_bot_temp_mix') 
+    : path.join(__dirname, '..', 'temp_mix');
 
 // Assicuriamoci che le cartelle esistano
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -25,7 +32,7 @@ interface MixerState {
 const activeMixers = new Map<string, MixerState>();
 
 // Mix ogni 30 secondi (bilanciamento overhead/latency)
-const MIX_INTERVAL_MS = 30000;
+const MIX_INTERVAL_MS = 300000; // 5 Minuti (prima era 30s)
 
 /**
  * Avvia il mixer incrementale per una sessione
@@ -201,6 +208,7 @@ function mixBatch(
         const tempOutput = accumulatorPath.replace('.wav', '_new.wav');
 
         const ffmpegArgs = [
+            '-threads', '1', // LIMITA I THREAD: Il mixer è un job di background
             ...args,
             '-filter_complex', filterComplex,
             '-map', '[out]',

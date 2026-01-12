@@ -16,13 +16,17 @@ import { uploadToOracle } from './backupService';
 import { monitor } from './monitor';
 import { startStreamingMixer, addFileToStreamingMixer, stopStreamingMixer } from './streamingMixer';
 
-// ✅ CLASSE SILENCE INJECTOR
+// ✅ CLASSE SILENCE INJECTOR OTTIMIZZATA (Zero-Alloc)
 class SilenceInjector extends Transform {
     private lastPacketTime: number;
     private readonly frameSize: number = 3840; // 20ms @ 48kHz stereo 16-bit
     private readonly bytesPerMs: number = 192; // 48000 * 2 * 2 / 1000
     private isFirstPacket: boolean = true;
     private silenceInjected: number = 0;
+
+    // Buffer statico di ~1 secondo di silenzio (riutilizzabile)
+    // 192 bytes/ms * 1000ms = 192000 bytes
+    private static readonly ZERO_BUFFER = Buffer.alloc(192000); 
 
     constructor() {
         super();
@@ -50,8 +54,17 @@ class SilenceInjector extends Transform {
 
             if (alignedMissingBytes > 0) {
                 this.silenceInjected += alignedMissingBytes;
-                const silenceBuffer = Buffer.alloc(alignedMissingBytes, 0);
-                this.push(silenceBuffer);
+                
+                // Logica di invio a blocchi per evitare allocazioni
+                let remainingToSend = alignedMissingBytes;
+                const maxChunkSize = SilenceInjector.ZERO_BUFFER.length;
+
+                while (remainingToSend > 0) {
+                    const chunkSize = Math.min(remainingToSend, maxChunkSize);
+                    // Usa subarray che crea un riferimento (non copia memoria)
+                    this.push(SilenceInjector.ZERO_BUFFER.subarray(0, chunkSize));
+                    remainingToSend -= chunkSize;
+                }
             }
         }
 

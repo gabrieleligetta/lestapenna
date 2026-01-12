@@ -21,7 +21,7 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent, smartMergeBios, regenerateNpcNotes } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent, smartMergeBios, regenerateNpcNotes, syncNpcDossier } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
     getAvailableSessions,
@@ -80,7 +80,8 @@ import {
     getSessionEncounteredNPCs,
     renameNpcEntry, // NUOVO IMPORT
     deleteNpcEntry, // NUOVO IMPORT
-    updateNpcFields // NUOVO IMPORT
+    updateNpcFields, // NUOVO IMPORT
+    migrateKnowledgeFragments // NUOVO IMPORT
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -809,15 +810,48 @@ client.on('messageCreate', async (message: Message) => {
             const [name, field, value] = parts;
             const updates: any = {};
             
-            if (field === 'name') updates.name = value;
-            else if (field === 'role') updates.role = value;
-            else if (field === 'status') updates.status = value;
-            else if (field === 'description' || field === 'desc') updates.description = value;
-            else return message.reply("❌ Campo non valido. Usa: name, role, status, description");
+            // Recupera NPC esistente
+            const existingNpc = getNpcEntry(activeCampaign!.id, name);
+            if (!existingNpc) return message.reply(`❌ NPC "${name}" non trovato.`);
 
-            const success = updateNpcFields(activeCampaign!.id, name, updates);
-            if (success) return message.reply(`✅ NPC **${name}** aggiornato.`);
-            else return message.reply(`❌ NPC "${name}" non trovato o errore aggiornamento.`);
+            if (field === 'name') {
+                // GESTIONE CAMBIO NOME (MIGRAZIONE RAG)
+                const success = updateNpcFields(activeCampaign!.id, name, { name: value });
+                if (success) {
+                    await message.reply(`⏳ **Migrazione RAG:** Aggiorno i riferimenti da "${name}" a "${value}"...`);
+                    migrateKnowledgeFragments(activeCampaign!.id, name, value);
+                    await syncNpcDossier(activeCampaign!.id, value, existingNpc.description || "", existingNpc.role, existingNpc.status);
+                    return message.reply(`✅ NPC rinominato e sincronizzato.`);
+                }
+            } else if (field === 'description' || field === 'desc') {
+                // GESTIONE MERGE DESCRIZIONE
+                await message.reply(`⏳ **Smart Merge:** Unione intelligente della descrizione...`);
+                const mergedDesc = await smartMergeBios(existingNpc.description || "", value);
+                
+                const success = updateNpcFields(activeCampaign!.id, name, { description: mergedDesc });
+                if (success) {
+                    await syncNpcDossier(activeCampaign!.id, name, mergedDesc, existingNpc.role, existingNpc.status);
+                    return message.reply(`✅ Descrizione aggiornata e sincronizzata.\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
+                }
+            } else if (field === 'role') {
+                updates.role = value;
+                const success = updateNpcFields(activeCampaign!.id, name, updates);
+                if (success) {
+                    await syncNpcDossier(activeCampaign!.id, name, existingNpc.description || "", value, existingNpc.status);
+                    return message.reply(`✅ Ruolo aggiornato a **${value}**.`);
+                }
+            } else if (field === 'status') {
+                updates.status = value;
+                const success = updateNpcFields(activeCampaign!.id, name, updates);
+                if (success) {
+                    await syncNpcDossier(activeCampaign!.id, name, existingNpc.description || "", existingNpc.role, value);
+                    return message.reply(`✅ Stato aggiornato a **${value}**.`);
+                }
+            } else {
+                return message.reply("❌ Campo non valido. Usa: name, role, status, description");
+            }
+            
+            return message.reply(`❌ Errore aggiornamento.`);
         }
 
         if (argsStr.toLowerCase().startsWith('regen ')) {

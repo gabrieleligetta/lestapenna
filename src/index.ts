@@ -77,7 +77,10 @@ import {
     addWorldEvent,
     getWorldTimeline,
     setCampaignYear, getSessionRecordings, Campaign,
-    getSessionEncounteredNPCs // NUOVO IMPORT
+    getSessionEncounteredNPCs,
+    renameNpcEntry, // NUOVO IMPORT
+    deleteNpcEntry, // NUOVO IMPORT
+    updateNpcFields // NUOVO IMPORT
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -292,6 +295,9 @@ client.on('messageCreate', async (message: Message) => {
                     name: "👥 NPC & Dossier",
                     value:
                         "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
+                        "`$npc merge <Vecchio> | <Nuovo>`: Unisce due NPC.\n" +
+                        "`$npc delete <Nome>`: Elimina un NPC.\n" +
+                        "`$npc update <Nome> | <Campo> | <Valore>`: Aggiorna campi specifici.\n" +
                         "`$presenze`: Mostra gli NPC incontrati nella sessione corrente."
                 },
                 {
@@ -390,6 +396,9 @@ client.on('messageCreate', async (message: Message) => {
                     name: "👥 NPC & Dossier",
                     value:
                         "`$npc [Name]`: View or update NPC dossier.\n" +
+                        "`$npc merge <Old> | <New>`: Merge two NPCs.\n" +
+                        "`$npc delete <Name>`: Delete an NPC.\n" +
+                        "`$npc update <Name> | <Field> | <Value>`: Update specific fields.\n" +
                         "`$presenze`: Show NPCs encountered in current session."
                 },
                 {
@@ -721,6 +730,9 @@ client.on('messageCreate', async (message: Message) => {
     // Uso: $npc -> Lista ultimi NPC
     // Uso: $npc Mario -> Vedi scheda di Mario
     // Uso: $npc Mario | È un bravo idraulico -> Aggiorna descrizione
+    // Uso: $npc merge Vecchio | Nuovo -> Unisce due NPC
+    // Uso: $npc delete Nome -> Elimina NPC
+    // Uso: $npc update Nome | Campo | Valore -> Aggiorna campo specifico
     if (command === 'npc' || command === 'dossier') {
         const argsStr = args.join(' ');
 
@@ -731,6 +743,41 @@ client.on('messageCreate', async (message: Message) => {
 
             const list = npcs.map((n: any) => `👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
             return message.reply(`**📂 Dossier NPC Recenti**\n${list}`);
+        }
+
+        // Sottocomandi avanzati
+        if (argsStr.toLowerCase().startsWith('merge ')) {
+            const parts = argsStr.substring(6).split('|').map(s => s.trim());
+            if (parts.length !== 2) return message.reply("Uso: `$npc merge <Vecchio Nome> | <Nuovo Nome>`");
+            
+            const success = renameNpcEntry(activeCampaign!.id, parts[0], parts[1]);
+            if (success) return message.reply(`✅ NPC uniti: **${parts[0]}** è ora **${parts[1]}**.`);
+            else return message.reply(`❌ Impossibile unire: NPC "${parts[0]}" non trovato.`);
+        }
+
+        if (argsStr.toLowerCase().startsWith('delete ')) {
+            const name = argsStr.substring(7).trim();
+            const success = deleteNpcEntry(activeCampaign!.id, name);
+            if (success) return message.reply(`🗑️ NPC **${name}** eliminato dal dossier.`);
+            else return message.reply(`❌ NPC "${name}" non trovato.`);
+        }
+
+        if (argsStr.toLowerCase().startsWith('update ')) {
+            const parts = argsStr.substring(7).split('|').map(s => s.trim());
+            if (parts.length !== 3) return message.reply("Uso: `$npc update <Nome> | <Campo> | <Valore>`\nCampi validi: name, role, status, description");
+            
+            const [name, field, value] = parts;
+            const updates: any = {};
+            
+            if (field === 'name') updates.name = value;
+            else if (field === 'role') updates.role = value;
+            else if (field === 'status') updates.status = value;
+            else if (field === 'description' || field === 'desc') updates.description = value;
+            else return message.reply("❌ Campo non valido. Usa: name, role, status, description");
+
+            const success = updateNpcFields(activeCampaign!.id, name, updates);
+            if (success) return message.reply(`✅ NPC **${name}** aggiornato.`);
+            else return message.reply(`❌ NPC "${name}" non trovato o errore aggiornamento.`);
         }
 
         if (argsStr.includes('|')) {

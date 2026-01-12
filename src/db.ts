@@ -556,6 +556,147 @@ export const findNpcDossierByName = (campaignId: number, nameQuery: string): Npc
     `).all(campaignId, nameQuery) as NpcEntry[];
 };
 
+// --- FUNZIONI MANUTENZIONE NPC ---
+
+/**
+ * Rinomina un NPC. Se il nuovo nome esiste già, unisce le descrizioni.
+ */
+export const renameNpcEntry = (campaignId: number, oldName: string, newName: string): boolean => {
+    const existing = getNpcEntry(campaignId, oldName);
+    if (!existing) return false;
+    
+    const conflict = getNpcEntry(campaignId, newName);
+    
+    db.transaction(() => {
+        if (conflict) {
+            // MERGE: Unisce le descrizioni e aggiorna la cronologia
+            const mergedDesc = [existing.description, conflict.description]
+                .filter(d => d && d.trim().length > 0).join(' | ');
+            
+            // Aggiorna il record di destinazione
+            db.prepare(`
+                UPDATE npc_dossier 
+                SET description = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(mergedDesc, conflict.id);
+            
+            // Aggiorna la cronologia per puntare al nuovo nome
+            db.prepare(`
+                UPDATE npc_history 
+                SET npc_name = ? 
+                WHERE campaign_id = ? AND lower(npc_name) = lower(?)
+            `).run(newName, campaignId, oldName);
+
+            // Elimina il vecchio record
+            db.prepare(`DELETE FROM npc_dossier WHERE id = ?`).run(existing.id);
+            console.log(`[DB] NPC Merged: "${oldName}" -> "${newName}"`);
+        } else {
+            // RENAME SEMPLICE
+            db.prepare(`UPDATE npc_dossier SET name = ? WHERE id = ?`).run(newName, existing.id);
+            
+            // Aggiorna anche la cronologia
+            db.prepare(`
+                UPDATE npc_history 
+                SET npc_name = ? 
+                WHERE campaign_id = ? AND lower(npc_name) = lower(?)
+            `).run(newName, campaignId, oldName);
+            
+            console.log(`[DB] NPC Renamed: "${oldName}" -> "${newName}"`);
+        }
+    })();
+    
+    return true;
+};
+
+/**
+ * Elimina un NPC dal dossier e dalla sua cronologia.
+ */
+export const deleteNpcEntry = (campaignId: number, name: string): boolean => {
+    const existing = getNpcEntry(campaignId, name);
+    if (!existing) return false;
+    
+    db.transaction(() => {
+        // Elimina dal dossier
+        db.prepare(`DELETE FROM npc_dossier WHERE id = ?`).run(existing.id);
+        
+        // Elimina dalla cronologia (opzionale, ma pulito)
+        db.prepare(`DELETE FROM npc_history WHERE campaign_id = ? AND lower(npc_name) = lower(?)`).run(campaignId, name);
+    })();
+    
+    console.log(`[DB] NPC Deleted: "${name}"`);
+    return true;
+};
+
+/**
+ * Aggiorna campi specifici di un NPC esistente
+ */
+export const updateNpcFields = (
+    campaignId: number,
+    currentName: string,
+    updates: {
+        name?: string;        // Nuovo nome
+        description?: string; // Nuova descrizione
+        role?: string;        // Nuovo ruolo
+        status?: string;      // ALIVE, DEAD, MISSING
+    }
+): boolean => {
+    const existing = getNpcEntry(campaignId, currentName);
+    if (!existing) {
+        console.error(`[DB] NPC "${currentName}" non trovato.`);
+        return false;
+    }
+
+    // Costruisci query dinamica per aggiornare solo i campi forniti
+    const setClauses: string[] = [];
+    const params: any[] = [];
+
+    if (updates.name !== undefined && updates.name !== currentName) {
+        setClauses.push('name = ?');
+        params.push(updates.name);
+    }
+
+    if (updates.description !== undefined) {
+        setClauses.push('description = ?');
+        params.push(updates.description);
+    }
+
+    if (updates.role !== undefined) {
+        setClauses.push('role = ?');
+        params.push(updates.role);
+    }
+
+    if (updates.status !== undefined) {
+        setClauses.push('status = ?');
+        params.push(updates.status.toUpperCase());
+    }
+
+    if (setClauses.length === 0) return false;
+
+    setClauses.push('last_updated = CURRENT_TIMESTAMP');
+    params.push(existing.id);
+
+    const query = `UPDATE npc_dossier SET ${setClauses.join(', ')} WHERE id = ?`;
+    
+    try {
+        db.prepare(query).run(...params);
+        
+        // Se il nome è cambiato, aggiorna anche la history
+        if (updates.name && updates.name !== currentName) {
+             db.prepare(`
+                UPDATE npc_history 
+                SET npc_name = ? 
+                WHERE campaign_id = ? AND lower(npc_name) = lower(?)
+            `).run(updates.name, campaignId, currentName);
+        }
+
+        console.log(`[DB] NPC "${currentName}" aggiornato:`, updates);
+        return true;
+    } catch (err) {
+        console.error('[DB] Errore aggiornamento NPC:', err);
+        return false;
+    }
+};
+
 // --- FUNZIONI QUESTS ---
 
 export const addQuest = (campaignId: number, title: string) => {

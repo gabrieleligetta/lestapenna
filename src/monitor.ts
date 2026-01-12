@@ -78,6 +78,10 @@ export interface SessionMetrics {
         ramSamplesMB: number[];
     };
     // 🆕 AGGIUNGI QUESTI
+    systemHealth?: {
+        minFreeRamMB: number; // Minima RAM libera osservata (Critico per RAM Disk)
+        maxCpuLoad: number;   // Massimo Load Average (1min)
+    };
     whisperMetrics?: {
         avgProcessingRatio: number;  // Tempo elaborazione / durata audio (ideale: < 0.5)
         minProcessingTime: number;   // File più veloce
@@ -130,6 +134,7 @@ class SystemMonitor {
     private interval: NodeJS.Timeout | null = null;
     private lastLogTime = 0;
     private readonly LOG_INTERVAL = 15000; // 15 secondi
+    private sampleCounter = 0; // Contatore per gestire log periodici
 
     startSession(sessionId: string) {
         let dbSize = 0;
@@ -163,19 +168,50 @@ class SystemMonitor {
         console.log(`[Monitor] 📊 Iniziato tracciamento sessione ${sessionId} (DB Size: ${(dbSize / 1024 / 1024).toFixed(2)} MB)`);
     }
 
+    startIdleMonitoring() {
+        console.log("[Monitor] 💤 Avvio monitoraggio Idle (Heartbeat 60s)...");
+        setInterval(() => {
+            // Se c'è una sessione attiva, il monitoraggio intensivo (5s) ci pensa già.
+            // Noi logghiamo solo se siamo FERMI.
+            if (!this.currentSession) {
+                this.logSystemHealth(true); // true = flag per indicare 'Idle Mode'
+            }
+        }, 60000);
+    }
+
     private async sampleResources() {
         if (!this.currentSession) return;
+        this.sampleCounter++;
+
         try {
             const stats = await pidusage(process.pid);
             this.currentSession.resourceUsage.cpuSamples.push(Math.round(stats.cpu));
             this.currentSession.resourceUsage.ramSamplesMB.push(Math.round(stats.memory / 1024 / 1024));
 
-            // Aggiorniamo lo spazio disco ogni tanto (es. ogni 10 campionamenti = 50 sec) o semplicemente ad ogni ciclo se non è pesante
-            // Per semplicità lo facciamo ogni volta ma in modo asincrono senza await bloccante
-            if (this.currentSession.resourceUsage.cpuSamples.length % 12 === 0) { // Ogni minuto circa
+            // 🆕 CATTURA METRICHE SISTEMA (OS LEVEL)
+            const freeMemMB = Math.round(os.freemem() / 1024 / 1024);
+            const cpuLoad = os.loadavg()[0];
+
+            if (!this.currentSession.systemHealth) {
+                this.currentSession.systemHealth = {
+                    minFreeRamMB: freeMemMB,
+                    maxCpuLoad: cpuLoad
+                };
+            } else {
+                this.currentSession.systemHealth.minFreeRamMB = Math.min(this.currentSession.systemHealth.minFreeRamMB, freeMemMB);
+                this.currentSession.systemHealth.maxCpuLoad = Math.max(this.currentSession.systemHealth.maxCpuLoad, cpuLoad);
+            }
+
+            // Aggiorniamo lo spazio disco ogni tanto (es. ogni 12 campionamenti = 60 sec)
+            if (this.sampleCounter % 12 === 0) { 
                 this.checkDiskSpace();
             }
             
+            // Log System Health ogni 30 secondi (6 campionamenti da 5s)
+            if (this.sampleCounter % 6 === 0) {
+                this.logSystemHealth();
+            }
+
             // Log periodico invece di ogni 2 secondi
             const now = Date.now();
             if (now - this.lastLogTime > this.LOG_INTERVAL) {
@@ -190,42 +226,63 @@ class SystemMonitor {
         }
     }
 
+    // Inserisci questo metodo nella classe SystemMonitor
+    private logSystemHealth(isIdle: boolean = false) {
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        const usedMemGB = (usedMem / (1024 * 1024 * 1024)).toFixed(2);
+        const totalMemGB = (totalMem / (1024 * 1024 * 1024)).toFixed(2);
+        const memPercent = Math.round((usedMem / totalMem) * 100);
+        
+        const loadAvg = os.loadavg()[0].toFixed(2); // Carico a 1 minuto
+        
+        // Ottieni info disco (o dalla sessione o al volo)
+        let diskUsedPct = '?';
+        if (this.currentSession?.diskUsage) {
+            diskUsedPct = this.currentSession.diskUsage.usedPercent.toFixed(1);
+        } else {
+            const diskStats = this.checkDiskSpace();
+            if (diskStats) {
+                diskUsedPct = diskStats.usedPercent.toFixed(1);
+            }
+        }
+
+        const prefix = isIdle ? '[Idle]' : '[Health]';
+        
+        // Log "Heartbeat" per Docker
+        console.log(`${prefix} 🖥️ SYS: CPU Load ${loadAvg} | 🧠 RAM: ${usedMemGB}/${totalMemGB} GB (${memPercent}%) | 💿 Disk: ${diskUsedPct}%`);
+
+        // Allarme Saturazione RAM (se < 2GB liberi)
+        if (freeMem < 2 * 1024 * 1024 * 1024) {
+            console.warn(`[⚠️ ALARM] RAM IN ESURIMENTO! Liberi solo ${(freeMem / 1024 / 1024).toFixed(0)} MB`);
+        }
+    }
+
+    // Sostituisci il vecchio checkDiskSpace con questo:
     private checkDiskSpace() {
-        if (!this.currentSession) return;
+        try {
+            // Monitoriamo la root (o /dev/shm se preferisci, ma root è più critico per i log/db)
+            const stats = fs.statfsSync('.'); 
+            const totalGB = (stats.bsize * stats.blocks) / (1024 * 1024 * 1024);
+            const freeGB = (stats.bsize * stats.bavail) / (1024 * 1024 * 1024);
+            const usedPercent = ((totalGB - freeGB) / totalGB) * 100;
 
-        // Comando df -k . per ottenere info sulla partizione corrente in KB
-        exec('df -k .', (error, stdout, stderr) => {
-            if (error || !this.currentSession) {
-                return;
+            const diskData = {
+                totalGB: parseFloat(totalGB.toFixed(2)),
+                freeGB: parseFloat(freeGB.toFixed(2)),
+                usedPercent: parseFloat(usedPercent.toFixed(1))
+            };
+
+            if (this.currentSession) {
+                this.currentSession.diskUsage = diskData;
             }
-            try {
-                // Output tipico:
-                // Filesystem     1K-blocks      Used Available Use% Mounted on
-                // /dev/disk1s1s1 494384792 38472812 455911980   8% /
 
-                const lines = stdout.trim().split('\n');
-                if (lines.length < 2) return;
-
-                const parts = lines[1].split(/\s+/);
-                if (parts.length >= 5) {
-                    const totalKB = parseInt(parts[1]);
-                    const availableKB = parseInt(parts[3]);
-                    // Use% potrebbe essere parts[4] (es "8%")
-
-                    const totalGB = totalKB / (1024 * 1024);
-                    const freeGB = availableKB / (1024 * 1024);
-                    const usedPercent = ((totalGB - freeGB) / totalGB) * 100;
-
-                    this.currentSession.diskUsage = {
-                        totalGB: parseFloat(totalGB.toFixed(2)),
-                        freeGB: parseFloat(freeGB.toFixed(2)),
-                        usedPercent: parseFloat(usedPercent.toFixed(1))
-                    };
-                }
-            } catch (e) {
-                console.error("[Monitor] Errore parsing df:", e);
-            }
-        });
+            return diskData;
+        } catch (e) {
+            console.error("[Monitor] Errore lettura disco:", e);
+            return null;
+        }
     }
 
     logFileProcessed(durationSec: number, processingTimeMs: number) {

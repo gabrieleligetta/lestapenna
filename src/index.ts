@@ -2674,6 +2674,9 @@ client.once('ready', async () => {
     // Avvia il worker PRIMA di processare le sessioni, altrimenti il processing sequenziale si blocca
     startWorker();
     
+    // 🆕 AVVIO MONITORAGGIO IDLE
+    monitor.startIdleMonitoring();
+
     await recoverOrphanedFiles();
     
     console.log('🔍 Controllo lavori interrotti nel database...');

@@ -94,6 +94,10 @@ Ecco le metriche della sessione:
 - Disk Used: ${diskUsedPct.toFixed(1)}% (${diskFree.toFixed(2)}GB free)
 ${thermalWarning}
 
+**SYSTEM HEALTH (VM)**
+- Min Free RAM: ${metrics.systemHealth?.minFreeRamMB || 'N/A'} MB (Critico se < 1000MB)
+- Max CPU Load: ${metrics.systemHealth?.maxCpuLoad.toFixed(2) || 'N/A'}
+
 **WHISPER PERFORMANCE**
 - File Audio: ${metrics.totalFiles}
 - Processing Ratio: ${whisperRatio.toFixed(2)}x (${whisperEfficiency})
@@ -245,12 +249,18 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
             <td>${metrics.totalTokensUsed}</td>
         </tr>
         <tr>
-            <td>Avg CPU</td>
-            <td>${avgCpu.toFixed(1)}%</td>
+            <td><strong>Process</strong> CPU/RAM</td>
+            <td>${avgCpu.toFixed(1)}% / ${maxRam} MB</td>
+        </tr>
+        <tr style="background-color: ${(metrics.systemHealth?.minFreeRamMB || 9999) < 2000 ? '#fff3cd' : 'white'};">
+            <td><strong>System</strong> Min Free RAM</td>
+            <td style="font-weight: bold; color: ${(metrics.systemHealth?.minFreeRamMB || 9999) < 1000 ? 'red' : 'black'};">
+                ${metrics.systemHealth?.minFreeRamMB.toLocaleString() || 'N/A'} MB
+            </td>
         </tr>
         <tr>
-            <td>Max RAM</td>
-            <td>${maxRam} MB</td>
+            <td><strong>System</strong> Max Load</td>
+            <td>${metrics.systemHealth?.maxCpuLoad.toFixed(2) || 'N/A'}</td>
         </tr>
         <tr>
             <td>DB Start Size</td>

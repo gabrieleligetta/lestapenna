@@ -418,16 +418,20 @@ export async function disconnect(guildId: string): Promise<boolean> {
                 }
                 fileProcessingResolvers.get(guildId)!.push(resolve);
             });
-            
+
+            let timeoutHandle: NodeJS.Timeout;
+
             const timeoutPromise = new Promise<void>((resolve) => {
-                setTimeout(() => {
+                timeoutHandle = setTimeout(() => {
                     console.warn(`[Recorder] ⚠️ Timeout attesa file, continuo comunque...`);
                     resolve();
                 }, 30000);
             });
             
             await Promise.race([waitPromise, timeoutPromise]);
-            
+
+            clearTimeout(timeoutHandle!);
+
             console.log(`[Recorder] ✅ Tutti i file sono stati processati (o timeout)`);
         }
         

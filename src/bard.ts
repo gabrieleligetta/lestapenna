@@ -1669,6 +1669,63 @@ export async function generateNpcBiography(campaignId: number, npcName: string, 
     }
 }
 
+// --- GENERATORE NOTE NPC (Conciso) ---
+export async function regenerateNpcNotes(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
+    const history = getNpcHistory(campaignId, npcName);
+
+    const historyText = history.length > 0
+        ? history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n')
+        : "Nessun evento storico registrato.";
+
+    const prompt = `Sei un archivista di D&D.
+    Devi riscrivere le NOTE del dossier per l'NPC: **${npcName}**.
+    
+    RUOLO: ${role}
+    NOTE ATTUALI: ${staticDesc}
+    
+    CRONOLOGIA EVENTI (Nuovi fatti):
+    ${historyText}
+    
+    ISTRUZIONI:
+    1. Sintetizza le note attuali e la cronologia in un unico testo descrittivo conciso.
+    2. Mantieni i fatti importanti (chi è, cosa ha fatto, stato attuale).
+    3. Elimina ridondanze.
+    4. Usa un tono da "Dossier" (informativo, diretto).
+    5. Lunghezza massima: 3-4 frasi dense di informazioni.
+    
+    Restituisci SOLO il testo delle nuove note.`;
+
+    const startAI = Date.now();
+    try {
+        const response = await summaryClient.chat.completions.create({
+            model: SUMMARY_MODEL,
+            messages: [{ role: "user", content: prompt }]
+        });
+        
+        const latency = Date.now() - startAI;
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost(
+            'summary',
+            SUMMARY_PROVIDER,
+            SUMMARY_MODEL,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            latency,
+            false
+        );
+        
+        return response.choices[0].message.content || staticDesc;
+    } catch (e) {
+        console.error("Errore rigenerazione note NPC:", e);
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        return staticDesc;
+    }
+}
+
 // --- RAG: INGESTIONE BIOGRAFIA ---
 export async function ingestBioEvent(campaignId: number, sessionId: string, charName: string, event: string, type: string) {
     const content = `BIOGRAFIA ${charName}: TIPO ${type}. EVENTO: ${event}`;

@@ -21,7 +21,7 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent, smartMergeBios } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent, smartMergeBios, regenerateNpcNotes } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
     getAvailableSessions,
@@ -304,6 +304,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$npc merge <Vecchio> | <Nuovo>`: Unisce due NPC.\n" +
                         "`$npc delete <Nome>`: Elimina un NPC.\n" +
                         "`$npc update <Nome> | <Campo> | <Valore>`: Aggiorna campi specifici.\n" +
+                        "`$npc regen <Nome>`: Rigenera le note usando la cronologia.\n" +
                         "`$presenze`: Mostra gli NPC incontrati nella sessione corrente."
                 },
                 {
@@ -405,6 +406,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$npc merge <Old> | <New>`: Merge two NPCs.\n" +
                         "`$npc delete <Name>`: Delete an NPC.\n" +
                         "`$npc update <Name> | <Field> | <Value>`: Update specific fields.\n" +
+                        "`$npc regen <Name>`: Regenerate notes using history.\n" +
                         "`$presenze`: Show NPCs encountered in current session."
                 },
                 {
@@ -739,6 +741,7 @@ client.on('messageCreate', async (message: Message) => {
     // Uso: $npc merge Vecchio | Nuovo -> Unisce due NPC
     // Uso: $npc delete Nome -> Elimina NPC
     // Uso: $npc update Nome | Campo | Valore -> Aggiorna campo specifico
+    // Uso: $npc regen Nome -> Rigenera note usando la cronologia
     if (command === 'npc' || command === 'dossier') {
         const argsStr = args.join(' ');
 
@@ -815,6 +818,18 @@ client.on('messageCreate', async (message: Message) => {
             const success = updateNpcFields(activeCampaign!.id, name, updates);
             if (success) return message.reply(`✅ NPC **${name}** aggiornato.`);
             else return message.reply(`❌ NPC "${name}" non trovato o errore aggiornamento.`);
+        }
+
+        if (argsStr.toLowerCase().startsWith('regen ')) {
+            const name = argsStr.substring(6).trim();
+            const npc = getNpcEntry(activeCampaign!.id, name);
+            if (!npc) return message.reply(`❌ NPC "${name}" non trovato.`);
+
+            await message.reply(`⏳ **Rigenerazione Note:** Analisi cronologia per "${name}"...`);
+            const newDesc = await regenerateNpcNotes(activeCampaign!.id, npc.name, npc.role || "Sconosciuto", npc.description || "");
+            
+            updateNpcEntry(activeCampaign!.id, npc.name, newDesc);
+            return message.reply(`✅ **Note Aggiornate!**\n📜 **Nuova Bio:**\n> *${newDesc}*`);
         }
 
         if (argsStr.includes('|')) {

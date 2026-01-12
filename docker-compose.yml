@@ -5,12 +5,29 @@ services:
     build: .
     container_name: dnd-bot-container
     restart: unless-stopped
+
+    # 🔥 CRUCIALE: Aumenta la memoria condivisa per il RAM Disk (/dev/shm)
+    # Senza questo, il mixer crasherà dopo circa 6 minuti di audio (limite default 64MB)
+    shm_size: '16gb'
+
     env_file:
       - .env
+
+    environment:
+      # 🚀 OTTIMIZZAZIONE I/O: Aumenta i thread per la gestione file (default è 4)
+      # Fondamentale quando si scrivono molti file audio contemporaneamente.
+      - UV_THREADPOOL_SIZE=32
+
+      # 🧠 OTTIMIZZAZIONE RAM: Dice a Node di usare fino a 8GB prima di forzare il GC
+      # Funziona sia in dev che in prod, senza cambiare la riga 'command'.
+      - NODE_OPTIONS=--max-old-space-size=8192 --no-warnings
+
     depends_on:
       - redis
-    # Override del comando di default (che ora è node dist/index.js) per usare dev mode
+
+    # Override del comando di default
     command: yarn dev
+
     volumes:
       # Mappatura corretta su /app
       - ./src:/app/src

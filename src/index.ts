@@ -2673,7 +2673,19 @@ client.once('ready', async () => {
     
     // Avvia il worker PRIMA di processare le sessioni, altrimenti il processing sequenziale si blocca
     startWorker();
-    
+    // --- CHECK RAM DISK (/dev/shm) ---
+    // Esegue 'df -h /dev/shm' per confermare che Docker abbia allocato la memoria corretta
+    exec('df -h /dev/shm', (error, stdout, stderr) => {
+        if (error) {
+            console.warn(`⚠️ [System] Impossibile verificare /dev/shm: ${error.message}`);
+            return;
+        }
+        // Pulisce l'output per mostrarlo su una riga sola nei log
+        const lines = stdout.trim().split('\n');
+        const info = lines.length > 1 ? lines[1] : lines[0]; // Prende la seconda riga (dati)
+        console.log(`✅ [System] RAM Disk Check: ${info.replace(/\s+/g, ' ')}`);
+    });
+    // ----------------------------------
     // 🆕 AVVIO MONITORAGGIO IDLE
     monitor.startIdleMonitoring();
 

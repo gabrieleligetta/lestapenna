@@ -638,19 +638,97 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
     }
 }
 
-// --- RAG: ASK BARD ---
-export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
-    const context = await searchKnowledge(campaignId, question, 5);
+// --- RAG AGENT: QUERY GENERATOR (Chat) ---
+async function generateSearchQueries(campaignId: number, userQuestion: string, history: any[]): Promise<string[]> {
+    const recentHistory = history.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
+    
+    const prompt = `Sei un esperto di ricerca per un database D&D.
+    
+    CONTESTO CHAT RECENTE:
+    ${recentHistory}
+    
+    ULTIMA DOMANDA UTENTE:
+    "${userQuestion}"
+    
+    Il tuo compito è generare 1-3 query di ricerca specifiche per trovare la risposta nel database vettoriale (RAG).
+    
+    REGOLE:
+    1. Risolvi i riferimenti (es. "Lui" -> "Leosin", "Quel posto" -> "Locanda del Drago").
+    2. Usa parole chiave specifiche (Nomi, Luoghi, Oggetti).
+    3. Se la domanda è generica ("Riassumi tutto"), crea query sui fatti recenti.
+    
+    Output: JSON array di stringhe. Es: ["Dialoghi Leosin Erantar", "Storia della Torre"]`;
 
-    let contextText = context.length > 0
-        ? "TRASCRIZIONI RILEVANTI (FONTE DI VERITÀ):\n" + context.map(c => `...\\n${c}\\n...`).join("\\n")
+    try {
+        const response = await chatClient.chat.completions.create({
+            model: CHAT_MODEL, 
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" }
+        });
+        
+        const parsed = JSON.parse(response.choices[0].message.content || "{}");
+        return Array.isArray(parsed.queries) ? parsed.queries : [];
+    } catch (e) {
+        return [userQuestion];
+    }
+}
+
+// --- RAG AGENT: ENTITY RESOLUTION (Metadata) ---
+async function resolveEntitiesWithRAG(campaignId: number, text: string): Promise<string> {
+    if (text.length < 30) return ""; 
+
+    // Analisi rapida per identificare ambiguità
+    const analyzePrompt = `Analizza questo testo D&D. Identifica:
+    1. Nomi parziali o ruoli (es. "il fabbro", "l'elfo").
+    2. Oggetti generici importanti (es. "la spada magica").
+    3. Mostri o Boss (es. "il drago verde").
+    
+    Restituisci le chiavi di ricerca per trovare il loro Nome Proprio nel DB.
+    JSON: { "queries": ["query1", "query2"] }`;
+    
+    try {
+        const analyzeResp = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL, 
+            messages: [{ role: "user", content: `${analyzePrompt}\n\nTESTO: ${text}` }],
+            response_format: { type: "json_object" }
+        });
+        
+        const queries = JSON.parse(analyzeResp.choices[0].message.content || "{}").queries || [];
+        if (queries.length === 0) return "";
+
+        const searchPromises = queries.map((q: string) => searchKnowledge(campaignId, q, 1));
+        const results = await Promise.all(searchPromises);
+        const knowledge = Array.from(new Set(results.flat()));
+
+        if (knowledge.length === 0) return "";
+
+        return `\n[[INFO IDENTITÀ RECUPERATE (RAG)]]\n${knowledge.join('\n')}\n(Usa queste info SOLO per dare un nome specifico alle entità descritte nel testo)`;
+    } catch (e) {
+        return ""; 
+    }
+}
+
+// --- ASK BARD (AGENTIC RAG) ---
+export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
+    
+    // 1. AGENTIC STEP
+    const searchQueries = await generateSearchQueries(campaignId, question, history);
+    console.log(`[AskBard] 🧠 Query generate:`, searchQueries);
+
+    const promises = searchQueries.map(q => searchKnowledge(campaignId, q, 3)); 
+    const results = await Promise.all(promises);
+    const uniqueContext = Array.from(new Set(results.flat()));
+
+    let contextText = uniqueContext.length > 0
+        ? "MEMORIE RECUPERATE:\n" + uniqueContext.map(c => `...\\n${c}\\n...`).join("\\n")
         : "Nessuna memoria specifica trovata.";
 
     const MAX_CONTEXT_CHARS = 12000;
     if (contextText.length > MAX_CONTEXT_CHARS) {
-        contextText = contextText.substring(0, MAX_CONTEXT_CHARS) + "\n... [TESTO TRONCATO PER LIMITI DI MEMORIA]";
+        contextText = contextText.substring(0, MAX_CONTEXT_CHARS) + "\n... [TESTO TRONCATO]";
     }
 
+    // 2. LOGICA ATMOSFERA ORIGINALE (Preservata)
     const loc = getCampaignLocationById(campaignId);
     let atmosphere = "Sei il Bardo della campagna. Rispondi in modo neutrale ma evocativo.";
 
@@ -659,44 +737,40 @@ export async function askBard(campaignId: number, question: string, history: { r
         const macro = (loc.macro || "").toLowerCase();
 
         if (micro.includes('taverna') || micro.includes('locanda') || micro.includes('pub')) {
-            atmosphere = "Sei un bardo allegro e un po' brillo. Usi slang da taverna, fai battute e c'è rumore di boccali in sottofondo.";
+            atmosphere = "Sei un bardo allegro e un po' brillo. Usi slang da taverna, fai battute.";
         } else if (micro.includes('cripta') || micro.includes('dungeon') || micro.includes('grotta') || micro.includes('tomba')) {
-            atmosphere = "Parli sottovoce, sei teso e spaventato. Descrivi i suoni inquietanti dell'ambiente oscuro. Sei molto cauto.";
+            atmosphere = "Parli sottovoce, sei teso e spaventato. Descrivi i suoni inquietanti.";
         } else if (micro.includes('tempio') || micro.includes('chiesa') || micro.includes('santuario')) {
-            atmosphere = "Usi un tono solenne, rispettoso e quasi religioso. Parli con voce calma e misurata.";
+            atmosphere = "Usi un tono solenne, rispettoso e quasi religioso.";
         } else if (macro.includes('corte') || macro.includes('castello') || macro.includes('palazzo')) {
-            atmosphere = "Usi un linguaggio aulico, formale e molto rispettoso. Sei un cronista di corte attento all'etichetta.";
+            atmosphere = "Usi un linguaggio aulico, formale e molto rispettoso.";
         } else if (micro.includes('bosco') || micro.includes('foresta') || micro.includes('giungla')) {
-            atmosphere = "Sei un bardo naturalista. Parli con meraviglia della natura, noti i suoni degli animali e il fruscio delle foglie.";
+            atmosphere = "Sei un bardo naturalista. Parli con meraviglia della natura.";
         }
-
         atmosphere += `\nLUOGO ATTUALE: ${loc.macro || "Sconosciuto"} - ${loc.micro || "Sconosciuto"}.`;
     }
 
     const relevantNpcs = findNpcDossierByName(campaignId, question);
     let socialContext = "";
-
     if (relevantNpcs.length > 0) {
         socialContext = "\n\n[[DOSSIER PERSONAGGI RILEVANTI]]\n";
         relevantNpcs.forEach((npc: any) => {
             socialContext += `- NOME: ${npc.name}\n  RUOLO: ${npc.role || 'Sconosciuto'}\n  STATO: ${npc.status}\n  INFO: ${npc.description}\n`;
         });
-        socialContext += "Usa queste informazioni per arricchire la risposta, ma dai priorità ai fatti accaduti nelle trascrizioni.\n";
+        socialContext += "Usa queste informazioni, ma dai priorità ai fatti nelle trascrizioni.\n";
     }
 
     const systemPrompt = `${atmosphere}
-    Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni fornite qui sotto.
+    Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni.
     
     ${socialContext}
-
     ${contextText}
     
     REGOLAMENTO RIGIDO:
-    1. La cronologia della chat serve SOLO per capire il contesto (es. se l'utente chiede "Come si chiama?", guarda i messaggi precedenti per capire di chi parla).
-    2. NON ripetere mai le risposte già presenti nella cronologia.
-    3. Rispondi in modo diretto e conciso alla domanda corrente.
-    4. Se trovi informazioni contrastanti nelle trascrizioni, riportale come voci diverse.
-    5. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
+    1. La cronologia serve SOLO per il contesto.
+    2. NON ripetere mai le risposte già date.
+    3. Rispondi in modo diretto.
+    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
 
     const messages: any[] = [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: question }];
 
@@ -706,26 +780,15 @@ export async function askBard(campaignId: number, question: string, history: { r
             model: CHAT_MODEL,
             messages: messages as any
         }));
-        const latency = Date.now() - startAI;
+        
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
-
-        monitor.logAIRequestWithCost(
-            'chat',
-            CHAT_PROVIDER,
-            CHAT_MODEL,
-            inputTokens,
-            outputTokens,
-            cachedTokens,
-            latency,
-            false
-        );
+        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
-        console.error("[Chat] Errore risposta:", e);
-        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        console.error("[Chat] Errore:", e);
         return "La mia mente è annebbiata...";
     }
 }
@@ -913,8 +976,7 @@ async function extractMetadataSingleBatch(
     present_npcs?: string[];
 }> {
     let contextInfo = "Contesto: Sessione D&D.";
-    let currentLocationMsg = "Luogo: Sconosciuto.";
-    let atlasContext = "";
+    let ragContext = ""; 
 
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
@@ -925,41 +987,47 @@ async function extractMetadataSingleBatch(
                 macro: campaign.current_macro_location!,
                 micro: campaign.current_micro_location!
             };
-
+            // SOLO NOME LUOGO per evitare allucinazioni
             if (loc.macro || loc.micro) {
-                currentLocationMsg = `LUOGO ATTUALE: ${loc.macro || ''} - ${loc.micro || ''}`;
-                if (loc.macro && loc.micro) {
-                    const lore = getAtlasEntry(campaignId, loc.macro, loc.micro);
-                    atlasContext = lore ? `\nINFO LUOGO: ${lore}` : "";
-                }
+                contextInfo += `\nLuogo Attuale (Riferimento): ${loc.macro || ''} - ${loc.micro || ''}`;
             }
 
             const characters = getCampaignCharacters(campaignId);
             if (characters.length > 0) {
                 contextInfo += "\nPG: " + characters.map(c => c.character_name).join(", ");
             }
+            
+            // 🆕 AGENTIC STEP
+            ragContext = await resolveEntitiesWithRAG(campaignId, text);
         }
     }
 
+    // 🛡️ PROMPT BLINDATO: Agentic Logic + Istruzioni Originali
     const prompt = `Analizza questa trascrizione di una sessione D&D.
 
 ${contextInfo}
-${currentLocationMsg}
-${atlasContext}
+${ragContext}
 
-**ISTRUZIONI CRITICHE:**
+**ISTRUZIONI CRITICHE (LINGUA & STILE):**
 1. **Rispondi SEMPRE in italiano puro**
 2. Descrivi luoghi, personaggi e azioni in italiano
 3. Non mescolare inglese nelle descrizioni
 4. Usa termini italiani anche per concetti fantasy
 
+**ISTRUZIONI ANTI-ALLUCINAZIONE & ENTITY LINKING:**
+1. **FONTE DI VERITÀ:** Usa ESCLUSIVAMENTE il testo in "TRASCRIZIONE".
+2. **SILENZIO:** Se la trascrizione è vuota o rumore, restituisci liste vuote. NON inventare nulla basandoti sul contesto.
+3. **RAG LINKING:** Usa [[INFO IDENTITÀ RECUPERATE]] per collegare descrizioni generiche (es. "l'informatore") a nomi propri (es. "Leosin").
+   - Esempio: Se senti "l'informatore ferito" e le info dicono "Leosin (Spia)", scrivi name: "Leosin".
+   - MAI inserire un NPC dal RAG se non è menzionato o attivo nella trascrizione attuale.
+
 **COMPITI:**
 1. Rileva cambio di luogo (macro/micro-location)
-2. Distingui RIGOROSAMENTE tra NPC (Personaggi con nome, ruolo sociale, alleati o neutrali) e MOSTRI (Bestie, nemici anonimi, creature ostili).
+2. Distingui RIGOROSAMENTE tra NPC (Personaggi con nome, ruolo sociale) e MOSTRI (Bestie, nemici anonimi).
 3. Rileva aggiornamenti alle descrizioni dei luoghi
 4. Rileva nuove informazioni sugli NPC (ruolo, status)
 
-**TESTO DA ANALIZZARE:**
+**TRASCRIZIONE DA ANALIZZARE:**
 ${text}
 
 **FORMATO OUTPUT (JSON OBBLIGATORIO):**
@@ -970,28 +1038,28 @@ ${text}
     "confidence": "high" o "low",
     "description": "Descrizione dettagliata in ITALIANO"
   },
-  "atlas_update": "Aggiornamento descrizione luogo (se necessario, in ITALIANO)",
+  "atlas_update": "Nuovi dettagli del luogo (null se invariato)",
   "npc_updates": [
     {
-      "name": "Nome NPC",
+      "name": "Nome Proprio (Riconciliato)",
       "description": "Descrizione in ITALIANO",
-      "role": "Ruolo in ITALIANO (es. 'Mercante', 'Guardia')",
+      "role": "Ruolo in ITALIANO (es. 'Mercante')",
       "status": "ALIVE o DEAD"
     }
   ],
   "monsters": [
       { "name": "Nome Mostro", "status": "DEFEATED" | "ALIVE" | "FLED", "count": "numero o descrizione" }
   ],
-  "present_npcs": ["NPC1", "NPC2"]
+  "present_npcs": ["Nome1", "Nome2"]
 }
 
 **ESEMPIO CORRETTO:**
 {
   "detected_location": {
     "macro": "Waterdeep",
-    "micro": "Taverna del Drago Dorato",
+    "micro": "Taverna del Drago",
     "confidence": "high",
-    "description": "Locale affollato, odore di birra e arrosto, camino acceso"
+    "description": "Locale affollato, odore di birra"
   },
   "npc_updates": [
     {
@@ -1002,27 +1070,25 @@ ${text}
     }
   ],
   "monsters": [
-      { "name": "Goblin", "status": "DEFEATED", "count": "3" },
-      { "name": "Drago Rosso", "status": "FLED", "count": "1" }
+      { "name": "Goblin", "status": "DEFEATED", "count": "3" }
   ],
   "present_npcs": ["Elminster"]
 }
 
 Istruzione extra: "NON inserire mostri generici (es. 'Ragno', 'Orco') nella lista 'npc_updates'. Mettili solo in 'monsters'."
 
-Rispondi SOLO con il JSON, senza altro testo.`;
+Rispondi SOLO con il JSON.`;
 
     const startAI = Date.now();
     try {
         const options: any = {
             model: METADATA_MODEL,
             messages: [
-                { role: "system", content: "Sei un assistente esperto di D&D. Rispondi SEMPRE in italiano. Output: solo JSON valido, descrizioni dettagliate in italiano." },
+                { role: "system", content: "Sei un assistente esperto di D&D. Rispondi SEMPRE in italiano. Output: solo JSON valido." },
                 { role: "user", content: prompt }
             ]
         };
 
-        // Solo OpenAI supporta response_format
         if (provider === 'openai') {
             options.response_format = { type: "json_object" };
         }
@@ -1033,43 +1099,21 @@ Rispondi SOLO con il JSON, senza altro testo.`;
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
 
-        monitor.logAIRequestWithCost(
-            'metadata',
-            METADATA_PROVIDER,
-            METADATA_MODEL,
-            inputTokens,
-            outputTokens,
-            cachedTokens,
-            latency,
-            false
-        );
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
 
         const rawContent = response.choices[0].message.content || "{}";
-        
-        // USO LA NUOVA FUNZIONE SAFE PARSE
         const parsed = safeJsonParse(rawContent);
         
         if (!parsed) {
-            console.error(`[Metadati] ❌ JSON Parse Error con ${provider}. Raw: ${rawContent.substring(0, 50)}...`);
-            
-            // Se Ollama fallisce, fallback a OpenAI
-            if (provider === 'ollama') {
-                console.log(`[Metadati] 🔄 Fallback a OpenAI...`);
-                return extractMetadataSingleBatch(text, campaignId, 'openai');
-            }
-            
+            console.error(`[Metadati] ❌ JSON Parse Error.`);
+            if (provider === 'ollama') return extractMetadataSingleBatch(text, campaignId, 'openai');
             return { detected_location: null, npc_updates: [], present_npcs: [] };
         }
 
-        // Validazione minima
-        if (!parsed.detected_location && !parsed.present_npcs) {
-             // Se è vuoto ma valido, ok.
-        }
         return parsed;
 
     } catch (err) {
         console.error(`[Metadati] ❌ Errore:`, err);
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return {};
     }
 }

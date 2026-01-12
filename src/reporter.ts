@@ -24,6 +24,33 @@ const openai = new OpenAI({
     apiKey: process.env.AI_PROVIDER === 'ollama' ? 'ollama' : process.env.OPENAI_API_KEY,
 });
 
+// Helper per ottenere la lista dei destinatari
+// Accetta il nome della variabile specifica, con fallback su REPORT_RECIPIENT
+function getRecipients(envVarName: string): string[] {
+    // 1. Cerca la variabile specifica (es. TECHNICAL_REPORT_RECIPIENT)
+    // 2. Se manca, cerca quella generica (REPORT_RECIPIENT)
+    // 3. Se manca anche quella, usa il default
+    const recipientEnv = process.env[envVarName] || process.env.REPORT_RECIPIENT;
+    
+    if (!recipientEnv) return ['gabligetta@gmail.com'];
+
+    try {
+        // Prova a parsare come JSON array
+        const parsed = JSON.parse(recipientEnv);
+        if (Array.isArray(parsed)) {
+            return parsed;
+        }
+        // Se è una stringa JSON valida ma non un array, la trattiamo come stringa singola
+        return [String(parsed)];
+    } catch (e) {
+        // Se fallisce il parsing JSON, assume che sia una stringa semplice (singola email o separata da virgola)
+        if (recipientEnv.includes(',')) {
+            return recipientEnv.split(',').map(s => s.trim());
+        }
+        return [recipientEnv];
+    }
+}
+
 export async function processSessionReport(metrics: SessionMetrics) {
     console.log(`[Reporter] 📝 Generazione report post-mortem per sessione ${metrics.sessionId}...`);
 
@@ -445,9 +472,11 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
     }
 
     // 6. Invio Email via Porkbun
+    // 🆕 USA LA LISTA TECNICA
+    const recipients = getRecipients('TECHNICAL_REPORT_RECIPIENT');
     const mailOptions = {
         from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
-        to: process.env.REPORT_RECIPIENT || 'gabligetta@gmail.com',
+        to: recipients.join(', '),
         subject: `[Lestapenna] Report Sessione ${metrics.sessionId} - ${metrics.errors.length > 0 ? '⚠️ ALERT' : '✅ OK'}`,
         text: emailBody + `\n\nDATI RAW:\n${statsJson}`,
         html: htmlTable,
@@ -673,9 +702,11 @@ export async function sendSessionRecap(
 </div>
 `;
 
+        // 🆕 USA LA LISTA SESSIONE
+        const recipients = getRecipients('SESSION_REPORT_RECIPIENT');
         const mailOptions = {
             from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
-            to: process.env.REPORT_RECIPIENT || 'dm@example.com',
+            to: recipients.join(', '),
             subject: `[D&D Report] ${campaign?.name || 'Campagna'} - Sessione #${sessionNum} - ${sessionDate}`,
             html: htmlContent,
             attachments: [

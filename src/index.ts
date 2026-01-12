@@ -21,7 +21,7 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent } from './bard';
+import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent, smartMergeBios } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
     getAvailableSessions,
@@ -756,9 +756,40 @@ client.on('messageCreate', async (message: Message) => {
             const parts = argsStr.substring(6).split('|').map(s => s.trim());
             if (parts.length !== 2) return message.reply("Uso: `$npc merge <Vecchio Nome> | <Nuovo Nome>`");
             
-            const success = renameNpcEntry(activeCampaign!.id, parts[0], parts[1]);
-            if (success) return message.reply(`✅ NPC uniti: **${parts[0]}** è ora **${parts[1]}**.`);
-            else return message.reply(`❌ Impossibile unire: NPC "${parts[0]}" non trovato.`);
+            const sourceName = parts[0];
+            const targetName = parts[1];
+            
+            const sourceNpc = getNpcEntry(activeCampaign!.id, sourceName);
+            const targetNpc = getNpcEntry(activeCampaign!.id, targetName);
+
+            if (!sourceNpc) {
+                return message.reply(`❌ Impossibile unire: NPC "${sourceName}" non trovato.`);
+            }
+
+            if (targetNpc) {
+                // MERGE REALE CON AI
+                await message.reply(`⏳ **Smart Merge:** Unione intelligente di "${sourceName}" in "${targetName}"...`);
+                
+                const mergedDesc = await smartMergeBios(targetNpc.description || "", sourceNpc.description || "");
+                
+                // Aggiorna Target
+                db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
+                  .run(mergedDesc, targetNpc.id);
+                
+                // Aggiorna History (sposta eventi dal vecchio al nuovo)
+                db.prepare(`UPDATE npc_history SET npc_name = ? WHERE campaign_id = ? AND lower(npc_name) = lower(?)`)
+                  .run(targetName, activeCampaign!.id, sourceName);
+
+                // Elimina Source
+                db.prepare(`DELETE FROM npcdossier WHERE id = ?`).run(sourceNpc.id);
+
+                return message.reply(`✅ **Unito!**\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
+            } else {
+                // RINOMINA SEMPLICE (Target non esiste)
+                const success = renameNpcEntry(activeCampaign!.id, sourceName, targetName);
+                if (success) return message.reply(`✅ NPC rinominato: **${sourceName}** è ora **${targetName}**.`);
+                else return message.reply(`❌ Errore durante la rinomina.`);
+            }
         }
 
         if (argsStr.toLowerCase().startsWith('delete ')) {

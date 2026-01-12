@@ -21,7 +21,24 @@ import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRec
 import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
-import { generateSummary, TONES, ToneKey, askBard, ingestSessionRaw, generateCharacterBiography, ingestBioEvent, generateNpcBiography, ingestWorldEvent, ingestLootEvent, smartMergeBios, regenerateNpcNotes, syncNpcDossier } from './bard';
+import {
+    generateSummary,
+    TONES,
+    ToneKey,
+    askBard,
+    ingestSessionRaw,
+    generateCharacterBiography,
+    ingestBioEvent,
+    generateNpcBiography,
+    ingestWorldEvent,
+    ingestLootEvent,
+    smartMergeBios,
+    regenerateNpcNotes,
+    validateBatch,           // NUOVO
+    syncAllDirtyNpcs,        // NUOVO
+    syncNpcDossierIfNeeded,   // NUOVO
+    syncNpcDossier
+} from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
     getAvailableSessions,
@@ -81,7 +98,8 @@ import {
     renameNpcEntry, // NUOVO IMPORT
     deleteNpcEntry, // NUOVO IMPORT
     updateNpcFields, // NUOVO IMPORT
-    migrateKnowledgeFragments // NUOVO IMPORT
+    migrateKnowledgeFragments, // NUOVO IMPORT
+    markNpcDirty // NUOVO IMPORT
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -262,7 +280,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     let activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche', 'sync'];
 
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -306,6 +324,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$npc delete <Nome>`: Elimina un NPC.\n" +
                         "`$npc update <Nome> | <Campo> | <Valore>`: Aggiorna campi specifici.\n" +
                         "`$npc regen <Nome>`: Rigenera le note usando la cronologia.\n" +
+                        "`$npc sync [Nome|all]`: Sincronizza manualmente il RAG.\n" +
                         "`$presenze`: Mostra gli NPC incontrati nella sessione corrente."
                 },
                 {
@@ -408,6 +427,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$npc delete <Name>`: Delete an NPC.\n" +
                         "`$npc update <Name> | <Field> | <Value>`: Update specific fields.\n" +
                         "`$npc regen <Name>`: Regenerate notes using history.\n" +
+                        "`$npc sync [Name|all]`: Manually sync RAG.\n" +
                         "`$presenze`: Show NPCs encountered in current session."
                 },
                 {
@@ -803,67 +823,110 @@ client.on('messageCreate', async (message: Message) => {
             else return message.reply(`❌ NPC "${name}" non trovato.`);
         }
 
-        if (argsStr.toLowerCase().startsWith('update ')) {
+        if (argsStr.toLowerCase().startsWith('update')) {
             const parts = argsStr.substring(7).split('|').map(s => s.trim());
-            if (parts.length !== 3) return message.reply("Uso: `$npc update <Nome> | <Campo> | <Valore>`\nCampi validi: name, role, status, description");
-            
-            const [name, field, value] = parts;
-            const updates: any = {};
-            
-            // Recupera NPC esistente
-            const existingNpc = getNpcEntry(activeCampaign!.id, name);
-            if (!existingNpc) return message.reply(`❌ NPC "${name}" non trovato.`);
-
-            if (field === 'name') {
-                // GESTIONE CAMBIO NOME (MIGRAZIONE RAG)
-                const success = updateNpcFields(activeCampaign!.id, name, { name: value });
-                if (success) {
-                    await message.reply(`⏳ **Migrazione RAG:** Aggiorno i riferimenti da "${name}" a "${value}"...`);
-                    migrateKnowledgeFragments(activeCampaign!.id, name, value);
-                    await syncNpcDossier(activeCampaign!.id, value, existingNpc.description || "", existingNpc.role, existingNpc.status);
-                    return message.reply(`✅ NPC rinominato e sincronizzato.`);
-                }
-            } else if (field === 'description' || field === 'desc') {
-                // GESTIONE MERGE DESCRIZIONE
-                await message.reply(`⏳ **Smart Merge:** Unione intelligente della descrizione...`);
-                const mergedDesc = await smartMergeBios(existingNpc.description || "", value);
-                
-                const success = updateNpcFields(activeCampaign!.id, name, { description: mergedDesc });
-                if (success) {
-                    await syncNpcDossier(activeCampaign!.id, name, mergedDesc, existingNpc.role, existingNpc.status);
-                    return message.reply(`✅ Descrizione aggiornata e sincronizzata.\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
-                }
-            } else if (field === 'role') {
-                updates.role = value;
-                const success = updateNpcFields(activeCampaign!.id, name, updates);
-                if (success) {
-                    await syncNpcDossier(activeCampaign!.id, name, existingNpc.description || "", value, existingNpc.status);
-                    return message.reply(`✅ Ruolo aggiornato a **${value}**.`);
-                }
-            } else if (field === 'status') {
-                updates.status = value;
-                const success = updateNpcFields(activeCampaign!.id, name, updates);
-                if (success) {
-                    await syncNpcDossier(activeCampaign!.id, name, existingNpc.description || "", existingNpc.role, value);
-                    return message.reply(`✅ Stato aggiornato a **${value}**.`);
-                }
-            } else {
-                return message.reply("❌ Campo non valido. Usa: name, role, status, description");
+            if (parts.length !== 3) {
+                return message.reply('Uso: `!npc update <Nome> | <Campo> | <Valore>`\nCampi validi: `name`, `role`, `status`, `description`');
             }
             
-            return message.reply(`❌ Errore aggiornamento.`);
+            const [name, field, value] = parts;
+            
+            const npc = getNpcEntry(activeCampaign!.id, name);
+            if (!npc) {
+                return message.reply(`❌ NPC **${name}** non trovato.`);
+            }
+            
+            // === LOGICA SPECIALE PER DESCRIPTION (SMART MERGE) ===
+            if (field === 'description' || field === 'desc') {
+                const loadingMsg = await message.reply(`⚙️ Merge intelligente descrizione per **${name}**...`);
+                
+                // Smart Merge invece di overwrite distruttivo
+                const mergedDesc = await smartMergeBios(npc.description || '', value);
+                
+                // Aggiorna SQL
+                db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(mergedDesc, npc.id);
+                
+                // ✅ CRITICO: Marca per sync lazy
+                markNpcDirty(activeCampaign!.id, npc.name);
+                
+                await loadingMsg.edit(`✅ Descrizione aggiornata!\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`);
+                return;
+            }
+            
+            // === LOGICA NORMALE PER GLI ALTRI CAMPI ===
+            const updates: any = {};
+            if (field === 'name') {
+                updates.name = value;
+            } else if (field === 'role') {
+                updates.role = value;
+            } else if (field === 'status') {
+                updates.status = value;
+            } else {
+                return message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`, `description`');
+            }
+            
+            const success = updateNpcFields(activeCampaign!.id, name, updates);
+            
+            if (success) {
+                // Se cambiamo il nome, migriamo il RAG
+                if (updates.name) {
+                migrateKnowledgeFragments(activeCampaign!.id, name, updates.name);
+                markNpcDirty(activeCampaign!.id, updates.name);
+                return message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
+                }
+                return message.reply(`✅ NPC **${name}** aggiornato: ${field} = ${value}`);
+            } else {
+                return message.reply(`❌ Errore durante l'aggiornamento.`);
+            }
         }
 
-        if (argsStr.toLowerCase().startsWith('regen ')) {
+        if (argsStr.toLowerCase().startsWith('regen')) {
             const name = argsStr.substring(6).trim();
             const npc = getNpcEntry(activeCampaign!.id, name);
-            if (!npc) return message.reply(`❌ NPC "${name}" non trovato.`);
-
-            await message.reply(`⏳ **Rigenerazione Note:** Analisi cronologia per "${name}"...`);
-            const newDesc = await regenerateNpcNotes(activeCampaign!.id, npc.name, npc.role || "Sconosciuto", npc.description || "");
+            if (!npc) return message.reply(`❌ NPC **${name}** non trovato.`);
             
-            updateNpcEntry(activeCampaign!.id, npc.name, newDesc);
-            return message.reply(`✅ **Note Aggiornate!**\n📜 **Nuova Bio:**\n> *${newDesc}*`);
+            const loadingMsg = await message.reply(`⚙️ Rigenerazione Note: Analisi cronologia per **${name}**...`);
+            
+            // ✅ MODIFICATO: Usa syncNpcDossierIfNeeded con force=true
+            const newDesc = await syncNpcDossierIfNeeded(
+                activeCampaign!.id,
+                npc.name,
+                true // Force sync
+            );
+            
+            if (newDesc) {
+                await loadingMsg.edit(`✅ Note Aggiornate e Sincronizzate con RAG!\n\n📜 **Nuova Bio:**\n${newDesc.substring(0, 800)}${newDesc.length > 800 ? '...' : ''}`);
+            } else {
+                await loadingMsg.edit(`❌ Errore durante la rigenerazione.`);
+            }
+            return;
+        }
+
+        // 🆕 NUOVO COMANDO: !npc sync (Sync manuale RAG)
+        if (argsStr.toLowerCase().startsWith('sync')) {
+            const name = argsStr.substring(5).trim();
+            
+            if (!name || name === 'all') {
+                // Sync batch di tutti gli NPC dirty
+                const loadingMsg = await message.reply('⚙️ Sincronizzazione batch NPC in corso...');
+                const count = await syncAllDirtyNpcs(activeCampaign!.id);
+                
+                if (count > 0) {
+                await loadingMsg.edit(`✅ Sincronizzati **${count} NPC** con RAG.`);
+                } else {
+                await loadingMsg.edit('✨ Tutti gli NPC sono già sincronizzati!');
+                }
+            } else {
+                // Sync singolo NPC
+                const npc = getNpcEntry(activeCampaign!.id, name);
+                if (!npc) return message.reply(`❌ NPC **${name}** non trovato.`);
+                
+                const loadingMsg = await message.reply(`⚙️ Sincronizzazione RAG per **${name}**...`);
+                await syncNpcDossierIfNeeded(activeCampaign!.id, name, true);
+                await loadingMsg.edit(`✅ **${name}** sincronizzato con RAG.`);
+            }
+            return;
         }
 
         if (argsStr.includes('|')) {
@@ -1193,114 +1256,158 @@ client.on('messageCreate', async (message: Message) => {
             // SALVATAGGIO TITOLO
             updateSessionTitle(targetSessionId, result.title);
 
-            // --- AUTOMAZIONE DB: LOOT & QUEST ---
-            const activeCampaignId = activeCampaign!.id;
-
-            if (result.loot && result.loot.length > 0) {
-                console.log(`[Loot] 📦 Elaborazione ${result.loot.length} oggetti...`);
+            // ============================================
+            // GESTIONE EVENTI/LOOT/QUEST CON VALIDAZIONE
+            // ============================================
+            
+            if (result && activeCampaign) {
+                const currentSessionId = targetSessionId;
+                const currentCampaignId = activeCampaign.id;
                 
-                for (const item of result.loot) {
-                    // 1. SALVA NEL DB SQL (Inventario)
-                    addLoot(activeCampaignId, item);
-                    console.log(`[Loot] 💰 Aggiunto al DB: ${item}`);
+                // 🆕 PREPARAZIONE BATCH VALIDATION
+                const batchInput: any = {};
+                
+                if (result.character_growth && result.character_growth.length > 0) {
+                batchInput.character_events = result.character_growth;
+                }
+                
+                if (result.npc_events && result.npc_events.length > 0) {
+                batchInput.npc_events = result.npc_events;
+                }
+                
+                if (result.world_events && result.world_events.length > 0) {
+                batchInput.world_events = result.world_events;
+                }
+                
+                if (result.loot && result.loot.length > 0) {
+                batchInput.loot = result.loot;
+                }
+                
+                if (result.quests && result.quests.length > 0) {
+                batchInput.quests = result.quests;
+                }
+                
+                // Esegui validazione batch se c'è qualcosa da validare
+                let validated: any = null;
+                
+                if (Object.keys(batchInput).length > 0) {
+                console.log('[Validator] 🛡️ Validazione batch in corso...');
+                validated = await validateBatch(currentCampaignId, batchInput);
+                
+                // Log statistiche
+                const totalInput = 
+                    (batchInput.npc_events?.length || 0) +
+                    (batchInput.character_events?.length || 0) +
+                    (batchInput.world_events?.length || 0) +
+                    (batchInput.loot?.length || 0) +
+                    (batchInput.quests?.length || 0);
+                
+                const totalKept = 
+                    (validated.npc_events.keep.length) +
+                    (validated.character_events.keep.length) +
+                    (validated.world_events.keep.length) +
+                    (validated.loot.keep.length) +
+                    (validated.quests.keep.length);
+                
+                const totalSkipped = totalInput - totalKept;
+                const filterRate = totalInput > 0 ? Math.round((totalSkipped / totalInput) * 100) : 0;
+                
+                console.log(`[Validator] ✅ Validazione completata:`);
+                console.log(`  - Accettati: ${totalKept}/${totalInput}`);
+                console.log(`  - Filtrati: ${totalSkipped} (${filterRate}%)`);
+                
+                if (validated.npc_events.skip.length > 0) {
+                    console.log(`  - Eventi NPC scartati: ${validated.npc_events.skip.slice(0, 3).join('; ')}${validated.npc_events.skip.length > 3 ? '...' : ''}`);
+                }
+                }
+                
+                // --- GESTIONE EVENTI PG ---
+                if (validated?.character_events.keep && validated.character_events.keep.length > 0) {
+                for (const evt of validated.character_events.keep) {
+                    addCharacterEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                    console.log(`[Storia PG] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
                     
-                    // 2. 🆕 FILTRA E INDICIZZA NEL RAG
-                    // Ignoriamo valuta spicciola generica per non inquinare il RAG
-                    const isSimpleCurrency = (
-                        item.toLowerCase().match(/^\d+\s*(monet|oro|argent|ram|pezz)/i) &&
-                        item.length < 25
-                    );
+                    // RAG (invariato)
+                    ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                    .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
+                }
+                }
+                
+                // --- GESTIONE EVENTI NPC ---
+                if (validated?.npc_events.keep && validated.npc_events.keep.length > 0) {
+                for (const evt of validated.npc_events.keep) {
+                    addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                    console.log(`[Storia NPC] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
                     
-                    if (isSimpleCurrency) {
-                        console.log(`[Loot] 💸 Valuta semplice, skip RAG: ${item}`);
-                        continue;
-                    }
+                    // ✅ Marca NPC come dirty per sync lazy
+                    markNpcDirty(currentCampaignId, evt.name);
                     
-                    // Indicizza oggetti significativi nel RAG
+                    // RAG
+                    ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                    .catch(err => console.error(`[RAG] Errore NPC ${evt.name}:`, err));
+                }
+                }
+                
+                // --- GESTIONE EVENTI MONDO ---
+                if (validated?.world_events.keep && validated.world_events.keep.length > 0) {
+                for (const evt of validated.world_events.keep) {
+                    addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
+                    console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
+                    
+                    // RAG
+                    ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
+                    .catch(err => console.error('[RAG] Errore Mondo:', err));
+                }
+                }
+                
+                // --- GESTIONE LOOT ---
+                if (validated?.loot.keep && validated.loot.keep.length > 0) {
+                for (const item of validated.loot.keep) {
+                    addLoot(currentCampaignId, item, 1);
+                    console.log(`[Tesoriere] 💰 Aggiunto: ${item}`);
+                    
+                    // ✅ Embedding selettivo: solo se NON è valuta semplice
+                    const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(item) && item.length < 30;
+                    
+                    if (!isSimpleCurrency) {
                     try {
-                        await ingestLootEvent(activeCampaignId, targetSessionId, item);
-                        console.log(`[RAG] 💎 Indicizzato: ${item}`);
+                        await ingestLootEvent(currentCampaignId, currentSessionId, item);
                     } catch (err: any) {
-                        console.error(`[RAG] ❌ Errore indicizzazione "${item}":`, err.message);
+                        console.error(`[RAG] Errore indicizzazione ${item}:`, err.message);
+                    }
                     }
                 }
-            }
-
-            if (result.loot_removed && result.loot_removed.length > 0) {
+                }
+                
+                // --- RIMOZIONE LOOT ---
+                if (result.loot_removed && result.loot_removed.length > 0) {
                 result.loot_removed.forEach((item: string) => {
-                    removeLoot(activeCampaignId, item);
-                    console.log(`[Loot] 🗑️ Rimosso: ${item}`);
+                    removeLoot(currentCampaignId, item);
+                    console.log(`[Tesoriere] 🗑️ Rimosso: ${item}`);
                 });
-            }
-
-            if (result.quests && result.quests.length > 0) {
-                result.quests.forEach((q: string) => addQuest(activeCampaignId, q));
-            }
-            // ------------------------------------
-
-            // --- GESTIONE CRESCITA PG ---
-            if (result.character_growth && Array.isArray(result.character_growth)) {
-                // Recuperiamo l'ID campagna (sicurezza, funziona sia in $racconta che nel monitor)
-                // Usa targetSessionId se sei nel comando $racconta, altrimenti sessionId
-                const currentSessionId = targetSessionId;
-                const currentCampaignId = getSessionCampaignId(currentSessionId) || activeCampaign?.id;
-
-                if (currentCampaignId) {
-                    for (const growth of result.character_growth) {
-                        if (growth.name && growth.event) {
-                            // 1. STORIA NARRATIVA ($storia)
-                            addCharacterEvent(currentCampaignId, growth.name, currentSessionId, growth.event, growth.type || 'GENERIC');
-
-                            // 2. INTEGRAZIONE RAG ($chiedialbardo)
-                            ingestBioEvent(currentCampaignId, currentSessionId, growth.name, growth.event, growth.type || 'GENERIC')
-                                .catch(err => console.error(`Errore ingestione bio per ${growth.name}:`, err));
-                        }
+                }
+                
+                // --- GESTIONE QUEST ---
+                if (validated?.quests.keep && validated.quests.keep.length > 0) {
+                for (const quest of validated.quests.keep) {
+                    addQuest(currentCampaignId, quest);
+                    console.log(`[Notaio] 🎯 Quest aggiunta: ${quest}`);
+                }
+                }
+                
+                // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
+                if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
+                console.log('[Sync] 📊 Controllo NPC da sincronizzare...');
+                try {
+                    const syncedCount = await syncAllDirtyNpcs(currentCampaignId);
+                    if (syncedCount > 0) {
+                    console.log(`[Sync] ✅ Sincronizzati ${syncedCount} NPC con RAG.`);
                     }
+                } catch (e) {
+                    console.error('[Sync] ⚠️ Errore batch sync:', e);
+                }
                 }
             }
-            // ----------------------------
-
-            // --- GESTIONE EVENTI NPC ---
-            if (result.npc_events && Array.isArray(result.npc_events)) {
-                // Recuperiamo l'ID campagna (sicurezza)
-                const currentSessionId = targetSessionId;
-                const currentCampaignId = getSessionCampaignId(currentSessionId) || activeCampaign?.id;
-
-                if (currentCampaignId) {
-                    for (const evt of result.npc_events) {
-                        if (evt.name && evt.event) {
-                            // 1. STORIA NARRATIVA NPC
-                            addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type || 'GENERIC');
-
-                            // 2. INTEGRAZIONE RAG (Così il Bardo sa cosa ha fatto l'NPC)
-                            ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type || 'GENERIC')
-                                .catch(err => console.error(`Errore ingestione bio NPC ${evt.name}:`, err));
-                        }
-                    }
-                }
-            }
-            // ---------------------------
-
-            // --- GESTIONE EVENTI MONDO ---
-            if (result.world_events && Array.isArray(result.world_events)) {
-                // Recupero ID campagna (sicurezza)
-                const currentSessionId = targetSessionId;
-                const currentCampaignId = getSessionCampaignId(currentSessionId) || activeCampaign?.id;
-
-                if (currentCampaignId) {
-                    for (const w of result.world_events) {
-                        if (w.event) {
-                            // 1. TIMELINE CRONOLOGICA
-                            addWorldEvent(currentCampaignId, currentSessionId, w.event, w.type || 'GENERIC');
-
-                            // 2. RAG (Lore Generale)
-                            ingestWorldEvent(currentCampaignId, currentSessionId, w.event, w.type || 'GENERIC')
-                                .catch(err => console.error(`Errore ingestione mondo:`, err));
-                        }
-                    }
-                }
-            }
-            // -----------------------------
 
             // 🆕 Recupera NPC incontrati
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
@@ -1361,6 +1468,17 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         try {
+            // ✅ NUOVO: Sync lazy prima di query RAG
+            // Estrai nomi NPC dalla domanda
+            const allNpcs = listNpcs(activeCampaign!.id, 1000);
+            const mentionedNpcs = allNpcs.filter(npc => 
+                question.toLowerCase().includes(npc.name.toLowerCase())
+            );
+            
+            for (const npc of mentionedNpcs) {
+                await syncNpcDossierIfNeeded(activeCampaign!.id, npc.name, false);
+            }
+
             // GESTIONE MEMORIA PERSISTENTE
             const history = getChatHistory(message.channelId, 6); // Recupera ultimi 6 messaggi (3 scambi)
             const answer = await askBard(activeCampaign!.id, question, history);
@@ -2228,6 +2346,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 
                 // Genera riassunto
                 const campaignId = getSessionCampaignId(sessionId);
+                const activeCampaign = campaignId ? getCampaigns(channel?.guild.id || '').find(c => c.id === campaignId) : undefined;
                 if (!campaignId) {
                     console.error(`[Monitor] ❌ Nessuna campagna per sessione ${sessionId}`);
                     return reject(new Error('No campaign found'));
@@ -2248,39 +2367,158 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     // Salva titolo
                     updateSessionTitle(sessionId, result.title);
                     
-                    // Salva loot/quest nel DB
-                    if (result.loot && result.loot.length > 0) {
-                        console.log(`[Loot] 📦 Elaborazione ${result.loot.length} oggetti...`);
+                    // ============================================
+                    // GESTIONE EVENTI/LOOT/QUEST CON VALIDAZIONE
+                    // ============================================
+                    
+                    if (result && activeCampaign) {
+                        const currentSessionId = sessionId;
+                        const currentCampaignId = activeCampaign.id;
                         
-                        for (const item of result.loot) {
-                            // 1. SALVA NEL DB SQL (Inventario)
-                            addLoot(campaignId, item);
-                            console.log(`[Loot] 💰 Aggiunto al DB: ${item}`);
+                        // 🆕 PREPARAZIONE BATCH VALIDATION
+                        const batchInput: any = {};
+                        
+                        if (result.character_growth && result.character_growth.length > 0) {
+                        batchInput.character_events = result.character_growth;
+                        }
+                        
+                        if (result.npc_events && result.npc_events.length > 0) {
+                        batchInput.npc_events = result.npc_events;
+                        }
+                        
+                        if (result.world_events && result.world_events.length > 0) {
+                        batchInput.world_events = result.world_events;
+                        }
+                        
+                        if (result.loot && result.loot.length > 0) {
+                        batchInput.loot = result.loot;
+                        }
+                        
+                        if (result.quests && result.quests.length > 0) {
+                        batchInput.quests = result.quests;
+                        }
+                        
+                        // Esegui validazione batch se c'è qualcosa da validare
+                        let validated: any = null;
+                        
+                        if (Object.keys(batchInput).length > 0) {
+                        console.log('[Validator] 🛡️ Validazione batch in corso...');
+                        validated = await validateBatch(currentCampaignId, batchInput);
+                        
+                        // Log statistiche
+                        const totalInput = 
+                            (batchInput.npc_events?.length || 0) +
+                            (batchInput.character_events?.length || 0) +
+                            (batchInput.world_events?.length || 0) +
+                            (batchInput.loot?.length || 0) +
+                            (batchInput.quests?.length || 0);
+                        
+                        const totalKept = 
+                            (validated.npc_events.keep.length) +
+                            (validated.character_events.keep.length) +
+                            (validated.world_events.keep.length) +
+                            (validated.loot.keep.length) +
+                            (validated.quests.keep.length);
+                        
+                        const totalSkipped = totalInput - totalKept;
+                        const filterRate = totalInput > 0 ? Math.round((totalSkipped / totalInput) * 100) : 0;
+                        
+                        console.log(`[Validator] ✅ Validazione completata:`);
+                        console.log(`  - Accettati: ${totalKept}/${totalInput}`);
+                        console.log(`  - Filtrati: ${totalSkipped} (${filterRate}%)`);
+                        
+                        if (validated.npc_events.skip.length > 0) {
+                            console.log(`  - Eventi NPC scartati: ${validated.npc_events.skip.slice(0, 3).join('; ')}${validated.npc_events.skip.length > 3 ? '...' : ''}`);
+                        }
+                        }
+                        
+                        // --- GESTIONE EVENTI PG ---
+                        if (validated?.character_events.keep && validated.character_events.keep.length > 0) {
+                        for (const evt of validated.character_events.keep) {
+                            addCharacterEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                            console.log(`[Storia PG] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
                             
-                            // 2. 🆕 FILTRA E INDICIZZA NEL RAG
-                            // Ignoriamo valuta spicciola generica per non inquinare il RAG
-                            const isSimpleCurrency = (
-                                item.toLowerCase().match(/^\d+\s*(monet|oro|argent|ram|pezz)/i) &&
-                                item.length < 25
-                            );
+                            // RAG (invariato)
+                            ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                            .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
+                        }
+                        }
+                        
+                        // --- GESTIONE EVENTI NPC ---
+                        if (validated?.npc_events.keep && validated.npc_events.keep.length > 0) {
+                        for (const evt of validated.npc_events.keep) {
+                            addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                            console.log(`[Storia NPC] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
                             
-                            if (isSimpleCurrency) {
-                                console.log(`[Loot] 💸 Valuta semplice, skip RAG: ${item}`);
-                                continue;
-                            }
+                            // ✅ Marca NPC come dirty per sync lazy
+                            markNpcDirty(currentCampaignId, evt.name);
                             
-                            // Indicizza oggetti significativi nel RAG
+                            // RAG
+                            ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                            .catch(err => console.error(`[RAG] Errore NPC ${evt.name}:`, err));
+                        }
+                        }
+                        
+                        // --- GESTIONE EVENTI MONDO ---
+                        if (validated?.world_events.keep && validated.world_events.keep.length > 0) {
+                        for (const evt of validated.world_events.keep) {
+                            addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
+                            console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
+                            
+                            // RAG
+                            ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
+                            .catch(err => console.error('[RAG] Errore Mondo:', err));
+                        }
+                        }
+                        
+                        // --- GESTIONE LOOT ---
+                        if (validated?.loot.keep && validated.loot.keep.length > 0) {
+                        for (const item of validated.loot.keep) {
+                            addLoot(currentCampaignId, item, 1);
+                            console.log(`[Tesoriere] 💰 Aggiunto: ${item}`);
+                            
+                            // ✅ Embedding selettivo: solo se NON è valuta semplice
+                            const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(item) && item.length < 30;
+                            
+                            if (!isSimpleCurrency) {
                             try {
-                                await ingestLootEvent(campaignId, sessionId, item);
-                                console.log(`[RAG] 💎 Indicizzato: ${item}`);
+                                await ingestLootEvent(currentCampaignId, currentSessionId, item);
                             } catch (err: any) {
-                                console.error(`[RAG] ❌ Errore indicizzazione "${item}":`, err.message);
+                                console.error(`[RAG] Errore indicizzazione ${item}:`, err.message);
+                            }
                             }
                         }
+                        }
+                        
+                        // --- RIMOZIONE LOOT ---
+                        if (result.loot_removed && result.loot_removed.length > 0) {
+                        result.loot_removed.forEach((item: string) => {
+                            removeLoot(currentCampaignId, item);
+                            console.log(`[Tesoriere] 🗑️ Rimosso: ${item}`);
+                        });
+                        }
+                        
+                        // --- GESTIONE QUEST ---
+                        if (validated?.quests.keep && validated.quests.keep.length > 0) {
+                        for (const quest of validated.quests.keep) {
+                            addQuest(currentCampaignId, quest);
+                            console.log(`[Notaio] 🎯 Quest aggiunta: ${quest}`);
+                        }
+                        }
+                        
+                        // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
+                        if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
+                        console.log('[Sync] 📊 Controllo NPC da sincronizzare...');
+                        try {
+                            const syncedCount = await syncAllDirtyNpcs(currentCampaignId);
+                            if (syncedCount > 0) {
+                            console.log(`[Sync] ✅ Sincronizzati ${syncedCount} NPC con RAG.`);
+                            }
+                        } catch (e) {
+                            console.error('[Sync] ⚠️ Errore batch sync:', e);
+                        }
+                        }
                     }
-
-                    if (result.loot_removed) result.loot_removed.forEach(item => removeLoot(campaignId, item));
-                    if (result.quests) result.quests.forEach(q => addQuest(campaignId, q));
                     
                     // 🆕 Recupera NPC incontrati
                     const encounteredNPCs = getSessionEncounteredNPCs(sessionId);

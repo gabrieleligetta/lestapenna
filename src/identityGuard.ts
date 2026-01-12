@@ -1,5 +1,14 @@
 import { Message, TextChannel } from 'discord.js';
-import { db, addPendingMerge, removePendingMerge, getAllPendingMerges, PendingMerge, getNpcEntry } from './db';
+import {
+    db,
+    addPendingMerge,
+    removePendingMerge,
+    getAllPendingMerges,
+    PendingMerge,
+    getNpcEntry,
+    migrateKnowledgeFragments,
+    markNpcDirty
+} from './db';
 import { resolveIdentityCandidate, smartMergeBios } from './bard';
 
 // RAM Cache
@@ -67,19 +76,23 @@ export async function handleIdentityReply(message: Message) {
     if (['SI', 'SÌ', 'YES', 'Y'].includes(upperContent)) {
         const existing = getNpcEntry(data.campaign_id, data.target_name);
         if (existing) {
-            // ⏳ Feedback immediato
-            const loadingMsg = await message.reply("⏳ *Unione intelligente delle biografie in corso...*");
-            
+            const loadingMsg = await message.reply('⚙️ Unione intelligente delle biografie in corso...');
+
             // 🧠 AI Merge
-            const mergedDesc = await smartMergeBios(existing.description || "", data.new_description);
+            const mergedDesc = await smartMergeBios(existing.description || '', data.new_description);
+
+            db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(mergedDesc, existing.id);
+
+            // ✅ NUOVO: Migra riferimenti RAG
+            migrateKnowledgeFragments(data.campaign_id, data.detected_name, data.target_name);
             
-            db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
-              .run(mergedDesc, existing.id);
+            // ✅ NUOVO: Marca per sync lazy
+            markNpcDirty(data.campaign_id, data.target_name);
             
-            // ✅ Edit finale
-            await loadingMsg.edit(`✅ **Unito!** Scheda di **${data.target_name}** aggiornata.\n\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
+            await loadingMsg.edit(`✅ Unito! Scheda di **${data.target_name}** aggiornata.\n📌 Sync RAG programmato (verrà eseguito alla prossima query o a fine sessione).`);
         } else {
-            await message.reply(`⚠️ Errore: **${data.target_name}** non trovato nel DB.`);
+            await message.reply(`❌ Errore: ${data.target_name} non trovato nel DB.`);
         }
         cleanup(data.message_id);
         return;
@@ -87,8 +100,8 @@ export async function handleIdentityReply(message: Message) {
     
     // --- CASE 2: CREATE NEW (NO/NUOVO) ---
     if (['NO', 'NEW', 'NUOVO', 'N'].includes(upperContent)) {
-        db.prepare(`INSERT INTO npcdossier (campaign_id, name, description, role, status) VALUES (?, ?, ?, ?, 'ALIVE')`)
-          .run(data.campaign_id, data.detected_name, data.new_description, data.role);
+        db.prepare(`INSERT INTO npc_dossier (campaign_id, name, description, role, status) VALUES (?, ?, ?, ?, 'ALIVE')`)
+            .run(data.campaign_id, data.detected_name, data.new_description, data.role);
         await message.reply(`🆕 **Creato!** Benvenuto **${data.detected_name}**.`);
         cleanup(data.message_id);
         return;
@@ -97,21 +110,23 @@ export async function handleIdentityReply(message: Message) {
     // --- CASE 3: MANUAL OVERRIDE (Specific Name) ---
     // Clean input (e.g. "No è Brom" -> "Brom")
     const manualName = content.replace(/^(no|è|e'|is|it's)\s+/i, '').trim();
-    
+
     // Check DB for manual match
     const manualMatch = getNpcEntry(data.campaign_id, manualName);
 
     if (manualMatch) {
-        // ⏳ Feedback immediato
-        const loadingMsg = await message.reply(`⏳ *Unione intelligente con ${manualMatch.name}...*`);
+        const loadingMsg = await message.reply(`⚙️ Unione intelligente con **${manualMatch.name}**...`);
+        
+        const mergedDesc = await smartMergeBios(manualMatch.description || '', data.new_description);
+        
+        db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(mergedDesc, manualMatch.id);
+        
+        // ✅ NUOVO
+        migrateKnowledgeFragments(data.campaign_id, data.detected_name, manualMatch.name);
+        markNpcDirty(data.campaign_id, manualMatch.name);
 
-        // 🧠 AI Merge su Manual Match
-        const mergedDesc = await smartMergeBios(manualMatch.description || "", data.new_description);
-        
-        db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
-            .run(mergedDesc, manualMatch.id);
-        
-        await loadingMsg.edit(`↩️ **Corretto!** Unito a **${manualMatch.name}**.\n\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
+        await loadingMsg.edit(`✅ Corretto! Unito a **${manualMatch.name}**.\n📌 Sync RAG programmato.`);
         cleanup(data.message_id);
     } else {
         // Not found -> Warn user but keep listening

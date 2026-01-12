@@ -1,10 +1,10 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry, getUserProfile, saveRawTranscription } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry, getUserProfile, saveRawTranscription, getAtlasEntry } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
-import { correctTranscription } from './bard';
+import { correctTranscription, validateBatch } from './bard';
 import { correctionQueue } from './queue';
 import { filterWhisperHallucinations } from './whisperHallucinationFilter';
 
@@ -299,10 +299,30 @@ export function startWorker() {
                     finalMicro = current?.micro || null;
                 }
 
-                // 2. GESTIONE ATLANTE (Storico)
+                // 2. GESTIONE ATLANTE (con validazione)
                 if (aiResult.atlas_update && finalMacro && finalMicro) {
-                    console.log(`[Atlas] ✍️ L'AI ha aggiornato la memoria di: ${finalMicro}`);
-                    updateAtlasEntry(campaignId, finalMacro, finalMicro, aiResult.atlas_update);
+                    const existingDesc = getAtlasEntry(campaignId, finalMacro, finalMicro);
+                    
+                    // ✅ Valida con batch validator
+                    const atlasValidation = await validateBatch(campaignId, {
+                        atlas_update: {
+                        macro: finalMacro,
+                        micro: finalMicro,
+                        description: aiResult.atlas_update,
+                        existingDesc: existingDesc || undefined
+                        }
+                    });
+                    
+                    if (atlasValidation.atlas.action === 'merge' && atlasValidation.atlas.text) {
+                        console.log(`[Cartografo] 📝 Aggiornamento atlante (merge): ${finalMicro}`);
+                        updateAtlasEntry(campaignId, finalMacro, finalMicro, atlasValidation.atlas.text);
+                    } else if (atlasValidation.atlas.action === 'keep' && !existingDesc) {
+                        // Prima visita del luogo
+                        console.log(`[Cartografo] 🗺️ Nuovo luogo mappato: ${finalMicro}`);
+                        updateAtlasEntry(campaignId, finalMacro, finalMicro, aiResult.atlas_update);
+                    } else if (atlasValidation.atlas.action === 'skip') {
+                        console.log(`[Cartografo] ⏭️ Aggiornamento atlante scartato: ${finalMicro} (riformulazione generica)`);
+                    }
                 }
 
                 // 3. GESTIONE DOSSIER NPC (Biografo)

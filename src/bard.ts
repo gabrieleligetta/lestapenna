@@ -24,7 +24,13 @@ import {
     getSessionTravelLog,
     getSessionEncounteredNPCs,
     getExplicitSessionNumber,
-    db
+    db,
+    getOpenQuests,
+    getNpcEntry,
+    updateNpcEntry,
+    deleteNpcRagSummary,
+    getDirtyNpcs,
+    clearNpcDirtyFlag
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
@@ -260,6 +266,33 @@ export interface SummaryResponse {
     };
 }
 
+// ============================================
+// SISTEMA ARMONICO: INTERFACCE VALIDAZIONE
+// ============================================
+
+interface ValidationBatchInput {
+    npc_events?: Array<{ name: string; event: string; type: string }>;
+    character_events?: Array<{ name: string; event: string; type: string }>;
+    world_events?: Array<{ event: string; type: string }>;
+    loot?: string[];
+    quests?: string[];
+    atlas_update?: {
+        macro: string;
+        micro: string;
+        description: string;
+        existingDesc?: string;
+    };
+}
+
+interface ValidationBatchOutput {
+    npc_events: { keep: any[]; skip: string[] };
+    character_events: { keep: any[]; skip: string[] };
+    world_events: { keep: any[]; skip: string[] };
+    loot: { keep: string[]; skip: string[] };
+    quests: { keep: string[]; skip: string[] };
+    atlas: { action: 'keep' | 'skip' | 'merge'; text?: string };
+}
+
 /**
  * Divide il testo in chunk
  */
@@ -406,6 +439,398 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
         monitor.logAIRequestWithCost('map', MAP_PROVIDER, MAP_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return { text: "", title: "", tokens: 0 };
     }
+}
+
+// ============================================
+// SISTEMA ARMONICO: VALIDAZIONE BATCH
+// ============================================
+
+/**
+ * Costruisce il prompt per la validazione batch
+ */
+function buildValidationPrompt(context: any, input: ValidationBatchInput): string {
+    let prompt = `Valida questi dati di una sessione D&D in BATCH.
+
+**CONTESTO:**
+`;
+
+    // Aggiungi contesto NPC
+    if (context.npcHistories && Object.keys(context.npcHistories).length > 0) {
+        prompt += "\n**Storia Recente NPC:**\n";
+        for (const [name, history] of Object.entries(context.npcHistories)) {
+            prompt += `- ${name}: ${history}\n`;
+        }
+    }
+
+    // Aggiungi contesto PG
+    if (context.charHistories && Object.keys(context.charHistories).length > 0) {
+        prompt += "\n**Storia Recente PG:**\n";
+        for (const [name, history] of Object.entries(context.charHistories)) {
+            prompt += `- ${name}: ${history}\n`;
+        }
+    }
+
+    // Aggiungi quest attive
+    if (context.existingQuests && context.existingQuests.length > 0) {
+        prompt += `\n**Quest Attive:** ${context.existingQuests.slice(0, 5).join(', ')}${context.existingQuests.length > 5 ? '...' : ''}\n`;
+    }
+
+    prompt += "\n**DATI DA VALIDARE:**\n\n";
+
+    // Eventi NPC
+    if (input.npc_events && input.npc_events.length > 0) {
+        prompt += `**Eventi NPC (${input.npc_events.length}):**\n`;
+        input.npc_events.forEach((e, i) => {
+            prompt += `${i + 1}. ${e.name}: [${e.type}] ${e.event}\n`;
+        });
+        prompt += "\n";
+    }
+
+    // Eventi PG
+    if (input.character_events && input.character_events.length > 0) {
+        prompt += `**Eventi PG (${input.character_events.length}):**\n`;
+        input.character_events.forEach((e, i) => {
+            prompt += `${i + 1}. ${e.name}: [${e.type}] ${e.event}\n`;
+        });
+        prompt += "\n";
+    }
+
+    // Eventi Mondo
+    if (input.world_events && input.world_events.length > 0) {
+        prompt += `**Eventi Mondo (${input.world_events.length}):**\n`;
+        input.world_events.forEach((e, i) => {
+            prompt += `${i + 1}. [${e.type}] ${e.event}\n`;
+        });
+        prompt += "\n";
+    }
+
+    // Loot
+    if (input.loot && input.loot.length > 0) {
+        prompt += `**Loot (${input.loot.length}):**\n`;
+        input.loot.forEach((item, i) => prompt += `${i + 1}. ${item}\n`);
+        prompt += "\n";
+    }
+
+    // Quest
+    if (input.quests && input.quests.length > 0) {
+        prompt += `**Quest (${input.quests.length}):**\n`;
+        input.quests.forEach((q, i) => prompt += `${i + 1}. ${q}\n`);
+        prompt += "\n";
+    }
+
+    // Atlante
+    if (input.atlas_update) {
+        const a = input.atlas_update;
+        prompt += `**Aggiornamento Atlante:**\n`;
+        prompt += `- Luogo: ${a.macro} - ${a.micro}\n`;
+        if (a.existingDesc) {
+            const truncDesc = a.existingDesc.length > 200 ? a.existingDesc.substring(0, 200) + '...' : a.existingDesc;
+            prompt += `- Descrizione Esistente: ${truncDesc}\n`;
+        }
+        prompt += `- Nuova Descrizione: ${a.description}\n\n`;
+    }
+
+    prompt += `
+**REGOLE DI VALIDAZIONE:**
+
+**Eventi (NPC/PG/World):**
+- SKIP se: duplicato semantico della storia recente, evento banale (es. "ha parlato", "ha mangiato"), contraddittorio con eventi recenti
+- KEEP se: cambio di status significativo, rivelazione importante, impatto sulla trama
+- Per eventi KEEP: riscrivi in modo conciso (max 1 frase chiara)
+
+**Loot:**
+- SKIP: spazzatura (<10 monete di valore stimato), oggetti di scena non utilizzabili (es. "sacco vuoto"), duplicati semantici
+- KEEP: oggetti magici o unici (anche se sembrano deboli), valuta >=10 monete, oggetti chiave per la trama
+- Normalizza nomi: "Spada +1" invece di "lama affilata magica"
+- Aggrega valuta: "150 mo" invece di liste multiple
+
+**Quest:**
+- SKIP: micro-task immediate (es. "Parlare con X", "Comprare Y"), duplicati semantici delle quest attive
+- KEEP: obiettivi principali con impatto trama, side-quest con ricompense significative
+- Normalizza: rimuovi prefissi come "Quest:", "TODO:", capitalizza correttamente
+
+**Atlante:**
+- SKIP se: e' solo una riformulazione generica dello stesso contenuto, e' piu' generica e perde dettagli
+- MERGE se: contiene nuovi dettagli osservabili E preserva informazioni storiche esistenti
+- KEEP se: e' la prima descrizione del luogo (non c'e' descrizione esistente)
+- Per MERGE: restituisci descrizione unificata che preserva vecchi dettagli + aggiunge novita'
+
+**OUTPUT JSON RICHIESTO:**
+{
+  "npc_events": {
+    "keep": [{"name": "NomeNPC", "event": "evento riscritto conciso", "type": "TIPO"}],
+    "skip": ["motivo scarto 1", "motivo scarto 2"]
+  },
+  "character_events": {
+    "keep": [{"name": "NomePG", "event": "evento riscritto", "type": "TIPO"}],
+    "skip": ["motivo"]
+  },
+  "world_events": {
+    "keep": [{"event": "evento riscritto", "type": "TIPO"}],
+    "skip": ["motivo"]
+  },
+  "loot": {
+    "keep": ["Spada +1", "150 mo"],
+    "skip": ["frecce rotte - valore <10mo"]
+  },
+  "quests": {
+    "keep": ["Recuperare la Spada del Destino"],
+    "skip": ["parlare con oste - micro-task"]
+  },
+  "atlas": {
+    "action": "keep" | "skip" | "merge",
+    "text": "descrizione unificata se action=merge, altrimenti ometti"
+  }
+}
+
+Rispondi SOLO con il JSON, niente altro.`;
+
+    return prompt;
+}
+
+/**
+ * VALIDATORE BATCH UNIFICATO - Ottimizzato per costi
+ * Usa 1 sola chiamata AI invece di 6 separate
+ */
+export async function validateBatch(
+    campaignId: number,
+    input: ValidationBatchInput
+): Promise<ValidationBatchOutput> {
+
+    // Recupera contesto solo se necessario
+    const context: any = {};
+
+    // Context NPC (solo ultimi 3 eventi per NPC)
+    if (input.npc_events && input.npc_events.length > 0) {
+        const npcNames = [...new Set(input.npc_events.map(e => e.name))];
+        context.npcHistories = {};
+
+        for (const name of npcNames) {
+            const history = getNpcHistory(campaignId, name).slice(-3);
+            if (history.length > 0) {
+                context.npcHistories[name] = history.map((h: any) =>
+                    `[${h.event_type}] ${h.description}`
+                ).join('; ');
+            }
+        }
+    }
+
+    // Context PG
+    if (input.character_events && input.character_events.length > 0) {
+        const charNames = [...new Set(input.character_events.map(e => e.name))];
+        context.charHistories = {};
+
+        for (const name of charNames) {
+            const history = getCharacterHistory(campaignId, name).slice(-3);
+            if (history.length > 0) {
+                context.charHistories[name] = history.map((h: any) =>
+                    `[${h.event_type}] ${h.description}`
+                ).join('; ');
+            }
+        }
+    }
+
+    // Context Quest
+    if (input.quests && input.quests.length > 0) {
+        context.existingQuests = getOpenQuests(campaignId).map((q: any) => q.title);
+    }
+
+    // Costruisci prompt ottimizzato
+    const prompt = buildValidationPrompt(context, input);
+
+    const startAI = Date.now();
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [
+                { role: "system", content: "Sei il Custode degli Archivi di una campagna D&D. Valida dati in batch. Rispondi SOLO con JSON valido in italiano." },
+                { role: "user", content: prompt }
+            ],
+            response_format: { type: "json_object" }
+        });
+
+        const latency = Date.now() - startAI;
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+
+        console.log(`[Validator] Validazione completata in ${latency}ms (${inputTokens}+${outputTokens} tokens)`);
+
+        const result = JSON.parse(response.choices[0].message.content || "{}");
+
+        // Fallback sicuro per ogni campo
+        return {
+            npc_events: result.npc_events || { keep: input.npc_events || [], skip: [] },
+            character_events: result.character_events || { keep: input.character_events || [], skip: [] },
+            world_events: result.world_events || { keep: input.world_events || [], skip: [] },
+            loot: result.loot || { keep: input.loot || [], skip: [] },
+            quests: result.quests || { keep: input.quests || [], skip: [] },
+            atlas: result.atlas || { action: 'keep' }
+        };
+
+    } catch (e: any) {
+        console.error('[Validator] Errore batch validation:', e);
+
+        // Fallback conservativo: accetta tutto
+        return {
+            npc_events: { keep: input.npc_events || [], skip: [] },
+            character_events: { keep: input.character_events || [], skip: [] },
+            world_events: { keep: input.world_events || [], skip: [] },
+            loot: { keep: input.loot || [], skip: [] },
+            quests: { keep: input.quests || [], skip: [] },
+            atlas: { action: 'keep' }
+        };
+    }
+}
+
+/**
+ * Ingestion generica nel RAG (per snapshot autorevoli)
+ */
+async function ingestGenericEvent(
+    campaignId: number,
+    sessionId: string,
+    content: string,
+    npcs: string[],
+    microLoc: string
+): Promise<void> {
+    const promises: any[] = [];
+    const startAI = Date.now();
+
+    // OpenAI Embedding
+    promises.push(
+        openaiEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OPENAI,
+            input: content
+        })
+            .then(resp => {
+                return { provider: 'openai', data: resp.data[0].embedding };
+            })
+            .catch(err => {
+                console.error('[RAG] Errore embedding OpenAI:', err.message);
+                return { provider: 'openai', error: err.message };
+            })
+    );
+
+    // Ollama Embedding
+    promises.push(
+        ollamaEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OLLAMA,
+            input: content
+        })
+            .then(resp => {
+                return { provider: 'ollama', data: resp.data[0].embedding };
+            })
+            .catch(err => {
+                console.error('[RAG] Errore embedding Ollama:', err.message);
+                return { provider: 'ollama', error: err.message };
+            })
+    );
+
+    const results = await Promise.allSettled(promises);
+
+    for (const res of results) {
+        if (res.status === 'fulfilled') {
+            const val = res.value as any;
+            if (!val.error) {
+                insertKnowledgeFragment(
+                    campaignId,
+                    sessionId,
+                    content,
+                    val.data,
+                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
+                    Date.now(),
+                    null,
+                    microLoc,
+                    npcs
+                );
+            }
+        }
+    }
+
+    console.log(`[RAG] Evento generico indicizzato in ${Date.now() - startAI}ms`);
+}
+
+/**
+ * Sincronizza NPC Dossier (LAZY - solo se necessario)
+ */
+export async function syncNpcDossierIfNeeded(
+    campaignId: number,
+    npcName: string,
+    force: boolean = false
+): Promise<string | null> {
+
+    const npc = getNpcEntry(campaignId, npcName);
+    if (!npc) return null;
+
+    // Check se necessita sync (usa any per evitare errore TS su campo opzionale)
+    const needsSync = (npc as any).rag_sync_needed === 1;
+    if (!force && !needsSync) {
+        console.log(`[Sync] ${npcName} gia sincronizzato, skip.`);
+        return npc.description;
+    }
+
+    console.log(`[Sync] Avvio sync per ${npcName}...`);
+
+    // Rigenera biografia
+    const newBio = await regenerateNpcNotes(
+        campaignId,
+        npcName,
+        npc.role || 'Sconosciuto',
+        npc.description || ''
+    );
+
+    // Aggiorna SQL
+    updateNpcEntry(campaignId, npcName, newBio, npc.role || undefined);
+
+    // Pulisci vecchi snapshot RAG
+    deleteNpcRagSummary(campaignId, npcName);
+
+    // Crea nuovo snapshot (SOLO se bio significativa)
+    if (newBio.length > 100) {
+        const ragContent = `[[SCHEDA UFFICIALE: ${npcName}]]
+RUOLO: ${npc.role || 'Sconosciuto'}
+STATO: ${npc.status || 'Sconosciuto'}
+BIOGRAFIA COMPLETA: ${newBio}
+
+(Questa scheda ufficiale ha priorita su informazioni frammentarie precedenti)`;
+
+        await ingestGenericEvent(
+            campaignId,
+            'DOSSIER_UPDATE',
+            ragContent,
+            [npcName],
+            'DOSSIER'
+        );
+    }
+
+    // Marca come pulito
+    clearNpcDirtyFlag(campaignId, npcName);
+
+    console.log(`[Sync] ${npcName} sincronizzato.`);
+    return newBio;
+}
+
+/**
+ * Batch sync di tutti gli NPC dirty
+ */
+export async function syncAllDirtyNpcs(campaignId: number): Promise<number> {
+    const dirtyNpcs = getDirtyNpcs(campaignId);
+
+    if (dirtyNpcs.length === 0) {
+        console.log('[Sync] Nessun NPC da sincronizzare.');
+        return 0;
+    }
+
+    console.log(`[Sync] Sincronizzazione batch di ${dirtyNpcs.length} NPC...`);
+
+    for (const npc of dirtyNpcs) {
+        try {
+            await syncNpcDossierIfNeeded(campaignId, npc.name, true);
+        } catch (e) {
+            console.error(`[Sync] Errore sync ${npc.name}:`, e);
+        }
+    }
+
+    return dirtyNpcs.length;
 }
 
 // --- RAG: INGESTION ---

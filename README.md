@@ -11,6 +11,7 @@ Lestapenna è un bot Discord avanzato progettato per registrare, trascrivere e n
 *   **Memoria a Lungo Termine**: Indicizza gli eventi passati per rispondere a domande sulla storia ("Cosa è successo a Waterdeep?").
 *   **Archivio Cloud**: Backup automatico delle registrazioni su Oracle Cloud Object Storage.
 *   **Tracciamento Luoghi (Atlas)**: Mantiene memoria dei luoghi visitati e adatta la narrazione all'ambiente.
+*   **Sistema Armonico**: Validazione intelligente degli eventi, sincronizzazione RAG lazy e protezione dell'Atlante.
 
 ## 🛠️ Installazione e Configurazione
 
@@ -112,10 +113,18 @@ Il bot tiene traccia di chi incontrate.
             *   `name`: Cambia il nome (rinomina semplice senza unire).
             *   `role`: Cambia il ruolo (es. "Mercante", "Nemico").
             *   `status`: Cambia lo stato (es. "ALIVE", "DEAD", "MISSING").
-            *   `description`: Sovrascrive la descrizione.
+            *   `description`: Sovrascrive la descrizione (usa Smart Merge).
         *   **Esempio Status**: `$npc update "Grog" | status | DEAD`
         *   **Esempio Ruolo**: `$npc update "Siri" | role | Mercante di Pozioni`
         *   **Esempio Nome**: `$npc update "Siri" | name | Ciri`
+    
+    *   **Regen (Rigenera)**: `$npc regen <Nome>`
+        *   Rigenera le note dell'NPC analizzando tutta la cronologia degli eventi. Utile se la descrizione sembra obsoleta.
+        *   **Esempio**: `$npc regen "Gandalf"`
+
+    *   **Sync (Sincronizza)**: `$npc sync [Nome|all]`
+        *   Forza la sincronizzazione della memoria RAG per un NPC specifico o per tutti quelli in attesa ("dirty").
+        *   **Esempio**: `$npc sync all`
 
 *   `$presenze`: Mostra un elenco rapido degli NPC rilevati nella sessione corrente (utile per il DM per verificare se l'AI sta ascoltando bene).
 
@@ -164,6 +173,7 @@ Gestisci lo scorrere del tempo e gli eventi storici della tua campagna.
 *   `$setcmd`: Imposta il canale testuale corrente come canale per i comandi del bot.
 *   `$setsummary`: Imposta il canale testuale corrente per la pubblicazione dei riassunti.
 *   `$stato` (o `$status`): Mostra lo stato delle code di elaborazione (audio e correzione).
+*   `$sync`: Forza una sincronizzazione completa della memoria RAG per tutti gli NPC "dirty" (non sincronizzati).
 
 ### 🧪 Debug e Test
 *   `$teststream <URL>`: Simula una sessione scaricando un file audio da un URL.

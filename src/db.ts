@@ -245,7 +245,9 @@ const migrations = [
     // NUOVA COLONNA PER ANNO REGISTRAZIONE
     "ALTER TABLE recordings ADD COLUMN year INTEGER",
     // 🆕 NUOVO CAMPO PER TRASCRIZIONI GREZZE
-    "ALTER TABLE recordings ADD COLUMN raw_transcription_text TEXT"
+    "ALTER TABLE recordings ADD COLUMN raw_transcription_text TEXT",
+    // 🆕 SISTEMA ARMONICO: Lazy sync RAG per NPC
+    "ALTER TABLE npc_dossier ADD COLUMN rag_sync_needed INTEGER DEFAULT 0"
 ];
 
 for (const m of migrations) {
@@ -576,11 +578,26 @@ export const getNpcEntry = (campaignId: number, name: string): NpcEntry | undefi
 
 export const listNpcs = (campaignId: number, limit: number = 10): NpcEntry[] => {
     return db.prepare(`
-        SELECT * FROM npc_dossier 
-        WHERE campaign_id = ? 
-        ORDER BY last_updated DESC 
+        SELECT * FROM npc_dossier
+        WHERE campaign_id = ?
+        ORDER BY last_updated DESC
         LIMIT ?
     `).all(campaignId, limit) as NpcEntry[];
+};
+
+/**
+ * Rimuove i vecchi frammenti "DOSSIER_UPDATE" per un NPC specifico.
+ * Usato per pulire il RAG prima di inserire una biografia aggiornata.
+ */
+export const deleteNpcRagSummary = (campaignId: number, npcName: string): void => {
+    db.prepare(`
+        DELETE FROM knowledge_fragments
+        WHERE campaign_id = ?
+          AND session_id = 'DOSSIER_UPDATE'
+          AND associated_npcs LIKE ?
+    `).run(campaignId, `%${npcName}%`);
+
+    console.log(`[RAG] 🧹 Puliti vecchi riassunti per: ${npcName}`);
 };
 
 export const findNpcDossierByName = (campaignId: number, nameQuery: string): NpcEntry[] => {
@@ -749,6 +766,39 @@ export const migrateKnowledgeFragments = (campaignId: number, oldName: string, n
         }
     }
     console.log(`[DB] 🧠 Migrati riferimenti RAG da "${oldName}" a "${newName}"`);
+};
+
+/**
+ * Marca un NPC come "dirty" per sync RAG lazy
+ */
+export const markNpcDirty = (campaignId: number, npcName: string): void => {
+    db.prepare(`
+        UPDATE npc_dossier
+        SET rag_sync_needed = 1
+        WHERE campaign_id = ? AND lower(name) = lower(?)
+    `).run(campaignId, npcName);
+};
+
+/**
+ * Recupera tutti gli NPC che necessitano sync RAG
+ */
+export const getDirtyNpcs = (campaignId: number): NpcEntry[] => {
+    return db.prepare(`
+        SELECT *
+        FROM npc_dossier
+        WHERE campaign_id = ? AND rag_sync_needed = 1
+    `).all(campaignId) as NpcEntry[];
+};
+
+/**
+ * Resetta il flag dirty dopo sync
+ */
+export const clearNpcDirtyFlag = (campaignId: number, npcName: string): void => {
+    db.prepare(`
+        UPDATE npc_dossier
+        SET rag_sync_needed = 0
+        WHERE campaign_id = ? AND lower(name) = lower(?)
+    `).run(campaignId, npcName);
 };
 
 // --- FUNZIONI PENDING MERGES ---

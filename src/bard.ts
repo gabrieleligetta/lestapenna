@@ -1916,3 +1916,35 @@ export async function resolveIdentityCandidate(campaignId: number, newName: stri
         return { match: null, confidence: 0 };
     }
 }
+
+// --- HELPER: SMART MERGE ---
+export async function smartMergeBios(existingBio: string, newInfo: string): Promise<string> {
+    const prompt = `Sei un archivista di D&D.
+    Devi aggiornare la scheda biografica di un NPC unendo le informazioni vecchie con quelle nuove appena scoperte.
+    
+    DESCRIZIONE ESISTENTE:
+    "${existingBio}"
+    
+    NUOVE INFORMAZIONI (da integrare):
+    "${newInfo}"
+    
+    COMPITO:
+    Riscrivi una SINGOLA descrizione coerente in italiano che:
+    1. Integri i fatti nuovi nel testo esistente.
+    2. Elimini le ripetizioni (es. se entrambi dicono "è ferito", dillo una volta sola).
+    3. Mantenga lo stile conciso da dossier.
+    4. Aggiorni lo stato fisico se le nuove info sono più recenti.
+    
+    Restituisci SOLO il testo della nuova descrizione, niente altro.`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL, // Use a fast/smart model
+            messages: [{ role: "user", content: prompt }]
+        });
+        return response.choices[0].message.content || existingBio + " | " + newInfo;
+    } catch (e) {
+        console.error("Smart Merge failed, falling back to concat:", e);
+        return `${existingBio} | ${newInfo}`; // Fallback sicuro
+    }
+}

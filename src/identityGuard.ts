@@ -1,6 +1,6 @@
 import { Message, TextChannel } from 'discord.js';
 import { db, addPendingMerge, removePendingMerge, getAllPendingMerges, PendingMerge, getNpcEntry } from './db';
-import { resolveIdentityCandidate } from './bard';
+import { resolveIdentityCandidate, smartMergeBios } from './bard';
 
 // RAM Cache
 const pendingMergesMap = new Map<string, PendingMerge>();
@@ -67,10 +67,17 @@ export async function handleIdentityReply(message: Message) {
     if (['SI', 'SÌ', 'YES', 'Y'].includes(upperContent)) {
         const existing = getNpcEntry(data.campaign_id, data.target_name);
         if (existing) {
-            const mergedDesc = `${existing.description} | [${data.detected_name}]: ${data.new_description}`;
+            // ⏳ Feedback immediato
+            const loadingMsg = await message.reply("⏳ *Unione intelligente delle biografie in corso...*");
+            
+            // 🧠 AI Merge
+            const mergedDesc = await smartMergeBios(existing.description || "", data.new_description);
+            
             db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
               .run(mergedDesc, existing.id);
-            await message.reply(`✅ **Unito!** Dati di "${data.detected_name}" aggiunti a **${data.target_name}**.`);
+            
+            // ✅ Edit finale
+            await loadingMsg.edit(`✅ **Unito!** Scheda di **${data.target_name}** aggiornata.\n\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
         } else {
             await message.reply(`⚠️ Errore: **${data.target_name}** non trovato nel DB.`);
         }
@@ -95,12 +102,16 @@ export async function handleIdentityReply(message: Message) {
     const manualMatch = getNpcEntry(data.campaign_id, manualName);
 
     if (manualMatch) {
-        // Merge into the MANUALLY selected NPC
-        const mergedDesc = `${manualMatch.description} | [${data.detected_name}]: ${data.new_description}`;
+        // ⏳ Feedback immediato
+        const loadingMsg = await message.reply(`⏳ *Unione intelligente con ${manualMatch.name}...*`);
+
+        // 🧠 AI Merge su Manual Match
+        const mergedDesc = await smartMergeBios(manualMatch.description || "", data.new_description);
+        
         db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
             .run(mergedDesc, manualMatch.id);
         
-        await message.reply(`↩️ **Corretto!** Ho unito "${data.detected_name}" a **${manualMatch.name}** (invece di ${data.target_name}).`);
+        await loadingMsg.edit(`↩️ **Corretto!** Unito a **${manualMatch.name}**.\n\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
         cleanup(data.message_id);
     } else {
         // Not found -> Warn user but keep listening

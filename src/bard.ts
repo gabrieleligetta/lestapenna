@@ -606,7 +606,7 @@ export async function validateBatch(
         context.npcHistories = {};
 
         for (const name of npcNames) {
-            const history = getNpcHistory(campaignId, name).slice(-3);
+            const history = getNpcHistory(campaignId, name).slice(-10);
             if (history.length > 0) {
                 context.npcHistories[name] = history.map((h: any) =>
                     `[${h.event_type}] ${h.description}`

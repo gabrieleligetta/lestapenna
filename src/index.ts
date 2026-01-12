@@ -2060,7 +2060,7 @@ client.on('messageCreate', async (message: Message) => {
 // --- FUNZIONE MONITORAGGIO CODA ---
 async function waitForCompletionAndSummarize(sessionId: string, channel?: TextChannel): Promise<void> {
     return new Promise<void>(async (resolve, reject) => {
-        const CHECK_INTERVAL = 5000; // 5s
+        const CHECK_INTERVAL = 30000; // 5s
         const MAX_WAIT_TIME = 3600000; // 1 ora max
         const startTime = Date.now();
         

@@ -94,7 +94,29 @@ Il bot tiene traccia di chi incontrate.
 *   `$npc` (o `$dossier`):
     *   Senza argomenti: Mostra la lista degli ultimi NPC incontrati.
     *   Con nome: `$npc Grog` mostra la scheda dettagliata (Ruolo, Stato, Note).
-    *   Aggiornamento: `$npc Grog | È un traditore` aggiorna le note.
+    *   Aggiornamento rapido: `$npc Grog | È un traditore` aggiorna le note.
+    
+    #### Comandi Avanzati
+    *   **Merge (Unisci)**: `$npc merge <Vecchio Nome> | <Nuovo Nome>`
+        *   Unisce due schede NPC in una sola. Utile se l'AI ha creato duplicati (es. "Il Fabbro" e "Gorim").
+        *   **Esempio**: `$npc merge "Il Fabbro" | "Gorim"`
+        *   **Risultato**: La scheda "Il Fabbro" viene eliminata. Tutte le note e la storia vengono trasferite su "Gorim".
+    
+    *   **Delete (Elimina)**: `$npc delete <Nome>`
+        *   Elimina definitivamente un NPC dal dossier. Utile per rimuovere mostri o errori.
+        *   **Esempio**: `$npc delete "Goblin Generico"`
+    
+    *   **Update (Modifica)**: `$npc update <Nome> | <Campo> | <Valore>`
+        *   Modifica un attributo specifico di un NPC.
+        *   **Campi validi**:
+            *   `name`: Cambia il nome (rinomina semplice senza unire).
+            *   `role`: Cambia il ruolo (es. "Mercante", "Nemico").
+            *   `status`: Cambia lo stato (es. "ALIVE", "DEAD", "MISSING").
+            *   `description`: Sovrascrive la descrizione.
+        *   **Esempio Status**: `$npc update "Grog" | status | DEAD`
+        *   **Esempio Ruolo**: `$npc update "Siri" | role | Mercante di Pozioni`
+        *   **Esempio Nome**: `$npc update "Siri" | name | Ciri`
+
 *   `$presenze`: Mostra un elenco rapido degli NPC rilevati nella sessione corrente (utile per il DM per verificare se l'AI sta ascoltando bene).
 
 ### 🎒 Inventario e Quest

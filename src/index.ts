@@ -2342,50 +2342,47 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     }
 
     // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---
-    if ((loot && loot.length > 0) || (quests && quests.length > 0) || (monsters && monsters.length > 0) || (encounteredNPCs && encounteredNPCs.length > 0)) {
-        const embed = new EmbedBuilder()
-            .setColor("#F1C40F")
-            .setTitle("🎒 Riepilogo Tecnico");
+    // Mostriamo sempre il riepilogo tecnico
+    const embed = new EmbedBuilder()
+        .setColor("#F1C40F")
+        .setTitle("🎒 Riepilogo Tecnico");
 
-        if (loot && loot.length > 0) {
-            embed.addFields({ name: "💰 Bottino (Loot)", value: loot.map(i => `• ${i}`).join('\n') });
-        }
+    const lootText = (loot && loot.length > 0) ? loot.map(i => `• ${i}`).join('\n') : "Nessun bottino recuperato";
+    embed.addFields({ name: "💰 Bottino (Loot)", value: lootText });
 
-        if (quests && quests.length > 0) {
-            embed.addFields({ name: "🗺️ Missioni (Quests)", value: quests.map(q => `• ${q}`).join('\n') });
-        }
+    const questText = (quests && quests.length > 0) ? quests.map(q => `• ${q}`).join('\n') : "Nessuna missione attiva";
+    embed.addFields({ name: "🗺️ Missioni (Quests)", value: questText });
 
-        if (monsters && monsters.length > 0) {
-            const monsterList = monsters.map(monster => {
-                const countText = monster.count ? ` (${monster.count})` : '';
-                const statusEmoji = monster.status === 'DEFEATED' ? '💀' : 
-                                   monster.status === 'FLED' ? '🏃' : 
-                                   monster.status === 'ALIVE' ? '⚔️' : '❓';
-                return `${statusEmoji} **${monster.name}**${countText} - \`${monster.status}\``;
-            }).join('\n');
-            embed.addFields({ name: "🐉 Mostri Combattuti", value: monsterList });
-        }
-
-        // 🆕 SEZIONE NPC INCONTRATI
-        if (encounteredNPCs && encounteredNPCs.length > 0) {
-            const npcList = encounteredNPCs.map(npc => {
-                // Emoji in base allo status
-                const statusEmoji = npc.status === 'DEAD' ? '💀' :
-                                   npc.status === 'HOSTILE' ? '⚔️' :
-                                   npc.status === 'FRIENDLY' ? '🤝' :
-                                   npc.status === 'NEUTRAL' ? '🔷' : '✅';
-                
-                // Ruolo (se presente)
-                const roleText = npc.role ? ` - *${npc.role}*` : '';
-                
-                return `${statusEmoji} **${npc.name}**${roleText}`;
-            }).join('\n');
-            
-            embed.addFields({ name: '👥 NPC Incontrati', value: npcList });
-        }
-
-        await targetChannel.send({ embeds: [embed] });
+    let monsterText = "Nessun mostro combattuto";
+    if (monsters && monsters.length > 0) {
+        monsterText = monsters.map(monster => {
+            const countText = monster.count ? ` (${monster.count})` : '';
+            const statusEmoji = monster.status === 'DEFEATED' ? '💀' : 
+                               monster.status === 'FLED' ? '🏃' : 
+                               monster.status === 'ALIVE' ? '⚔️' : '❓';
+            return `${statusEmoji} **${monster.name}**${countText} - \`${monster.status}\``;
+        }).join('\n');
     }
+    embed.addFields({ name: "🐉 Mostri Combattuti", value: monsterText });
+
+    let npcText = "Nessun Npc incontrato";
+    if (encounteredNPCs && encounteredNPCs.length > 0) {
+        npcText = encounteredNPCs.map(npc => {
+            // Emoji in base allo status
+            const statusEmoji = npc.status === 'DEAD' ? '💀' :
+                               npc.status === 'HOSTILE' ? '⚔️' :
+                               npc.status === 'FRIENDLY' ? '🤝' :
+                               npc.status === 'NEUTRAL' ? '🔷' : '✅';
+            
+            // Ruolo (se presente)
+            const roleText = npc.role ? ` - *${npc.role}*` : '';
+            
+            return `${statusEmoji} **${npc.name}**${roleText}`;
+        }).join('\n');
+    }
+    embed.addFields({ name: '👥 NPC Incontrati', value: npcText });
+
+    await targetChannel.send({ embeds: [embed] });
     // ------------------------------------
 
     if (targetChannel.id !== defaultChannel.id) {

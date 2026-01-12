@@ -13,9 +13,13 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - TZ=Europe/Rome
-      # 🔧 TUNING GC: 5GB Heap, ottimizzazione size, GC frequente (100ms) per evitare lag
-      - NODE_OPTIONS=--max-old-space-size=5120 --optimize_for_size --gc_interval=100
+      # 🔧 TUNING GC: 5GB Heap (ereditato dai worker)
+      # Rimosso --optimize_for_size e --gc_interval=100 da qui perché Node 22 li blocca in NODE_OPTIONS
+      - NODE_OPTIONS=--max-old-space-size=5120
       - UV_THREADPOOL_SIZE=32
+
+    # 🔧 FLAG GC ESPLICITI: Passati direttamente al comando di avvio
+    command: node --optimize_for_size --gc_interval=100 dist/index.js
 
     deploy:
       resources:

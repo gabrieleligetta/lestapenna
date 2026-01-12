@@ -977,6 +977,7 @@ async function extractMetadataSingleBatch(
 }> {
     let contextInfo = "Contesto: Sessione D&D.";
     let ragContext = ""; 
+    let pcNames: string[] = [];
 
     if (campaignId) {
         const campaign = getCampaignById(campaignId);
@@ -994,7 +995,8 @@ async function extractMetadataSingleBatch(
 
             const characters = getCampaignCharacters(campaignId);
             if (characters.length > 0) {
-                contextInfo += "\nPG: " + characters.map(c => c.character_name).join(", ");
+                pcNames = characters.map(c => c.character_name?.toLowerCase() || "");
+                contextInfo += "\nPG (Personaggi Giocanti - NON SONO NPC): " + characters.map(c => c.character_name).join(", ");
             }
             
             // 🆕 AGENTIC STEP
@@ -1020,6 +1022,7 @@ ${ragContext}
 3. **RAG LINKING:** Usa [[INFO IDENTITÀ RECUPERATE]] per collegare descrizioni generiche (es. "l'informatore") a nomi propri (es. "Leosin").
    - Esempio: Se senti "l'informatore ferito" e le info dicono "Leosin (Spia)", scrivi name: "Leosin".
    - MAI inserire un NPC dal RAG se non è menzionato o attivo nella trascrizione attuale.
+4. **PG vs NPC:** I nomi elencati in "PG" sono i protagonisti. NON inserirli MAI nella lista "npc_updates" o "present_npcs".
 
 **COMPITI:**
 1. Rileva cambio di luogo (macro/micro-location)
@@ -1108,6 +1111,16 @@ Rispondi SOLO con il JSON.`;
             console.error(`[Metadati] ❌ JSON Parse Error.`);
             if (provider === 'ollama') return extractMetadataSingleBatch(text, campaignId, 'openai');
             return { detected_location: null, npc_updates: [], present_npcs: [] };
+        }
+
+        // --- HARD FILTER: RIMOZIONE PG DALLA LISTA NPC ---
+        if (pcNames.length > 0) {
+            if (parsed.npc_updates) {
+                parsed.npc_updates = parsed.npc_updates.filter((npc: any) => !pcNames.includes(npc.name.toLowerCase()));
+            }
+            if (parsed.present_npcs) {
+                parsed.present_npcs = parsed.present_npcs.filter((name: string) => !pcNames.includes(name.toLowerCase()));
+            }
         }
 
         return parsed;

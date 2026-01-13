@@ -1114,6 +1114,11 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
             if (currentMacro && f.macro_location === currentMacro) score += 0.05;
             if (currentMicro && f.micro_location === currentMicro) score += 0.10;
 
+            // 🆕 BONUS MATCH ESATTO (Keyword Search Hybrid)
+            if (query.length > 2 && f.content.toLowerCase().includes(query.toLowerCase())) {
+                score += 0.5; 
+            }
+
             return { ...f, score, originalIndex: index };
         });
 

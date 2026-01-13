@@ -28,7 +28,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS campaigns (
     current_location TEXT,
     current_macro_location TEXT,
     current_micro_location TEXT,
-    current_year INTEGER
+    current_year INTEGER,
+    allow_auto_character_update INTEGER DEFAULT 0
 )`);
 
 // --- TABELLA PERSONAGGI ---
@@ -39,6 +40,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS characters (
     race TEXT,
     class TEXT,
     description TEXT,
+    rag_sync_needed INTEGER DEFAULT 0,
     PRIMARY KEY (user_id, campaign_id),
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
@@ -256,7 +258,11 @@ const migrations = [
     "ALTER TABLE inventory ADD COLUMN session_id TEXT",
     "ALTER TABLE quests ADD COLUMN session_id TEXT",
     // 🆕 SISTEMA ARMONICO: Lazy sync RAG per Timeline
-    "ALTER TABLE world_history ADD COLUMN rag_sync_needed INTEGER DEFAULT 0"
+    "ALTER TABLE world_history ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+    // 🆕 SISTEMA ARMONICO: Lazy sync RAG per Personaggi (PG)
+    "ALTER TABLE characters ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+    // 🆕 SISTEMA ARMONICO: Flag per abilitare auto-update PG
+    "ALTER TABLE campaigns ADD COLUMN allow_auto_character_update INTEGER DEFAULT 0"
 ];
 
 for (const m of migrations) {
@@ -290,6 +296,7 @@ export interface UserProfile {
     race: string | null;
     class: string | null;
     description: string | null;
+    rag_sync_needed?: number; // NUOVO
 }
 
 export interface Recording {
@@ -327,6 +334,7 @@ export interface Campaign {
     current_macro_location?: string;
     current_micro_location?: string;
     current_year?: number; // NUOVO
+    allow_auto_character_update?: number; // NUOVO
 }
 
 export interface KnowledgeFragment {
@@ -464,6 +472,11 @@ export const updateCampaignLocation = (guildId: string, location: string): void 
 export const setCampaignYear = (campaignId: number, year: number): void => {
     db.prepare('UPDATE campaigns SET current_year = ? WHERE id = ?').run(year, campaignId);
     console.log(`[DB] 📅 Anno campagna ${campaignId} impostato a: ${year}`);
+};
+
+export const setCampaignAutoUpdate = (campaignId: number, allow: boolean): void => {
+    db.prepare('UPDATE campaigns SET allow_auto_character_update = ? WHERE id = ?').run(allow ? 1 : 0, campaignId);
+    console.log(`[DB] ⚙️ Auto-update PG per campagna ${campaignId}: ${allow}`);
 };
 
 // --- NUOVE FUNZIONI LUOGO (MACRO/MICRO) ---
@@ -1238,6 +1251,46 @@ export const clearWorldEventDirtyFlag = (eventId: number): void => {
     `).run(eventId);
 };
 
+// --- FUNZIONI CHARACTER DIRTY (LAZY RAG SYNC) ---
+
+export const markCharacterDirty = (campaignId: number, userId: string): void => {
+    db.prepare(`
+        UPDATE characters SET rag_sync_needed = 1 
+        WHERE campaign_id = ? AND user_id = ?
+    `).run(campaignId, userId);
+};
+
+export const clearCharacterDirtyFlag = (campaignId: number, userId: string): void => {
+    db.prepare(`
+        UPDATE characters SET rag_sync_needed = 0 
+        WHERE campaign_id = ? AND user_id = ?
+    `).run(campaignId, userId);
+};
+
+export const getDirtyCharacters = (campaignId: number): { user_id: string, character_name: string }[] => {
+    return db.prepare(`
+        SELECT user_id, character_name FROM characters
+        WHERE campaign_id = ? AND rag_sync_needed = 1
+    `).all(campaignId) as { user_id: string, character_name: string }[];
+};
+
+// Marca dirty per nome personaggio (utile per event processing)
+export const markCharacterDirtyByName = (campaignId: number, characterName: string): void => {
+    db.prepare(`
+        UPDATE characters SET rag_sync_needed = 1
+        WHERE campaign_id = ? AND LOWER(character_name) = LOWER(?)
+    `).run(campaignId, characterName);
+};
+
+// Ottieni user_id dal nome personaggio
+export const getCharacterUserId = (campaignId: number, characterName: string): string | null => {
+    const row = db.prepare(`
+        SELECT user_id FROM characters
+        WHERE campaign_id = ? AND LOWER(character_name) = LOWER(?)
+    `).get(campaignId, characterName) as { user_id: string } | undefined;
+    return row?.user_id || null;
+};
+
 // --- FUNZIONI SNAPSHOT (TOTAL RECALL) ---
 
 export const getCampaignSnapshot = (campaignId: number): CampaignSnapshot => {
@@ -1313,7 +1366,7 @@ export const deleteCampaign = (campaignId: number) => {
 // --- FUNZIONI PERSONAGGI (CONTEXT AWARE) ---
 
 export const getUserProfile = (userId: string, campaignId: number): UserProfile => {
-    const row = db.prepare('SELECT character_name, race, class, description FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as UserProfile | undefined;
+    const row = db.prepare('SELECT character_name, race, class, description, rag_sync_needed FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as UserProfile | undefined;
     return row || { character_name: null, race: null, class: null, description: null };
 };
 
@@ -1611,7 +1664,8 @@ export const wipeDatabase = () => {
         current_location TEXT,
         current_macro_location TEXT,
         current_micro_location TEXT,
-        current_year INTEGER
+        current_year INTEGER,
+        allow_auto_character_update INTEGER DEFAULT 0
     )`);
 
     // --- TABELLA PERSONAGGI ---
@@ -1622,6 +1676,7 @@ export const wipeDatabase = () => {
         race TEXT,
         class TEXT,
         description TEXT,
+        rag_sync_needed INTEGER DEFAULT 0,
         PRIMARY KEY (user_id, campaign_id),
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);

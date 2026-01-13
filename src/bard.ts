@@ -40,7 +40,11 @@ import {
     // Timeline dirty sync
     getDirtyWorldEvents,
     clearWorldEventDirtyFlag,
-    WorldEventFull
+    WorldEventFull,
+    // Character dirty sync
+    markCharacterDirty,
+    clearCharacterDirtyFlag,
+    getDirtyCharacters
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
@@ -966,6 +970,185 @@ export async function syncAllDirtyTimeline(campaignId: number): Promise<number> 
     return dirtyEvents.length;
 }
 
+// --- CHARACTER SYNC FUNCTIONS ---
+
+/**
+ * Rigenera la descrizione di un personaggio giocante basandosi sulla storia degli eventi.
+ * Rispetta l'agency del giocatore: modifica solo conseguenze osservabili, non personalità.
+ */
+export async function regenerateCharacterDescription(
+    campaignId: number,
+    userId: string,
+    charName: string,
+    staticDesc: string
+): Promise<string> {
+    const history = getCharacterHistory(campaignId, charName);
+
+    if (history.length === 0) {
+        console.log(`[Character] Nessun evento per ${charName}, mantengo descrizione originale.`);
+        return staticDesc;
+    }
+
+    const historyText = history
+        .slice(-10) // Ultimi 10 eventi
+        .map(h => `[${h.event_type}] ${h.description}`)
+        .join('\n');
+
+    const prompt = `Sei il Biografo Personale del personaggio giocante **${charName}**.
+
+**DESCRIZIONE INIZIALE (Da preservare come base):**
+${staticDesc || 'Nessuna descrizione iniziale.'}
+
+**CRONOLOGIA CRESCITA PERSONAGGIO (Ultimi eventi):**
+${historyText}
+
+**REGOLE CRITICHE:**
+1. **Rispetta l'Agency del Giocatore**: NON cambiare tratti di personalità scelti dal giocatore.
+2. **Aggiungi Solo Conseguenze Osservabili**: Cicatrici, oggetti iconici, titoli guadagnati, relazioni chiave.
+3. **Non Interpretare Emozioni**: Non scrivere "è diventato triste" o "è più saggio" a meno che non sia esplicito.
+4. **Preserva il 90% del Testo Originale**: Aggiungi massimo 2-3 frasi nuove basate sugli ultimi eventi.
+5. **Formato**: Scrivi in terza persona, stile enciclopedia fantasy.
+
+Restituisci SOLO il testo aggiornato della descrizione (senza introduzioni o spiegazioni).`;
+
+    const startAI = Date.now();
+    try {
+        const response = await summaryClient.chat.completions.create({
+            model: SUMMARY_MODEL,
+            messages: [
+                { role: "system", content: "Sei un biografo esperto che aggiorna schede personaggio rispettando l'agency del giocatore." },
+                { role: "user", content: prompt }
+            ],
+            max_tokens: 1000
+        });
+
+        const latency = Date.now() - startAI;
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
+
+        const newDesc = response.choices[0].message.content?.trim() || staticDesc;
+        console.log(`[Character] Biografia rigenerata per ${charName} (${latency}ms)`);
+
+        return newDesc;
+
+    } catch (e) {
+        console.error(`[Character] Errore rigenerazione ${charName}:`, e);
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        return staticDesc;
+    }
+}
+
+/**
+ * Sincronizza un personaggio giocante nel RAG (LAZY - solo se necessario)
+ */
+export async function syncCharacterIfNeeded(
+    campaignId: number,
+    userId: string,
+    force: boolean = false
+): Promise<string | null> {
+    const char = db.prepare(`
+        SELECT character_name, description, rag_sync_needed
+        FROM characters
+        WHERE user_id = ? AND campaign_id = ?
+    `).get(userId, campaignId) as { character_name: string, description: string | null, rag_sync_needed: number } | undefined;
+
+    if (!char || !char.character_name) return null;
+
+    // Controlla flag auto-update della campagna
+    const campaign = getCampaignById(campaignId);
+    if (!force && !campaign?.allow_auto_character_update) {
+        console.log(`[Sync Character] Auto-update PG disabilitato per campagna ${campaignId}.`);
+        return char.description;
+    }
+
+    // Check se necessita sync
+    const needsSync = char.rag_sync_needed === 1;
+    if (!force && !needsSync) {
+        console.log(`[Sync Character] ${char.character_name} già sincronizzato, skip.`);
+        return char.description;
+    }
+
+    console.log(`[Sync Character] Avvio sync per ${char.character_name}...`);
+
+    // Rigenera descrizione
+    const newDesc = await regenerateCharacterDescription(
+        campaignId,
+        userId,
+        char.character_name,
+        char.description || ''
+    );
+
+    // Aggiorna SQL
+    db.prepare(`
+        UPDATE characters
+        SET description = ?, rag_sync_needed = 0
+        WHERE user_id = ? AND campaign_id = ?
+    `).run(newDesc, userId, campaignId);
+
+    // Pulisci vecchi snapshot RAG
+    db.prepare(`
+        DELETE FROM knowledge_fragments
+        WHERE session_id = 'CHARACTER_UPDATE'
+          AND associated_npcs LIKE ?
+    `).run(`%${char.character_name}%`);
+
+    // Crea nuovo snapshot RAG (solo se descrizione significativa)
+    if (newDesc.length > 100) {
+        const ragContent = `[[SCHEDA PERSONAGGIO GIOCANTE: ${char.character_name}]]
+DESCRIZIONE AGGIORNATA: ${newDesc}
+
+(Questa scheda ufficiale del PG ha priorità su informazioni frammentarie precedenti)`;
+
+        await ingestGenericEvent(
+            campaignId,
+            'CHARACTER_UPDATE',
+            ragContent,
+            [char.character_name],
+            'PARTY'
+        );
+    }
+
+    console.log(`[Sync Character] ${char.character_name} sincronizzato.`);
+    return newDesc;
+}
+
+/**
+ * Batch sync di tutti i personaggi dirty
+ */
+export async function syncAllDirtyCharacters(campaignId: number): Promise<{ synced: number, names: string[] }> {
+    // Controlla flag auto-update della campagna
+    const campaign = getCampaignById(campaignId);
+    if (!campaign?.allow_auto_character_update) {
+        console.log('[Sync Character] Auto-update PG disabilitato per questa campagna.');
+        return { synced: 0, names: [] };
+    }
+
+    const dirtyChars = getDirtyCharacters(campaignId);
+
+    if (dirtyChars.length === 0) {
+        console.log('[Sync Character] Nessun PG da sincronizzare.');
+        return { synced: 0, names: [] };
+    }
+
+    console.log(`[Sync Character] Sincronizzazione batch di ${dirtyChars.length} PG...`);
+
+    const syncedNames: string[] = [];
+
+    for (const char of dirtyChars) {
+        try {
+            const newDesc = await syncCharacterIfNeeded(campaignId, char.user_id, true);
+            if (newDesc) {
+                syncedNames.push(char.character_name);
+            }
+        } catch (e) {
+            console.error(`[Sync Character] Errore sync ${char.character_name}:`, e);
+        }
+    }
+
+    return { synced: syncedNames.length, names: syncedNames };
+}
+
 // --- RAG: INGESTION ---
 export async function ingestSessionRaw(sessionId: string) {
     const campaignId = getSessionCampaignId(sessionId);
@@ -1728,71 +1911,204 @@ export async function correctTranscription(
 }
 
 /**
- * AGENTIC RAG: Analizza la trascrizione e decide cosa cercare nella memoria a lungo termine.
+ * Smart Truncate - Privilegia scene finali e rispetta confini semantici
+ * Strategia: 75% dalle scene finali (climax) + 25% dalle scene iniziali (contesto)
+ * @param text Testo da troncare
+ * @param maxChars Limite massimo caratteri
+ * @returns Testo troncato intelligentemente
+ */
+function smartTruncate(text: string, maxChars: number): string {
+    if (text.length <= maxChars) return text;
+
+    console.log(`[SmartTruncate] Input: ${text.length} chars, Target: ${maxChars} chars`);
+
+    // 1. Cerca marker di scena (pattern usato in processChronologicalSession)
+    const sceneMarkers = [...text.matchAll(/--- CAMBIO SCENA: \[(.*?)\] - \[(.*?)\] ---/g)];
+
+    if (sceneMarkers.length > 3) {
+        console.log(`[SmartTruncate] Trovati ${sceneMarkers.length} marker. Strategia: scene finali (75%) + iniziali (25%)`);
+
+        const targetEnd = maxChars * 0.75;
+        const targetStart = maxChars * 0.25;
+
+        // Raccolta scene finali (climax, rivelazioni)
+        let endContent = '';
+        let endIdx = text.length;
+
+        for (let i = sceneMarkers.length - 1; i >= 0; i--) {
+            const sceneStart = sceneMarkers[i].index || 0;
+            const sceneLength = endIdx - sceneStart;
+
+            if (endContent.length + sceneLength > targetEnd) break;
+
+            endContent = text.substring(sceneStart, endIdx) + endContent;
+            endIdx = sceneStart;
+        }
+
+        // Raccolta scene iniziali (contesto narrativo)
+        let startContent = '';
+        let startIdx = 0;
+
+        for (let i = 0; i < sceneMarkers.length && startIdx < endIdx; i++) {
+            const sceneEnd = sceneMarkers[i + 1]?.index || (sceneMarkers[i].index || 0) + 5000;
+            const sceneLength = sceneEnd - startIdx;
+
+            if (startContent.length + sceneLength > targetStart) break;
+
+            startContent += text.substring(startIdx, sceneEnd);
+            startIdx = sceneEnd;
+        }
+
+        const result = startContent + '\n\n[...SCENE INTERMEDIE OMESSE...]\n\n' + endContent;
+        console.log(`[SmartTruncate] Output: ${result.length} chars (${sceneMarkers.length} scene campionate)`);
+
+        return result;
+    }
+
+    // 2. Fallback: nessun marker -> 20% inizio + 80% fine
+    console.log(`[SmartTruncate] Fallback: 20% inizio + 80% fine`);
+
+    const startChunk = text.substring(0, maxChars * 0.2);
+    const endChunk = text.substring(text.length - (maxChars * 0.8));
+
+    const lastPeriodStart = startChunk.lastIndexOf('.');
+    const cleanStart = lastPeriodStart > 0
+        ? startChunk.substring(0, lastPeriodStart + 1)
+        : startChunk;
+
+    const firstPeriodEnd = endChunk.indexOf('.');
+    const cleanEnd = firstPeriodEnd > 0
+        ? endChunk.substring(firstPeriodEnd + 1)
+        : endChunk;
+
+    return cleanStart + '\n\n[...SEZIONE CENTRALE OMESSA...]\n\n' + cleanEnd;
+}
+
+/**
+ * ENHANCED identifyRelevantContext - Progressive Density Sampling
+ * Combina MAP phase (condensazione) + Smart Truncate (selezione scene)
+ *
+ * Strategia:
+ * - Sessioni brevi (<50k chars): Skip MAP, solo smart truncate
+ * - Sessioni lunghe (>50k chars): MAP phase per condensare + smart truncate
+ * - Target finale: 300k chars (~75k token per GPT-5.2)
  */
 async function identifyRelevantContext(
-    campaignId: number, 
-    transcriptText: string, 
+    campaignId: number,
+    rawTranscript: string,
     snapshot: any
 ): Promise<string[]> {
-    console.log(`[RAG Agent] 🕵️ Analisi contesto dinamico...`);
 
-    // Limitiamo il testo per evitare token overflow in questa fase di analisi rapida
-    const analysisText = transcriptText.length > 15000
-        ? transcriptText.substring(0, 15000) + "... [TRONCATO]"
-        : transcriptText;
+    const TARGET_CHARS = 300000; // ~75k token per GPT-5.2
+    const USE_MAP_PHASE = rawTranscript.length > 50000;
 
-    const prompt = `Sei l'archivista di una campagna D&D.
-    
-    CONTESTO ATTUALE (Statico):
-    - Luogo: ${snapshot.location?.macro} - ${snapshot.location?.micro}
-    - Quest Attive: ${snapshot.quest_context}
-    
-    TRASCRIZIONE SESSIONE (Parziale):
-    ${analysisText}
-    
-    Il tuo compito è identificare 3-5 elementi SPECIFICI menzionati in questa sessione di cui servirebbe recuperare la memoria storica dal database (RAG) per scrivere un riassunto migliore.
-    
-    Cerca:
-    1. NPC specifici menzionati che non sono nel party.
-    2. Luoghi passati o oggetti della lore citati.
-    3. Eventi passati a cui i giocatori fanno riferimento.
-    
-    Restituisci ESCLUSIVAMENTE un array JSON di stringhe (le query di ricerca).
-    Esempio: ["Chi è il Barone Vargas?", "Storia della Torre di Vallaki", "Profezia del Drago"]`;
+    console.log(`[identifyRelevantContext] Input: ${rawTranscript.length} chars`);
+
+    let processedText = rawTranscript;
+
+    // FASE 1: Condensazione con MAP (solo se necessario)
+    if (USE_MAP_PHASE) {
+        console.log(`[identifyRelevantContext] 📊 MAP phase attiva per condensazione...`);
+
+        const chunks = splitTextInChunks(rawTranscript, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
+
+        const characters = getCampaignCharacters(campaignId);
+        const castContext = characters.length > 0
+            ? `CAST: ${characters.map(c => c.character_name).join(', ')}`
+            : '';
+
+        const condensedChunks = await processInBatches(
+            chunks,
+            MAP_CONCURRENCY,
+            async (chunk, idx) => {
+                try {
+                    return await extractFactsFromChunk(chunk, idx, chunks.length, castContext);
+                } catch (e) {
+                    console.warn(`[MAP] Errore chunk ${idx}, uso fallback`);
+                    return { text: chunk.substring(0, 5000), title: '', tokens: 0 };
+                }
+            },
+            'MAP Phase (Condensazione per identifyRelevantContext)'
+        );
+
+        processedText = condensedChunks.map(c => c.text).join('\n\n');
+
+        const ratio = (rawTranscript.length / processedText.length).toFixed(2);
+        console.log(`[identifyRelevantContext] ✅ MAP completato: ${processedText.length} chars (${ratio}x compressione)`);
+    } else {
+        console.log(`[identifyRelevantContext] ⚡ Sessione breve, skip MAP phase`);
+    }
+
+    // FASE 2: Smart Truncate (sempre, anche dopo MAP)
+    const analysisText = smartTruncate(processedText, TARGET_CHARS);
+
+    console.log(`[identifyRelevantContext] 📝 Testo finale per analisi: ${analysisText.length} chars (~${Math.round(analysisText.length / 4)} token)`);
+
+    // FASE 3: Generazione query RAG
+    const prompt = `Sei l'Archivista della campagna D&D "${snapshot.campaignName || 'Sconosciuta'}".
+
+**CONTESTO SNAPSHOT CORRENTE:**
+- Sessione: #${snapshot.sessionNumber || '?'}
+- Luogo: ${snapshot.location?.macro || 'Sconosciuto'} - ${snapshot.location?.micro || 'Sconosciuto'}
+- NPC Presenti: ${snapshot.presentNpcs?.join(', ') || 'Nessuno'}
+- Quest Attive: ${snapshot.quests?.slice(0, 3).join(', ') || snapshot.quest_context || 'Nessuna'}
+
+**TRASCRIZIONE CONDENSATA (Eventi Chiave):**
+${analysisText}
+
+**COMPITO:**
+Analizza la trascrizione e genera 3-5 query di ricerca specifiche per recuperare informazioni rilevanti dal database vettoriale (RAG).
+
+**PRIORITÀ QUERY (in ordine):**
+1. **Eventi Critici Finali**: Combattimenti, morti, tradimenti, rivelazioni nelle ultime scene
+2. **Relazioni NPC**: Dialoghi importanti, alleanze/conflitti menzionati
+3. **Oggetti/Luoghi Chiave**: Artefatti magici, location citate ripetutamente
+4. **Background Mancante**: Riferimenti a eventi passati non chiari nella trascrizione
+
+**REGOLE:**
+- Query specifiche con nomi propri (es. "Dialoghi Leosin e Erantar", "Storia della Torre Nera")
+- Evita query generiche (❌ "cosa è successo", ✅ "morte del Fabbro Torun")
+- Massimo 8 parole per query
+- Se la sessione è solo esplorazione/travel, genera 2-3 query invece di 5
+
+**OUTPUT:**
+Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 
     const startAI = Date.now();
     try {
         const response = await summaryClient.chat.completions.create({
-            model: SUMMARY_MODEL, // Usa un modello veloce (es. gpt-4o-mini)
+            model: SUMMARY_MODEL,
             messages: [
-                { role: "system", content: "Sei un analista di contesto JSON." },
+                { role: "system", content: "Sei un esperto di ricerca semantica per database D&D. Rispondi SOLO con JSON valido." },
                 { role: "user", content: prompt }
             ],
             response_format: { type: "json_object" }
         });
 
+        const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
-        const raw = response.choices[0].message.content || "{}";
-        const parsed = JSON.parse(raw);
-        
-        // Gestiamo formati diversi (es. { queries: [...] } o { list: [...] } o direttamente array)
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+
+        const parsed = JSON.parse(response.choices[0].message.content || '{"queries":[]}');
         const queries = Array.isArray(parsed) ? parsed : (parsed.queries || parsed.list || parsed.items || []);
-        
-        console.log(`[RAG Agent] 🔍 Query generate:`, queries);
-        if (queries.length === 0) {
-            console.log("[RAG Agent] 🤷 Nessun contesto aggiuntivo ritenuto necessario.");
-        }
-        return queries.slice(0, 5); // Max 5 ricerche per non intasare
+
+        console.log(`[identifyRelevantContext] ✅ Generate ${queries.length} query RAG in ${latency}ms`);
+        console.log(`[identifyRelevantContext] Query: ${queries.join(' | ')}`);
+
+        return queries.slice(0, 5); // Max 5 ricerche
 
     } catch (e) {
-        console.warn(`[RAG Agent] ⚠️ Fallita generazione query dinamiche:`, e);
+        console.error('[identifyRelevantContext] ❌ Errore generazione query:', e);
         monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return []; // Fallback al contesto statico se fallisce
+
+        // Fallback: query generica basata su snapshot
+        return [
+            `Eventi recenti ${snapshot.location?.macro || 'campagna'}`,
+            `Dialoghi NPC ${snapshot.presentNpcs?.slice(0, 2).join(' ') || ''}`
+        ].filter(q => q.trim().length > 10);
     }
 }
 
@@ -2672,40 +2988,4 @@ export async function syncNpcDossier(campaignId: number, npcName: string, descri
             }
         }
     }
-}
-
-// --- TIMELINE SYNC FUNCTIONS ---
-
-/**
- * Batch sync di tutti gli eventi timeline dirty
- */
-export async function syncAllDirtyTimeline(campaignId: number): Promise<number> {
-    const dirtyEvents = getDirtyWorldEvents(campaignId);
-
-    if (dirtyEvents.length === 0) {
-        console.log('[Sync Timeline] Nessun evento da sincronizzare.');
-        return 0;
-    }
-
-    console.log(`[Sync Timeline] Sincronizzazione batch di ${dirtyEvents.length} eventi...`);
-
-    for (const evt of dirtyEvents) {
-        try {
-            // Usa ingestWorldEvent per creare l'embedding
-            // Nota: ingestWorldEvent non controlla duplicati, ma dato che è un evento nuovo (dirty), va bene.
-            // Se stiamo ri-sincronizzando, potremmo voler pulire prima, ma per ora assumiamo append-only.
-            // Per sicurezza, potremmo cancellare vecchi embedding con lo stesso contenuto esatto se necessario,
-            // ma ingestWorldEvent è stateless.
-            
-            await ingestWorldEvent(campaignId, evt.session_id || 'MANUAL_ENTRY', evt.description, evt.event_type);
-            
-            // Marca come pulito
-            clearWorldEventDirtyFlag(evt.id);
-            
-        } catch (e) {
-            console.error(`[Sync Timeline] Errore sync evento #${evt.id}:`, e);
-        }
-    }
-
-    return dirtyEvents.length;
 }

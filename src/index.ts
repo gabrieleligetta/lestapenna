@@ -39,7 +39,9 @@ import {
     syncNpcDossierIfNeeded,   // NUOVO
     syncNpcDossier,
     syncAllDirtyAtlas,        // NUOVO - Atlas dirty sync
-    syncAtlasEntryIfNeeded    // NUOVO - Atlas dirty sync
+    syncAtlasEntryIfNeeded,   // NUOVO - Atlas dirty sync
+    syncAllDirtyCharacters,   // NUOVO - Character dirty sync
+    syncCharacterIfNeeded     // NUOVO - Character dirty sync
 } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
@@ -114,7 +116,9 @@ import {
     getLocationHistoryWithIds, // NUOVO - Storia con ID
     fixLocationHistoryEntry, // NUOVO - Correggi storia
     fixCurrentLocation, // NUOVO - Correggi posizione corrente
-    deleteWorldEvent // NUOVO - Cancella evento timeline
+    deleteWorldEvent, // NUOVO - Cancella evento timeline
+    markCharacterDirtyByName, // NUOVO - Character dirty sync (by name)
+    setCampaignAutoUpdate // NUOVO - Toggle auto-update PG
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -1869,7 +1873,10 @@ client.on('messageCreate', async (message: Message) => {
                 for (const evt of validated.character_events.keep) {
                     addCharacterEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
                     console.log(`[Storia PG] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
-                    
+
+                    // ✅ Marca PG come dirty per sync lazy (Sistema Armonico)
+                    markCharacterDirtyByName(currentCampaignId, evt.name);
+
                     // RAG (invariato)
                     ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
                     .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
@@ -1940,11 +1947,23 @@ client.on('messageCreate', async (message: Message) => {
                 
                 // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
                 if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
-                console.log('[Sync] 📊 Controllo NPC da sincronizzare...');
+                console.log('[Sync] 📊 Controllo NPC e PG da sincronizzare...');
                 try {
-                    const syncedCount = await syncAllDirtyNpcs(currentCampaignId);
-                    if (syncedCount > 0) {
-                    console.log(`[Sync] ✅ Sincronizzati ${syncedCount} NPC con RAG.`);
+                    // Sync NPC
+                    const syncedNpcCount = await syncAllDirtyNpcs(currentCampaignId);
+                    if (syncedNpcCount > 0) {
+                        console.log(`[Sync] ✅ Sincronizzati ${syncedNpcCount} NPC con RAG.`);
+                    }
+
+                    // ✅ NUOVO: Sync PG (Sistema Armonico)
+                    const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
+                    if (charSyncResult.synced > 0) {
+                        console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
+
+                        // Notifica nel canale (opzionale)
+                        if (channel && charSyncResult.names.length > 0) {
+                            channel.send(`📜 **Schede Aggiornate Automaticamente**\n${charSyncResult.names.map(n => `• ${n}`).join('\n')}`).catch(() => {});
+                        }
                     }
                 } catch (e) {
                     console.error('[Sync] ⚠️ Errore batch sync:', e);
@@ -2095,10 +2114,63 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- MODIFICATO: $storia (PG o NPC) ---
     if (command === 'storia' || command === 'story') {
-        const targetName = args.join(' ');
-        if (!targetName) return await message.reply("Uso: `$storia <Nome>` (Cerca sia tra i PG che tra gli NPC)");
-
         const campaignId = activeCampaign!.id;
+        const firstArg = args[0]?.toLowerCase();
+
+        // --- Sottocomando: $storia sync [NomePG] ---
+        if (firstArg === 'sync') {
+            const targetName = args.slice(1).join(' ');
+
+            if (!targetName) {
+                // Sync tutti i PG dirty
+                const loadingMsg = await message.reply(`⚙️ **Sincronizzazione Schede PG**\nControllo aggiornamenti in corso...`);
+                try {
+                    const result = await syncAllDirtyCharacters(campaignId);
+                    if (result.synced === 0) {
+                        await loadingMsg.edit(`✅ **Schede PG Sincronizzate**\nNessun aggiornamento necessario.`);
+                    } else {
+                        await loadingMsg.edit(
+                            `✅ **Schede PG Aggiornate!**\n` +
+                            `Sincronizzati **${result.synced}** personaggi:\n` +
+                            result.names.map(n => `• ${n}`).join('\n')
+                        );
+                    }
+                } catch (e: any) {
+                    await loadingMsg.edit(`❌ Errore sync: ${e.message}`);
+                }
+                return;
+            }
+
+            // Sync specifico PG
+            const targetPG = db.prepare('SELECT user_id, character_name FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
+            if (!targetPG) {
+                return await message.reply(`❌ Non trovo un PG chiamato "**${targetName}**".`);
+            }
+
+            const loadingMsg = await message.reply(`⚙️ Aggiornamento scheda di **${targetPG.character_name}**...`);
+            try {
+                const result = await syncCharacterIfNeeded(campaignId, targetPG.user_id, true); // force=true
+                if (result) {
+                    await loadingMsg.edit(`✅ **${targetPG.character_name}** aggiornato!\n\n${result.substring(0, 1800)}...`);
+                } else {
+                    await loadingMsg.edit(`ℹ️ **${targetPG.character_name}** non necessita di aggiornamenti.`);
+                }
+            } catch (e: any) {
+                await loadingMsg.edit(`❌ Errore: ${e.message}`);
+            }
+            return;
+        }
+
+        // --- Uso standard: $storia <Nome> ---
+        const targetName = args.join(' ');
+        if (!targetName) {
+            return await message.reply(
+                "Uso: `$storia <Nome>` (Cerca sia tra i PG che tra gli NPC)\n\n" +
+                "**Sottocomandi:**\n" +
+                "`$storia sync` - Aggiorna tutte le schede PG con eventi recenti\n" +
+                "`$storia sync <NomePG>` - Aggiorna scheda di un PG specifico"
+            );
+        }
 
         // Fix per TS2339: Controllo se il canale supporta sendTyping
         if ('sendTyping' in message.channel) {
@@ -2163,6 +2235,47 @@ client.on('messageCreate', async (message: Message) => {
         activeCampaign!.current_year = year;
 
         return await message.reply(`📅 Data campagna aggiornata a: **${label}**`);
+    }
+
+    // --- NUOVO: $autoaggiorna (on/off) - Toggle auto-update PG ---
+    if (command === 'autoaggiorna' || command === 'autoupdate') {
+        const subCmd = args[0]?.toLowerCase();
+
+        if (!subCmd) {
+            // Mostra stato attuale
+            const current = activeCampaign!.allow_auto_character_update ? 'ATTIVO' : 'DISATTIVO';
+            return await message.reply(
+                `⚙️ **Auto-Aggiornamento Schede PG**\n` +
+                `Stato attuale: **${current}**\n\n` +
+                `Uso:\n` +
+                `\`$autoaggiorna on\` - Attiva aggiornamento automatico bio PG\n` +
+                `\`$autoaggiorna off\` - Disattiva (i giocatori aggiorneranno manualmente)`
+            );
+        }
+
+        if (subCmd === 'on' || subCmd === 'attiva' || subCmd === '1') {
+            setCampaignAutoUpdate(activeCampaign!.id, true);
+            activeCampaign!.allow_auto_character_update = 1;
+            return await message.reply(
+                `✅ **Auto-Aggiornamento ATTIVATO**\n` +
+                `Le biografie dei PG verranno aggiornate automaticamente a fine sessione ` +
+                `con le conseguenze osservabili delle loro azioni.\n\n` +
+                `⚠️ **Nota:** Solo eventi narrativi verificabili. ` +
+                `Non verranno mai modificate personalità, motivazioni o scelte del giocatore.`
+            );
+        }
+
+        if (subCmd === 'off' || subCmd === 'disattiva' || subCmd === '0') {
+            setCampaignAutoUpdate(activeCampaign!.id, false);
+            activeCampaign!.allow_auto_character_update = 0;
+            return await message.reply(
+                `⛔ **Auto-Aggiornamento DISATTIVATO**\n` +
+                `Le schede PG non verranno modificate automaticamente.\n` +
+                `I giocatori dovranno usare \`$storia sync\` per aggiornare manualmente.`
+            );
+        }
+
+        return await message.reply("Uso: `$autoaggiorna on` o `$autoaggiorna off`");
     }
 
     // --- NUOVO: $timeline ---
@@ -2836,6 +2949,7 @@ client.on('messageCreate', async (message: Message) => {
                 if (validated.character_events.keep) {
                     for (const evt of validated.character_events.keep) {
                         addCharacterEvent(campaignId, evt.name, targetSessionId, evt.event, evt.type);
+                        markCharacterDirtyByName(campaignId, evt.name); // Sistema Armonico
                         ingestBioEvent(campaignId, targetSessionId, evt.name, evt.event, evt.type).catch(console.error);
                     }
                 }
@@ -2866,9 +2980,10 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
 
-                // Sync NPC
+                // Sync NPC e PG
                 if (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0) {
                     syncAllDirtyNpcs(campaignId).catch(console.error);
+                    syncAllDirtyCharacters(campaignId).catch(console.error); // Sistema Armonico
                 }
             }
 
@@ -3120,13 +3235,16 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         for (const evt of validated.character_events.keep) {
                             addCharacterEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
                             console.log(`[Storia PG] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
-                            
+
+                            // ✅ Marca PG come dirty per sync lazy (Sistema Armonico)
+                            markCharacterDirtyByName(currentCampaignId, evt.name);
+
                             // RAG (invariato)
                             ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
                             .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
                         }
                         }
-                        
+
                         // --- GESTIONE EVENTI NPC ---
                         if (validated?.npc_events.keep && validated.npc_events.keep.length > 0) {
                         for (const evt of validated.npc_events.keep) {
@@ -3191,18 +3309,25 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         
                         // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
                         if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
-                        console.log('[Sync] 📊 Controllo NPC da sincronizzare...');
+                        console.log('[Sync] 📊 Controllo NPC e PG da sincronizzare...');
                         try {
-                            const syncedCount = await syncAllDirtyNpcs(currentCampaignId);
-                            if (syncedCount > 0) {
-                            console.log(`[Sync] ✅ Sincronizzati ${syncedCount} NPC con RAG.`);
+                            // Sync NPC
+                            const syncedNpcCount = await syncAllDirtyNpcs(currentCampaignId);
+                            if (syncedNpcCount > 0) {
+                                console.log(`[Sync] ✅ Sincronizzati ${syncedNpcCount} NPC con RAG.`);
+                            }
+
+                            // ✅ NUOVO: Sync PG (Sistema Armonico)
+                            const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
+                            if (charSyncResult.synced > 0) {
+                                console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
                             }
                         } catch (e) {
                             console.error('[Sync] ⚠️ Errore batch sync:', e);
                         }
                         }
                     }
-                    
+
                     // 🆕 Recupera NPC incontrati
                     const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
 

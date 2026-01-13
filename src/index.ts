@@ -139,6 +139,36 @@ const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
 const getCmdChannelId = (guildId: string) => getGuildConfig(guildId, 'cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
 
+// --- HELPER FUNCTIONS PER ID SESSIONE ---
+
+/**
+ * Verifica se una stringa è un ID di sessione valido (UUID o session_...)
+ */
+function isSessionId(str: string): boolean {
+    if (!str) return false;
+    const clean = str.trim();
+    // Regex per UUID v4 (es. efaebb05-af05-4c02-a346-bebe0375eeaa)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // Regex per session_...
+    const sessionRegex = /^session_[a-zA-Z0-9-]+$/i;
+    // Regex per id:...
+    const explicitIdRegex = /^id:[a-zA-Z0-9-]+$/i;
+
+    return uuidRegex.test(clean) || sessionRegex.test(clean) || explicitIdRegex.test(clean);
+}
+
+/**
+ * Estrae l'ID sessione pulito da una stringa (rimuove prefissi id:)
+ */
+function extractSessionId(str: string): string {
+    if (!str) return "";
+    let clean = str.trim();
+    if (clean.toLowerCase().startsWith('id:')) {
+        clean = clean.substring(3);
+    }
+    return clean;
+}
+
 client.on('messageCreate', async (message: Message) => {
     // CAMBIO PREFISSO: ! -> $
     if (message.author.bot) return;
@@ -327,6 +357,16 @@ client.on('messageCreate', async (message: Message) => {
                         "`$reset <ID>`: Forza la rielaborazione di una sessione."
                 },
                 {
+                    name: "🕰️ Comandi per Sessione Specifica",
+                    value: "Molti comandi accettano un ID sessione (`session_xxxxx` o UUID) per vedere lo storico:\n" +
+                           "`$viaggi <ID>`: Spostamenti della sessione.\n" +
+                           "`$presenze <ID>`: NPC incontrati.\n" +
+                           "`$npc <ID>`: Anteprima NPC.\n" +
+                           "`$atlante <ID>`: Luoghi visitati.\n" +
+                           "`$inventario <ID>`: Oggetti acquisiti.\n" +
+                           "`$quest <ID>`: Quest aggiunte."
+                },
+                {
                     name: "📍 Luoghi & Atlante",
                     value:
                         "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo.\n" +
@@ -436,6 +476,16 @@ client.on('messageCreate', async (message: Message) => {
                         "`$note <Text>`: Add a manual note to the summary.\n" +
                         "`$setsession <N>`: Manually set session number.\n" +
                         "`$reset <ID>`: Force re-processing of a session."
+                },
+                {
+                    name: "🕰️ Session Specific Commands",
+                    value: "Many commands accept a session ID (`session_xxxxx` or UUID) to view history:\n" +
+                           "`$travels <ID>`: Session travels.\n" +
+                           "`$presenze <ID>`: Encountered NPCs.\n" +
+                           "`$npc <ID>`: NPC preview.\n" +
+                           "`$atlas <ID>`: Visited locations.\n" +
+                           "`$inventory <ID>`: Acquired items.\n" +
+                           "`$quest <ID>`: Added quests."
                 },
                 {
                     name: "📍 Locations & Atlas",
@@ -753,8 +803,8 @@ client.on('messageCreate', async (message: Message) => {
         const argsStr = args.join(' ');
 
         // --- SESSIONE SPECIFICA: $viaggi <session_id> ---
-        if (argsStr && argsStr.startsWith('session_')) {
-            const sessionId = argsStr.trim();
+        if (argsStr && isSessionId(argsStr)) {
+            const sessionId = extractSessionId(argsStr);
             const travelLog = getSessionTravelLog(sessionId);
 
             if (travelLog.length === 0) {
@@ -858,8 +908,8 @@ client.on('messageCreate', async (message: Message) => {
         const argsStr = args.join(' ');
 
         // --- SESSIONE SPECIFICA: $atlante <session_id> ---
-        if (argsStr && argsStr.startsWith('session_')) {
-            const sessionId = argsStr.trim();
+        if (argsStr && isSessionId(argsStr)) {
+            const sessionId = extractSessionId(argsStr);
             const travelLog = getSessionTravelLog(sessionId);
 
             if (travelLog.length === 0) {
@@ -1137,8 +1187,8 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         // --- SESSIONE SPECIFICA: $npc <session_id> ---
-        if (argsStr.startsWith('session_')) {
-            const sessionId = argsStr.trim();
+        if (isSessionId(argsStr)) {
+            const sessionId = extractSessionId(argsStr);
             const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
 
             if (encounteredNPCs.length === 0) {
@@ -1367,8 +1417,8 @@ client.on('messageCreate', async (message: Message) => {
         let targetSessionId: string | undefined;
         let sessionLabel: string;
 
-        if (argsStr && argsStr.startsWith('session_')) {
-            targetSessionId = argsStr;
+        if (argsStr && isSessionId(argsStr)) {
+            targetSessionId = extractSessionId(argsStr);
             sessionLabel = `sessione \`${targetSessionId}\``;
         } else {
             targetSessionId = guildSessions.get(message.guild.id);
@@ -1399,8 +1449,8 @@ client.on('messageCreate', async (message: Message) => {
         const arg = args.join(' ');
 
         // --- SESSIONE SPECIFICA: $quest <session_id> ---
-        if (arg && arg.startsWith('session_')) {
-            const sessionId = arg.trim();
+        if (arg && isSessionId(arg)) {
+            const sessionId = extractSessionId(arg);
             const sessionQuests = getSessionQuests(sessionId);
 
             if (sessionQuests.length === 0) {
@@ -1445,8 +1495,8 @@ client.on('messageCreate', async (message: Message) => {
         const arg = args.join(' ');
 
         // --- SESSIONE SPECIFICA: $inventario <session_id> ---
-        if (arg && arg.startsWith('session_')) {
-            const sessionId = arg.trim();
+        if (arg && isSessionId(arg)) {
+            const sessionId = extractSessionId(arg);
             const sessionItems = getSessionInventory(sessionId);
 
             if (sessionItems.length === 0) {

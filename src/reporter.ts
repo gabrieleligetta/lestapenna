@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript, getExplicitSessionNumber, db, getSessionNotes } from './db';
 import { processChronologicalSession } from './transcriptUtils';
+import { monitor } from './monitor';
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -177,6 +178,7 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
 `;
 
     let emailBody = "";
+    const startAI = Date.now();
     try {
         const modelToUse = process.env.AI_PROVIDER === 'ollama'
             ? (process.env.OLLAMA_MODEL || "llama3.2")
@@ -186,8 +188,21 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
             model: modelToUse,
             messages: [{ role: "user", content: prompt }]
         });
+        
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+        const provider = process.env.AI_PROVIDER === 'ollama' ? 'ollama' : 'openai';
+        
+        monitor.logAIRequestWithCost('summary', provider, modelToUse, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
+        
         emailBody = response.choices[0].message.content || "Report generico.";
     } catch (e: any) {
+        const provider = process.env.AI_PROVIDER === 'ollama' ? 'ollama' : 'openai';
+        const modelToUse = process.env.AI_PROVIDER === 'ollama'
+            ? (process.env.OLLAMA_MODEL || "llama3.2")
+            : (process.env.OPEN_AI_MODEL || "gpt-4o-mini");
+        monitor.logAIRequestWithCost('summary', provider, modelToUse, 0, 0, 0, Date.now() - startAI, true);
         emailBody = `Impossibile generare analisi AI: ${e.message}`;
     }
 

@@ -652,6 +652,9 @@ export async function validateBatch(
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
 
         console.log(`[Validator] Validazione completata in ${latency}ms (${inputTokens}+${outputTokens} tokens)`);
 
@@ -669,6 +672,7 @@ export async function validateBatch(
 
     } catch (e: any) {
         console.error('[Validator] Errore batch validation:', e);
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
 
         // Fallback conservativo: accetta tutto
         return {
@@ -702,10 +706,13 @@ async function ingestGenericEvent(
             input: content
         })
             .then(resp => {
+                const inputTokens = resp.usage?.prompt_tokens || 0;
+                monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
                 return { provider: 'openai', data: resp.data[0].embedding };
             })
             .catch(err => {
                 console.error('[RAG] Errore embedding OpenAI:', err.message);
+                monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
                 return { provider: 'openai', error: err.message };
             })
     );
@@ -717,10 +724,12 @@ async function ingestGenericEvent(
             input: content
         })
             .then(resp => {
+                monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
                 return { provider: 'ollama', data: resp.data[0].embedding };
             })
             .catch(err => {
                 console.error('[RAG] Errore embedding Ollama:', err.message);
+                monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
                 return { provider: 'ollama', error: err.message };
             })
     );
@@ -1084,6 +1093,7 @@ async function generateSearchQueries(campaignId: number, userQuestion: string, h
     
     Output: JSON array di stringhe. Es: ["Dialoghi Leosin Erantar", "Storia della Torre"]`;
 
+    const startAI = Date.now();
     try {
         const response = await chatClient.chat.completions.create({
             model: CHAT_MODEL, 
@@ -1091,9 +1101,15 @@ async function generateSearchQueries(campaignId: number, userQuestion: string, h
             response_format: { type: "json_object" }
         });
         
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
+
         const parsed = JSON.parse(response.choices[0].message.content || "{}");
         return Array.isArray(parsed.queries) ? parsed.queries : [];
     } catch (e) {
+        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return [userQuestion];
     }
 }
@@ -1111,6 +1127,7 @@ async function resolveEntitiesWithRAG(campaignId: number, text: string): Promise
     Restituisci le chiavi di ricerca per trovare il loro Nome Proprio nel DB.
     JSON: { "queries": ["query1", "query2"] }`;
     
+    const startAI = Date.now();
     try {
         const analyzeResp = await metadataClient.chat.completions.create({
             model: METADATA_MODEL, 
@@ -1118,6 +1135,11 @@ async function resolveEntitiesWithRAG(campaignId: number, text: string): Promise
             response_format: { type: "json_object" }
         });
         
+        const inputTokens = analyzeResp.usage?.prompt_tokens || 0;
+        const outputTokens = analyzeResp.usage?.completion_tokens || 0;
+        const cachedTokens = analyzeResp.usage?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
+
         const queries = JSON.parse(analyzeResp.choices[0].message.content || "{}").queries || [];
         if (queries.length === 0) return "";
 
@@ -1129,6 +1151,7 @@ async function resolveEntitiesWithRAG(campaignId: number, text: string): Promise
 
         return `\n[[INFO IDENTITÀ RECUPERATE (RAG)]]\n${knowledge.join('\n')}\n(Usa queste info SOLO per dare un nome specifico alle entità descritte nel testo)`;
     } catch (e) {
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return ""; 
     }
 }
@@ -1609,6 +1632,7 @@ async function identifyRelevantContext(
     Restituisci ESCLUSIVAMENTE un array JSON di stringhe (le query di ricerca).
     Esempio: ["Chi è il Barone Vargas?", "Storia della Torre di Vallaki", "Profezia del Drago"]`;
 
+    const startAI = Date.now();
     try {
         const response = await summaryClient.chat.completions.create({
             model: SUMMARY_MODEL, // Usa un modello veloce (es. gpt-4o-mini)
@@ -1618,6 +1642,11 @@ async function identifyRelevantContext(
             ],
             response_format: { type: "json_object" }
         });
+
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
         const raw = response.choices[0].message.content || "{}";
         const parsed = JSON.parse(raw);
@@ -1633,6 +1662,7 @@ async function identifyRelevantContext(
 
     } catch (e) {
         console.warn(`[RAG Agent] ⚠️ Fallita generazione query dinamiche:`, e);
+        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return []; // Fallback al contesto statico se fallisce
     }
 }
@@ -2398,14 +2428,20 @@ export async function resolveIdentityCandidate(campaignId: number, newName: stri
     
     Rispondi JSON: { "match": "NomeEsattoEsistente" | null, "confidence": 0.0-1.0 }`;
 
+    const startAI = Date.now();
     try {
         const response = await metadataClient.chat.completions.create({
             model: METADATA_MODEL,
             messages: [{ role: "user", content: prompt }],
             response_format: { type: "json_object" }
         });
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
         return JSON.parse(response.choices[0].message.content || "{}");
     } catch (e) {
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return { match: null, confidence: 0 };
     }
 }
@@ -2430,14 +2466,20 @@ export async function smartMergeBios(existingBio: string, newInfo: string): Prom
     
     Restituisci SOLO il testo della nuova descrizione, niente altro.`;
 
+    const startAI = Date.now();
     try {
         const response = await metadataClient.chat.completions.create({
             model: METADATA_MODEL, // Use a fast/smart model
             messages: [{ role: "user", content: prompt }]
         });
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
         return response.choices[0].message.content || existingBio + " | " + newInfo;
     } catch (e) {
         console.error("Smart Merge failed, falling back to concat:", e);
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return `${existingBio} | ${newInfo}`; // Fallback sicuro
     }
 }

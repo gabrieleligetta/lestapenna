@@ -7,6 +7,7 @@ import * as path from 'path';
 import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript, getExplicitSessionNumber, db, getSessionNotes } from './db';
 import { processChronologicalSession } from './transcriptUtils';
 import { monitor } from './monitor';
+import { normalizeToNarrative, formatNarrativeTranscript } from './narrativeFilter';
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -592,15 +593,22 @@ export async function sendSessionRecap(
         const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId);
         const rawText = processedRaw.formattedText;
 
+        // --- ELABORAZIONE NARRATIVE (per RAG e allegato) ---
+        console.log(`[Reporter] 🎭 Generazione versione Narrativa...`);
+        const narrativeSegments = await normalizeToNarrative(processedCorrected.segments, campaignId);
+        const narrativeText = formatNarrativeTranscript(narrativeSegments);
+
         // 📁 SALVA FILE TEMPORANEI
         const tempDir = path.join(__dirname, '..', 'temp_emails');
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
         const correctedPath = path.join(tempDir, `${sessionId}_corrected.txt`);
         const rawPath = path.join(tempDir, `${sessionId}_raw_whisper.txt`);
+        const narrativePath = path.join(tempDir, `${sessionId}_narrative.txt`);
 
         fs.writeFileSync(correctedPath, correctedText, 'utf-8');
         fs.writeFileSync(rawPath, rawText, 'utf-8');
+        fs.writeFileSync(narrativePath, narrativeText, 'utf-8');
 
         // Genera Link Raw Full Session
         let fullMixUrl = "";
@@ -707,10 +715,11 @@ export async function sendSessionRecap(
     </table>
 
     <hr>
-    <h3>🎙️ Allegati</h3>
+    <h3>📎 Allegati</h3>
     <ul>
       <li><strong>Trascrizioni Corrette:</strong> Testo rivisto dall'AI con ortografia e punteggiatura corrette</li>
       <li><strong>Trascrizioni Grezze:</strong> Output originale di Whisper senza modifiche</li>
+      <li><strong>Trascrizioni Narrative:</strong> Versione ottimizzata per analisi RAG (senza metagaming, eventi normalizzati in terza persona)</li>
     </ul>
     
     <p style="font-size: 12px; color: #999; margin-top: 30px;">Generato automaticamente dal Bardo AI Lestapenna.</p>
@@ -732,17 +741,22 @@ export async function sendSessionRecap(
                 {
                     filename: `Sessione_${sessionNum}_Raw_Whisper.txt`,
                     path: rawPath
+                },
+                {
+                    filename: `Sessione_${sessionNum}_Narrative.txt`,
+                    path: narrativePath
                 }
             ]
         };
 
         await transporter.sendMail(mailOptions);
-        console.log(`[Reporter] ✅ Email inviata con HTML completo + 2 allegati`);
+        console.log(`[Reporter] ✅ Email inviata con HTML completo + 3 allegati (Corretta, Raw, Narrative)`);
 
         // 🧹 PULIZIA
         try {
             fs.unlinkSync(correctedPath);
             fs.unlinkSync(rawPath);
+            fs.unlinkSync(narrativePath);
         } catch (e) {
             console.warn(`[Reporter] ⚠️ Errore pulizia temp:`, e);
         }

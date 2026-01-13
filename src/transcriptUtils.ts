@@ -9,11 +9,25 @@ export interface TranscriptEntry {
     user_id?: string;
 }
 
+// Segmento processato (esportato per Narrative Filter)
+export interface ProcessedSegment {
+    absoluteTime: number;
+    text: string;
+    character: string;
+    fileLabel: string;
+    formattedTime: string;
+    type: 'audio' | 'note';
+    macro?: string | null;
+    micro?: string | null;
+}
+
 export interface ProcessedSession {
     formattedText: string; // Script Teatrale (per Email)
     linearText: string;    // [MM:SS] Nome: Testo (per AI)
+    segments: ProcessedSegment[]; // Segmenti raw per Narrative Filter
 }
 
+// Alias interno per compatibilità
 interface FlattenedSegment {
     absoluteTime: number;
     text: string;
@@ -155,7 +169,8 @@ export function processChronologicalSession(
     // 4. Generate Outputs
     return {
         formattedText: generateFormattedOutput(segments),
-        linearText: generateLinearOutput(segments)
+        linearText: generateLinearOutput(segments),
+        segments: segments as ProcessedSegment[] // Per Narrative Filter
     };
 }
 

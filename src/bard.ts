@@ -48,6 +48,7 @@ import {
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
+import { normalizeToNarrative, formatNarrativeTranscript } from './narrativeFilter';
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -147,6 +148,7 @@ const MAP_PROVIDER = getProvider('MAP_PROVIDER', 'AI_PROVIDER');
 const SUMMARY_PROVIDER = getProvider('SUMMARY_PROVIDER', 'AI_PROVIDER');
 const CHAT_PROVIDER = getProvider('CHAT_PROVIDER', 'AI_PROVIDER');
 const EMBEDDING_PROVIDER = getProvider('EMBEDDING_PROVIDER', 'AI_PROVIDER');
+const NARRATIVE_FILTER_PROVIDER = getProvider('NARRATIVE_FILTER_PROVIDER', 'AI_PROVIDER');
 
 // ============================================
 // MODEL CONFIGURATION (Per-Phase)
@@ -157,6 +159,7 @@ const METADATA_MODEL = getModel(METADATA_PROVIDER, 'OPEN_AI_MODEL_METADATA', 'gp
 const MAP_MODEL = getModel(MAP_PROVIDER, 'OPEN_AI_MODEL_MAP', 'gpt-5-mini');
 const SUMMARY_MODEL = getModel(SUMMARY_PROVIDER, 'OPEN_AI_MODEL_SUMMARY', 'gpt-5.2');
 const CHAT_MODEL = getModel(CHAT_PROVIDER, 'OPEN_AI_MODEL_CHAT', 'gpt-5-mini');
+const NARRATIVE_FILTER_MODEL = getModel(NARRATIVE_FILTER_PROVIDER, 'OPEN_AI_MODEL_NARRATIVE_FILTER', 'gpt-5-mini');
 
 const EMBEDDING_MODEL_OPENAI = 'text-embedding-3-small';
 const EMBEDDING_MODEL_OLLAMA = 'nomic-embed-text';
@@ -171,6 +174,7 @@ const metadataClient = createClient(METADATA_PROVIDER);
 const mapClient = createClient(MAP_PROVIDER);
 const summaryClient = createClient(SUMMARY_PROVIDER);
 const chatClient = createClient(CHAT_PROVIDER);
+const narrativeFilterClient = createClient(NARRATIVE_FILTER_PROVIDER);
 
 // --- CLIENT DEDICATI PER EMBEDDING (DOPPIO) ---
 const openaiEmbedClient = new OpenAI({
@@ -190,6 +194,7 @@ const ollamaEmbedClient = new OpenAI({
 const TRANSCRIPTION_CONCURRENCY = TRANSCRIPTION_PROVIDER === 'ollama' ? 1 : 5;
 const MAP_CONCURRENCY = MAP_PROVIDER === 'ollama' ? 1 : 5;
 const EMBEDDING_BATCH_SIZE = EMBEDDING_PROVIDER === 'ollama' ? 1 : 5;
+const NARRATIVE_BATCH_SIZE = parseInt(process.env.NARRATIVE_BATCH_SIZE || '30', 10);
 
 // ============================================
 // CHUNK SIZE (Dynamic based on MAP_PROVIDER)
@@ -208,6 +213,7 @@ console.log(`Metadati:    ${METADATA_PROVIDER.padEnd(8)} → ${METADATA_MODEL.pa
 console.log(`Map:         ${MAP_PROVIDER.padEnd(8)} → ${MAP_MODEL.padEnd(20)}`);
 console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${SUMMARY_MODEL.padEnd(20)}`);
 console.log(`Chat/RAG:    ${CHAT_PROVIDER.padEnd(8)} → ${CHAT_MODEL.padEnd(20)}`);
+console.log(`NarrFilter:  ${NARRATIVE_FILTER_PROVIDER.padEnd(8)} → ${NARRATIVE_FILTER_MODEL.padEnd(20)} (batch: ${NARRATIVE_BATCH_SIZE})`);
 console.log(`Embeddings:  DOPPIO      → OpenAI (${EMBEDDING_MODEL_OPENAI}) + Ollama (${EMBEDDING_MODEL_OLLAMA})`);
 
 // Interfaccia per la risposta dell'AI
@@ -1157,7 +1163,7 @@ export async function ingestSessionRaw(sessionId: string) {
         return;
     }
 
-    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Doppio Embedding)...`);
+    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Doppio Embedding + Narrative Filter)...`);
 
     // 1. Pulisci vecchi frammenti per ENTRAMBI i modelli
     deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
@@ -1170,14 +1176,19 @@ export async function ingestSessionRaw(sessionId: string) {
 
     if (transcriptions.length === 0 && notes.length === 0) return;
 
-    // Usa la nuova utility per ottenere il testo lineare
+    // Usa la nuova utility per ottenere il testo lineare e i segmenti
     const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
-    const fullText = processed.linearText;
+
+    // 3. Applica Narrative Filter per pulire metagaming e normalizzare eventi
+    console.log(`[RAG] 🎭 Applicazione Narrative Filter (${processed.segments.length} segmenti)...`);
+    const narrativeSegments = await normalizeToNarrative(processed.segments, campaignId);
+    const fullText = formatNarrativeTranscript(narrativeSegments);
+    console.log(`[RAG] 📝 Testo narrativo generato: ${fullText.length} caratteri`);
 
     const allNpcs = listNpcs(campaignId, 1000);
     const npcNames = allNpcs.map(n => n.name);
 
-    // 3. Sliding Window Chunking
+    // 4. Sliding Window Chunking (su testo narrativo filtrato)
     const CHUNK_SIZE = 1000;
     const OVERLAP = 200;
 
@@ -1218,7 +1229,7 @@ export async function ingestSessionRaw(sessionId: string) {
         i = end - OVERLAP;
     }
 
-    // 4. Embedding con Progress Bar (DOPPIO - OpenAI + Ollama)
+    // 5. Embedding con Progress Bar (DOPPIO - OpenAI + Ollama)
     await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, idx) => {
         const promises: any[] = [];
         const startAI = Date.now();
@@ -2989,3 +3000,14 @@ export async function syncNpcDossier(campaignId: number, npcName: string, descri
         }
     }
 }
+
+// ============================================
+// EXPORTS FOR NARRATIVE FILTER
+// ============================================
+
+export {
+    narrativeFilterClient,
+    NARRATIVE_FILTER_MODEL,
+    NARRATIVE_FILTER_PROVIDER,
+    NARRATIVE_BATCH_SIZE
+};

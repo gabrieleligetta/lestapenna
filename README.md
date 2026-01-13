@@ -78,6 +78,21 @@ Prima di iniziare, devi creare o selezionare una campagna.
 *   `$impostasessioneid <ID> <N>`: Corregge il numero di sessione per uno specifico ID sessione.
 *   `$reset <ID>`: Forza la rielaborazione completa di una sessione (utile in caso di errori).
 
+### 🕰️ Comandi per Sessione Specifica
+
+Tutti i comandi di consultazione ora accettano un ID sessione (`session_xxxxx`) come parametro per visualizzare i dati storici di quella specifica sessione:
+
+| Comando | Uso | Descrizione |
+| :--- | :---: | :--- |
+| `$viaggi session_xxxxx` | ✅ | Mostra gli spostamenti avvenuti in quella sessione |
+| `$presenze session_xxxxx` | ✅ | Mostra NPC incontrati con dettagli (status, ruolo) |
+| `$npc session_xxxxx` | ✅ | Mostra NPC con descrizione preview |
+| `$atlante session_xxxxx` | ✅ | Mostra luoghi visitati (unici, con conteggio) |
+| `$inventario session_xxxxx` | ✅ | Mostra oggetti acquisiti nella sessione* |
+| `$quest session_xxxxx` | ✅ | Mostra quest aggiunte nella sessione* |
+
+*\*Nota: Inventario e Quest tracciano solo gli elementi aggiunti dopo l'aggiornamento del sistema.*
+
 ### 📍 Luoghi e Atlante
 Il bot traccia automaticamente gli spostamenti, ma puoi intervenire manualmente.
 

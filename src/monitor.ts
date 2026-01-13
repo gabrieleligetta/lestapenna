@@ -18,7 +18,7 @@ interface CostBreakdown {
 const OPENAI_PRICING: Record<string, { input: number; output: number; cachedInput: number }> = {
     'gpt-5-nano': { input: 0.05, output: 0.40, cachedInput: 0.005 },
     'gpt-5-mini': { input: 0.25, output: 2.00, cachedInput: 0.025 },
-    'gpt-5.2': { input: 1.75, output: 14.00, cachedInput: 0.175 },
+    'gpt-5.2': { input: 1.75, output: 14.00, cachedInput: 0.175 }, // Flagship Model
     'gpt-5': { input: 1.25, output: 10.00, cachedInput: 0.125 },
     'text-embedding-3-small': { input: 0.020, output: 0, cachedInput: 0 },
     'text-embedding-3-large': { input: 0.130, output: 0, cachedInput: 0 },

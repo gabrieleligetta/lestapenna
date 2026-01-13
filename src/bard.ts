@@ -1242,12 +1242,12 @@ async function resolveEntitiesWithRAG(campaignId: number, text: string): Promise
 
 // --- ASK BARD (AGENTIC RAG) ---
 export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
-    
+
     // 1. AGENTIC STEP
     const searchQueries = await generateSearchQueries(campaignId, question, history);
     console.log(`[AskBard] 🧠 Query generate:`, searchQueries);
 
-    const promises = searchQueries.map(q => searchKnowledge(campaignId, q, 3)); 
+    const promises = searchQueries.map(q => searchKnowledge(campaignId, q, 3));
     const results = await Promise.all(promises);
     const uniqueContext = Array.from(new Set(results.flat()));
 
@@ -1312,7 +1312,7 @@ export async function askBard(campaignId: number, question: string, history: { r
             model: CHAT_MODEL,
             messages: messages as any
         }));
-        
+
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
@@ -1329,7 +1329,7 @@ export async function askBard(campaignId: number, question: string, history: { r
 async function correctTextOnly(segments: any[]): Promise<any[]> {
     const BATCH_SIZE = 20;
     const allBatches: any[][] = [];
-    
+
     for (let i = 0; i < segments.length; i += BATCH_SIZE) {
         allBatches.push(segments.slice(i, i + BATCH_SIZE));
     }
@@ -1399,14 +1399,14 @@ ${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
                 if (lines.length !== batch.length) {
                     if (diff <= tolerance) {
                         console.warn(`[Correzione] ⚠️ Batch ${idx+1}: Mismatch tollerato (${lines.length}≠${batch.length}, diff: ${diff})`);
-                        
+
                         // Padding o Truncate
                         return batch.map((orig, i) => ({
                             ...orig,
                             text: cleanText(lines[i] || orig.text)
                         }));
                     }
-                    
+
                     console.warn(`[Correzione] ⚠️ Batch ${idx+1}: Mismatch eccessivo (${lines.length}≠${batch.length}). Uso originale.`);
                     return batch;
                 }
@@ -1442,7 +1442,7 @@ async function extractMetadata(
     // 🆕 BATCHING DEI METADATI
     // Invece di processare tutto in un colpo solo (che potrebbe superare i limiti di token)
     // o processare riga per riga (che è inefficiente), usiamo una finestra scorrevole.
-    
+
     // Se il testo è breve, processiamo tutto insieme
     const fullText = correctedSegments.map(s => s.text).join('\n');
     if (fullText.length < 15000) { // Limite arbitrario sicuro per gpt-4o-mini
@@ -1451,10 +1451,10 @@ async function extractMetadata(
 
     // Se è lungo, dividiamo in chunk logici
     console.log(`[Metadati] 🐘 Testo lungo (${fullText.length} chars). Batching attivato.`);
-    
+
     const CHUNK_SIZE = 20; // Numero di segmenti per batch
     const OVERLAP = 5;     // Sovrapposizione per non perdere contesto tra i batch
-    
+
     const chunks: any[][] = [];
     for (let i = 0; i < correctedSegments.length; i += (CHUNK_SIZE - OVERLAP)) {
         chunks.push(correctedSegments.slice(i, i + CHUNK_SIZE));
@@ -1486,7 +1486,7 @@ async function extractMetadata(
 
     // Deduplica NPC
     aggregated.present_npcs = Array.from(new Set(aggregated.present_npcs));
-    
+
     // Se non abbiamo trovato location high confidence, proviamo con l'ultima low confidence
     if (!aggregated.detected_location) {
         const lastLow = results.reverse().find(r => r.detected_location);
@@ -1508,7 +1508,7 @@ async function extractMetadataSingleBatch(
     present_npcs?: string[];
 }> {
     let contextInfo = "Contesto: Sessione D&D.";
-    let ragContext = ""; 
+    let ragContext = "";
     let pcNames: string[] = [];
 
     if (campaignId) {
@@ -1530,7 +1530,7 @@ async function extractMetadataSingleBatch(
                 pcNames = characters.map(c => c.character_name?.toLowerCase() || "");
                 contextInfo += "\nPG (Personaggi Giocanti - NON SONO NPC): " + characters.map(c => c.character_name).join(", ");
             }
-            
+
             // 🆕 AGENTIC STEP
             ragContext = await resolveEntitiesWithRAG(campaignId, text);
         }
@@ -1638,7 +1638,7 @@ Rispondi SOLO con il JSON.`;
 
         const rawContent = response.choices[0].message.content || "{}";
         const parsed = safeJsonParse(rawContent);
-        
+
         if (!parsed) {
             console.error(`[Metadati] ❌ JSON Parse Error.`);
             if (provider === 'ollama') return extractMetadataSingleBatch(text, campaignId, 'openai');
@@ -1693,8 +1693,8 @@ async function identifyRelevantContext(
     console.log(`[RAG Agent] 🕵️ Analisi contesto dinamico...`);
 
     // Limitiamo il testo per evitare token overflow in questa fase di analisi rapida
-    const analysisText = transcriptText.length > 15000 
-        ? transcriptText.substring(0, 15000) + "... [TRONCATO]" 
+    const analysisText = transcriptText.length > 15000
+        ? transcriptText.substring(0, 15000) + "... [TRONCATO]"
         : transcriptText;
 
     const prompt = `Sei l'archivista di una campagna D&D.

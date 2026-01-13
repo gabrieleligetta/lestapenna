@@ -76,6 +76,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS world_history (
     description TEXT NOT NULL,
     timestamp INTEGER,
     year INTEGER,
+    rag_sync_needed INTEGER DEFAULT 0,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
@@ -253,7 +254,9 @@ const migrations = [
     "ALTER TABLE location_atlas ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
     // 🆕 Tracciamento sessione per inventario e quest
     "ALTER TABLE inventory ADD COLUMN session_id TEXT",
-    "ALTER TABLE quests ADD COLUMN session_id TEXT"
+    "ALTER TABLE quests ADD COLUMN session_id TEXT",
+    // 🆕 SISTEMA ARMONICO: Lazy sync RAG per Timeline
+    "ALTER TABLE world_history ADD COLUMN rag_sync_needed INTEGER DEFAULT 0"
 ];
 
 for (const m of migrations) {
@@ -1154,11 +1157,12 @@ export const addWorldEvent = (campaignId: number, sessionId: string | null, desc
         eventYear = camp?.current_year || 0;
     }
 
+    // 🆕 Imposta rag_sync_needed = 1 (Dirty)
     db.prepare(`
-        INSERT INTO world_history (campaign_id, session_id, event_type, description, timestamp, year)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO world_history (campaign_id, session_id, event_type, description, timestamp, year, rag_sync_needed)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
     `).run(campaignId, sessionId, type, description, Date.now(), eventYear);
-    console.log(`[World] 🌍 Aggiunto evento globale: [${type}] Anno: ${eventYear}`);
+    console.log(`[World] 🌍 Aggiunto evento globale (Dirty): [${type}] Anno: ${eventYear}`);
 };
 
 export const getWorldTimeline = (campaignId: number): { id: number, description: string, event_type: string, session_id: string | null, session_number?: number, year: number }[] => {
@@ -1198,6 +1202,40 @@ export const deleteWorldEvent = (eventId: number): boolean => {
     }
 
     return false;
+};
+
+// --- FUNZIONI TIMELINE DIRTY (LAZY RAG SYNC) ---
+
+export interface WorldEventFull {
+    id: number;
+    campaign_id: number;
+    session_id: string | null;
+    event_type: string;
+    description: string;
+    year: number;
+    rag_sync_needed?: number;
+}
+
+/**
+ * Recupera tutti gli eventi timeline che necessitano sync RAG
+ */
+export const getDirtyWorldEvents = (campaignId: number): WorldEventFull[] => {
+    return db.prepare(`
+        SELECT *
+        FROM world_history
+        WHERE campaign_id = ? AND rag_sync_needed = 1
+    `).all(campaignId) as WorldEventFull[];
+};
+
+/**
+ * Resetta il flag dirty dopo sync
+ */
+export const clearWorldEventDirtyFlag = (eventId: number): void => {
+    db.prepare(`
+        UPDATE world_history
+        SET rag_sync_needed = 0
+        WHERE id = ?
+    `).run(eventId);
 };
 
 // --- FUNZIONI SNAPSHOT (TOTAL RECALL) ---
@@ -1750,6 +1788,7 @@ export const wipeDatabase = () => {
         description TEXT NOT NULL,
         timestamp INTEGER,
         year INTEGER,
+        rag_sync_needed INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 

@@ -39,7 +39,8 @@ import {
     syncNpcDossierIfNeeded,   // NUOVO
     syncNpcDossier,
     syncAllDirtyAtlas,        // NUOVO - Atlas dirty sync
-    syncAtlasEntryIfNeeded    // NUOVO - Atlas dirty sync
+    syncAtlasEntryIfNeeded,    // NUOVO - Atlas dirty sync
+    syncAllDirtyTimeline      // NUOVO - Timeline dirty sync
 } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
@@ -1897,9 +1898,8 @@ client.on('messageCreate', async (message: Message) => {
                     addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
                     console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
                     
-                    // RAG
-                    ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
-                    .catch(err => console.error('[RAG] Errore Mondo:', err));
+                    // RAG (LAZY SYNC)
+                    // Non chiamiamo più ingestWorldEvent qui, addWorldEvent ha già settato rag_sync_needed=1
                 }
                 }
                 
@@ -1939,16 +1939,23 @@ client.on('messageCreate', async (message: Message) => {
                 }
                 
                 // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
-                if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
-                console.log('[Sync] 📊 Controllo NPC da sincronizzare...');
-                try {
-                    const syncedCount = await syncAllDirtyNpcs(currentCampaignId);
-                    if (syncedCount > 0) {
-                    console.log(`[Sync] ✅ Sincronizzati ${syncedCount} NPC con RAG.`);
+                if (validated) {
+                    console.log('[Sync] 📊 Controllo elementi da sincronizzare...');
+                    try {
+                        // Sync NPC
+                        if (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0) {
+                            const syncedNpcs = await syncAllDirtyNpcs(currentCampaignId);
+                            if (syncedNpcs > 0) console.log(`[Sync] ✅ Sincronizzati ${syncedNpcs} NPC.`);
+                        }
+                        
+                        // Sync Timeline (NUOVO)
+                        if (validated.world_events.keep.length > 0) {
+                            const syncedEvents = await syncAllDirtyTimeline(currentCampaignId);
+                            if (syncedEvents > 0) console.log(`[Sync] ✅ Sincronizzati ${syncedEvents} eventi timeline.`);
+                        }
+                    } catch (e) {
+                        console.error('[Sync] ⚠️ Errore batch sync:', e);
                     }
-                } catch (e) {
-                    console.error('[Sync] ⚠️ Errore batch sync:', e);
-                }
                 }
             }
 
@@ -2181,7 +2188,7 @@ client.on('messageCreate', async (message: Message) => {
             if (isNaN(year)) return await message.reply("L'anno deve essere un numero.");
 
             addWorldEvent(activeCampaign!.id, null, desc, type, year);
-            return await message.reply(`📜 Evento storico aggiunto nell'anno **${year}**.`);
+            return await message.reply(`📜 Evento storico aggiunto nell'anno **${year}**.\n📌 Sync RAG programmato.`);
         }
 
         // Sottocomando: $timeline delete <ID>
@@ -2197,6 +2204,19 @@ client.on('messageCreate', async (message: Message) => {
             } else {
                 return await message.reply(`❌ Evento #${eventId} non trovato.`);
             }
+        }
+
+        // Sottocomando: $timeline sync
+        if (arg.toLowerCase().startsWith('sync')) {
+            const loadingMsg = await message.reply('⚙️ Sincronizzazione batch Timeline in corso...');
+            const count = await syncAllDirtyTimeline(activeCampaign!.id);
+            
+            if (count > 0) {
+                await loadingMsg.edit(`✅ Sincronizzati **${count} eventi** con RAG.`);
+            } else {
+                await loadingMsg.edit('✨ Tutti gli eventi sono già sincronizzati!');
+            }
+            return;
         }
 
         // Visualizzazione
@@ -2234,6 +2254,27 @@ client.on('messageCreate', async (message: Message) => {
         for (const chunk of chunks) {
             await (message.channel as TextChannel).send(chunk);
         }
+    }
+
+    // --- NUOVO: $sync (Comando Globale) ---
+    if (command === 'sync') {
+        const loadingMsg = await message.reply('⚙️ Sincronizzazione Globale RAG in corso...');
+        
+        let report = "";
+        
+        // 1. Sync NPC
+        const npcCount = await syncAllDirtyNpcs(activeCampaign!.id);
+        report += `✅ NPC: ${npcCount}\n`;
+        
+        // 2. Sync Atlas
+        const atlasCount = await syncAllDirtyAtlas(activeCampaign!.id);
+        report += `✅ Atlante: ${atlasCount}\n`;
+        
+        // 3. Sync Timeline
+        const timelineCount = await syncAllDirtyTimeline(activeCampaign!.id);
+        report += `✅ Timeline: ${timelineCount}\n`;
+        
+        await loadingMsg.edit(`**🔄 Sincronizzazione Completata**\n${report}`);
     }
 
     // --- NUOVO: !ingest <session_id> ---
@@ -3148,9 +3189,8 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
                             console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
                             
-                            // RAG
-                            ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
-                            .catch(err => console.error('[RAG] Errore Mondo:', err));
+                            // RAG (LAZY SYNC)
+                            // Non chiamiamo più ingestWorldEvent qui, addWorldEvent ha già settato rag_sync_needed=1
                         }
                         }
                         
@@ -3190,16 +3230,23 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         }
                         
                         // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
-                        if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
-                        console.log('[Sync] 📊 Controllo NPC da sincronizzare...');
-                        try {
-                            const syncedCount = await syncAllDirtyNpcs(currentCampaignId);
-                            if (syncedCount > 0) {
-                            console.log(`[Sync] ✅ Sincronizzati ${syncedCount} NPC con RAG.`);
+                        if (validated) {
+                            console.log('[Sync] 📊 Controllo elementi da sincronizzare...');
+                            try {
+                                // Sync NPC
+                                if (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0) {
+                                    const syncedNpcs = await syncAllDirtyNpcs(currentCampaignId);
+                                    if (syncedNpcs > 0) console.log(`[Sync] ✅ Sincronizzati ${syncedNpcs} NPC.`);
+                                }
+                                
+                                // Sync Timeline (NUOVO)
+                                if (validated.world_events.keep.length > 0) {
+                                    const syncedEvents = await syncAllDirtyTimeline(currentCampaignId);
+                                    if (syncedEvents > 0) console.log(`[Sync] ✅ Sincronizzati ${syncedEvents} eventi timeline.`);
+                                }
+                            } catch (e) {
+                                console.error('[Sync] ⚠️ Errore batch sync:', e);
                             }
-                        } catch (e) {
-                            console.error('[Sync] ⚠️ Errore batch sync:', e);
-                        }
                         }
                     }
                     

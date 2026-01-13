@@ -36,7 +36,11 @@ import {
     deleteAtlasRagSummary,
     getDirtyAtlasEntries,
     clearAtlasDirtyFlag,
-    AtlasEntryFull
+    AtlasEntryFull,
+    // Timeline dirty sync
+    getDirtyWorldEvents,
+    clearWorldEventDirtyFlag,
+    WorldEventFull
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
@@ -924,6 +928,42 @@ export async function syncAllDirtyAtlas(campaignId: number): Promise<number> {
     }
 
     return dirtyEntries.length;
+}
+
+// --- TIMELINE SYNC FUNCTIONS ---
+
+/**
+ * Batch sync di tutti gli eventi timeline dirty
+ */
+export async function syncAllDirtyTimeline(campaignId: number): Promise<number> {
+    const dirtyEvents = getDirtyWorldEvents(campaignId);
+
+    if (dirtyEvents.length === 0) {
+        console.log('[Sync Timeline] Nessun evento da sincronizzare.');
+        return 0;
+    }
+
+    console.log(`[Sync Timeline] Sincronizzazione batch di ${dirtyEvents.length} eventi...`);
+
+    for (const evt of dirtyEvents) {
+        try {
+            // Usa ingestWorldEvent per creare l'embedding
+            // Nota: ingestWorldEvent non controlla duplicati, ma dato che è un evento nuovo (dirty), va bene.
+            // Se stiamo ri-sincronizzando, potremmo voler pulire prima, ma per ora assumiamo append-only.
+            // Per sicurezza, potremmo cancellare vecchi embedding con lo stesso contenuto esatto se necessario,
+            // ma ingestWorldEvent è stateless.
+            
+            await ingestWorldEvent(campaignId, evt.session_id || 'MANUAL_ENTRY', evt.description, evt.event_type);
+            
+            // Marca come pulito
+            clearWorldEventDirtyFlag(evt.id);
+            
+        } catch (e) {
+            console.error(`[Sync Timeline] Errore sync evento #${evt.id}:`, e);
+        }
+    }
+
+    return dirtyEvents.length;
 }
 
 // --- RAG: INGESTION ---
@@ -2632,4 +2672,40 @@ export async function syncNpcDossier(campaignId: number, npcName: string, descri
             }
         }
     }
+}
+
+// --- TIMELINE SYNC FUNCTIONS ---
+
+/**
+ * Batch sync di tutti gli eventi timeline dirty
+ */
+export async function syncAllDirtyTimeline(campaignId: number): Promise<number> {
+    const dirtyEvents = getDirtyWorldEvents(campaignId);
+
+    if (dirtyEvents.length === 0) {
+        console.log('[Sync Timeline] Nessun evento da sincronizzare.');
+        return 0;
+    }
+
+    console.log(`[Sync Timeline] Sincronizzazione batch di ${dirtyEvents.length} eventi...`);
+
+    for (const evt of dirtyEvents) {
+        try {
+            // Usa ingestWorldEvent per creare l'embedding
+            // Nota: ingestWorldEvent non controlla duplicati, ma dato che è un evento nuovo (dirty), va bene.
+            // Se stiamo ri-sincronizzando, potremmo voler pulire prima, ma per ora assumiamo append-only.
+            // Per sicurezza, potremmo cancellare vecchi embedding con lo stesso contenuto esatto se necessario,
+            // ma ingestWorldEvent è stateless.
+            
+            await ingestWorldEvent(campaignId, evt.session_id || 'MANUAL_ENTRY', evt.description, evt.event_type);
+            
+            // Marca come pulito
+            clearWorldEventDirtyFlag(evt.id);
+            
+        } catch (e) {
+            console.error(`[Sync Timeline] Errore sync evento #${evt.id}:`, e);
+        }
+    }
+
+    return dirtyEvents.length;
 }

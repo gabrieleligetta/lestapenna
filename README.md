@@ -204,9 +204,11 @@ Gestisci lo scorrere del tempo e gli eventi storici della tua campagna.
 *   `$anno0 <Descrizione>` (o `$year0`): Imposta l'evento fondante della campagna (Anno 0). Es. `$anno0 La Caduta dell'Impero`.
 *   `$data <Anno>` (o `$date`, `$anno`): Imposta l'anno corrente della campagna. Es. `$data 100` (100 D.E.) o `$data -50` (50 P.E.).
 *   `$timeline` (o `$cronologia`):
-    *   Senza argomenti: Mostra la cronologia degli eventi mondiali registrati.
+    *   Senza argomenti: Mostra la cronologia degli eventi mondiali registrati (con ID).
     *   Con `add`: Aggiunge un evento storico. Sintassi: `$timeline add <Anno> | <Tipo> | <Descrizione>`.
+    *   Con `delete`: Elimina un evento storico. Sintassi: `$timeline delete <ID>`.
     *   Esempio: `$timeline add -500 | WAR | La Grande Guerra dei Draghi`.
+    *   Esempio: `$timeline delete 5`.
     *   Tipi supportati: `WAR`, `POLITICS`, `DISCOVERY`, `CALAMITY`, `SUPERNATURAL`, `GENERIC`.
 
 ### 📜 Narrazione e Archivi

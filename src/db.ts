@@ -1174,8 +1174,30 @@ export const getWorldTimeline = (campaignId: number): { id: number, description:
 };
 
 export const deleteWorldEvent = (eventId: number): boolean => {
+    // 1. Recupera l'evento per avere il testo da cancellare dal RAG
+    const event = db.prepare('SELECT description, event_type FROM world_history WHERE id = ?').get(eventId) as { description: string, event_type: string } | undefined;
+
+    if (!event) return false;
+
+    // 2. Cancella dal DB SQL
     const result = db.prepare('DELETE FROM world_history WHERE id = ?').run(eventId);
-    return result.changes > 0;
+    
+    if (result.changes > 0) {
+        // 3. Cancella dal RAG (knowledge_fragments)
+        // Il formato usato in ingestWorldEvent è: `STORIA DEL MONDO: TIPO ${type}. EVENTO: ${event}`
+        // Cerchiamo frammenti che contengono la descrizione esatta
+        const ragContentPattern = `%EVENTO: ${event.description}%`;
+        
+        const ragResult = db.prepare(`
+            DELETE FROM knowledge_fragments 
+            WHERE content LIKE ?
+        `).run(ragContentPattern);
+
+        console.log(`[Timeline] 🗑️ Cancellato evento #${eventId} (SQL) e ${ragResult.changes} frammenti RAG.`);
+        return true;
+    }
+
+    return false;
 };
 
 // --- FUNZIONI SNAPSHOT (TOTAL RECALL) ---

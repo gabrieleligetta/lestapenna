@@ -825,35 +825,55 @@ client.on('messageCreate', async (message: Message) => {
 
         if (argsStr.toLowerCase().startsWith('update')) {
             const parts = argsStr.substring(7).split('|').map(s => s.trim());
-            if (parts.length !== 3) {
-                return message.reply('Uso: `!npc update <Nome> | <Campo> | <Valore>`\nCampi validi: `name`, `role`, `status`, `description`');
+
+            // Accetta 3 o 4 parametri (4° = force flag opzionale)
+            if (parts.length < 3 || parts.length > 4) {
+                return message.reply('Uso: `$npc update <Nome> | <Campo> | <Valore> [| force]`\nCampi validi: `name`, `role`, `status`, `description`\n💡 Aggiungi `| force` per sovrascrittura diretta (solo description)');
             }
-            
+
             const [name, field, value] = parts;
-            
+            const forceFlag = parts[3]?.toLowerCase();
+            const isForceMode = forceFlag === 'force' || forceFlag === '--force' || forceFlag === '!';
+
             const npc = getNpcEntry(activeCampaign!.id, name);
             if (!npc) {
                 return message.reply(`❌ NPC **${name}** non trovato.`);
             }
-            
-            // === LOGICA SPECIALE PER DESCRIPTION (SMART MERGE) ===
+
+            // === LOGICA SPECIALE PER DESCRIPTION ===
             if (field === 'description' || field === 'desc') {
-                const loadingMsg = await message.reply(`⚙️ Merge intelligente descrizione per **${name}**...`);
-                
-                // Smart Merge invece di overwrite distruttivo
-                const mergedDesc = await smartMergeBios(npc.description || '', value);
-                
-                // Aggiorna SQL
-                db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
-                .run(mergedDesc, npc.id);
-                
-                // ✅ CRITICO: Marca per sync lazy
-                markNpcDirty(activeCampaign!.id, npc.name);
-                
-                await loadingMsg.edit(`✅ Descrizione aggiornata!\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`);
-                return;
+
+                if (isForceMode) {
+                    // 🔥 FORCE MODE: Sovrascrittura diretta senza merge
+                    const loadingMsg = await message.reply(`🔥 **FORCE MODE** attivato per **${name}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
+
+                    // Overwrite diretto
+                    db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                        .run(value, npc.id);
+
+                    // Marca per sync RAG (anche in force mode!)
+                    markNpcDirty(activeCampaign!.id, npc.name);
+
+                    await loadingMsg.edit(`🔥 **Sovrascrittura completata!**\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${value.substring(0, 500)}${value.length > 500 ? '...' : ''}`);
+                    return;
+
+                } else {
+                    // 🧠 STANDARD MODE: Smart Merge
+                    const loadingMsg = await message.reply(`⚙️ Merge intelligente descrizione per **${name}**...`);
+
+                    const mergedDesc = await smartMergeBios(npc.description || '', value);
+
+                    db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                        .run(mergedDesc, npc.id);
+
+                    // Marca per sync RAG
+                    markNpcDirty(activeCampaign!.id, npc.name);
+
+                    await loadingMsg.edit(`✅ Descrizione aggiornata!\n📌 Sync RAG programmato.\n💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n📜 **Nuova Bio:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`);
+                    return;
+                }
             }
-            
+
             // === LOGICA NORMALE PER GLI ALTRI CAMPI ===
             const updates: any = {};
             if (field === 'name') {
@@ -865,15 +885,15 @@ client.on('messageCreate', async (message: Message) => {
             } else {
                 return message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`, `description`');
             }
-            
+
             const success = updateNpcFields(activeCampaign!.id, name, updates);
-            
+
             if (success) {
                 // Se cambiamo il nome, migriamo il RAG
                 if (updates.name) {
-                migrateKnowledgeFragments(activeCampaign!.id, name, updates.name);
-                markNpcDirty(activeCampaign!.id, updates.name);
-                return message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
+                    migrateKnowledgeFragments(activeCampaign!.id, name, updates.name);
+                    markNpcDirty(activeCampaign!.id, updates.name);
+                    return message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
                 }
                 return message.reply(`✅ NPC **${name}** aggiornato: ${field} = ${value}`);
             } else {

@@ -125,7 +125,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
-import { monitor, SessionMetrics } from './monitor';
+import { monitor, SessionMetrics, startMemoryMonitor } from './monitor';
 import { processSessionReport, sendTestEmail, sendSessionRecap, archiveSessionTranscripts } from './reporter';
 import { exec } from 'child_process';
 import { pipeline } from 'stream/promises';
@@ -3935,6 +3935,9 @@ client.once('ready', async () => {
     // ----------------------------------
     // 🆕 AVVIO MONITORAGGIO IDLE
     monitor.startIdleMonitoring();
+    
+    // 🆕 AVVIO MONITORAGGIO MEMORIA (Proattivo)
+    startMemoryMonitor();
 
     await recoverOrphanedFiles();
     

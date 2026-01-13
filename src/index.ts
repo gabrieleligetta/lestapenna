@@ -2755,6 +2755,104 @@ client.on('messageCreate', async (message: Message) => {
         }
     }
 
+    // --- NUOVO: $riprocessa <ID> (SOFT RESET) ---
+    if (command === 'riprocessa' || command === 'reprocess') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) {
+            return await message.reply("Uso: `$riprocessa <ID_SESSIONE>` - Rigenera memoria e dati senza ritrascrivere.");
+        }
+
+        const channel = message.channel as TextChannel;
+        await channel.send(`🔄 **Riprocessamento Logico** avviato per sessione \`${targetSessionId}\`...\n1. Pulizia dati derivati (Loot, Quest, Storia, RAG)...`);
+
+        try {
+            // 1. PULIZIA MIRATA DATI DERIVATI
+            const campaignId = getSessionCampaignId(targetSessionId);
+            if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
+
+            db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM inventory WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM quests WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM character_history WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM world_history WHERE session_id = ?').run(targetSessionId);
+            
+            await channel.send(`2. Rigenerazione Memoria RAG e Analisi Eventi...`);
+
+            // 2. RIGENERAZIONE RAG
+            await ingestSessionRaw(targetSessionId);
+
+            // 3. RIGENERAZIONE SUMMARY & DATI
+            const result = await generateSummary(targetSessionId, 'DM');
+            updateSessionTitle(targetSessionId, result.title);
+
+            // 4. VALIDAZIONE E SALVATAGGIO (Logica copiata da waitForCompletionAndSummarize)
+            const batchInput: any = {};
+            if (result.character_growth?.length) batchInput.character_events = result.character_growth;
+            if (result.npc_events?.length) batchInput.npc_events = result.npc_events;
+            if (result.world_events?.length) batchInput.world_events = result.world_events;
+            if (result.loot?.length) batchInput.loot = result.loot;
+            if (result.quests?.length) batchInput.quests = result.quests;
+
+            if (Object.keys(batchInput).length > 0) {
+                console.log('[Riprocessa] 🛡️ Validazione batch...');
+                const validated = await validateBatch(campaignId, batchInput);
+
+                // Salvataggio dati validati
+                if (validated.character_events.keep) {
+                    for (const evt of validated.character_events.keep) {
+                        addCharacterEvent(campaignId, evt.name, targetSessionId, evt.event, evt.type);
+                        ingestBioEvent(campaignId, targetSessionId, evt.name, evt.event, evt.type).catch(console.error);
+                    }
+                }
+                if (validated.npc_events.keep) {
+                    for (const evt of validated.npc_events.keep) {
+                        addNpcEvent(campaignId, evt.name, targetSessionId, evt.event, evt.type);
+                        markNpcDirty(campaignId, evt.name);
+                        ingestBioEvent(campaignId, targetSessionId, evt.name, evt.event, evt.type).catch(console.error);
+                    }
+                }
+                if (validated.world_events.keep) {
+                    for (const evt of validated.world_events.keep) {
+                        addWorldEvent(campaignId, targetSessionId, evt.event, evt.type);
+                        ingestWorldEvent(campaignId, targetSessionId, evt.event, evt.type).catch(console.error);
+                    }
+                }
+                if (validated.loot.keep) {
+                    for (const item of validated.loot.keep) {
+                        addLoot(campaignId, item, 1, targetSessionId);
+                        if (!/^[\d\s]+(mo|monete?)/i.test(item)) {
+                            ingestLootEvent(campaignId, targetSessionId, item).catch(console.error);
+                        }
+                    }
+                }
+                if (validated.quests.keep) {
+                    for (const quest of validated.quests.keep) {
+                        addQuest(campaignId, quest, targetSessionId);
+                    }
+                }
+
+                // Sync NPC
+                if (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0) {
+                    syncAllDirtyNpcs(campaignId).catch(console.error);
+                }
+            }
+
+            // 5. PUBBLICAZIONE
+            const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrative, result.monsters, encounteredNPCs);
+            
+            // Email
+            await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrative, result.monsters);
+
+            await channel.send(`✅ **Riprocessamento Completato!** Dati aggiornati.`);
+
+        } catch (err: any) {
+            console.error(`❌ Errore riprocessa ${targetSessionId}:`, err);
+            await channel.send(`❌ Errore critico: ${err.message}`);
+        }
+    }
+
     // --- NUOVO: !testmail (HIDDEN) ---
     if (command === 'testmail') {
         if (message.author.id !== '310865403066712074') return;

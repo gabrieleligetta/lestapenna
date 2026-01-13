@@ -113,7 +113,8 @@ import {
     renameAtlasEntry, // NUOVO - Rinomina luogo
     getLocationHistoryWithIds, // NUOVO - Storia con ID
     fixLocationHistoryEntry, // NUOVO - Correggi storia
-    fixCurrentLocation // NUOVO - Correggi posizione corrente
+    fixCurrentLocation, // NUOVO - Correggi posizione corrente
+    deleteWorldEvent // NUOVO - Cancella evento timeline
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -1469,10 +1470,12 @@ client.on('messageCreate', async (message: Message) => {
     // Uso: $quest <session_id> -> Mostra quest aggiunte in una sessione
     if (command === 'quest' || command === 'obiettivi') {
         const arg = args.join(' ');
+        const firstArg = args[0];
 
-        // --- SESSIONE SPECIFICA: $quest <session_id> ---
-        if (arg && isSessionId(arg)) {
-            const sessionId = extractSessionId(arg);
+        // --- SESSIONE SPECIFICA: $quest <session_id> [all] ---
+        if (firstArg && isSessionId(firstArg)) {
+            const sessionId = extractSessionId(firstArg);
+            const showAll = args.includes('all') || args.includes('-a');
             const sessionQuests = getSessionQuests(sessionId);
 
             if (sessionQuests.length === 0) {
@@ -1482,11 +1485,25 @@ client.on('messageCreate', async (message: Message) => {
                 );
             }
 
-            const list = sessionQuests.map((q: any) => {
+            // Filtra quest completate o con testo "COMPLETATA" nel titolo (se non richiesto all)
+            const filteredQuests = showAll ? sessionQuests : sessionQuests.filter((q: any) => {
+                const isCompletedStatus = q.status === 'COMPLETED';
+                const title = q.title.toUpperCase();
+                const isCompletedText = title.includes('(COMPLETATA') || title.includes('(PARZIALMENTE COMPLETATA');
+                return !isCompletedStatus && !isCompletedText;
+            });
+
+            if (filteredQuests.length === 0) {
+                 return message.reply(`🗺️ Nessuna quest **attiva** trovata per la sessione \`${sessionId}\` (su ${sessionQuests.length} registrate).\n💡 Usa \`$quest ${sessionId} all\` per vederle tutte.`);
+            }
+
+            const list = filteredQuests.map((q: any) => {
                 const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '🔹';
                 return `${statusIcon} **${q.title}** [${q.status}]`;
             }).join('\n');
-            return message.reply(`**🗺️ Quest della Sessione \`${sessionId}\`:**\n\n${list}`);
+            
+            const header = showAll ? `Quest della Sessione \`${sessionId}\`` : `Quest Attive della Sessione \`${sessionId}\``;
+            return message.reply(`**🗺️ ${header}:**\n\n${list}`);
         }
 
         // Sottocomandi manuali: $quest add Titolo / $quest done Titolo
@@ -2167,6 +2184,21 @@ client.on('messageCreate', async (message: Message) => {
             return await message.reply(`📜 Evento storico aggiunto nell'anno **${year}**.`);
         }
 
+        // Sottocomando: $timeline delete <ID>
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('remove ')) {
+            const idStr = arg.split(' ')[1];
+            const eventId = parseInt(idStr);
+
+            if (isNaN(eventId)) return await message.reply("Uso: `$timeline delete <ID>` (L'ID deve essere un numero)");
+
+            const success = deleteWorldEvent(eventId);
+            if (success) {
+                return await message.reply(`🗑️ Evento #${eventId} eliminato dalla cronologia.`);
+            } else {
+                return await message.reply(`❌ Evento #${eventId} non trovato.`);
+            }
+        }
+
         // Visualizzazione
         const events = getWorldTimeline(activeCampaign!.id);
 
@@ -2192,8 +2224,10 @@ client.on('messageCreate', async (message: Message) => {
             // Formattazione Anno
             const yearLabel = e.year === 0 ? "**[Anno 0]**" : (e.year > 0 ? `**[${e.year} D.E.]**` : `**[${Math.abs(e.year)} P.E.]**`);
 
-            msg += `${yearLabel} ${icon} ${e.description}\n`;
+            msg += `\`#${e.id}\` ${yearLabel} ${icon} ${e.description}\n`;
         });
+
+        msg += `\n💡 Usa \`$timeline delete <ID>\` per eliminare un evento.`;
 
         // Gestione lunghezza messaggio (split se necessario)
         const chunks = msg.match(/[\s\S]{1,1900}/g) || [];

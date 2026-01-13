@@ -1161,16 +1161,21 @@ export const addWorldEvent = (campaignId: number, sessionId: string | null, desc
     console.log(`[World] 🌍 Aggiunto evento globale: [${type}] Anno: ${eventYear}`);
 };
 
-export const getWorldTimeline = (campaignId: number): { description: string, event_type: string, session_id: string, session_number?: number, year: number }[] => {
+export const getWorldTimeline = (campaignId: number): { id: number, description: string, event_type: string, session_id: string | null, session_number?: number, year: number }[] => {
     // Join con la tabella sessions per avere il numero sessione se disponibile
     // ORDINAMENTO PER ANNO (year)
     return db.prepare(`
-        SELECT w.description, w.event_type, w.session_id, w.year, s.session_number
+        SELECT w.id, w.description, w.event_type, w.session_id, w.year, s.session_number
         FROM world_history w
         LEFT JOIN sessions s ON w.session_id = s.session_id
         WHERE w.campaign_id = ?
         ORDER BY w.year ASC, w.id ASC
     `).all(campaignId) as any[];
+};
+
+export const deleteWorldEvent = (eventId: number): boolean => {
+    const result = db.prepare('DELETE FROM world_history WHERE id = ?').run(eventId);
+    return result.changes > 0;
 };
 
 // --- FUNZIONI SNAPSHOT (TOTAL RECALL) ---

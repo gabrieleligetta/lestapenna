@@ -1,8 +1,38 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { getSessionStartTime } from './db';
 import { uploadToOracle } from './backupService';
+import { monitor } from './monitor';
+
+// ==================== MEMORY MANAGEMENT ====================
+
+/**
+ * Livelli di stato della memoria RAM per gestione fallback conservativa
+ */
+export enum MemoryStatus {
+    HEALTHY = 'HEALTHY',      // > 20% RAM libera - usa /dev/shm
+    WARNING = 'WARNING',      // 10-20% RAM libera - logga warning
+    CRITICAL = 'CRITICAL'     // < 10% RAM libera - migra su disco
+}
+
+/**
+ * Controlla lo stato della RAM disponibile
+ * @returns Oggetto con status, GB liberi e percentuale libera
+ */
+export function getMemoryStatus(): { status: MemoryStatus; freeGB: number; freePercent: number } {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const freePercent = (freeMem / totalMem) * 100;
+    const freeGB = freeMem / (1024 ** 3);
+
+    let status = MemoryStatus.HEALTHY;
+    if (freePercent < 20) status = MemoryStatus.WARNING;
+    if (freePercent < 10) status = MemoryStatus.CRITICAL;
+
+    return { status, freeGB, freePercent };
+}
 
 const OUTPUT_DIR = path.join(__dirname, '..', 'mixed_sessions');
 
@@ -10,13 +40,20 @@ const OUTPUT_DIR = path.join(__dirname, '..', 'mixed_sessions');
 // Se siamo su Linux, usiamo la RAM per i file temporanei del mixer (/dev/shm).
 // Questo azzera l'I/O su disco durante il mixing incrementale.
 const isLinux = process.platform === 'linux';
-const TEMP_DIR = isLinux 
-    ? path.join('/dev/shm', 'dnd_bot_temp_mix') 
+const RAM_TEMP_DIR = isLinux
+    ? path.join('/dev/shm', 'dnd_bot_temp_mix')
     : path.join(__dirname, '..', 'temp_mix');
+
+// Fallback su disco per emergenze RAM
+const DISK_TEMP_DIR = path.join(__dirname, '..', 'temp_mix');
+
+// Alias per compatibilità con codice esistente
+const TEMP_DIR = RAM_TEMP_DIR;
 
 // Assicuriamoci che le cartelle esistano
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
+if (!fs.existsSync(RAM_TEMP_DIR)) fs.mkdirSync(RAM_TEMP_DIR, { recursive: true });
+if (!fs.existsSync(DISK_TEMP_DIR)) fs.mkdirSync(DISK_TEMP_DIR, { recursive: true });
 
 interface MixerState {
     sessionId: string;
@@ -27,12 +64,79 @@ interface MixerState {
     mixInterval: NodeJS.Timeout;
     isMixing: boolean; // Previene mix paralleli
     finalMp3Path: string;
+    isOnDisk: boolean; // Flag per tracking migrazione emergenza RAM → Disco
 }
 
 const activeMixers = new Map<string, MixerState>();
 
 // Mix ogni 30 secondi (bilanciamento overhead/latency)
 const MIX_INTERVAL_MS = 300000; // 5 Minuti (prima era 30s)
+
+/**
+ * Migrazione di emergenza: sposta l'accumulatore da /dev/shm a disco
+ * Viene chiamata solo quando la RAM è in stato CRITICAL (< 10% libera)
+ * Preserva tutti i dati e crea backup su Oracle Cloud come safety net
+ */
+async function emergencyDiskMigration(state: MixerState): Promise<void> {
+    const ramPath = state.accumulatorPath;
+    const diskPath = ramPath.replace('/dev/shm/dnd_bot_temp_mix', DISK_TEMP_DIR);
+
+    // Se già su disco, skip
+    if (state.isOnDisk || !ramPath.includes('/dev/shm')) {
+        console.log(`[StreamMixer] ✅ Già su disco, nessuna migrazione necessaria`);
+        return;
+    }
+
+    // Se l'accumulatore non esiste ancora in RAM, basta aggiornare il path
+    if (!fs.existsSync(ramPath)) {
+        console.log(`[StreamMixer] 📝 Accumulatore non ancora creato, switch preventivo a disco`);
+        state.accumulatorPath = diskPath;
+        state.isOnDisk = true;
+        return;
+    }
+
+    console.log(`[StreamMixer] 💾 Migrazione emergenza: RAM → Disco`);
+
+    // Copia con stream per non esplodere la RAM ulteriormente
+    await new Promise<void>((resolve, reject) => {
+        const readStream = fs.createReadStream(ramPath);
+        const writeStream = fs.createWriteStream(diskPath);
+
+        readStream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+        readStream.on('error', reject);
+    });
+
+    // Verifica integrità (confronta dimensioni)
+    const ramStats = fs.statSync(ramPath);
+    const diskStats = fs.statSync(diskPath);
+
+    if (ramStats.size !== diskStats.size) {
+        throw new Error(`Migrazione fallita: dimensioni diverse (RAM: ${ramStats.size}, Disk: ${diskStats.size})`);
+    }
+
+    // Rimuovi da RAM solo dopo verifica
+    fs.unlinkSync(ramPath);
+    const sizeMB = diskStats.size / (1024 * 1024);
+    console.log(`[StreamMixer] ✅ Migrato ${sizeMB.toFixed(2)} MB su disco`);
+
+    // Aggiorna path nello state
+    state.accumulatorPath = diskPath;
+    state.isOnDisk = true;
+
+    // Backup immediato su Oracle come safety net
+    const backupKey = `emergency_backups/${state.sessionId}/acc_${Date.now()}.wav`;
+    console.log(`[StreamMixer] ☁️ Backup emergenza accumulatore su Oracle...`);
+
+    try {
+        await uploadToOracle(diskPath, path.basename(diskPath), state.sessionId, backupKey);
+        console.log(`[StreamMixer] ✅ Accumulatore salvato su cloud: ${backupKey}`);
+    } catch (e) {
+        console.error(`[StreamMixer] ❌ Backup emergenza fallito (file locale comunque sicuro):`, e);
+        monitor.logError('StreamMixer', `Emergency backup failed: ${e}`);
+    }
+}
 
 /**
  * Avvia il mixer incrementale per una sessione
@@ -73,6 +177,7 @@ export function startStreamingMixer(sessionId: string): void {
         lastMixTime: Date.now(),
         isMixing: false,
         finalMp3Path,
+        isOnDisk: false, // Inizia sempre su RAM
         mixInterval: setInterval(() => flushPendingFiles(sessionId), MIX_INTERVAL_MS)
     };
 
@@ -114,6 +219,24 @@ async function flushPendingFiles(sessionId: string): Promise<void> {
     if (state.pendingFiles.length === 0) {
         return;
     }
+
+    // ==================== MEMORY CHECK ====================
+    // Controlla lo stato della RAM PRIMA del mix
+    const memStatus = getMemoryStatus();
+
+    if (memStatus.status === MemoryStatus.CRITICAL) {
+        console.warn(`[StreamMixer] 🚨 RAM CRITICA (${memStatus.freePercent.toFixed(1)}%, ${memStatus.freeGB.toFixed(2)} GB liberi)`);
+        monitor.logError('StreamMixer', `Critical RAM: ${memStatus.freePercent.toFixed(1)}%`);
+        try {
+            await emergencyDiskMigration(state);
+        } catch (e: any) {
+            console.error(`[StreamMixer] ❌ Migrazione emergenza fallita:`, e.message);
+            monitor.logError('StreamMixer', `Migration failed: ${e.message}`);
+        }
+    } else if (memStatus.status === MemoryStatus.WARNING) {
+        console.warn(`[StreamMixer] ⚠️ RAM in WARNING (${memStatus.freePercent.toFixed(1)}%, ${memStatus.freeGB.toFixed(2)} GB liberi)`);
+    }
+    // ======================================================
 
     // Previeni mix paralleli (safety)
     if (state.isMixing) {
@@ -421,11 +544,21 @@ export function getStreamingMixerStats(sessionId: string): any {
     const state = activeMixers.get(sessionId);
     if (!state) return null;
 
+    const memStatus = getMemoryStatus();
+    const accExists = fs.existsSync(state.accumulatorPath);
+    const accSize = accExists ? fs.statSync(state.accumulatorPath).size / (1024 * 1024) : 0;
+
     return {
         sessionId: state.sessionId,
         pendingFiles: state.pendingFiles.length,
         isMixing: state.isMixing,
-        accumulatorExists: fs.existsSync(state.accumulatorPath),
-        lastMixTime: new Date(state.lastMixTime).toISOString()
+        accumulatorExists: accExists,
+        accumulatorSizeMB: accSize.toFixed(2),
+        isOnDisk: state.isOnDisk,
+        accumulatorLocation: state.isOnDisk ? 'DISK' : 'RAM',
+        lastMixTime: new Date(state.lastMixTime).toISOString(),
+        memoryStatus: memStatus.status,
+        freeRAM_GB: memStatus.freeGB.toFixed(2),
+        freeRAM_Percent: memStatus.freePercent.toFixed(1)
     };
 }

@@ -229,7 +229,10 @@ Gestisci lo scorrere del tempo e gli eventi storici della tua campagna.
 *   `$wiki <Termine>` (o `$lore`): Cerca frammenti di testo esatti negli archivi della memoria (senza elaborazione AI).
 *   `$memorizza <ID>` (o `$ingest`): Forza l'apprendimento degli eventi di una specifica sessione. Utile se il bot non sembra ricordare cosa è successo in una sessione passata o se l'ingestione automatica è fallita. Dopo aver eseguito questo comando, il bot potrà rispondere a domande su quella sessione tramite `$chiedialbardo`.
 *   `$scarica <ID_SESSIONE>` (o `$download`): Richiede il file audio completo della sessione (mixato).
-*   `$scaricatrascrizioni <ID_SESSIONE>` (o `$downloadtxt`): Scarica il file di testo con la trascrizione completa.
+*   `$scaricatrascrizioni <ID_SESSIONE> [raw|corrected|narrative|all]` (o `$downloadtxt`): Scarica i file di testo con le trascrizioni della sessione.
+    *   **Uso**: `$scaricatrascrizioni session_xxxxx` (default: corrected)
+    *   **Opzioni**: `raw` (grezzo), `corrected` (corretto), `narrative` (racconto), `all` (tutti).
+    *   **Nota**: Se i file non esistono nel Cloud (es. sessioni vecchie), verranno generati e caricati automaticamente al momento della richiesta.
 
 ### ⚙️ Configurazione e Manutenzione
 *   `$setcmd`: Imposta il canale testuale corrente come canale per i comandi del bot.

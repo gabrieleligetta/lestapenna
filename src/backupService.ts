@@ -49,7 +49,8 @@ function getPreferredKey(fileName: string, sessionId?: string): string {
 async function findS3Key(fileName: string, sessionId?: string): Promise<string | null> {
     // 1. Prova il percorso specifico per la sessione (se fornito)
     if (sessionId) {
-        const sessionKey = `recordings/${sessionId}/${fileName}`;
+        // Se fileName contiene già un path (es. transcripts/...), usalo direttamente
+        const sessionKey = fileName.includes('/') ? fileName : `recordings/${sessionId}/${fileName}`;
         try {
             await getS3Client().send(new HeadObjectCommand({ Bucket: getBucketName(), Key: sessionKey }));
             return sessionKey;
@@ -61,13 +62,16 @@ async function findS3Key(fileName: string, sessionId?: string): Promise<string |
     }
 
     // 2. Prova il percorso legacy (root di recordings)
-    const legacyKey = `recordings/${fileName}`;
-    try {
-        await getS3Client().send(new HeadObjectCommand({ Bucket: getBucketName(), Key: legacyKey }));
-        return legacyKey;
-    } catch (err: any) {
-        if (err.name !== 'NotFound' && err.$metadata?.httpStatusCode !== 404) {
-            console.error(`[Custode] ❌ Errore verifica existence per ${legacyKey}:`, err);
+    // Solo se fileName non è un path complesso
+    if (!fileName.includes('/')) {
+        const legacyKey = `recordings/${fileName}`;
+        try {
+            await getS3Client().send(new HeadObjectCommand({ Bucket: getBucketName(), Key: legacyKey }));
+            return legacyKey;
+        } catch (err: any) {
+            if (err.name !== 'NotFound' && err.$metadata?.httpStatusCode !== 404) {
+                console.error(`[Custode] ❌ Errore verifica existence per ${legacyKey}:`, err);
+            }
         }
     }
 
@@ -103,6 +107,7 @@ export async function uploadToOracle(filePath: string, fileName: string, session
         const contentType = extension === '.ogg' ? 'audio/ogg' : 
                           extension === '.mp3' ? 'audio/mpeg' : 
                           extension === '.json' ? 'application/json' :
+                          extension === '.txt' ? 'text/plain' :
                           'audio/x-pcm';
 
         const command = new PutObjectCommand({
@@ -187,15 +192,28 @@ export async function getPresignedUrl(
 
         // ✅ Se contiene '/', trattalo come chiave completa
         if (fileNameOrKey.includes('/')) {
-            console.log(`[Custode] 🔗 Uso chiave custom: ${fileNameOrKey}`);
-            key = fileNameOrKey;
+            // Verifica se esiste davvero usando la chiave completa
+            try {
+                await getS3Client().send(new HeadObjectCommand({ Bucket: getBucketName(), Key: fileNameOrKey }));
+                key = fileNameOrKey;
+            } catch (err: any) {
+                if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
+                    // Non trovato, ritorna null così il chiamante sa che deve rigenerarlo
+                    return null;
+                }
+                // Altri errori, logga e ritorna null
+                console.error(`[Custode] ❌ Errore verifica chiave custom ${fileNameOrKey}:`, err);
+                return null;
+            }
         } else {
             // Comportamento legacy
             key = await findS3Key(fileNameOrKey, sessionId);
             
             if (!key) {
-                const targetKey = getPreferredKey(fileNameOrKey, sessionId);
-                key = targetKey;
+                // Se non trovato, proviamo a costruire la chiave target (magari non esiste ancora ma vogliamo l'URL per upload?)
+                // No, getPresignedUrl per download (GetObject) richiede che l'oggetto esista o darà 404 al download.
+                // Quindi se findS3Key fallisce, ritorniamo null.
+                return null;
             }
         }
 

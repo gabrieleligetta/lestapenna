@@ -604,3 +604,46 @@ class SystemMonitor {
 }
 
 export const monitor = new SystemMonitor();
+
+// ==================== MEMORY STATUS ENUM ====================
+// (duplicato qui per evitare dipendenza circolare con streamingMixer)
+
+export enum MemoryStatus {
+    HEALTHY = 'HEALTHY',      // > 20% RAM libera
+    WARNING = 'WARNING',      // 10-20% RAM libera
+    CRITICAL = 'CRITICAL'     // < 10% RAM libera
+}
+
+/**
+ * Controlla lo stato della RAM disponibile (utility standalone)
+ */
+export function getMemoryStatus(): { status: MemoryStatus; freeGB: number; freePercent: number } {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const freePercent = (freeMem / totalMem) * 100;
+    const freeGB = freeMem / (1024 ** 3);
+
+    let status = MemoryStatus.HEALTHY;
+    if (freePercent < 20) status = MemoryStatus.WARNING;
+    if (freePercent < 10) status = MemoryStatus.CRITICAL;
+
+    return { status, freeGB, freePercent };
+}
+
+/**
+ * Avvia un monitor proattivo della memoria che logga ogni 2 minuti
+ * Solo in caso di RAM non HEALTHY per evitare log spam
+ * @returns NodeJS.Timeout per eventuale clearInterval
+ */
+export function startMemoryMonitor(): NodeJS.Timeout {
+    console.log('[MemMonitor] 📊 Avvio monitor memoria (check ogni 2 min)...');
+
+    return setInterval(() => {
+        const mem = getMemoryStatus();
+
+        if (mem.status !== MemoryStatus.HEALTHY) {
+            console.warn(`[MemMonitor] RAM: ${mem.freeGB.toFixed(2)} GB liberi (${mem.freePercent.toFixed(1)}%) - Status: ${mem.status}`);
+            monitor.logError('Memory', `Low RAM: ${mem.freePercent.toFixed(1)}%`);
+        }
+    }, 120000); // Ogni 2 minuti
+}

@@ -4,7 +4,11 @@ services:
     build: .
     container_name: dnd-bot-prod
     restart: unless-stopped
-    shm_size: '16gb'
+    # 🔧 STRATEGIA RAM DISK:
+    # - /dev/shm è usato per l'accumulatore del mixer streaming (I/O zero-latency)
+    # - Se RAM scende sotto 10%, fallback automatico su disco (temp_mix/)
+    # - 6GB = ~25% della RAM totale (23GB), sufficiente per sessioni multi-ora
+    shm_size: '6gb'
     depends_on:
       - redis
       - ollama
@@ -13,9 +17,9 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - TZ=Europe/Rome
-      # 🔧 TUNING GC: 5GB Heap (ereditato dai worker)
+      # 🔧 TUNING GC: 6GB Heap (bilanciato con Ollama e sistema)
       # Rimosso --optimize_for_size e --gc_interval=100 da qui perché Node 22 li blocca in NODE_OPTIONS
-      - NODE_OPTIONS=--max-old-space-size=5120
+      - NODE_OPTIONS=--max-old-space-size=6144
       - UV_THREADPOOL_SIZE=32
 
     # 🔧 FLAG GC ESPLICITI: Passati direttamente al comando di avvio
@@ -25,9 +29,10 @@ services:
       resources:
         limits:
           # NON limitiamo CPU: Whisper usa nice + -t 3, self-limiting
-          memory: 8G  # 🔧 Ridotto da 22G: sufficiente per Node + Whisper + buffer
+          # 🔧 20GB lascia 3GB al sistema per stabilità
+          memory: 20G
         reservations:
-          memory: 4G
+          memory: 2G
 
     logging:
       driver: "json-file"

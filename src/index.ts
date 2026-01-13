@@ -37,7 +37,9 @@ import {
     validateBatch,           // NUOVO
     syncAllDirtyNpcs,        // NUOVO
     syncNpcDossierIfNeeded,   // NUOVO
-    syncNpcDossier
+    syncNpcDossier,
+    syncAllDirtyAtlas,        // NUOVO - Atlas dirty sync
+    syncAtlasEntryIfNeeded    // NUOVO - Atlas dirty sync
 } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
@@ -80,6 +82,9 @@ import {
     updateLocation,
     getAtlasEntry,
     updateAtlasEntry,
+    listAtlasEntries,
+    deleteAtlasEntry,
+    getAtlasEntryFull,
     getNpcEntry,
     updateNpcEntry,
     listNpcs,
@@ -99,7 +104,13 @@ import {
     deleteNpcEntry, // NUOVO IMPORT
     updateNpcFields, // NUOVO IMPORT
     migrateKnowledgeFragments, // NUOVO IMPORT
-    markNpcDirty // NUOVO IMPORT
+    markNpcDirty, // NUOVO IMPORT
+    markAtlasDirty, // NUOVO IMPORT - Atlas dirty sync
+    getDirtyAtlasEntries, // NUOVO IMPORT - Atlas dirty sync
+    renameAtlasEntry, // NUOVO - Rinomina luogo
+    getLocationHistoryWithIds, // NUOVO - Storia con ID
+    fixLocationHistoryEntry, // NUOVO - Correggi storia
+    fixCurrentLocation // NUOVO - Correggi posizione corrente
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -308,13 +319,21 @@ client.on('messageCreate', async (message: Message) => {
                         "`$termina`: Termina la sessione.\n" +
                         "`$pausa`: Sospende la registrazione.\n" +
                         "`$riprendi`: Riprende la registrazione.\n" +
-                        "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo attuale.\n" +
-                        "`$viaggi`: Mostra la cronologia degli spostamenti.\n" +
-                        "`$atlante [Descrizione]`: Visualizza o aggiorna la memoria del luogo.\n" +
                         "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
                         "`$impostasessione <N>`: Imposta numero sessione.\n" +
-                        "`$impostasessioneid <ID> <N>`: Corregge il numero.\n" +
                         "`$reset <ID>`: Forza la rielaborazione di una sessione."
+                },
+                {
+                    name: "📍 Luoghi & Atlante",
+                    value:
+                        "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo.\n" +
+                        "`$viaggi`: Cronologia spostamenti.\n" +
+                        "`$viaggi fix #ID | <R> | <L>`: Correggi voce cronologia.\n" +
+                        "`$atlante`: Memoria del luogo attuale.\n" +
+                        "`$atlante list`: Elenca tutti i luoghi.\n" +
+                        "`$atlante rename <VR>|<VL>|<NR>|<NL>`: Rinomina luogo.\n" +
+                        "`$atlante <R> | <L> | <Desc> [| force]`: Aggiorna.\n" +
+                        "`$atlante sync [all|Nome]`: Sincronizza RAG."
                 },
                 {
                     name: "👥 NPC & Dossier",
@@ -322,10 +341,10 @@ client.on('messageCreate', async (message: Message) => {
                         "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
                         "`$npc merge <Vecchio> | <Nuovo>`: Unisce due NPC.\n" +
                         "`$npc delete <Nome>`: Elimina un NPC.\n" +
-                        "`$npc update <Nome> | <Campo> | <Valore>`: Aggiorna campi specifici.\n" +
+                        "`$npc update <Nome> | <Campo> | <Val> [| force]`: Aggiorna campi.\n" +
                         "`$npc regen <Nome>`: Rigenera le note usando la cronologia.\n" +
                         "`$npc sync [Nome|all]`: Sincronizza manualmente il RAG.\n" +
-                        "`$presenze`: Mostra gli NPC incontrati nella sessione corrente."
+                        "`$presenze`: Mostra NPC incontrati nella sessione."
                 },
                 {
                     name: "📜 Narrazione & Archivi",
@@ -411,13 +430,21 @@ client.on('messageCreate', async (message: Message) => {
                         "`$stoplistening`: End the session.\n" +
                         "`$pause`: Pause recording.\n" +
                         "`$resume`: Resume recording.\n" +
-                        "`$location [Macro | Micro]`: View or update current location.\n" +
-                        "`$travels`: Show travel history.\n" +
-                        "`$atlas [Description]`: View or update location memory.\n" +
                         "`$note <Text>`: Add a manual note to the summary.\n" +
                         "`$setsession <N>`: Manually set session number.\n" +
-                        "`$setsessionid <ID> <N>`: Fix session number by ID.\n" +
                         "`$reset <ID>`: Force re-processing of a session."
+                },
+                {
+                    name: "📍 Locations & Atlas",
+                    value:
+                        "`$location [Macro | Micro]`: View or update location.\n" +
+                        "`$travels`: Travel history.\n" +
+                        "`$travels fix #ID | <R> | <L>`: Fix history entry.\n" +
+                        "`$atlas`: Current location memory.\n" +
+                        "`$atlas list`: List all locations.\n" +
+                        "`$atlas rename <OR>|<OL>|<NR>|<NL>`: Rename location.\n" +
+                        "`$atlas <R> | <L> | <Desc> [| force]`: Update.\n" +
+                        "`$atlas sync [all|Name]`: Sync RAG."
                 },
                 {
                     name: "👥 NPC & Dossier",
@@ -425,10 +452,10 @@ client.on('messageCreate', async (message: Message) => {
                         "`$npc [Name]`: View or update NPC dossier.\n" +
                         "`$npc merge <Old> | <New>`: Merge two NPCs.\n" +
                         "`$npc delete <Name>`: Delete an NPC.\n" +
-                        "`$npc update <Name> | <Field> | <Value>`: Update specific fields.\n" +
+                        "`$npc update <Name> | <Field> | <Val> [| force]`: Update fields.\n" +
                         "`$npc regen <Name>`: Regenerate notes using history.\n" +
                         "`$npc sync [Name|all]`: Manually sync RAG.\n" +
-                        "`$presenze`: Show NPCs encountered in current session."
+                        "`$presenze`: Show NPCs encountered in session."
                 },
                 {
                     name: "📜 Storytelling & Archives",
@@ -714,45 +741,322 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: !viaggi (Cronologia) ---
+    // Uso: $viaggi -> Mostra cronologia
+    // Uso: $viaggi list -> Mostra cronologia con ID
+    // Uso: $viaggi fix <ID> | <NuovaMacro> | <NuovaMicro> -> Correggi voce
+    // Uso: $viaggi fixcurrent <NuovaMacro> | <NuovaMicro> -> Correggi posizione corrente
     if (command === 'viaggi' || command === 'travels') {
-        const history = getLocationHistory(message.guild.id);
+        const argsStr = args.join(' ');
 
+        // --- SOTTOCOMANDO: list (con ID per edit) ---
+        if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
+            const history = getLocationHistoryWithIds(activeCampaign!.id);
+            if (history.length === 0) return message.reply("Il diario di viaggio è vuoto.");
+
+            let msg = "**📜 Diario di Viaggio (con ID per correzione):**\n";
+            history.forEach((h: any, idx: number) => {
+                const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                msg += `\`#${h.id}\` \`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+            });
+            msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.`;
+
+            return message.reply(msg);
+        }
+
+        // --- SOTTOCOMANDO: fix (correggi voce) ---
+        if (argsStr.toLowerCase().startsWith('fix ') && !argsStr.toLowerCase().startsWith('fixcurrent')) {
+            const fixArgs = argsStr.substring(4).trim();
+            const parts = fixArgs.split('|').map(s => s.trim());
+
+            if (parts.length !== 3) {
+                return message.reply(
+                    '**Uso: `$viaggi fix`**\n' +
+                    '`$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>`\n' +
+                    '💡 Usa `$viaggi list` per vedere gli ID delle voci.'
+                );
+            }
+
+            const idStr = parts[0].replace('#', '').trim();
+            const entryId = parseInt(idStr);
+            const [, newMacro, newMicro] = parts;
+
+            if (isNaN(entryId)) {
+                return message.reply('❌ ID non valido. Usa `$viaggi list` per vedere gli ID.');
+            }
+
+            const success = fixLocationHistoryEntry(entryId, newMacro, newMicro);
+            if (success) {
+                return message.reply(`✅ **Voce #${entryId} corretta!**\n📍 ${newMacro} - ${newMicro}`);
+            } else {
+                return message.reply(`❌ Voce #${entryId} non trovata.`);
+            }
+        }
+
+        // --- SOTTOCOMANDO: fixcurrent (correggi posizione corrente) ---
+        if (argsStr.toLowerCase().startsWith('fixcurrent ') || argsStr.toLowerCase().startsWith('correggi ')) {
+            const fixArgs = argsStr.substring(argsStr.indexOf(' ') + 1).trim();
+            const parts = fixArgs.split('|').map(s => s.trim());
+
+            if (parts.length !== 2) {
+                return message.reply(
+                    '**Uso: `$viaggi fixcurrent`**\n' +
+                    '`$viaggi fixcurrent <NuovaRegione> | <NuovoLuogo>`\n' +
+                    'Corregge la posizione corrente della campagna.'
+                );
+            }
+
+            const [newMacro, newMicro] = parts;
+            fixCurrentLocation(activeCampaign!.id, newMacro, newMicro);
+            return message.reply(`✅ **Posizione corrente aggiornata!**\n📍 ${newMacro} - ${newMicro}`);
+        }
+
+        // --- DEFAULT: Mostra cronologia semplice ---
+        const history = getLocationHistory(message.guild.id);
         if (history.length === 0) return message.reply("Il diario di viaggio è vuoto.");
 
         let msg = "**📜 Diario di Viaggio (Ultimi spostamenti):**\n";
-
-        // Raggruppamento semplice
         history.forEach((h: any) => {
             const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
             msg += `\`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
         });
+        msg += `\n💡 Usa \`$viaggi list\` per vedere gli ID e correggere voci.`;
 
         return message.reply(msg);
     }
 
-    // --- NUOVO: !atlante (Memoria Luoghi) ---
+    // --- COMANDO: $atlante (Gestione Luoghi) ---
+    // Uso: $atlante -> Mostra luogo corrente o lista
+    // Uso: $atlante list -> Lista tutti i luoghi
+    // Uso: $atlante <Macro> | <Micro> -> Vedi scheda luogo
+    // Uso: $atlante <Macro> | <Micro> | <Descrizione> -> Aggiorna con smart merge
+    // Uso: $atlante <Macro> | <Micro> | <Descrizione> | force -> Sovrascrittura diretta
+    // Uso: $atlante delete <Macro> | <Micro> -> Elimina luogo
     if (command === 'atlante' || command === 'memoria' || command === 'atlas') {
-        const loc = getCampaignLocation(message.guild.id);
+        const argsStr = args.join(' ');
 
-        if (!loc || !loc.macro || !loc.micro) {
-            return message.reply("⚠️ Non so dove siete. Imposta prima il luogo con `$luogo`.");
-        }
+        // --- SENZA ARGOMENTI: Mostra luogo corrente ---
+        if (!argsStr) {
+            const loc = getCampaignLocation(message.guild.id);
+            if (!loc || !loc.macro || !loc.micro) {
+                // Se non c'è posizione corrente, mostra lista
+                const entries = listAtlasEntries(activeCampaign!.id);
+                if (entries.length === 0) return message.reply("📖 L'Atlante è vuoto. Usa `$atlante <Regione> | <Luogo> | <Descrizione>` per aggiungere voci.");
 
-        const newDesc = args.join(' ');
+                const list = entries.slice(0, 10).map((e: any) =>
+                    `🗺️ **${e.macro_location}** - *${e.micro_location}*`
+                ).join('\n');
+                return message.reply(`**📖 Atlante (Luoghi Recenti)**\n${list}\n\n💡 Usa \`$atlante <Regione> | <Luogo>\` per dettagli.`);
+            }
 
-        if (newDesc) {
-            // SETTER MANUALE
-            updateAtlasEntry(activeCampaign!.id, loc.macro, loc.micro, newDesc);
-            return message.reply(`📖 **Atlante Aggiornato** per *${loc.micro}*:\n"${newDesc}"`);
-        } else {
-            // GETTER
             const lore = getAtlasEntry(activeCampaign!.id, loc.macro, loc.micro);
             if (lore) {
                 return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n_${lore}_`);
             } else {
-                return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*`);
+                return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*\n💡 Usa \`$atlante ${loc.macro} | ${loc.micro} | <descrizione>\` per aggiungerne una.`);
             }
         }
+
+        // --- SOTTOCOMANDO: list ---
+        if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
+            const entries = listAtlasEntries(activeCampaign!.id);
+            if (entries.length === 0) return message.reply("📖 L'Atlante è vuoto.");
+
+            const list = entries.map((e: any) => {
+                const descPreview = e.description ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '') : '*nessuna descrizione*';
+                return `🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
+            }).join('\n');
+            return message.reply(`**📖 Atlante Completo**\n${list}`);
+        }
+
+        // --- SOTTOCOMANDO: sync ---
+        if (argsStr.toLowerCase().startsWith('sync')) {
+            const syncArgs = argsStr.substring(4).trim();
+
+            // $atlante sync all - Sincronizza tutti i luoghi dirty
+            if (!syncArgs || syncArgs.toLowerCase() === 'all') {
+                const dirtyCount = getDirtyAtlasEntries(activeCampaign!.id).length;
+                if (dirtyCount === 0) {
+                    return message.reply('📍 Nessun luogo in attesa di sincronizzazione RAG.');
+                }
+
+                const loadingMsg = await message.reply(`🔄 Sincronizzazione RAG di **${dirtyCount}** luoghi in corso...`);
+                const synced = await syncAllDirtyAtlas(activeCampaign!.id);
+                await loadingMsg.edit(`✅ Sincronizzati **${synced}** luoghi nel RAG.`);
+                return;
+            }
+
+            // $atlante sync <Macro> | <Micro> - Sincronizza un luogo specifico
+            const parts = syncArgs.split('|').map(s => s.trim());
+            if (parts.length === 2) {
+                const [macro, micro] = parts;
+                const loadingMsg = await message.reply(`🔄 Sincronizzazione RAG per **${macro} - ${micro}**...`);
+                const result = await syncAtlasEntryIfNeeded(activeCampaign!.id, macro, micro, true);
+                if (result) {
+                    await loadingMsg.edit(`✅ **${macro} - ${micro}** sincronizzato nel RAG.`);
+                } else {
+                    await loadingMsg.edit(`❌ Luogo **${macro} - ${micro}** non trovato.`);
+                }
+                return;
+            }
+
+            return message.reply(
+                '**Uso: `$atlante sync`**\n' +
+                '`$atlante sync all` - Sincronizza tutti i luoghi dirty\n' +
+                '`$atlante sync <Regione> | <Luogo>` - Sincronizza un luogo specifico'
+            );
+        }
+
+        // --- SOTTOCOMANDO: rename/move ---
+        if (argsStr.toLowerCase().startsWith('rename ') || argsStr.toLowerCase().startsWith('move ') || argsStr.toLowerCase().startsWith('rinomina ')) {
+            const renameArgs = argsStr.substring(argsStr.indexOf(' ') + 1);
+            const parts = renameArgs.split('|').map(s => s.trim());
+
+            // Formato: $atlante rename <OldMacro> | <OldMicro> | <NewMacro> | <NewMicro> [| history]
+            if (parts.length < 4) {
+                return message.reply(
+                    '**Uso: `$atlante rename`**\n' +
+                    '`$atlante rename <VecchiaRegione> | <VecchioLuogo> | <NuovaRegione> | <NuovoLuogo>`\n' +
+                    '`$atlante rename <VR> | <VL> | <NR> | <NL> | history` - Aggiorna anche la cronologia viaggi'
+                );
+            }
+
+            const [oldMacro, oldMicro, newMacro, newMicro] = parts;
+            const updateHistory = parts[4]?.toLowerCase() === 'history' || parts[4]?.toLowerCase() === 'storia';
+
+            const success = renameAtlasEntry(activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, updateHistory);
+
+            if (success) {
+                let response = `✅ **Luogo rinominato!**\n` +
+                    `📖 **${oldMacro} - ${oldMicro}** → **${newMacro} - ${newMicro}**`;
+
+                if (updateHistory) {
+                    response += `\n📜 Anche la cronologia viaggi è stata aggiornata.`;
+                } else {
+                    response += `\n💡 Tip: Aggiungi \`| history\` per aggiornare anche la cronologia.`;
+                }
+
+                // Marca per sync RAG
+                markAtlasDirty(activeCampaign!.id, newMacro, newMicro);
+                response += `\n📌 Sync RAG programmato.`;
+
+                return message.reply(response);
+            } else {
+                return message.reply(
+                    `❌ Impossibile rinominare.\n` +
+                    `Verifica che **${oldMacro} - ${oldMicro}** esista e che **${newMacro} - ${newMicro}** non esista già.`
+                );
+            }
+        }
+
+        // --- SOTTOCOMANDO: delete ---
+        if (argsStr.toLowerCase().startsWith('delete ') || argsStr.toLowerCase().startsWith('elimina ')) {
+            const deleteArgs = argsStr.substring(argsStr.indexOf(' ') + 1);
+            const parts = deleteArgs.split('|').map(s => s.trim());
+
+            if (parts.length !== 2) {
+                return message.reply('Uso: `$atlante delete <Regione> | <Luogo>`');
+            }
+
+            const [macro, micro] = parts;
+            const success = deleteAtlasEntry(activeCampaign!.id, macro, micro);
+
+            if (success) {
+                return message.reply(`🗑️ Voce **${macro} - ${micro}** eliminata dall'Atlante.`);
+            } else {
+                return message.reply(`❌ Luogo **${macro} - ${micro}** non trovato nell'Atlante.`);
+            }
+        }
+
+        // --- PARSING ARGOMENTI CON PIPE ---
+        const parts = argsStr.split('|').map(s => s.trim());
+
+        // --- VISUALIZZA LUOGO SPECIFICO: $atlante <Macro> | <Micro> ---
+        if (parts.length === 2) {
+            const [macro, micro] = parts;
+            const entry = getAtlasEntryFull(activeCampaign!.id, macro, micro);
+
+            if (entry) {
+                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
+                return message.reply(
+                    `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
+                    `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
+                    `${entry.description || '*Nessuna descrizione*'}`
+                );
+            } else {
+                return message.reply(
+                    `📖 **${macro} - ${micro}** non è ancora nell'Atlante.\n` +
+                    `💡 Usa \`$atlante ${macro} | ${micro} | <descrizione>\` per aggiungerlo.`
+                );
+            }
+        }
+
+        // --- AGGIORNA LUOGO: $atlante <Macro> | <Micro> | <Descrizione> [| force] ---
+        if (parts.length >= 3) {
+            const [macro, micro, newDesc] = parts;
+            const forceFlag = parts[3]?.toLowerCase();
+            const isForceMode = forceFlag === 'force' || forceFlag === '--force' || forceFlag === '!';
+
+            const existing = getAtlasEntryFull(activeCampaign!.id, macro, micro);
+
+            if (isForceMode) {
+                // 🔥 FORCE MODE: Sovrascrittura diretta
+                const loadingMsg = await message.reply(`🔥 **FORCE MODE** per **${macro} - ${micro}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
+
+                updateAtlasEntry(activeCampaign!.id, macro, micro, newDesc);
+                markAtlasDirty(activeCampaign!.id, macro, micro); // 🆕 Marca per sync RAG
+
+                await loadingMsg.edit(
+                    `🔥 **Sovrascrittura completata!**\n` +
+                    `📖 **${macro} - ${micro}**\n` +
+                    `📌 Sync RAG programmato.\n\n` +
+                    `${newDesc.substring(0, 500)}${newDesc.length > 500 ? '...' : ''}`
+                );
+                return;
+
+            } else {
+                // 🧠 STANDARD MODE: Smart Merge
+                if (existing && existing.description) {
+                    const loadingMsg = await message.reply(`⚙️ Merge intelligente per **${macro} - ${micro}**...`);
+
+                    // Usa smartMergeBios per unire le descrizioni
+                    const mergedDesc = await smartMergeBios(existing.description, newDesc);
+
+                    updateAtlasEntry(activeCampaign!.id, macro, micro, mergedDesc);
+                    markAtlasDirty(activeCampaign!.id, macro, micro); // 🆕 Marca per sync RAG
+
+                    await loadingMsg.edit(
+                        `✅ **Atlante Aggiornato** per **${macro} - ${micro}**\n` +
+                        `📌 Nuovi dettagli integrati. Sync RAG programmato.\n` +
+                        `💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n` +
+                        `📖 **Descrizione Unificata:**\n${mergedDesc.substring(0, 600)}${mergedDesc.length > 600 ? '...' : ''}`
+                    );
+                    return;
+
+                } else {
+                    // Prima voce per questo luogo - inserimento diretto
+                    updateAtlasEntry(activeCampaign!.id, macro, micro, newDesc);
+                    markAtlasDirty(activeCampaign!.id, macro, micro); // 🆕 Marca per sync RAG
+                    return message.reply(
+                        `📖 **Nuovo Luogo Aggiunto all'Atlante!**\n` +
+                        `🗺️ **${macro} - ${micro}**\n` +
+                        `📌 Sync RAG programmato.\n\n` +
+                        `${newDesc.substring(0, 500)}${newDesc.length > 500 ? '...' : ''}`
+                    );
+                }
+            }
+        }
+
+        // --- FALLBACK: Help ---
+        return message.reply(
+            `**📖 Uso del comando $atlante:**\n` +
+            `\`$atlante\` - Mostra luogo corrente o lista\n` +
+            `\`$atlante list\` - Lista tutti i luoghi\n` +
+            `\`$atlante sync [all|<R>|<L>]\` - Sincronizza RAG\n` +
+            `\`$atlante rename <VR> | <VL> | <NR> | <NL> [| history]\` - Rinomina\n` +
+            `\`$atlante <R> | <L>\` - Vedi descrizione\n` +
+            `\`$atlante <R> | <L> | <Testo> [| force]\` - Aggiorna\n` +
+            `\`$atlante delete <R> | <L>\` - Elimina voce`
+        );
     }
 
     // --- COMANDO: $npc (Visualizza o Modifica) ---

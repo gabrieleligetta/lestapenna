@@ -81,13 +81,46 @@ Prima di iniziare, devi creare o selezionare una campagna.
 ### 📍 Luoghi e Atlante
 Il bot traccia automaticamente gli spostamenti, ma puoi intervenire manualmente.
 
-*   `$luogo [Macro | Micro]` (o `$location`): 
+*   `$luogo [Macro | Micro]` (o `$location`):
     *   Senza argomenti: Mostra dove si trova il gruppo attualmente.
     *   Con argomenti: Aggiorna la posizione (es. `$luogo Waterdeep | Porto` oppure solo `$luogo Cripta` per cambiare stanza).
 *   `$viaggi` (o `$travels`): Mostra la cronologia degli ultimi spostamenti.
-*   `$atlante [Descrizione]` (o `$atlas`):
-    *   Senza argomenti: Mostra la "memoria" che il bot ha del luogo attuale (descrizione, NPC, atmosfera).
-    *   Con argomenti: Aggiorna manualmente la descrizione del luogo attuale nell'Atlante (es. `$atlante La locanda è bruciata`).
+    *   `$viaggi list`: Mostra la cronologia con gli ID delle voci per poterle correggere.
+    *   `$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>`: Corregge una voce specifica nella cronologia.
+    *   `$viaggi fixcurrent <Regione> | <Luogo>`: Corregge la posizione corrente della campagna.
+*   `$atlante` (o `$atlas`, `$memoria`):
+    *   Senza argomenti: Mostra la "memoria" che il bot ha del luogo attuale.
+    *   Con descrizione: Aggiorna il luogo attuale (es. `$atlante La locanda è bruciata`).
+
+    #### Comandi Avanzati Atlante
+    *   **List (Elenco)**: `$atlante list`
+        *   Mostra tutti i luoghi salvati nella campagna con descrizione breve.
+        *   **Esempio**: `$atlante list`
+
+    *   **View (Visualizza)**: `$atlante <NomeLuogo>`
+        *   Visualizza la scheda completa di un luogo specifico.
+        *   **Esempio**: `$atlante Waterdeep`
+
+    *   **Delete (Elimina)**: `$atlante delete <NomeLuogo>`
+        *   Elimina definitivamente un luogo dall'Atlante.
+        *   **Esempio**: `$atlante delete "Grotta Abbandonata"`
+
+    *   **Update (Modifica)**: `$atlante update <NomeLuogo> | <Descrizione> [| force]`
+        *   Aggiorna la descrizione di un luogo specifico usando Smart Merge (unisce nuova descrizione con quella esistente).
+        *   **Esempio**: `$atlante update Waterdeep | Il porto è stato distrutto`
+        *   **Force Mode**: Aggiungi `| force` per sovrascrivere completamente la descrizione.
+        *   **Esempio Force**: `$atlante update Waterdeep | Nuova descrizione completa | force`
+
+    *   **Sync (Sincronizza RAG)**: `$atlante sync [all|<Regione>|<Luogo>]`
+        *   Forza la sincronizzazione della memoria RAG per i luoghi modificati ("dirty").
+        *   **Esempio**: `$atlante sync all` - Sincronizza tutti i luoghi in attesa
+        *   **Esempio**: `$atlante sync Waterdeep | Porto` - Sincronizza un luogo specifico
+
+    *   **Rename (Rinomina)**: `$atlante rename <VecchiaRegione> | <VecchioLuogo> | <NuovaRegione> | <NuovoLuogo> [| history]`
+        *   Rinomina un luogo nell'Atlante (es. correggere un nome sbagliato).
+        *   Aggiungi `| history` per aggiornare anche tutte le voci nella cronologia viaggi.
+        *   **Esempio**: `$atlante rename Dominio di Ogma | Forno del Respiro | Dominio di Ogma | Cancelli del dominio`
+        *   **Esempio con storia**: `$atlante rename Nuova Arkosia | Palazzo | Nuova Arkosia - Capitale | Palazzo Imperiale | history`
 
 ### 👥 NPC e Dossier
 Il bot tiene traccia di chi incontrate.
@@ -107,16 +140,18 @@ Il bot tiene traccia di chi incontrate.
         *   Elimina definitivamente un NPC dal dossier. Utile per rimuovere mostri o errori.
         *   **Esempio**: `$npc delete "Goblin Generico"`
     
-    *   **Update (Modifica)**: `$npc update <Nome> | <Campo> | <Valore>`
+    *   **Update (Modifica)**: `$npc update <Nome> | <Campo> | <Valore> [| force]`
         *   Modifica un attributo specifico di un NPC.
         *   **Campi validi**:
             *   `name`: Cambia il nome (rinomina semplice senza unire).
             *   `role`: Cambia il ruolo (es. "Mercante", "Nemico").
             *   `status`: Cambia lo stato (es. "ALIVE", "DEAD", "MISSING").
-            *   `description`: Sovrascrive la descrizione (usa Smart Merge).
+            *   `description`: Aggiorna la descrizione (usa Smart Merge di default).
+        *   **Force Mode (solo description)**: Aggiungi `| force` per sovrascrivere completamente senza merge.
         *   **Esempio Status**: `$npc update "Grog" | status | DEAD`
         *   **Esempio Ruolo**: `$npc update "Siri" | role | Mercante di Pozioni`
         *   **Esempio Nome**: `$npc update "Siri" | name | Ciri`
+        *   **Esempio Force**: `$npc update "Gandalf" | description | Mago bianco | force`
     
     *   **Regen (Rigenera)**: `$npc regen <Nome>`
         *   Rigenera le note dell'NPC analizzando tutta la cronologia degli eventi. Utile se la descrizione sembra obsoleta.

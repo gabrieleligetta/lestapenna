@@ -167,6 +167,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS location_atlas (
     micro_location TEXT NOT NULL,
     description TEXT,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    rag_sync_needed INTEGER DEFAULT 0,
     UNIQUE(campaign_id, macro_location, micro_location)
 )`);
 
@@ -247,7 +248,9 @@ const migrations = [
     // 🆕 NUOVO CAMPO PER TRASCRIZIONI GREZZE
     "ALTER TABLE recordings ADD COLUMN raw_transcription_text TEXT",
     // 🆕 SISTEMA ARMONICO: Lazy sync RAG per NPC
-    "ALTER TABLE npc_dossier ADD COLUMN rag_sync_needed INTEGER DEFAULT 0"
+    "ALTER TABLE npc_dossier ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+    // 🆕 SISTEMA ARMONICO: Lazy sync RAG per Atlas
+    "ALTER TABLE location_atlas ADD COLUMN rag_sync_needed INTEGER DEFAULT 0"
 ];
 
 for (const m of migrations) {
@@ -548,6 +551,145 @@ export const updateAtlasEntry = (campaignId: number, macro: string, micro: strin
     console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
 };
 
+/**
+ * Lista tutte le voci dell'atlante per una campagna
+ */
+export const listAtlasEntries = (campaignId: number, limit: number = 15): any[] => {
+    return db.prepare(`
+        SELECT id, macro_location, micro_location, description, last_updated
+        FROM location_atlas
+        WHERE campaign_id = ?
+        ORDER BY last_updated DESC
+        LIMIT ?
+    `).all(campaignId, limit);
+};
+
+/**
+ * Elimina una voce specifica dall'atlante
+ */
+export const deleteAtlasEntry = (campaignId: number, macro: string, micro: string): boolean => {
+    const result = db.prepare(`
+        DELETE FROM location_atlas
+        WHERE campaign_id = ?
+          AND lower(macro_location) = lower(?)
+          AND lower(micro_location) = lower(?)
+    `).run(campaignId, macro, micro);
+
+    if (result.changes > 0) {
+        console.log(`[Atlas] 🗑️ Eliminata voce: ${macro} - ${micro}`);
+        return true;
+    }
+    return false;
+};
+
+/**
+ * Ottiene una voce dell'atlante con tutti i campi
+ */
+export const getAtlasEntryFull = (campaignId: number, macro: string, micro: string): any | null => {
+    return db.prepare(`
+        SELECT id, macro_location, micro_location, description, last_updated
+        FROM location_atlas
+        WHERE campaign_id = ?
+          AND lower(macro_location) = lower(?)
+          AND lower(micro_location) = lower(?)
+    `).get(campaignId, macro, micro) || null;
+};
+
+/**
+ * Rinomina/Sposta una voce dell'atlante (cambia macro e/o micro location)
+ * Opzionalmente aggiorna anche la cronologia dei viaggi
+ */
+export const renameAtlasEntry = (
+    campaignId: number,
+    oldMacro: string,
+    oldMicro: string,
+    newMacro: string,
+    newMicro: string,
+    updateHistory: boolean = false
+): boolean => {
+    const existing = getAtlasEntryFull(campaignId, oldMacro, oldMicro);
+    if (!existing) return false;
+
+    // Controlla se esiste già la destinazione
+    const conflict = getAtlasEntryFull(campaignId, newMacro, newMicro);
+    if (conflict) {
+        console.error(`[Atlas] ⚠️ Destinazione ${newMacro} - ${newMicro} esiste già!`);
+        return false;
+    }
+
+    db.transaction(() => {
+        // Aggiorna la voce atlas
+        db.prepare(`
+            UPDATE location_atlas
+            SET macro_location = ?, micro_location = ?, last_updated = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(newMacro, newMicro, existing.id);
+
+        // Aggiorna la cronologia viaggi se richiesto
+        if (updateHistory) {
+            db.prepare(`
+                UPDATE location_history
+                SET macro_location = ?, micro_location = ?,
+                    location = ? || ' | ' || ?
+                WHERE campaign_id = ?
+                  AND lower(macro_location) = lower(?)
+                  AND lower(micro_location) = lower(?)
+            `).run(newMacro, newMicro, newMacro, newMicro, campaignId, oldMacro, oldMicro);
+        }
+    })();
+
+    console.log(`[Atlas] 🔄 Rinominato: ${oldMacro} - ${oldMicro} -> ${newMacro} - ${newMicro}`);
+    return true;
+};
+
+/**
+ * Ottiene la cronologia viaggi con ID per poterla modificare
+ */
+export const getLocationHistoryWithIds = (campaignId: number, limit: number = 20): any[] => {
+    return db.prepare(`
+        SELECT id, macro_location, micro_location, timestamp, session_date, session_id
+        FROM location_history
+        WHERE campaign_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+    `).all(campaignId, limit);
+};
+
+/**
+ * Corregge una singola voce nella cronologia viaggi
+ */
+export const fixLocationHistoryEntry = (
+    entryId: number,
+    newMacro: string,
+    newMicro: string
+): boolean => {
+    const result = db.prepare(`
+        UPDATE location_history
+        SET macro_location = ?,
+            micro_location = ?,
+            location = ? || ' | ' || ?
+        WHERE id = ?
+    `).run(newMacro, newMicro, newMacro, newMicro, entryId);
+
+    if (result.changes > 0) {
+        console.log(`[History] 🔧 Corretta voce #${entryId}: ${newMacro} - ${newMicro}`);
+        return true;
+    }
+    return false;
+};
+
+/**
+ * Aggiorna anche la posizione corrente della campagna
+ */
+export const fixCurrentLocation = (campaignId: number, newMacro: string, newMicro: string): void => {
+    db.prepare(`
+        UPDATE campaigns
+        SET current_macro_location = ?, current_micro_location = ?
+        WHERE id = ?
+    `).run(newMacro, newMicro, campaignId);
+    console.log(`[Campaign] 📍 Posizione corrente aggiornata: ${newMacro} - ${newMicro}`);
+};
+
 // --- FUNZIONI DOSSIER NPC ---
 
 export const updateNpcEntry = (campaignId: number, name: string, description: string, role?: string, status?: string) => {
@@ -799,6 +941,69 @@ export const clearNpcDirtyFlag = (campaignId: number, npcName: string): void => 
         SET rag_sync_needed = 0
         WHERE campaign_id = ? AND lower(name) = lower(?)
     `).run(campaignId, npcName);
+};
+
+// --- FUNZIONI ATLAS DIRTY (LAZY RAG SYNC) ---
+
+/**
+ * Rimuove i vecchi frammenti "ATLAS_UPDATE" per un luogo specifico.
+ * Usato per pulire il RAG prima di inserire una descrizione aggiornata.
+ */
+export const deleteAtlasRagSummary = (campaignId: number, macro: string, micro: string): void => {
+    // Usiamo una combinazione di macro e micro per identificare il luogo
+    const locationKey = `${macro}|${micro}`;
+    db.prepare(`
+        DELETE FROM knowledge_fragments
+        WHERE campaign_id = ?
+          AND session_id = 'ATLAS_UPDATE'
+          AND content LIKE ?
+    `).run(campaignId, `%${locationKey}%`);
+
+    console.log(`[RAG] 🧹 Puliti vecchi riassunti atlas per: ${macro} - ${micro}`);
+};
+
+/**
+ * Marca un luogo come "dirty" per sync RAG lazy
+ */
+export const markAtlasDirty = (campaignId: number, macro: string, micro: string): void => {
+    db.prepare(`
+        UPDATE location_atlas
+        SET rag_sync_needed = 1
+        WHERE campaign_id = ? AND lower(macro_location) = lower(?) AND lower(micro_location) = lower(?)
+    `).run(campaignId, macro, micro);
+    console.log(`[Atlas] 🔄 Marcato per sync RAG: ${macro} - ${micro}`);
+};
+
+/**
+ * Recupera tutti i luoghi che necessitano sync RAG
+ */
+export interface AtlasEntryFull {
+    id: number;
+    campaign_id: number;
+    macro_location: string;
+    micro_location: string;
+    description: string | null;
+    last_updated: string;
+    rag_sync_needed?: number;
+}
+
+export const getDirtyAtlasEntries = (campaignId: number): AtlasEntryFull[] => {
+    return db.prepare(`
+        SELECT *
+        FROM location_atlas
+        WHERE campaign_id = ? AND rag_sync_needed = 1
+    `).all(campaignId) as AtlasEntryFull[];
+};
+
+/**
+ * Resetta il flag dirty dopo sync
+ */
+export const clearAtlasDirtyFlag = (campaignId: number, macro: string, micro: string): void => {
+    db.prepare(`
+        UPDATE location_atlas
+        SET rag_sync_needed = 0
+        WHERE campaign_id = ? AND lower(macro_location) = lower(?) AND lower(micro_location) = lower(?)
+    `).run(campaignId, macro, micro);
 };
 
 // --- FUNZIONI PENDING MERGES ---
@@ -1417,6 +1622,7 @@ export const wipeDatabase = () => {
         micro_location TEXT NOT NULL,
         description TEXT,
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        rag_sync_needed INTEGER DEFAULT 0,
         UNIQUE(campaign_id, macro_location, micro_location)
     )`);
 

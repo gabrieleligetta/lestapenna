@@ -382,6 +382,7 @@ client.on('messageCreate', async (message: Message) => {
                     name: "👥 NPC & Dossier",
                     value:
                         "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
+                        "`$npc add <Nome> | <Ruolo> | <Desc>`: Crea un nuovo NPC.\n" +
                         "`$npc merge <Vecchio> | <Nuovo>`: Unisce due NPC.\n" +
                         "`$npc delete <Nome>`: Elimina un NPC.\n" +
                         "`$npc update <Nome> | <Campo> | <Val> [| force]`: Aggiorna campi.\n" +
@@ -503,6 +504,7 @@ client.on('messageCreate', async (message: Message) => {
                     name: "👥 NPC & Dossier",
                     value:
                         "`$npc [Name]`: View or update NPC dossier.\n" +
+                        "`$npc add <Name> | <Role> | <Desc>`: Create a new NPC.\n" +
                         "`$npc merge <Old> | <New>`: Merge two NPCs.\n" +
                         "`$npc delete <Name>`: Delete an NPC.\n" +
                         "`$npc update <Name> | <Field> | <Val> [| force]`: Update fields.\n" +
@@ -1207,6 +1209,26 @@ client.on('messageCreate', async (message: Message) => {
             msg += `\n💡 Usa \`$npc <Nome>\` per vedere la scheda completa.`;
 
             return message.reply(msg);
+        }
+
+        // NUOVO SOTTOCOMANDO: add / create
+        if (argsStr.toLowerCase().startsWith('add ') || argsStr.toLowerCase().startsWith('create ') || argsStr.toLowerCase().startsWith('crea ')) {
+            const content = argsStr.substring(argsStr.indexOf(' ') + 1); // Rimuove il comando
+            const parts = content.split('|').map(s => s.trim());
+
+            if (parts.length < 3) {
+                return message.reply('Uso: `$npc add <Nome> | <Ruolo> | <Descrizione>`');
+            }
+
+            const [name, role, description] = parts;
+            
+            const existing = getNpcEntry(activeCampaign!.id, name);
+            if (existing) {
+                return message.reply(`⚠️ L'NPC **${name}** esiste già nel dossier. Usa \`$npc update\` per modificarlo.`);
+            }
+
+            updateNpcEntry(activeCampaign!.id, name, description, role, 'ALIVE');
+            return message.reply(`✅ **Nuovo NPC Creato!**\n👤 **${name}**\n🎭 Ruolo: ${role}\n📜 ${description}`);
         }
 
         // Sottocomandi avanzati

@@ -1533,10 +1533,35 @@ client.on('messageCreate', async (message: Message) => {
                 return await message.reply("Non ho trovato nulla negli archivi su questo argomento.");
             }
 
+            // Limite embed Discord: 4096 caratteri per description
+            const MAX_DESC_LENGTH = 4000; // Buffer di sicurezza
+            const MAX_FRAGMENT_LENGTH = 1200; // Max per singolo frammento
+
+            // Tronca ogni frammento se troppo lungo
+            const truncatedFragments = fragments.map((f: string) => {
+                if (f.length > MAX_FRAGMENT_LENGTH) {
+                    return f.substring(0, MAX_FRAGMENT_LENGTH) + '... [troncato]';
+                }
+                return f;
+            });
+
+            // Costruisci descrizione con controllo lunghezza
+            let description = '';
+            for (let i = 0; i < truncatedFragments.length; i++) {
+                const fragmentText = `**Frammento ${i + 1}:**\n${truncatedFragments[i]}`;
+                const separator = i > 0 ? '\n\n' : '';
+
+                if ((description + separator + fragmentText).length > MAX_DESC_LENGTH) {
+                    description += '\n\n*...altri frammenti omessi per limite Discord*';
+                    break;
+                }
+                description += separator + fragmentText;
+            }
+
             const embed = new EmbedBuilder()
                 .setTitle(`📚 Archivi: ${term}`)
                 .setColor("#F1C40F")
-                .setDescription(fragments.map((f: string, i: number) => `**Frammento ${i+1}:**\n${f}`).join('\n\n'));
+                .setDescription(description || 'Nessun contenuto disponibile.');
 
             await message.reply({ embeds: [embed] });
         } catch (err) {

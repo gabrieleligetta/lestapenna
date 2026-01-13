@@ -120,7 +120,8 @@ import {
     markCharacterDirtyByName, // NUOVO - Character dirty sync (by name)
     setCampaignAutoUpdate, // NUOVO - Toggle auto-update PG
     addNpcAlias, // NUOVO - Sistema Ibrido RAG
-    removeNpcAlias // NUOVO - Sistema Ibrido RAG
+    removeNpcAlias, // NUOVO - Sistema Ibrido RAG
+    upsertMonster // NUOVO - Bestiario (Architettura Unificata)
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -2012,18 +2013,64 @@ client.on('messageCreate', async (message: Message) => {
                     console.log(`[Notaio] 🎯 Quest aggiunta: ${quest}`);
                 }
                 }
-                
+
+                // ============================================
+                // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
+                // ============================================
+
+                // --- GESTIONE NPC DOSSIER ---
+                if (result.npc_dossier_updates && result.npc_dossier_updates.length > 0) {
+                    console.log(`[Biografo] 📝 Aggiornamento ${result.npc_dossier_updates.length} NPC...`);
+                    for (const npc of result.npc_dossier_updates) {
+                        if (npc.name && npc.description) {
+                            updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status);
+                            markNpcDirty(currentCampaignId, npc.name);
+                        }
+                    }
+                }
+
+                // --- GESTIONE LOCATIONS (ATLANTE) ---
+                if (result.location_updates && result.location_updates.length > 0) {
+                    console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} luoghi...`);
+                    for (const loc of result.location_updates) {
+                        if (loc.macro && loc.micro && loc.description) {
+                            updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description);
+                            markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                        }
+                    }
+                }
+
+                // --- GESTIONE BESTIARIO (MOSTRI) ---
+                if (result.monsters && result.monsters.length > 0) {
+                    console.log(`[Bestiario] 👹 Registrazione ${result.monsters.length} creature...`);
+                    for (const monster of result.monsters) {
+                        if (monster.name) {
+                            upsertMonster(
+                                currentCampaignId,
+                                monster.name,
+                                monster.status || 'ALIVE',
+                                monster.count,
+                                currentSessionId
+                            );
+                        }
+                    }
+                }
+
                 // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
-                if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
-                console.log('[Sync] 📊 Controllo NPC e PG da sincronizzare...');
+                // Condizione espansa per includere metadati unificati (npc_dossier_updates, location_updates)
+                const hasValidatedEvents = validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0);
+                const hasNewMetadata = (result.npc_dossier_updates?.length || 0) > 0 || (result.location_updates?.length || 0) > 0;
+
+                if (hasValidatedEvents || hasNewMetadata) {
+                console.log('[Sync] 📊 Controllo NPC, PG e Atlante da sincronizzare...');
                 try {
-                    // Sync NPC
+                    // Sync NPC (include sia npc_events che npc_dossier_updates)
                     const syncedNpcCount = await syncAllDirtyNpcs(currentCampaignId);
                     if (syncedNpcCount > 0) {
                         console.log(`[Sync] ✅ Sincronizzati ${syncedNpcCount} NPC con RAG.`);
                     }
 
-                    // ✅ NUOVO: Sync PG (Sistema Armonico)
+                    // Sync PG (Sistema Armonico)
                     const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
                     if (charSyncResult.synced > 0) {
                         console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
@@ -2031,6 +2078,14 @@ client.on('messageCreate', async (message: Message) => {
                         // Notifica nel canale (opzionale)
                         if (channel && charSyncResult.names.length > 0) {
                             channel.send(`📜 **Schede Aggiornate Automaticamente**\n${charSyncResult.names.map(n => `• ${n}`).join('\n')}`).catch(() => {});
+                        }
+                    }
+
+                    // 🆕 Sync Atlas (location_updates)
+                    if (result.location_updates?.length) {
+                        const syncedAtlasCount = await syncAllDirtyAtlas(currentCampaignId);
+                        if (syncedAtlasCount > 0) {
+                            console.log(`[Sync] ✅ Sincronizzati ${syncedAtlasCount} luoghi con RAG.`);
                         }
                     }
                 } catch (e) {
@@ -3047,13 +3102,37 @@ client.on('messageCreate', async (message: Message) => {
                         addQuest(campaignId, quest, targetSessionId);
                     }
                 }
+            }
 
-                // Sync NPC e PG
-                if (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0) {
-                    syncAllDirtyNpcs(campaignId).catch(console.error);
-                    syncAllDirtyCharacters(campaignId).catch(console.error); // Sistema Armonico
+            // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
+            if (result.npc_dossier_updates?.length) {
+                for (const npc of result.npc_dossier_updates) {
+                    if (npc.name && npc.description) {
+                        updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status);
+                        markNpcDirty(campaignId, npc.name);
+                    }
                 }
             }
+            if (result.location_updates?.length) {
+                for (const loc of result.location_updates) {
+                    if (loc.macro && loc.micro && loc.description) {
+                        updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description);
+                        markAtlasDirty(campaignId, loc.macro, loc.micro);
+                    }
+                }
+            }
+            if (result.monsters?.length) {
+                for (const monster of result.monsters) {
+                    if (monster.name) {
+                        upsertMonster(campaignId, monster.name, monster.status || 'ALIVE', monster.count, targetSessionId);
+                    }
+                }
+            }
+
+            // Sync NPC, PG e Atlante
+            syncAllDirtyNpcs(campaignId).catch(console.error);
+            syncAllDirtyCharacters(campaignId).catch(console.error);
+            syncAllDirtyAtlas(campaignId).catch(console.error);
 
             // 5. PUBBLICAZIONE
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
@@ -3374,21 +3453,75 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             console.log(`[Notaio] 🎯 Quest aggiunta: ${quest}`);
                         }
                         }
-                        
+
+                        // ============================================
+                        // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
+                        // ============================================
+
+                        // --- GESTIONE NPC DOSSIER ---
+                        if (result.npc_dossier_updates && result.npc_dossier_updates.length > 0) {
+                            console.log(`[Biografo] 📝 Aggiornamento ${result.npc_dossier_updates.length} NPC...`);
+                            for (const npc of result.npc_dossier_updates) {
+                                if (npc.name && npc.description) {
+                                    updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status);
+                                    markNpcDirty(currentCampaignId, npc.name);
+                                }
+                            }
+                        }
+
+                        // --- GESTIONE LOCATIONS (ATLANTE) ---
+                        if (result.location_updates && result.location_updates.length > 0) {
+                            console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} luoghi...`);
+                            for (const loc of result.location_updates) {
+                                if (loc.macro && loc.micro && loc.description) {
+                                    updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description);
+                                    markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                                }
+                            }
+                        }
+
+                        // --- GESTIONE BESTIARIO (MOSTRI) ---
+                        if (result.monsters && result.monsters.length > 0) {
+                            console.log(`[Bestiario] 👹 Registrazione ${result.monsters.length} creature...`);
+                            for (const monster of result.monsters) {
+                                if (monster.name) {
+                                    upsertMonster(
+                                        currentCampaignId,
+                                        monster.name,
+                                        monster.status || 'ALIVE',
+                                        monster.count,
+                                        currentSessionId
+                                    );
+                                }
+                            }
+                        }
+
                         // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
-                        if (validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0)) {
-                        console.log('[Sync] 📊 Controllo NPC e PG da sincronizzare...');
+                        // Condizione espansa per includere metadati unificati
+                        const hasValidatedEvents = validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0);
+                        const hasNewMetadata = (result.npc_dossier_updates?.length || 0) > 0 || (result.location_updates?.length || 0) > 0;
+
+                        if (hasValidatedEvents || hasNewMetadata) {
+                        console.log('[Sync] 📊 Controllo NPC, PG e Atlante da sincronizzare...');
                         try {
-                            // Sync NPC
+                            // Sync NPC (include sia npc_events che npc_dossier_updates)
                             const syncedNpcCount = await syncAllDirtyNpcs(currentCampaignId);
                             if (syncedNpcCount > 0) {
                                 console.log(`[Sync] ✅ Sincronizzati ${syncedNpcCount} NPC con RAG.`);
                             }
 
-                            // ✅ NUOVO: Sync PG (Sistema Armonico)
+                            // Sync PG (Sistema Armonico)
                             const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
                             if (charSyncResult.synced > 0) {
                                 console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
+                            }
+
+                            // 🆕 Sync Atlas (location_updates)
+                            if (result.location_updates?.length) {
+                                const syncedAtlasCount = await syncAllDirtyAtlas(currentCampaignId);
+                                if (syncedAtlasCount > 0) {
+                                    console.log(`[Sync] ✅ Sincronizzati ${syncedAtlasCount} luoghi con RAG.`);
+                                }
                             }
                         } catch (e) {
                             console.error('[Sync] ⚠️ Errore batch sync:', e);

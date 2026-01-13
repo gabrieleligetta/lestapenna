@@ -272,8 +272,21 @@ export interface SummaryResponse {
         type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
     }>;
     monsters?: Array<{ name: string; status: string; count?: string }>;
-    
-    // 🆕 AGGIUNGI QUESTO CAMPO
+
+    // 🆕 METADATI ESTRATTI (Architettura Unificata)
+    npc_dossier_updates?: Array<{
+        name: string;
+        description: string;
+        role?: string;
+        status?: 'ALIVE' | 'DEAD' | 'MISSING';
+    }>;
+    location_updates?: Array<{
+        macro: string;
+        micro: string;
+        description: string;
+    }>;
+    present_npcs?: string[];
+
     session_data?: {
         travels: Array<{
             timestamp: number;
@@ -1502,48 +1515,6 @@ async function generateSearchQueries(campaignId: number, userQuestion: string, h
     }
 }
 
-// --- RAG AGENT: ENTITY RESOLUTION (Metadata) ---
-async function resolveEntitiesWithRAG(campaignId: number, text: string): Promise<string> {
-    if (text.length < 30) return ""; 
-
-    // Analisi rapida per identificare ambiguità
-    const analyzePrompt = `Analizza questo testo D&D. Identifica:
-    1. Nomi parziali o ruoli (es. "il fabbro", "l'elfo").
-    2. Oggetti generici importanti (es. "la spada magica").
-    3. Mostri o Boss (es. "il drago verde").
-    
-    Restituisci le chiavi di ricerca per trovare il loro Nome Proprio nel DB.
-    JSON: { "queries": ["query1", "query2"] }`;
-    
-    const startAI = Date.now();
-    try {
-        const analyzeResp = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL, 
-            messages: [{ role: "user", content: `${analyzePrompt}\n\nTESTO: ${text}` }],
-            response_format: { type: "json_object" }
-        });
-        
-        const inputTokens = analyzeResp.usage?.prompt_tokens || 0;
-        const outputTokens = analyzeResp.usage?.completion_tokens || 0;
-        const cachedTokens = analyzeResp.usage?.prompt_tokens_details?.cached_tokens || 0;
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
-
-        const queries = JSON.parse(analyzeResp.choices[0].message.content || "{}").queries || [];
-        if (queries.length === 0) return "";
-
-        const searchPromises = queries.map((q: string) => searchKnowledge(campaignId, q, 1));
-        const results = await Promise.all(searchPromises);
-        const knowledge = Array.from(new Set(results.flat()));
-
-        if (knowledge.length === 0) return "";
-
-        return `\n[[INFO IDENTITÀ RECUPERATE (RAG)]]\n${knowledge.join('\n')}\n(Usa queste info SOLO per dare un nome specifico alle entità descritte nel testo)`;
-    } catch (e) {
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return ""; 
-    }
-}
-
 // --- ASK BARD (AGENTIC RAG) ---
 export async function askBard(campaignId: number, question: string, history: { role: 'user' | 'assistant', content: string }[] = []): Promise<string> {
 
@@ -1732,257 +1703,23 @@ ${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
     return results.flat();
 }
 
-// --- FASE 2: ESTRAZIONE METADATI ---
-async function extractMetadata(
-    correctedSegments: any[],
-    campaignId?: number
-): Promise<{
-    detected_location?: any;
-    atlas_update?: string;
-    npc_updates?: any[];
-    monsters?: any[];
-    present_npcs?: string[];
-}> {
-    // 🆕 BATCHING DEI METADATI
-    // Invece di processare tutto in un colpo solo (che potrebbe superare i limiti di token)
-    // o processare riga per riga (che è inefficiente), usiamo una finestra scorrevole.
-
-    // Se il testo è breve, processiamo tutto insieme
-    const fullText = correctedSegments.map(s => s.text).join('\n');
-    if (fullText.length < 15000) { // Limite arbitrario sicuro per gpt-4o-mini
-        return extractMetadataSingleBatch(fullText, campaignId, METADATA_PROVIDER);
-    }
-
-    // Se è lungo, dividiamo in chunk logici
-    console.log(`[Metadati] 🐘 Testo lungo (${fullText.length} chars). Batching attivato.`);
-
-    const CHUNK_SIZE = 20; // Numero di segmenti per batch
-    const OVERLAP = 5;     // Sovrapposizione per non perdere contesto tra i batch
-
-    const chunks: any[][] = [];
-    for (let i = 0; i < correctedSegments.length; i += (CHUNK_SIZE - OVERLAP)) {
-        chunks.push(correctedSegments.slice(i, i + CHUNK_SIZE));
-    }
-
-    const results = await processInBatches(chunks, 3, async (batch, idx) => {
-        const batchText = batch.map(s => s.text).join('\n');
-        return extractMetadataSingleBatch(batchText, campaignId, METADATA_PROVIDER);
-    }, "Estrazione Metadati (Batch)");
-
-    // Aggregazione risultati
-    const aggregated: any = {
-        detected_location: null, // Prendiamo l'ultimo valido o il più frequente? Per ora l'ultimo non nullo.
-        atlas_update: null,
-        npc_updates: [],
-        monsters: [],
-        present_npcs: []
-    };
-
-    for (const res of results) {
-        if (res.detected_location && res.detected_location.confidence === 'high') {
-            aggregated.detected_location = res.detected_location;
-        }
-        if (res.atlas_update) aggregated.atlas_update = res.atlas_update; // Sovrascrive, forse meglio concatenare?
-        if (res.npc_updates) aggregated.npc_updates.push(...res.npc_updates);
-        if (res.monsters) aggregated.monsters.push(...res.monsters);
-        if (res.present_npcs) aggregated.present_npcs.push(...res.present_npcs);
-    }
-
-    // Deduplica NPC
-    aggregated.present_npcs = Array.from(new Set(aggregated.present_npcs));
-
-    // Se non abbiamo trovato location high confidence, proviamo con l'ultima low confidence
-    if (!aggregated.detected_location) {
-        const lastLow = results.reverse().find(r => r.detected_location);
-        if (lastLow) aggregated.detected_location = lastLow.detected_location;
-    }
-
-    return aggregated;
-}
-
-async function extractMetadataSingleBatch(
-    text: string,
-    campaignId?: number,
-    provider: 'openai' | 'ollama' = 'openai'
-): Promise<{
-    detected_location?: any;
-    atlas_update?: string;
-    npc_updates?: any[];
-    monsters?: any[];
-    present_npcs?: string[];
-}> {
-    let contextInfo = "Contesto: Sessione D&D.";
-    let ragContext = "";
-    let pcNames: string[] = [];
-
-    if (campaignId) {
-        const campaign = getCampaignById(campaignId);
-        if (campaign) {
-            contextInfo += `\nCampagna: "${campaign.name}".`;
-            // @ts-ignore
-            const loc: LocationState = {
-                macro: campaign.current_macro_location!,
-                micro: campaign.current_micro_location!
-            };
-            // SOLO NOME LUOGO per evitare allucinazioni
-            if (loc.macro || loc.micro) {
-                contextInfo += `\nLuogo Attuale (Riferimento): ${loc.macro || ''} - ${loc.micro || ''}`;
-            }
-
-            const characters = getCampaignCharacters(campaignId);
-            if (characters.length > 0) {
-                pcNames = characters.map(c => c.character_name?.toLowerCase() || "");
-                contextInfo += "\nPG (Personaggi Giocanti - NON SONO NPC): " + characters.map(c => c.character_name).join(", ");
-            }
-
-            // 🆕 AGENTIC STEP
-            ragContext = await resolveEntitiesWithRAG(campaignId, text);
-        }
-    }
-
-    // 🛡️ PROMPT BLINDATO: Agentic Logic + Istruzioni Originali
-    const prompt = `Analizza questa trascrizione di una sessione D&D.
-
-${contextInfo}
-${ragContext}
-
-**ISTRUZIONI CRITICHE (LINGUA & STILE):**
-1. **Rispondi SEMPRE in italiano puro**
-2. Descrivi luoghi, personaggi e azioni in italiano
-3. Non mescolare inglese nelle descrizioni
-4. Usa termini italiani anche per concetti fantasy
-
-**ISTRUZIONI ANTI-ALLUCINAZIONE & ENTITY LINKING:**
-1. **FONTE DI VERITÀ:** Usa ESCLUSIVAMENTE il testo in "TRASCRIZIONE".
-2. **SILENZIO:** Se la trascrizione è vuota o rumore, restituisci liste vuote. NON inventare nulla basandoti sul contesto.
-3. **RAG LINKING:** Usa [[INFO IDENTITÀ RECUPERATE]] per collegare descrizioni generiche (es. "l'informatore") a nomi propri (es. "Leosin").
-   - Esempio: Se senti "l'informatore ferito" e le info dicono "Leosin (Spia)", scrivi name: "Leosin".
-   - MAI inserire un NPC dal RAG se non è menzionato o attivo nella trascrizione attuale.
-4. **PG vs NPC:** I nomi elencati in "PG" sono i protagonisti. NON inserirli MAI nella lista "npc_updates" o "present_npcs".
-
-**COMPITI:**
-1. Rileva cambio di luogo (macro/micro-location)
-2. Distingui RIGOROSAMENTE tra NPC (Personaggi con nome, ruolo sociale) e MOSTRI (Bestie, nemici anonimi).
-3. Rileva aggiornamenti alle descrizioni dei luoghi
-4. Rileva nuove informazioni sugli NPC (ruolo, status)
-
-**TRASCRIZIONE DA ANALIZZARE:**
-${text}
-
-**FORMATO OUTPUT (JSON OBBLIGATORIO):**
-{
-  "detected_location": {
-    "macro": "Nome città/regione",
-    "micro": "Nome specifico luogo",
-    "confidence": "high" o "low",
-    "description": "Descrizione dettagliata in ITALIANO"
-  },
-  "atlas_update": "Nuovi dettagli del luogo (null se invariato)",
-  "npc_updates": [
-    {
-      "name": "Nome Proprio (Riconciliato)",
-      "description": "Descrizione in ITALIANO",
-      "role": "Ruolo in ITALIANO (es. 'Mercante')",
-      "status": "ALIVE o DEAD"
-    }
-  ],
-  "monsters": [
-      { "name": "Nome Mostro", "status": "DEFEATED" | "ALIVE" | "FLED", "count": "numero o descrizione" }
-  ],
-  "present_npcs": ["Nome1", "Nome2"]
-}
-
-**ESEMPIO CORRETTO:**
-{
-  "detected_location": {
-    "macro": "Waterdeep",
-    "micro": "Taverna del Drago",
-    "confidence": "high",
-    "description": "Locale affollato, odore di birra"
-  },
-  "npc_updates": [
-    {
-      "name": "Elminster",
-      "description": "Mago anziano con barba bianca",
-      "role": "Arcimago",
-      "status": "ALIVE"
-    }
-  ],
-  "monsters": [
-      { "name": "Goblin", "status": "DEFEATED", "count": "3" }
-  ],
-  "present_npcs": ["Elminster"]
-}
-
-Istruzione extra: "NON inserire mostri generici (es. 'Ragno', 'Orco') nella lista 'npc_updates'. Mettili solo in 'monsters'."
-
-Rispondi SOLO con il JSON.`;
-
-    const startAI = Date.now();
-    try {
-        const options: any = {
-            model: METADATA_MODEL,
-            messages: [
-                { role: "system", content: "Sei un assistente esperto di D&D. Rispondi SEMPRE in italiano. Output: solo JSON valido." },
-                { role: "user", content: prompt }
-            ]
-        };
-
-        if (provider === 'openai') {
-            options.response_format = { type: "json_object" };
-        }
-
-        const response = await withRetry(() => metadataClient.chat.completions.create(options));
-        const latency = Date.now() - startAI;
-        const inputTokens = response.usage?.prompt_tokens || 0;
-        const outputTokens = response.usage?.completion_tokens || 0;
-        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
-
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
-
-        const rawContent = response.choices[0].message.content || "{}";
-        const parsed = safeJsonParse(rawContent);
-
-        if (!parsed) {
-            console.error(`[Metadati] ❌ JSON Parse Error.`);
-            if (provider === 'ollama') return extractMetadataSingleBatch(text, campaignId, 'openai');
-            return { detected_location: null, npc_updates: [], present_npcs: [] };
-        }
-
-        // --- HARD FILTER: RIMOZIONE PG DALLA LISTA NPC ---
-        if (pcNames.length > 0) {
-            if (parsed.npc_updates) {
-                parsed.npc_updates = parsed.npc_updates.filter((npc: any) => !pcNames.includes(npc.name.toLowerCase()));
-            }
-            if (parsed.present_npcs) {
-                parsed.present_npcs = parsed.present_npcs.filter((name: string) => !pcNames.includes(name.toLowerCase()));
-            }
-        }
-
-        return parsed;
-
-    } catch (err) {
-        console.error(`[Metadati] ❌ Errore:`, err);
-        return {};
-    }
-}
-
 // --- FUNZIONE PRINCIPALE REFACTORATA ---
+// 🆕 ARCHITETTURA OTTIMIZZATA: Solo correzione testo, metadata estrazione spostata in generateSummary
 export async function correctTranscription(
     segments: any[],
     campaignId?: number
 ): Promise<AIResponse> {
-    console.log(`[Bardo] 🔧 Avvio correzione (Provider: ${TRANSCRIPTION_PROVIDER})...`);
+    console.log(`[Bardo] 🔧 Avvio correzione testo (Provider: ${TRANSCRIPTION_PROVIDER})...`);
 
-    // STEP 1: Correzione Testuale Bulk
+    // STEP UNICO: Correzione Testuale Bulk
+    // L'estrazione metadati (NPCs, locations, monsters) è ora centralizzata in generateSummary()
+    // per evitare duplicazioni e sfruttare il contesto completo della sessione
     const correctedSegments = await correctTextOnly(segments);
 
-    // STEP 2: Estrazione Metadati
-    const metadata = await extractMetadata(correctedSegments, campaignId);
-
     return {
-        segments: correctedSegments,
-        ...metadata
+        segments: correctedSegments
+        // NOTA: metadata (npc_updates, detected_location, monsters, etc.)
+        // saranno estratti solo in fase di summary con contesto completo
     };
 }
 
@@ -2293,7 +2030,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
 
     let reducePrompt = "";
     if (tone === 'DM') {
-        reducePrompt = `Sei un assistente esperto di D&D (Dungeons & Dragons). 
+        reducePrompt = `Sei un assistente esperto di D&D (Dungeons & Dragons).
 Analizza la seguente trascrizione grezza di una sessione di gioco.
 Il tuo compito è estrarre informazioni strutturate E scrivere un riassunto narrativo.
 
@@ -2309,25 +2046,26 @@ FONTI DI DATI - LEGGI ATTENTAMENTE:
 DIVIETO ASSOLUTO:
 - NON riportare oggetti, quest o eventi citati solo nella MEMORIA.
 - Se la trascrizione non menziona esplicitamente il ritrovamento di un oggetto, NON scriverlo nel loot.
+- NON inserire i PG (Personaggi Giocanti elencati sopra) nella lista "npc_dossier_updates".
 """
 
 Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esatto:
 {
   "title": "Titolo evocativo della sessione",
   "narrative": "Scrivi qui un riassunto discorsivo e coinvolgente degli eventi, scritto come un racconto in terza persona al passato (es: 'Il gruppo è arrivato alla zona Ovest...'). Usa un tono epico ma conciso. Includi i colpi di scena e le interazioni principali.",
-    "loot": [
-        "FORMATO: Nome Oggetto (proprietà magiche se presenti)",
-        "SE oggetto magico: Arma Magica (+bonus attacco, effetto speciale se presente)",
-        "SE valuta semplice: 100 monete d'oro",
-        "IMPORTANTE: Estrai SOLO oggetti menzionati nella trascrizione, NON inventare!"
-    ],
+  "loot": [
+      "FORMATO: Nome Oggetto (proprietà magiche se presenti)",
+      "SE oggetto magico: Arma Magica (+bonus attacco, effetto speciale se presente)",
+      "SE valuta semplice: 100 monete d'oro",
+      "IMPORTANTE: Estrai SOLO oggetti menzionati nella trascrizione, NON inventare!"
+  ],
   "loot_removed": ["lista", "oggetti", "persi/usati"],
   "quests": ["lista", "missioni", "accettate/completate"],
   "character_growth": [
-    { 
-        "name": "Nome PG", 
-        "event": "Descrizione dell'evento significativo", 
-        "type": "TRAUMA" 
+    {
+        "name": "Nome PG",
+        "event": "Descrizione dell'evento significativo",
+        "type": "TRAUMA"
     }
   ],
   "npc_events": [
@@ -2348,7 +2086,23 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
   ],
   "monsters": [
        { "name": "Nome Mostro", "status": "DEFEATED" | "ALIVE" | "FLED", "count": "quantità approssimativa" }
-   ]
+  ],
+  "npc_dossier_updates": [
+      {
+          "name": "Nome Proprio NPC (es. 'Elminster', non 'il mago')",
+          "description": "Descrizione fisica e/o di personalità in ITALIANO",
+          "role": "Ruolo sociale (es. 'Arcimago', 'Locandiere', 'Mercante')",
+          "status": "ALIVE" | "DEAD" | "MISSING"
+      }
+  ],
+  "location_updates": [
+      {
+          "macro": "Nome città/regione (es. 'Waterdeep')",
+          "micro": "Nome luogo specifico (es. 'Taverna del Drago')",
+          "description": "Descrizione atmosferica del luogo in ITALIANO"
+      }
+  ],
+  "present_npcs": ["Nome1", "Nome2", "...tutti gli NPC presenti nella sessione"]
 }
 
 REGOLE IMPORTANTI:
@@ -2358,6 +2112,9 @@ REGOLE IMPORTANTI:
 4. Rispondi SEMPRE in ITALIANO.
 5. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
 6. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
+7. "npc_dossier_updates": Solo NPC con nome proprio menzionati nella trascrizione. NON includere i PG.
+8. "location_updates": Solo luoghi visitati/descritti nella sessione. Descrizioni concise ma evocative.
+9. "present_npcs": Lista semplice di TUTTI gli NPC nominati nella sessione (anche se non hanno eventi).
 
 **REGOLE PER IL LOOT:**
 - Oggetti magici/unici: Descrivi proprietà e maledizioni.
@@ -2368,7 +2125,7 @@ REGOLE IMPORTANTI:
         reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
         ${castContext}
         ${memoryContext}
-        
+
         """
         FONTI DI DATI - LEGGI ATTENTAMENTE:
         1. [[MEMORIA DEL MONDO]]: Serve SOLO per contesto (capire chi sono i nomi citati). NON USARE QUESTI DATI PER IL REPORT.
@@ -2377,6 +2134,7 @@ REGOLE IMPORTANTI:
         DIVIETO ASSOLUTO:
         - NON riportare oggetti, quest o eventi citati solo nella MEMORIA.
         - Se la trascrizione non menziona esplicitamente il ritrovamento di un oggetto, NON scriverlo nel loot.
+        - NON inserire i PG (Personaggi Giocanti elencati sopra) nella lista "npc_dossier_updates".
         """
 
         ISTRUZIONI DI STILE:
@@ -2387,7 +2145,7 @@ REGOLE IMPORTANTI:
         - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il riassunto in capitoli o paragrafi distinti basati sui luoghi.
 
         Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
-        
+
         ISTRUZIONI DI FORMATTAZIONE RIGIDE:
         1. Non usare preamboli (es. "Ecco il riassunto").
         2. Non usare chiusure conversazionali (es. "Fammi sapere se...", "Spero ti piaccia").
@@ -2395,14 +2153,18 @@ REGOLE IMPORTANTI:
         4. L'output deve essere un oggetto JSON valido con le seguenti chiavi:
            - "title": Un titolo evocativo per la sessione.
            - "summary": Il testo narrativo completo.
-           - "loot": Array di stringhe contenente gli oggetti ottenuti (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
-           - "loot_removed": Array di stringhe contenente gli oggetti consumati, persi o venduti. Se nessuno, array vuoto.
-           - "quests": Array di stringhe contenente le missioni accettate, aggiornate o concluse. Se nessuna, array vuoto.
+           - "loot": Array di stringhe (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
+           - "loot_removed": Array di stringhe degli oggetti consumati/persi. Se nessuno, array vuoto.
+           - "quests": Array di stringhe delle missioni accettate/aggiornate/concluse. Se nessuna, array vuoto.
            - "character_growth": Array di oggetti {name, event, type} per eventi significativi dei personaggi.
            - "monsters": Array di oggetti {name, status, count} per le creature ostili.
+           - "npc_dossier_updates": Array di oggetti {name, description, role, status} per NPC incontrati.
+           - "location_updates": Array di oggetti {macro, micro, description} per luoghi visitati.
+           - "present_npcs": Array di stringhe con i nomi di tutti gli NPC presenti nella sessione.
         5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.
-        6. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
-        7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.`;
+        6. IMPORTANTE: 'loot', 'loot_removed', 'quests', 'present_npcs' devono essere array di STRINGHE SEMPLICI.
+        7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
+        8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.`;
     }
 
     const startAI = Date.now();
@@ -2530,6 +2292,10 @@ REGOLE IMPORTANTI:
             npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],
             world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [],
             monsters: Array.isArray(parsed.monsters) ? parsed.monsters : [],
+            // 🆕 METADATI UNIFICATI (Architettura Ottimizzata)
+            npc_dossier_updates: Array.isArray(parsed.npc_dossier_updates) ? parsed.npc_dossier_updates : [],
+            location_updates: Array.isArray(parsed.location_updates) ? parsed.location_updates : [],
+            present_npcs: Array.isArray(parsed.present_npcs) ? parsed.present_npcs : [],
             session_data: sessionData
         };
     } catch (err: any) {

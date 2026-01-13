@@ -203,6 +203,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS quests (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
+// --- TABELLA BESTIARIO (MOSTRI) ---
+db.exec(`CREATE TABLE IF NOT EXISTS bestiary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT DEFAULT 'ALIVE', -- ALIVE, DEFEATED, FLED
+    count TEXT, -- Es. "3", "molti", "un branco"
+    session_id TEXT, -- Sessione in cui è stato incontrato
+    last_seen INTEGER, -- Timestamp ultimo avvistamento
+    FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_bestiary_campaign ON bestiary (campaign_id)`);
+
 // --- TABELLA INVENTORY ---
 db.exec(`CREATE TABLE IF NOT EXISTS inventory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -769,6 +782,70 @@ export const listNpcs = (campaignId: number, limit: number = 10): NpcEntry[] => 
         ORDER BY last_updated DESC
         LIMIT ?
     `).all(campaignId, limit) as NpcEntry[];
+};
+
+// --- FUNZIONI BESTIARIO (MOSTRI) ---
+
+export interface BestiaryEntry {
+    id: number;
+    campaign_id: number;
+    name: string;
+    status: string;
+    count: string | null;
+    session_id: string | null;
+    last_seen: number | null;
+}
+
+/**
+ * Aggiunge o aggiorna un mostro nel bestiario
+ */
+export const upsertMonster = (
+    campaignId: number,
+    name: string,
+    status: string,
+    count?: string,
+    sessionId?: string
+): void => {
+    db.prepare(`
+        INSERT INTO bestiary (campaign_id, name, status, count, session_id, last_seen)
+        VALUES ($campaignId, $name, $status, $count, $sessionId, $now)
+        ON CONFLICT(campaign_id, name, session_id) WHERE session_id IS NOT NULL
+        DO UPDATE SET
+            status = $status,
+            count = COALESCE($count, count),
+            last_seen = $now
+    `).run({
+        campaignId,
+        name,
+        status: status || 'ALIVE',
+        count: count || null,
+        sessionId: sessionId || null,
+        now: Date.now()
+    });
+    console.log(`[Bestiario] 👹 ${name} (${status})`);
+};
+
+/**
+ * Lista tutti i mostri incontrati in una campagna
+ */
+export const listMonsters = (campaignId: number, limit: number = 20): BestiaryEntry[] => {
+    return db.prepare(`
+        SELECT * FROM bestiary
+        WHERE campaign_id = ?
+        ORDER BY last_seen DESC
+        LIMIT ?
+    `).all(campaignId, limit) as BestiaryEntry[];
+};
+
+/**
+ * Lista mostri incontrati in una sessione specifica
+ */
+export const getSessionMonsters = (sessionId: string): BestiaryEntry[] => {
+    return db.prepare(`
+        SELECT * FROM bestiary
+        WHERE session_id = ?
+        ORDER BY last_seen DESC
+    `).all(sessionId) as BestiaryEntry[];
 };
 
 // --- SISTEMA ENTITY REFS (Typed Prefixes for RAG) ---

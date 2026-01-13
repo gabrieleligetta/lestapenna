@@ -1,10 +1,10 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
-import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, updateLocation, getCampaignLocationById, updateAtlasEntry, updateNpcEntry, getUserProfile, saveRawTranscription, getAtlasEntry } from './db';
+import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, getCampaignLocationById, getUserProfile, saveRawTranscription } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle } from './backupService';
 import { monitor } from './monitor';
-import { correctTranscription, validateBatch } from './bard';
+import { correctTranscription } from './bard';
 import { correctionQueue } from './queue';
 import { filterWhisperHallucinations } from './whisperHallucinationFilter';
 
@@ -260,118 +260,47 @@ export function startWorker() {
     });
 
     // --- WORKER 2: CORRECTION PROCESSING ---
+    // 🆕 ARCHITETTURA OTTIMIZZATA: Solo correzione testo
+    // L'estrazione metadata (NPCs, locations, monsters) avviene ora in generateSummary()
+    // con contesto completo della sessione per qualità superiore e zero duplicazioni
     const correctionWorker = new Worker('correction-processing', async job => {
         const { sessionId, fileName, segments, campaignId, userId } = job.data;
         const startJob = Date.now();
         const waitTime = startJob - job.timestamp;
 
-        // console.log(`[Correttore] 🧠 Inizio correzione AI per ${fileName}...`); // Rimosso per pulizia
-
         try {
+            // STEP UNICO: Correzione testuale
             const aiResult = await correctTranscription(segments, campaignId);
             const correctedSegments = aiResult.segments;
 
+            const jsonStr = JSON.stringify(correctedSegments);
+
+            // Recupera luogo corrente della campagna (per tracking, non estrazione)
             let finalMacro = null;
             let finalMicro = null;
-
-            // Logica Aggiornamento Luogo
             if (campaignId) {
                 const current = getCampaignLocationById(campaignId);
-
-                if (aiResult.detected_location) {
-                    const loc = aiResult.detected_location;
-
-                    // Logica di merge: se l'AI manda null, manteniamo il vecchio MACRO, 
-                    // ma il MICRO spesso cambia totalmente, quindi se è null potrebbe significare "fuori"
-                    const newMacro = loc.macro || current?.macro || null;
-                    const newMicro = loc.micro || null; // Se l'AI dice cambio scena ma micro è null, siamo "in giro" nel macro
-
-                    if (newMacro !== current?.macro || newMicro !== current?.micro) {
-                        console.log(`[Worker] 🗺️ Cambio luogo rilevato: ${newMacro} - ${newMicro}`);
-                        updateLocation(campaignId, newMacro, newMicro, sessionId);
-                    }
-
-                    finalMacro = newMacro;
-                    finalMicro = newMicro;
-                } else {
-                    // Se l'AI non rileva nulla, usiamo il luogo corrente della campagna
-                    finalMacro = current?.macro || null;
-                    finalMicro = current?.micro || null;
-                }
-
-                // 2. GESTIONE ATLANTE (con validazione)
-                if (aiResult.atlas_update && finalMacro && finalMicro) {
-                    const existingDesc = getAtlasEntry(campaignId, finalMacro, finalMicro);
-                    
-                    // ✅ Valida con batch validator
-                    const atlasValidation = await validateBatch(campaignId, {
-                        atlas_update: {
-                        macro: finalMacro,
-                        micro: finalMicro,
-                        description: aiResult.atlas_update,
-                        existingDesc: existingDesc || undefined
-                        }
-                    });
-                    
-                    if (atlasValidation.atlas.action === 'merge' && atlasValidation.atlas.text) {
-                        console.log(`[Cartografo] 📝 Aggiornamento atlante (merge): ${finalMicro}`);
-                        updateAtlasEntry(campaignId, finalMacro, finalMicro, atlasValidation.atlas.text);
-                    } else if (atlasValidation.atlas.action === 'keep' && !existingDesc) {
-                        // Prima visita del luogo
-                        console.log(`[Cartografo] 🗺️ Nuovo luogo mappato: ${finalMicro}`);
-                        updateAtlasEntry(campaignId, finalMacro, finalMicro, aiResult.atlas_update);
-                    } else if (atlasValidation.atlas.action === 'skip') {
-                        console.log(`[Cartografo] ⏭️ Aggiornamento atlante scartato: ${finalMicro} (riformulazione generica)`);
-                    }
-                }
-
-                // 3. GESTIONE DOSSIER NPC (Biografo)
-                if (aiResult.npc_updates && Array.isArray(aiResult.npc_updates)) {
-                    for (const npc of aiResult.npc_updates) {
-                        if (npc.name && npc.description) {
-                            console.log(`[Biografo] 👤 Rilevato NPC: ${npc.name}`);
-                            updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status);
-                        }
-                    }
-                }
-
-                // 4. GESTIONE BESTIARIO (Mostri)
-                if (aiResult.monsters && Array.isArray(aiResult.monsters)) {
-                    for (const m of aiResult.monsters) {
-                        if (m.name) {
-                            console.log(`[Bestiario] 👹 Rilevato Mostro: ${m.name} (${m.status})`);
-                            // NON salviamo nel DB NPC, solo log per ora (o futura tabella Bestiario)
-                        }
-                    }
-                }
+                finalMacro = current?.macro || null;
+                finalMicro = current?.micro || null;
             }
 
-            const jsonStr = JSON.stringify(correctedSegments);
-            const flatText = correctedSegments.map((s: any) => s.text).join(" ");
-
-            // Salviamo anche i metadati di luogo nel record
-            // E ora anche la lista degli NPC presenti!
-            const presentNpcs = aiResult.present_npcs || [];
-
-            // --- SNAPSHOT IDENTITÀ ---
+            // Snapshot identità parlante
             let frozenCharName = null;
             if (userId && campaignId) {
                 const profile = getUserProfile(userId, campaignId);
                 frozenCharName = profile.character_name || null;
             }
-            // -------------------------
 
-            updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro, presentNpcs, frozenCharName);
+            // Salva il testo corretto - NPCs vuoto perché saranno estratti in summary
+            updateRecordingStatus(fileName, 'PROCESSED', jsonStr, null, finalMacro, finalMicro, [], frozenCharName);
 
-            console.log(`[Correttore] 🧠 Correzione AI completata per ${fileName}`);
+            console.log(`[Correttore] ✅ Correzione completata per ${fileName}`);
 
             monitor.logJobProcessed(waitTime, job.attemptsMade);
             return { status: 'ok', segments: correctedSegments };
 
         } catch (e: any) {
             console.error(`[Correttore] ❌ Errore correzione ${fileName}: ${e.message}`);
-            // Non segniamo come ERROR bloccante, ma magari riproviamo o lasciamo TRANSCRIBED?
-            // Per ora lanciamo errore per far scattare il retry di BullMQ
             monitor.logJobFailed();
             throw e;
         }

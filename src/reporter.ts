@@ -594,9 +594,14 @@ export async function sendSessionRecap(
         const rawText = processedRaw.formattedText;
 
         // --- ELABORAZIONE NARRATIVE (per RAG e allegato) ---
-        console.log(`[Reporter] 🎭 Generazione versione Narrativa...`);
-        const narrativeSegments = await normalizeToNarrative(processedCorrected.segments, campaignId);
-        const narrativeText = formatNarrativeTranscript(narrativeSegments);
+        let narrativeText = narrative;
+        if (!narrativeText) {
+            console.log(`[Reporter] 🎭 Generazione versione Narrativa (Fallback)...`);
+            const narrativeSegments = await normalizeToNarrative(processedCorrected.segments, campaignId);
+            narrativeText = formatNarrativeTranscript(narrativeSegments);
+        } else {
+            console.log(`[Reporter] 🎭 Uso versione Narrativa pre-calcolata.`);
+        }
 
         // 📁 SALVA FILE TEMPORANEI
         const tempDir = path.join(__dirname, '..', 'temp_emails');
@@ -646,10 +651,10 @@ export async function sendSessionRecap(
     
     ${downloadLinksHtml}
 
-    ${narrative && narrative.length > 10 ? `
+    ${narrativeText && narrativeText.length > 10 ? `
     <h2>📖 Racconto</h2>
     <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; white-space: pre-line; border-left: 4px solid #d35400;">
-        ${narrative}
+        ${narrativeText}
     </div>
     ` : ''}
 

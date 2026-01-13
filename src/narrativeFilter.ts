@@ -60,7 +60,6 @@ export async function normalizeToNarrative(
                     { role: "user", content: prompt }
                 ],
                 response_format: { type: "json_object" },
-                temperature: 0.3
             });
 
             const latency = Date.now() - startAI;

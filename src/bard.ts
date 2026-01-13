@@ -1164,11 +1164,11 @@ export async function syncAllDirtyCharacters(campaignId: number): Promise<{ sync
 }
 
 // --- RAG: INGESTION ---
-export async function ingestSessionRaw(sessionId: string) {
+export async function ingestSessionRaw(sessionId: string): Promise<string | undefined> {
     const campaignId = getSessionCampaignId(sessionId);
     if (!campaignId) {
         console.warn(`[RAG] ⚠️ Sessione ${sessionId} senza campagna. Salto ingestione.`);
-        return;
+        return undefined;
     }
 
     console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Doppio Embedding + Narrative Filter)...`);
@@ -1182,7 +1182,7 @@ export async function ingestSessionRaw(sessionId: string) {
     const notes = getSessionNotes(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
 
-    if (transcriptions.length === 0 && notes.length === 0) return;
+    if (transcriptions.length === 0 && notes.length === 0) return undefined;
 
     // Usa la nuova utility per ottenere il testo lineare e i segmenti
     const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
@@ -1300,6 +1300,8 @@ export async function ingestSessionRaw(sessionId: string) {
             }
         }
     }, 'Calcolo Embeddings RAG');
+
+    return fullText;
 }
 
 // --- RAG: SEARCH ---

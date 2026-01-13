@@ -137,6 +137,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS knowledge_fragments (
     macro_location TEXT,
     micro_location TEXT,
     associated_npcs TEXT,
+    associated_npc_ids TEXT,
+    associated_entity_ids TEXT,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
@@ -184,6 +186,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS npc_dossier (
     status TEXT DEFAULT 'ALIVE', -- ALIVE, DEAD, MISSING
     last_seen_location TEXT, -- Link opzionale al luogo
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    rag_sync_needed INTEGER DEFAULT 0,
+    aliases TEXT,
     UNIQUE(campaign_id, name)
 )`);
 
@@ -195,6 +199,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS quests (
     status TEXT DEFAULT 'OPEN', -- OPEN, COMPLETED, FAILED
     created_at INTEGER,
     last_updated INTEGER,
+    session_id TEXT,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
@@ -206,6 +211,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS inventory (
     quantity INTEGER DEFAULT 1,
     acquired_at INTEGER,
     last_updated INTEGER,
+    session_id TEXT,
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 
@@ -272,7 +278,15 @@ const migrations = [
 ];
 
 for (const m of migrations) {
-    try { db.exec(m); } catch (e) { /* Ignora se la colonna esiste già */ }
+    try { 
+        db.exec(m); 
+    } catch (e) { 
+        // Ignora se la colonna esiste già, ma logga se è altro errore
+        const err = e as { message: string };
+        if (!err.message.includes('duplicate column name')) {
+            console.error(`[DB] ⚠️ Migration error: "${m}"`, err);
+        }
+    }
 }
 
 // --- INDICI ---
@@ -395,6 +409,7 @@ export interface Quest {
     status: 'OPEN' | 'COMPLETED' | 'FAILED';
     created_at: number;
     last_updated: number;
+    session_id?: string;
 }
 
 export interface InventoryItem {
@@ -404,6 +419,7 @@ export interface InventoryItem {
     quantity: number;
     acquired_at: number;
     last_updated: number;
+    session_id?: string;
 }
 
 export interface PendingMerge {
@@ -1963,6 +1979,8 @@ export const wipeDatabase = () => {
         macro_location TEXT,
         micro_location TEXT,
         associated_npcs TEXT,
+        associated_npc_ids TEXT,
+        associated_entity_ids TEXT,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -2010,6 +2028,8 @@ export const wipeDatabase = () => {
         status TEXT DEFAULT 'ALIVE',
         last_seen_location TEXT,
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        rag_sync_needed INTEGER DEFAULT 0,
+        aliases TEXT,
         UNIQUE(campaign_id, name)
     )`);
 

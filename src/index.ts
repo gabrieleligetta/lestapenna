@@ -126,7 +126,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
 import { monitor, SessionMetrics } from './monitor';
-import { processSessionReport, sendTestEmail, sendSessionRecap } from './reporter';
+import { processSessionReport, sendTestEmail, sendSessionRecap, archiveSessionTranscripts } from './reporter';
 import { exec } from 'child_process';
 import { pipeline } from 'stream/promises';
 import { initIdentityGuard, handleIdentityReply, checkAndPromptMerge } from './identityGuard';
@@ -1772,50 +1772,60 @@ client.on('messageCreate', async (message: Message) => {
     // --- NUOVO: !scaricatrascrizioni <ID> ---
     if (command === 'scaricatrascrizioni' || command === 'downloadtxt') {
         const targetSessionId = args[0];
+        const type = args[1]?.toLowerCase() || 'corrected'; // raw, corrected, narrative, all
+
         if (!targetSessionId) {
-            return await message.reply("Uso: `$scaricatrascrizioni <ID>`");
+            return await message.reply("Uso: `$scaricatrascrizioni <ID> [raw|corrected|narrative|all]`");
         }
 
-        const transcripts = getSessionTranscript(targetSessionId);
-        if (!transcripts || transcripts.length === 0) {
-            return await message.reply(`⚠️ Nessuna trascrizione trovata per la sessione \`${targetSessionId}\`.`);
-        }
+        const loadingMsg = await message.reply(`🔍 Ricerca trascrizioni per sessione \`${targetSessionId}\`...`);
 
-        const formattedText = transcripts.map(t => {
-            let text = "";
-            const startTime = getSessionStartTime(targetSessionId) || 0;
+        // 1. Tenta di ottenere URL dal Cloud (Lazy Check)
+        const correctedKey = `transcripts/${targetSessionId}/transcript_corrected.txt`;
+        const rawKey = `transcripts/${targetSessionId}/transcript_raw.txt`;
+        const narrativeKey = `transcripts/${targetSessionId}/transcript_narrative.txt`;
 
+        let correctedUrl = await getPresignedUrl(correctedKey, undefined, 604800); // 7 giorni
+        let rawUrl = await getPresignedUrl(rawKey, undefined, 604800);
+        let narrativeUrl = await getPresignedUrl(narrativeKey, undefined, 604800);
+
+        // 2. Se mancano, rigenera (Auto-Fix per sessioni vecchie)
+        if (!correctedUrl || !rawUrl || !narrativeUrl) {
+            await loadingMsg.edit(`⚙️ Archivi Cloud non trovati. Generazione e upload in corso...`);
+            
             try {
-                const segments = JSON.parse(t.transcription_text);
-                if (Array.isArray(segments)) {
-                    text = segments.map(s => {
-                        const absTime = t.timestamp + (s.start * 1000);
-                        const mins = Math.floor((absTime - startTime) / 60000);
-                        const secs = Math.floor(((absTime - startTime) % 60000) / 1000);
-                        return `[${mins}:${secs.toString().padStart(2, '0')}] ${s.text}`;
-                    }).join('\n');
-                } else {
-                    text = t.transcription_text;
-                }
-            } catch (e) {
-                text = t.transcription_text;
+                // Recupera ID campagna (necessario per generazione)
+                const campaignId = getSessionCampaignId(targetSessionId);
+                if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
+
+                // Genera e carica
+                await archiveSessionTranscripts(targetSessionId, campaignId);
+
+                // Riprova a ottenere URL
+                correctedUrl = await getPresignedUrl(correctedKey, undefined, 604800);
+                rawUrl = await getPresignedUrl(rawKey, undefined, 604800);
+                narrativeUrl = await getPresignedUrl(narrativeKey, undefined, 604800);
+
+            } catch (e: any) {
+                console.error(`Errore rigenerazione trascrizioni:`, e);
+                return await loadingMsg.edit(`❌ Errore durante la generazione: ${e.message}`);
             }
+        }
 
-            return `--- ${t.character_name || 'Sconosciuto'} (File: ${new Date(t.timestamp).toLocaleTimeString()}) ---\n${text}\n`;
-        }).join('\n');
+        // 3. Risposta con Embed
+        const embed = new EmbedBuilder()
+            .setTitle(`📜 Trascrizioni Sessione ${targetSessionId}`)
+            .setColor("#2ECC71")
+            .setDescription("Ecco i link per scaricare le trascrizioni (validi per 7 giorni).")
+            .addFields(
+                { name: "✨ Corretta (Leggibile)", value: correctedUrl ? `[Download](${correctedUrl})` : "Non disponibile", inline: true },
+                { name: "🎙️ Raw (Whisper)", value: rawUrl ? `[Download](${rawUrl})` : "Non disponibile", inline: true },
+                { name: "📖 Narrativa (RAG)", value: narrativeUrl ? `[Download](${narrativeUrl})` : "Non disponibile", inline: true }
+            )
+            .setFooter({ text: "File ospitati su Oracle Cloud Object Storage" });
 
-
-        const fileName = `transcript-${targetSessionId}.txt`;
-        const filePath = path.join(__dirname, '..', 'recordings', fileName);
-
-        fs.writeFileSync(filePath, formattedText);
-
-        await message.reply({
-            content: `📜 **Trascrizione Completa** per sessione \`${targetSessionId}\``,
-            files: [filePath]
-        });
-
-        try { fs.unlinkSync(filePath); } catch (e) {}
+        await loadingMsg.delete();
+        await message.reply({ embeds: [embed] });
     }
 
     // --- MODIFICATO: !racconta <id_sessione> [tono] ---

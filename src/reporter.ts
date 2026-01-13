@@ -532,6 +532,82 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
     }
 }
 
+/**
+ * Genera e archivia le trascrizioni (Raw, Corrected, Narrative) su Oracle Cloud.
+ * Restituisce i percorsi locali dei file temporanei per l'invio via email.
+ */
+export async function archiveSessionTranscripts(sessionId: string, campaignId: number, narrativeText?: string): Promise<{ raw: string, corrected: string, narrative: string }> {
+    console.log(`[Reporter] 📦 Archiviazione trascrizioni per sessione ${sessionId}...`);
+
+    // 1. Recupero Dati
+    const transcripts = getSessionTranscript(sessionId);
+    const notes = getSessionNotes(sessionId);
+    const startTime = getSessionStartTime(sessionId);
+
+    if (!transcripts || transcripts.length === 0) {
+        throw new Error(`Nessuna trascrizione trovata per ${sessionId}`);
+    }
+
+    // 2. Generazione Testi
+    // --- ELABORAZIONE CORRECTED ---
+    const processedCorrected = processChronologicalSession(transcripts, notes, startTime, campaignId);
+    const correctedText = processedCorrected.formattedText;
+
+    // --- ELABORAZIONE RAW ---
+    const rawTranscripts = transcripts.map(t => {
+        const recording = db.prepare(`
+            SELECT raw_transcription_text 
+            FROM recordings 
+            WHERE session_id = ? AND user_id = ? AND timestamp = ?
+        `).get(sessionId, t.user_id, t.timestamp) as { raw_transcription_text: string | null } | undefined;
+
+        return {
+            ...t,
+            transcription_text: recording?.raw_transcription_text || "[Trascrizione grezza non disponibile]"
+        };
+    });
+
+    const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId);
+    const rawText = processedRaw.formattedText;
+
+    // --- ELABORAZIONE NARRATIVE ---
+    let finalNarrativeText = narrativeText;
+    if (!finalNarrativeText) {
+        console.log(`[Reporter] 🎭 Generazione versione Narrativa (Fallback)...`);
+        const narrativeSegments = await normalizeToNarrative(processedCorrected.segments, campaignId);
+        finalNarrativeText = formatNarrativeTranscript(narrativeSegments);
+    }
+
+    // 3. Salvataggio Temporaneo
+    const tempDir = path.join(__dirname, '..', 'temp_emails');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+    const correctedPath = path.join(tempDir, `${sessionId}_corrected.txt`);
+    const rawPath = path.join(tempDir, `${sessionId}_raw_whisper.txt`);
+    const narrativePath = path.join(tempDir, `${sessionId}_narrative.txt`);
+
+    fs.writeFileSync(correctedPath, correctedText, 'utf-8');
+    fs.writeFileSync(rawPath, rawText, 'utf-8');
+    fs.writeFileSync(narrativePath, finalNarrativeText, 'utf-8');
+
+    // 4. Upload su Cloud
+    try {
+        await uploadToOracle(correctedPath, 'transcript_corrected.txt', sessionId, `transcripts/${sessionId}/transcript_corrected.txt`);
+        await uploadToOracle(rawPath, 'transcript_raw.txt', sessionId, `transcripts/${sessionId}/transcript_raw.txt`);
+        await uploadToOracle(narrativePath, 'transcript_narrative.txt', sessionId, `transcripts/${sessionId}/transcript_narrative.txt`);
+        console.log(`[Reporter] ☁️ Trascrizioni archiviate su Oracle Cloud.`);
+    } catch (e) {
+        console.error(`[Reporter] ❌ Errore upload trascrizioni:`, e);
+        // Non blocchiamo il flusso, i file locali sono comunque disponibili
+    }
+
+    return {
+        raw: rawPath,
+        corrected: correctedPath,
+        narrative: narrativePath
+    };
+}
+
 export async function sendSessionRecap(
     sessionId: string,
     campaignId: number,
@@ -542,8 +618,25 @@ export async function sendSessionRecap(
     monsters?: Array<{ name: string; status: string; count?: string }>
 ): Promise<boolean> {
 
+    // 1. Generazione e Archiviazione (Sempre, anche se email disabilitata)
+    let filePaths: { raw: string, corrected: string, narrative: string } | null = null;
+    try {
+        filePaths = await archiveSessionTranscripts(sessionId, campaignId, narrative);
+    } catch (e) {
+        console.error(`[Reporter] ❌ Errore archiviazione trascrizioni:`, e);
+        // Se fallisce l'archiviazione, non possiamo allegare i file, ma proviamo a mandare l'email senza
+    }
+
     if (!process.env.EMAIL_ENABLED || process.env.EMAIL_ENABLED !== 'true') {
         console.log(`[Reporter] ✉️ Email disabilitata`);
+        // Pulizia file se generati
+        if (filePaths) {
+            try {
+                if (fs.existsSync(filePaths.corrected)) fs.unlinkSync(filePaths.corrected);
+                if (fs.existsSync(filePaths.raw)) fs.unlinkSync(filePaths.raw);
+                if (fs.existsSync(filePaths.narrative)) fs.unlinkSync(filePaths.narrative);
+            } catch (e) {}
+        }
         return false;
     }
 
@@ -554,13 +647,6 @@ export async function sendSessionRecap(
         const startTime = getSessionStartTime(sessionId);
         const travels = getSessionTravelLog(sessionId);
         const npcs = getSessionEncounteredNPCs(sessionId);
-        const transcripts = getSessionTranscript(sessionId);
-        const notes = getSessionNotes(sessionId);
-
-        if (!transcripts || transcripts.length === 0) {
-            console.warn(`[Reporter] ⚠️ Nessuna trascrizione per ${sessionId}`);
-            return false;
-        }
 
         // 📅 Data formattata
         const sessionDate = startTime
@@ -571,49 +657,11 @@ export async function sendSessionRecap(
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
             });
 
-        // --- ELABORAZIONE CORRECTED ---
-        const processedCorrected = processChronologicalSession(transcripts, notes, startTime, campaignId);
-        const correctedText = processedCorrected.formattedText;
-
-        // --- ELABORAZIONE RAW ---
-        // Costruiamo un array di TranscriptEntry usando il raw_transcription_text
-        const rawTranscripts = transcripts.map(t => {
-            const recording = db.prepare(`
-                SELECT raw_transcription_text 
-                FROM recordings 
-                WHERE session_id = ? AND user_id = ? AND timestamp = ?
-            `).get(sessionId, t.user_id, t.timestamp) as { raw_transcription_text: string | null } | undefined;
-
-            return {
-                ...t,
-                transcription_text: recording?.raw_transcription_text || "[Trascrizione grezza non disponibile]"
-            };
-        });
-
-        const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId);
-        const rawText = processedRaw.formattedText;
-
-        // --- ELABORAZIONE NARRATIVE (per RAG e allegato) ---
+        // Leggi contenuto narrative per l'email (se disponibile)
         let narrativeText = narrative;
-        if (!narrativeText) {
-            console.log(`[Reporter] 🎭 Generazione versione Narrativa (Fallback)...`);
-            const narrativeSegments = await normalizeToNarrative(processedCorrected.segments, campaignId);
-            narrativeText = formatNarrativeTranscript(narrativeSegments);
-        } else {
-            console.log(`[Reporter] 🎭 Uso versione Narrativa pre-calcolata.`);
+        if (!narrativeText && filePaths && fs.existsSync(filePaths.narrative)) {
+            narrativeText = fs.readFileSync(filePaths.narrative, 'utf-8');
         }
-
-        // 📁 SALVA FILE TEMPORANEI
-        const tempDir = path.join(__dirname, '..', 'temp_emails');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
-        const correctedPath = path.join(tempDir, `${sessionId}_corrected.txt`);
-        const rawPath = path.join(tempDir, `${sessionId}_raw_whisper.txt`);
-        const narrativePath = path.join(tempDir, `${sessionId}_narrative.txt`);
-
-        fs.writeFileSync(correctedPath, correctedText, 'utf-8');
-        fs.writeFileSync(rawPath, rawText, 'utf-8');
-        fs.writeFileSync(narrativePath, narrativeText, 'utf-8');
 
         // Genera Link Raw Full Session
         let fullMixUrl = "";
@@ -733,37 +781,34 @@ export async function sendSessionRecap(
 
         // 🆕 USA LA LISTA SESSIONE
         const recipients = getRecipients('SESSION_REPORT_RECIPIENT');
+        
+        const attachments = [];
+        if (filePaths) {
+            if (fs.existsSync(filePaths.corrected)) attachments.push({ filename: `Sessione_${sessionNum}_Corretta.txt`, path: filePaths.corrected });
+            if (fs.existsSync(filePaths.raw)) attachments.push({ filename: `Sessione_${sessionNum}_Raw_Whisper.txt`, path: filePaths.raw });
+            if (fs.existsSync(filePaths.narrative)) attachments.push({ filename: `Sessione_${sessionNum}_Narrative.txt`, path: filePaths.narrative });
+        }
+
         const mailOptions = {
             from: `"${process.env.SMTP_FROM_NAME || 'Lestapenna'}" <${process.env.SMTP_USER}>`,
             to: recipients.join(', '),
             subject: `[D&D Report] ${campaign?.name || 'Campagna'} - Sessione #${sessionNum} - ${sessionDate}`,
             html: htmlContent,
-            attachments: [
-                {
-                    filename: `Sessione_${sessionNum}_Corretta.txt`,
-                    path: correctedPath
-                },
-                {
-                    filename: `Sessione_${sessionNum}_Raw_Whisper.txt`,
-                    path: rawPath
-                },
-                {
-                    filename: `Sessione_${sessionNum}_Narrative.txt`,
-                    path: narrativePath
-                }
-            ]
+            attachments: attachments
         };
 
         await transporter.sendMail(mailOptions);
-        console.log(`[Reporter] ✅ Email inviata con HTML completo + 3 allegati (Corretta, Raw, Narrative)`);
+        console.log(`[Reporter] ✅ Email inviata con HTML completo + ${attachments.length} allegati`);
 
         // 🧹 PULIZIA
-        try {
-            fs.unlinkSync(correctedPath);
-            fs.unlinkSync(rawPath);
-            fs.unlinkSync(narrativePath);
-        } catch (e) {
-            console.warn(`[Reporter] ⚠️ Errore pulizia temp:`, e);
+        if (filePaths) {
+            try {
+                if (fs.existsSync(filePaths.corrected)) fs.unlinkSync(filePaths.corrected);
+                if (fs.existsSync(filePaths.raw)) fs.unlinkSync(filePaths.raw);
+                if (fs.existsSync(filePaths.narrative)) fs.unlinkSync(filePaths.narrative);
+            } catch (e) {
+                console.warn(`[Reporter] ⚠️ Errore pulizia temp:`, e);
+            }
         }
 
         return true;

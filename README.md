@@ -177,6 +177,12 @@ Il bot tiene traccia di chi incontrate.
         *   Forza la sincronizzazione della memoria RAG per un NPC specifico o per tutti quelli in attesa ("dirty").
         *   **Esempio**: `$npc sync all`
 
+    *   **Alias**: `$npc alias <Nome> [| add/remove | <Alias>]`
+        *   Gestisce gli alias (soprannomi, titoli) per un NPC. Utile per migliorare la ricerca RAG (es. "Il fabbro" troverà "Theron").
+        *   **Visualizza**: `$npc alias "Theron"`
+        *   **Aggiungi**: `$npc alias "Theron" | add | "Il fabbro"`
+        *   **Rimuovi**: `$npc alias "Theron" | remove | "Il fabbro"`
+
 *   `$presenze`: Mostra un elenco rapido degli NPC rilevati nella sessione corrente (utile per il DM per verificare se l'AI sta ascoltando bene).
 
 ### 🎒 Inventario e Quest

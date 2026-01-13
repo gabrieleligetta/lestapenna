@@ -262,7 +262,13 @@ const migrations = [
     // 🆕 SISTEMA ARMONICO: Lazy sync RAG per Personaggi (PG)
     "ALTER TABLE characters ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
     // 🆕 SISTEMA ARMONICO: Flag per abilitare auto-update PG
-    "ALTER TABLE campaigns ADD COLUMN allow_auto_character_update INTEGER DEFAULT 0"
+    "ALTER TABLE campaigns ADD COLUMN allow_auto_character_update INTEGER DEFAULT 0",
+    // 🆕 SISTEMA IBRIDO RAG: NPC ID invece di nomi per precisione
+    "ALTER TABLE knowledge_fragments ADD COLUMN associated_npc_ids TEXT",
+    // 🆕 SISTEMA IBRIDO RAG: Alias per NPC (soprannomi, titoli)
+    "ALTER TABLE npc_dossier ADD COLUMN aliases TEXT",
+    // 🆕 SISTEMA ENTITY REFS: Rinomina per supportare prefissi tipizzati (npc:1, pc:15, etc.)
+    "ALTER TABLE knowledge_fragments ADD COLUMN associated_entity_ids TEXT"
 ];
 
 for (const m of migrations) {
@@ -350,6 +356,8 @@ export interface KnowledgeFragment {
     macro_location?: string | null;
     micro_location?: string | null;
     associated_npcs?: string | null;
+    associated_npc_ids?: string | null; // 🔄 Legacy - per retrocompatibilità
+    associated_entity_ids?: string | null; // 🆕 Entity Refs (npc:1, pc:15, quest:42)
 }
 
 export interface SessionNote {
@@ -377,6 +385,7 @@ export interface NpcEntry {
     status: string;
     last_seen_location: string | null;
     last_updated: string;
+    aliases?: string | null; // 🆕 Sistema Ibrido RAG (soprannomi, titoli)
 }
 
 export interface Quest {
@@ -744,6 +753,206 @@ export const listNpcs = (campaignId: number, limit: number = 10): NpcEntry[] => 
         ORDER BY last_updated DESC
         LIMIT ?
     `).all(campaignId, limit) as NpcEntry[];
+};
+
+// --- SISTEMA ENTITY REFS (Typed Prefixes for RAG) ---
+
+/**
+ * Entity Reference Types - Prefissi tipizzati per disambiguare entità nel RAG
+ * Formato: "type:id" es. "npc:1", "pc:15", "quest:42", "loc:7"
+ */
+export type EntityType = 'npc' | 'pc' | 'quest' | 'loc';
+
+export interface EntityRef {
+    type: EntityType;
+    id: number;
+}
+
+/**
+ * Crea un entity ref (es. "npc:1")
+ */
+export const createEntityRef = (type: EntityType, id: number): string => `${type}:${id}`;
+
+/**
+ * Parsa un entity ref (es. "npc:1" -> { type: 'npc', id: 1 })
+ */
+export const parseEntityRef = (ref: string): EntityRef | null => {
+    const match = ref.match(/^(npc|pc|quest|loc):(\d+)$/);
+    if (!match) return null;
+    return { type: match[1] as EntityType, id: parseInt(match[2]) };
+};
+
+/**
+ * Parsa una stringa di entity refs (es. "npc:1,npc:2,pc:5")
+ */
+export const parseEntityRefs = (refs: string | null): EntityRef[] => {
+    if (!refs) return [];
+    return refs.split(',')
+        .map(r => parseEntityRef(r.trim()))
+        .filter((r): r is EntityRef => r !== null);
+};
+
+/**
+ * Crea una stringa di entity refs da un array
+ */
+export const serializeEntityRefs = (refs: EntityRef[]): string => {
+    return refs.map(r => createEntityRef(r.type, r.id)).join(',');
+};
+
+/**
+ * Filtra entity refs per tipo
+ */
+export const filterEntityRefsByType = (refs: EntityRef[], type: EntityType): number[] => {
+    return refs.filter(r => r.type === type).map(r => r.id);
+};
+
+/**
+ * Migra vecchi ID numerici (backward compatibility)
+ * Converte "1,2,3" -> "npc:1,npc:2,npc:3"
+ */
+export const migrateOldNpcIds = (oldIds: string | null): string | null => {
+    if (!oldIds) return null;
+
+    // Se già nel nuovo formato, ritorna come è
+    if (oldIds.includes(':')) return oldIds;
+
+    // Converti vecchi ID numerici in npc:ID
+    const ids = oldIds.split(',').map(id => id.trim()).filter(id => id && !isNaN(parseInt(id)));
+    if (ids.length === 0) return null;
+
+    return ids.map(id => `npc:${id}`).join(',');
+};
+
+// --- FUNZIONI SISTEMA IBRIDO RAG (ID + ALIAS) ---
+
+/**
+ * Trova NPC per nome o alias (case insensitive).
+ * Usato per risolvere nomi in ID per il sistema RAG.
+ */
+export const getNpcByNameOrAlias = (campaignId: number, nameOrAlias: string): NpcEntry | undefined => {
+    // Prima cerca per nome esatto
+    const byName = db.prepare(`
+        SELECT * FROM npc_dossier
+        WHERE campaign_id = ? AND LOWER(name) = LOWER(?)
+    `).get(campaignId, nameOrAlias) as NpcEntry | undefined;
+
+    if (byName) return byName;
+
+    // Poi cerca negli alias
+    return db.prepare(`
+        SELECT * FROM npc_dossier
+        WHERE campaign_id = ? AND LOWER(aliases) LIKE '%' || LOWER(?) || '%'
+    `).get(campaignId, nameOrAlias) as NpcEntry | undefined;
+};
+
+/**
+ * Ottieni ID NPC dal nome (cerca anche negli alias).
+ */
+export const getNpcIdByName = (campaignId: number, name: string): number | null => {
+    const npc = getNpcByNameOrAlias(campaignId, name);
+    return npc?.id || null;
+};
+
+/**
+ * Ottieni nome NPC dall'ID.
+ */
+export const getNpcNameById = (campaignId: number, npcId: number): string | null => {
+    const npc = db.prepare(`
+        SELECT name FROM npc_dossier
+        WHERE campaign_id = ? AND id = ?
+    `).get(campaignId, npcId) as { name: string } | undefined;
+    return npc?.name || null;
+};
+
+/**
+ * Aggiorna gli alias di un NPC.
+ */
+export const updateNpcAliases = (campaignId: number, name: string, aliases: string[]): boolean => {
+    const result = db.prepare(`
+        UPDATE npc_dossier
+        SET aliases = ?, last_updated = CURRENT_TIMESTAMP
+        WHERE campaign_id = ? AND LOWER(name) = LOWER(?)
+    `).run(aliases.join(','), campaignId, name);
+    return result.changes > 0;
+};
+
+/**
+ * Aggiungi un alias a un NPC (senza rimuovere quelli esistenti).
+ */
+export const addNpcAlias = (campaignId: number, name: string, newAlias: string): boolean => {
+    const npc = getNpcEntry(campaignId, name);
+    if (!npc) return false;
+
+    const currentAliases = npc.aliases?.split(',').map(a => a.trim()).filter(a => a) || [];
+    if (currentAliases.some(a => a.toLowerCase() === newAlias.toLowerCase())) {
+        return false; // Alias già presente
+    }
+
+    currentAliases.push(newAlias);
+    return updateNpcAliases(campaignId, name, currentAliases);
+};
+
+/**
+ * Rimuovi un alias da un NPC.
+ */
+export const removeNpcAlias = (campaignId: number, name: string, aliasToRemove: string): boolean => {
+    const npc = getNpcEntry(campaignId, name);
+    if (!npc) return false;
+
+    const currentAliases = npc.aliases?.split(',').map(a => a.trim()).filter(a => a) || [];
+    const filtered = currentAliases.filter(a => a.toLowerCase() !== aliasToRemove.toLowerCase());
+
+    if (filtered.length === currentAliases.length) return false; // Alias non trovato
+
+    return updateNpcAliases(campaignId, name, filtered);
+};
+
+/**
+ * Migra i riferimenti RAG da nome a ID dopo un merge/rename.
+ */
+export const migrateRagNpcReferences = (campaignId: number, oldNpcId: number, newNpcId: number): number => {
+    // Cerca sia nel nuovo formato (npc:ID) che nel vecchio (ID numerico)
+    const oldRef = createEntityRef('npc', oldNpcId);
+    const newRef = createEntityRef('npc', newNpcId);
+
+    const fragments = db.prepare(`
+        SELECT id, associated_npc_ids, associated_entity_ids FROM knowledge_fragments
+        WHERE campaign_id = ? AND (
+            associated_entity_ids LIKE '%${oldRef}%' OR
+            associated_npc_ids LIKE '%${oldNpcId}%'
+        )
+    `).all(campaignId) as { id: number; associated_npc_ids: string | null; associated_entity_ids: string | null }[];
+
+    let migrated = 0;
+    const updateStmt = db.prepare(`UPDATE knowledge_fragments SET associated_npc_ids = ?, associated_entity_ids = ? WHERE id = ?`);
+
+    for (const f of fragments) {
+        let updatedEntityIds = f.associated_entity_ids;
+        let updatedNpcIds = f.associated_npc_ids;
+
+        // Aggiorna entity refs (nuovo formato)
+        if (f.associated_entity_ids) {
+            updatedEntityIds = f.associated_entity_ids
+                .split(',')
+                .map(ref => ref.trim() === oldRef ? newRef : ref.trim())
+                .filter((v, i, a) => a.indexOf(v) === i) // Rimuovi duplicati
+                .join(',');
+        }
+
+        // Aggiorna legacy npc_ids (retrocompatibilità)
+        if (f.associated_npc_ids) {
+            const ids = f.associated_npc_ids.split(',').map(id => parseInt(id.trim()));
+            const updatedIds = ids.map(id => id === oldNpcId ? newNpcId : id);
+            const uniqueIds = [...new Set(updatedIds)];
+            updatedNpcIds = uniqueIds.join(',');
+        }
+
+        updateStmt.run(updatedNpcIds, updatedEntityIds, f.id);
+        migrated++;
+    }
+
+    console.log(`[RAG] 🔄 Migrati ${migrated} frammenti da NPC #${oldNpcId} (${oldRef}) a #${newNpcId} (${newRef})`);
+    return migrated;
 };
 
 /**
@@ -1600,12 +1809,30 @@ export const getSessionNotes = (sessionId: string): SessionNote[] => {
 
 // --- FUNZIONI KNOWLEDGE BASE (RAG) ---
 
-export const insertKnowledgeFragment = (campaignId: number, sessionId: string, content: string, embedding: number[], model: string, startTimestamp: number = 0, macro: string | null = null, micro: string | null = null, npcs: string[] = []) => {
+export const insertKnowledgeFragment = (
+    campaignId: number,
+    sessionId: string,
+    content: string,
+    embedding: number[],
+    model: string,
+    startTimestamp: number = 0,
+    macro: string | null = null,
+    micro: string | null = null,
+    npcs: string[] = [],
+    entityRefs: string[] = [] // 🆕 Entity Refs (es. ["npc:1", "npc:2", "pc:5"])
+) => {
     const npcString = npcs.join(',');
+    const entityRefString = entityRefs.length > 0 ? entityRefs.join(',') : null;
+    // 🔄 Legacy: Estrai anche gli ID numerici per retrocompatibilità
+    const legacyNpcIds = entityRefs
+        .filter(ref => ref.startsWith('npc:'))
+        .map(ref => ref.replace('npc:', ''))
+        .join(',') || null;
+
     db.prepare(`
-        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at, macro_location, micro_location, associated_npcs)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now(), macro, micro, npcString);
+        INSERT INTO knowledge_fragments (campaign_id, session_id, content, embedding_json, embedding_model, vector_dimension, start_timestamp, created_at, macro_location, micro_location, associated_npcs, associated_npc_ids, associated_entity_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(campaignId, sessionId, content, JSON.stringify(embedding), model, embedding.length, startTimestamp, Date.now(), macro, micro, npcString, legacyNpcIds, entityRefString);
 };
 
 export const getKnowledgeFragments = (campaignId: number, model: string): KnowledgeFragment[] => {

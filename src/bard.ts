@@ -44,7 +44,15 @@ import {
     // Character dirty sync
     markCharacterDirty,
     clearCharacterDirtyFlag,
-    getDirtyCharacters
+    getDirtyCharacters,
+    // Sistema Ibrido RAG (ID + Alias)
+    getNpcIdByName,
+    getNpcByNameOrAlias,
+    // 🆕 Sistema Entity Refs
+    createEntityRef,
+    parseEntityRefs,
+    filterEntityRefsByType,
+    migrateOldNpcIds
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
@@ -1224,7 +1232,14 @@ export async function ingestSessionRaw(sessionId: string) {
         const textNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
         const mergedNpcs = Array.from(new Set(textNpcs));
 
-        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: mergedNpcs });
+        // 🆕 Sistema Entity Refs: Crea riferimenti tipizzati (npc:1, npc:2, etc.)
+        const entityRefs: string[] = [];
+        for (const npcName of mergedNpcs) {
+            const npcId = getNpcIdByName(campaignId, npcName);
+            if (npcId) entityRefs.push(createEntityRef('npc', npcId));
+        }
+
+        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: mergedNpcs, entityRefs });
         if (end >= fullText.length) break;
         i = end - OVERLAP;
     }
@@ -1278,7 +1293,8 @@ export async function ingestSessionRaw(sessionId: string) {
                         campaignId, sessionId, chunk.text,
                         val.data,
                         val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
-                        chunk.timestamp, chunk.macro, chunk.micro, chunk.npcs
+                        chunk.timestamp, chunk.macro, chunk.micro, chunk.npcs,
+                        chunk.entityRefs // 🆕 Sistema Entity Refs (npc:1, pc:15, etc.)
                     );
                 }
             }
@@ -1322,14 +1338,61 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
         let fragments = getKnowledgeFragments(campaignId, model);
         if (fragments.length === 0) return [];
 
+        // 🆕 Sistema Entity Refs: Risolvi nomi e alias in entity refs
         const allNpcs = listNpcs(campaignId, 1000);
-        const mentionedNpcs = allNpcs.filter(npc => query.toLowerCase().includes(npc.name.toLowerCase()));
+        const mentionedEntityRefs: string[] = [];
 
-        if (mentionedNpcs.length > 0) {
+        for (const npc of allNpcs) {
+            // Cerca nel nome principale
+            if (query.toLowerCase().includes(npc.name.toLowerCase())) {
+                mentionedEntityRefs.push(createEntityRef('npc', npc.id));
+                continue;
+            }
+
+            // Cerca negli alias
+            if (npc.aliases) {
+                const aliases = npc.aliases.split(',').map(a => a.trim().toLowerCase());
+                if (aliases.some(alias => query.toLowerCase().includes(alias))) {
+                    mentionedEntityRefs.push(createEntityRef('npc', npc.id));
+                }
+            }
+        }
+
+        if (mentionedEntityRefs.length > 0) {
+            // Estrai gli ID NPC per retrocompatibilità
+            const mentionedNpcIds = filterEntityRefsByType(
+                parseEntityRefs(mentionedEntityRefs.join(',')),
+                'npc'
+            );
+
+            // Filtra per entity refs (priorità) o fallback su vecchi formati
             const filteredFragments = fragments.filter(f => {
-                if (!f.associated_npcs) return false;
-                const fragmentNpcs = f.associated_npcs.split(',').map(n => n.toLowerCase());
-                return mentionedNpcs.some(mn => fragmentNpcs.includes(mn.name.toLowerCase()));
+                // 1. Prima prova con entity refs (nuovo formato)
+                if (f.associated_entity_ids) {
+                    const fragmentRefs = parseEntityRefs(f.associated_entity_ids);
+                    const fragmentNpcIds = filterEntityRefsByType(fragmentRefs, 'npc');
+                    if (mentionedNpcIds.some(qId => fragmentNpcIds.includes(qId))) return true;
+                }
+
+                // 2. Fallback su associated_npc_ids (formato legacy numerico)
+                if (f.associated_npc_ids) {
+                    // Migra on-the-fly vecchi ID se necessario
+                    const migratedRefs = migrateOldNpcIds(f.associated_npc_ids);
+                    if (migratedRefs) {
+                        const fragmentRefs = parseEntityRefs(migratedRefs);
+                        const fragmentNpcIds = filterEntityRefsByType(fragmentRefs, 'npc');
+                        if (mentionedNpcIds.some(qId => fragmentNpcIds.includes(qId))) return true;
+                    }
+                }
+
+                // 3. Fallback su nomi (frammenti molto vecchi)
+                if (f.associated_npcs) {
+                    const fragmentNpcs = f.associated_npcs.split(',').map(n => n.toLowerCase());
+                    const mentionedNpcs = allNpcs.filter(npc => mentionedNpcIds.includes(npc.id));
+                    return mentionedNpcs.some(mn => fragmentNpcs.includes(mn.name.toLowerCase()));
+                }
+
+                return false;
             });
 
             if (filteredFragments.length > 0) {

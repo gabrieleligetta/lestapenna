@@ -118,7 +118,9 @@ import {
     fixCurrentLocation, // NUOVO - Correggi posizione corrente
     deleteWorldEvent, // NUOVO - Cancella evento timeline
     markCharacterDirtyByName, // NUOVO - Character dirty sync (by name)
-    setCampaignAutoUpdate // NUOVO - Toggle auto-update PG
+    setCampaignAutoUpdate, // NUOVO - Toggle auto-update PG
+    addNpcAlias, // NUOVO - Sistema Ibrido RAG
+    removeNpcAlias // NUOVO - Sistema Ibrido RAG
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -1282,6 +1284,61 @@ client.on('messageCreate', async (message: Message) => {
             const success = deleteNpcEntry(activeCampaign!.id, name);
             if (success) return message.reply(`🗑️ NPC **${name}** eliminato dal dossier.`);
             else return message.reply(`❌ NPC "${name}" non trovato.`);
+        }
+
+        // 🆕 NUOVO: $npc alias <Nome> | add/remove | <Alias>
+        if (argsStr.toLowerCase().startsWith('alias ')) {
+            const parts = argsStr.substring(6).split('|').map(s => s.trim());
+
+            if (parts.length < 2) {
+                // Mostra alias esistenti
+                const npc = getNpcEntry(activeCampaign!.id, parts[0]);
+                if (!npc) return message.reply(`❌ NPC **${parts[0]}** non trovato.`);
+
+                const aliases = npc.aliases?.split(',').filter(a => a.trim()) || [];
+                if (aliases.length === 0) {
+                    return message.reply(
+                        `📇 **Alias per ${npc.name}:** Nessuno\n\n` +
+                        `**Comandi:**\n` +
+                        `\`$npc alias ${npc.name} | add | <Alias>\` - Aggiungi alias\n` +
+                        `\`$npc alias ${npc.name} | remove | <Alias>\` - Rimuovi alias`
+                    );
+                }
+
+                return message.reply(
+                    `📇 **Alias per ${npc.name}:**\n` +
+                    aliases.map(a => `• ${a.trim()}`).join('\n') +
+                    `\n\n💡 Gli alias permettono di cercare l'NPC nel RAG con soprannomi o titoli.`
+                );
+            }
+
+            const [npcName, action, alias] = parts;
+            const npc = getNpcEntry(activeCampaign!.id, npcName);
+            if (!npc) return message.reply(`❌ NPC **${npcName}** non trovato.`);
+
+            if (action.toLowerCase() === 'add') {
+                if (!alias) return message.reply('❌ Specifica l\'alias da aggiungere: `$npc alias <Nome> | add | <Alias>`');
+
+                const success = addNpcAlias(activeCampaign!.id, npc.name, alias);
+                if (success) {
+                    return message.reply(`✅ Alias **"${alias}"** aggiunto a **${npc.name}**.\n💡 Ora puoi cercare "${alias}" e troverà frammenti relativi a ${npc.name}.`);
+                } else {
+                    return message.reply(`⚠️ Alias **"${alias}"** già presente per **${npc.name}**.`);
+                }
+            }
+
+            if (action.toLowerCase() === 'remove' || action.toLowerCase() === 'del') {
+                if (!alias) return message.reply('❌ Specifica l\'alias da rimuovere: `$npc alias <Nome> | remove | <Alias>`');
+
+                const success = removeNpcAlias(activeCampaign!.id, npc.name, alias);
+                if (success) {
+                    return message.reply(`✅ Alias **"${alias}"** rimosso da **${npc.name}**.`);
+                } else {
+                    return message.reply(`❌ Alias **"${alias}"** non trovato per **${npc.name}**.`);
+                }
+            }
+
+            return message.reply('❌ Azione non valida. Usa `add` o `remove`.');
         }
 
         if (argsStr.toLowerCase().startsWith('update')) {

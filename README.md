@@ -67,6 +67,7 @@ Prima di iniziare, devi creare o selezionare una campagna.
 *   `$selezionacampagna <Nome>` (o `$selectcampaign`): Attiva una campagna specifica.
 *   `$listacampagne` (o `$listcampaigns`): Mostra l'elenco delle campagne disponibili.
 *   `$eliminacampagna <Nome>` (o `$deletecampaign`): Elimina definitivamente una campagna e tutti i suoi dati.
+*   `$autoaggiorna [on|off]` (o `$autoupdate`): Attiva o disattiva l'aggiornamento automatico delle schede PG a fine sessione.
 
 ### 🎙️ Gestione Sessione
 *   `$ascolta [Luogo]` (o `$listen`): Il bot entra nel canale vocale e inizia a registrare. Puoi specificare opzionalmente il luogo di partenza (es. `$ascolta Neverwinter | Locanda`). **Richiede una campagna attiva.**
@@ -196,6 +197,9 @@ Ogni giocatore può definire il proprio personaggio per la campagna attiva. Ques
 *   `$miadesc <Testo>` (o `$mydesc`): Aggiunge una breve descrizione fisica o caratteriale.
 *   `$chisono` (o `$whoami`): Visualizza la tua scheda attuale.
 *   `$party` (o `$compagni`): Visualizza l'elenco di tutti i personaggi registrati nella campagna.
+*   `$storia <Nome>` (o `$story`): Genera la biografia evolutiva di un PG o NPC.
+    *   `$storia sync`: Sincronizza manualmente tutte le schede PG con gli eventi recenti.
+    *   `$storia sync <Nome>`: Sincronizza la scheda di un PG specifico.
 *   `$resetpg` (o `$clearchara`): Cancella la tua scheda personaggio per la campagna attiva.
 
 ### ⏳ Tempo e Storia

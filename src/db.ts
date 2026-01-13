@@ -250,7 +250,10 @@ const migrations = [
     // 🆕 SISTEMA ARMONICO: Lazy sync RAG per NPC
     "ALTER TABLE npc_dossier ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
     // 🆕 SISTEMA ARMONICO: Lazy sync RAG per Atlas
-    "ALTER TABLE location_atlas ADD COLUMN rag_sync_needed INTEGER DEFAULT 0"
+    "ALTER TABLE location_atlas ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+    // 🆕 Tracciamento sessione per inventario e quest
+    "ALTER TABLE inventory ADD COLUMN session_id TEXT",
+    "ALTER TABLE quests ADD COLUMN session_id TEXT"
 ];
 
 for (const m of migrations) {
@@ -1026,13 +1029,25 @@ export const getAllPendingMerges = (): PendingMerge[] => {
 
 // --- FUNZIONI QUESTS ---
 
-export const addQuest = (campaignId: number, title: string) => {
+export const addQuest = (campaignId: number, title: string, sessionId?: string) => {
     // Evitiamo duplicati identici
     const exists = db.prepare("SELECT id FROM quests WHERE campaign_id = ? AND title = ?").get(campaignId, title);
     if (!exists) {
-        db.prepare("INSERT INTO quests (campaign_id, title, status, created_at, last_updated) VALUES (?, ?, 'OPEN', ?, ?)").run(campaignId, title, Date.now(), Date.now());
+        db.prepare("INSERT INTO quests (campaign_id, title, status, created_at, last_updated, session_id) VALUES (?, ?, 'OPEN', ?, ?, ?)").run(campaignId, title, Date.now(), Date.now(), sessionId || null);
         console.log(`[Quest] 🗺️ Nuova quest aggiunta: ${title}`);
     }
+};
+
+/**
+ * Recupera le quest di una sessione specifica
+ */
+export const getSessionQuests = (sessionId: string): any[] => {
+    return db.prepare(`
+        SELECT id, title, status, created_at, last_updated
+        FROM quests
+        WHERE session_id = ?
+        ORDER BY created_at DESC
+    `).all(sessionId);
 };
 
 export const updateQuestStatus = (campaignId: number, titlePart: string, status: 'COMPLETED' | 'FAILED' | 'OPEN') => {
@@ -1046,14 +1061,14 @@ export const getOpenQuests = (campaignId: number): Quest[] => {
 
 // --- FUNZIONI INVENTORY ---
 
-export const addLoot = (campaignId: number, itemName: string, qty: number = 1) => {
+export const addLoot = (campaignId: number, itemName: string, qty: number = 1, sessionId?: string) => {
     // Cerca se esiste già (case insensitive)
     const existing = db.prepare("SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)").get(campaignId, itemName) as {id: number, quantity: number} | undefined;
-    
+
     if (existing) {
-        db.prepare("UPDATE inventory SET quantity = quantity + ?, last_updated = ? WHERE id = ?").run(qty, Date.now(), existing.id);
+        db.prepare("UPDATE inventory SET quantity = quantity + ?, last_updated = ?, session_id = COALESCE(session_id, ?) WHERE id = ?").run(qty, Date.now(), sessionId || null, existing.id);
     } else {
-        db.prepare("INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated) VALUES (?, ?, ?, ?, ?)").run(campaignId, itemName, qty, Date.now(), Date.now());
+        db.prepare("INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id) VALUES (?, ?, ?, ?, ?, ?)").run(campaignId, itemName, qty, Date.now(), Date.now(), sessionId || null);
     }
     console.log(`[Loot] 💰 Aggiunto: ${itemName} (x${qty})`);
 };
@@ -1076,6 +1091,18 @@ export const removeLoot = (campaignId: number, itemName: string, qty: number = 1
 
 export const getInventory = (campaignId: number): InventoryItem[] => {
     return db.prepare("SELECT * FROM inventory WHERE campaign_id = ? ORDER BY item_name ASC").all(campaignId) as InventoryItem[];
+};
+
+/**
+ * Recupera gli oggetti acquisiti in una sessione specifica
+ */
+export const getSessionInventory = (sessionId: string): any[] => {
+    return db.prepare(`
+        SELECT id, item_name, quantity, acquired_at
+        FROM inventory
+        WHERE session_id = ?
+        ORDER BY acquired_at DESC
+    `).all(sessionId);
 };
 
 // --- FUNZIONI STORIA PERSONAGGI ---
@@ -1647,6 +1674,7 @@ export const wipeDatabase = () => {
         status TEXT DEFAULT 'OPEN',
         created_at INTEGER,
         last_updated INTEGER,
+        session_id TEXT,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -1658,6 +1686,7 @@ export const wipeDatabase = () => {
         quantity INTEGER DEFAULT 1,
         acquired_at INTEGER,
         last_updated INTEGER,
+        session_id TEXT,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 

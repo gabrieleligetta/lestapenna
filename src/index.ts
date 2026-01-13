@@ -100,6 +100,9 @@ import {
     getWorldTimeline,
     setCampaignYear, getSessionRecordings, Campaign,
     getSessionEncounteredNPCs,
+    getSessionTravelLog, // NUOVO - Viaggi per sessione
+    getSessionInventory, // NUOVO - Inventario per sessione
+    getSessionQuests, // NUOVO - Quest per sessione
     renameNpcEntry, // NUOVO IMPORT
     deleteNpcEntry, // NUOVO IMPORT
     updateNpcFields, // NUOVO IMPORT
@@ -742,11 +745,30 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- NUOVO: !viaggi (Cronologia) ---
     // Uso: $viaggi -> Mostra cronologia
+    // Uso: $viaggi <ID sessione> -> Mostra viaggi di una sessione specifica
     // Uso: $viaggi list -> Mostra cronologia con ID
     // Uso: $viaggi fix <ID> | <NuovaMacro> | <NuovaMicro> -> Correggi voce
     // Uso: $viaggi fixcurrent <NuovaMacro> | <NuovaMicro> -> Correggi posizione corrente
     if (command === 'viaggi' || command === 'travels') {
         const argsStr = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $viaggi <session_id> ---
+        if (argsStr && argsStr.startsWith('session_')) {
+            const sessionId = argsStr.trim();
+            const travelLog = getSessionTravelLog(sessionId);
+
+            if (travelLog.length === 0) {
+                return message.reply(`📜 Nessun viaggio registrato per la sessione \`${sessionId}\`.`);
+            }
+
+            let msg = `**📜 Viaggi della Sessione \`${sessionId}\`:**\n`;
+            travelLog.forEach((h: any) => {
+                const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                msg += `\`${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+            });
+
+            return message.reply(msg);
+        }
 
         // --- SOTTOCOMANDO: list (con ID per edit) ---
         if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
@@ -826,6 +848,7 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- COMANDO: $atlante (Gestione Luoghi) ---
     // Uso: $atlante -> Mostra luogo corrente o lista
+    // Uso: $atlante <session_id> -> Mostra luoghi visitati in una sessione
     // Uso: $atlante list -> Lista tutti i luoghi
     // Uso: $atlante <Macro> | <Micro> -> Vedi scheda luogo
     // Uso: $atlante <Macro> | <Micro> | <Descrizione> -> Aggiorna con smart merge
@@ -833,6 +856,39 @@ client.on('messageCreate', async (message: Message) => {
     // Uso: $atlante delete <Macro> | <Micro> -> Elimina luogo
     if (command === 'atlante' || command === 'memoria' || command === 'atlas') {
         const argsStr = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $atlante <session_id> ---
+        if (argsStr && argsStr.startsWith('session_')) {
+            const sessionId = argsStr.trim();
+            const travelLog = getSessionTravelLog(sessionId);
+
+            if (travelLog.length === 0) {
+                return message.reply(`📖 Nessun luogo visitato nella sessione \`${sessionId}\`.`);
+            }
+
+            // Raggruppa luoghi unici
+            const uniqueLocations = new Map<string, { macro: string, micro: string, count: number }>();
+            travelLog.forEach((h: any) => {
+                const key = `${h.macro_location}|${h.micro_location}`;
+                if (uniqueLocations.has(key)) {
+                    uniqueLocations.get(key)!.count++;
+                } else {
+                    uniqueLocations.set(key, { macro: h.macro_location, micro: h.micro_location, count: 1 });
+                }
+            });
+
+            let msg = `**📖 Luoghi Visitati nella Sessione \`${sessionId}\`:**\n`;
+            uniqueLocations.forEach((loc) => {
+                const entry = getAtlasEntry(activeCampaign!.id, loc.macro, loc.micro);
+                const hasDesc = entry ? '📝' : '❔';
+                msg += `${hasDesc} 🌍 **${loc.macro}** - 🏠 ${loc.micro}`;
+                if (loc.count > 1) msg += ` *(${loc.count}x)*`;
+                msg += '\n';
+            });
+            msg += `\n💡 Usa \`$atlante <Regione> | <Luogo>\` per vedere i dettagli.`;
+
+            return message.reply(msg);
+        }
 
         // --- SENZA ARGOMENTI: Mostra luogo corrente ---
         if (!argsStr) {
@@ -1061,6 +1117,7 @@ client.on('messageCreate', async (message: Message) => {
 
     // --- COMANDO: $npc (Visualizza o Modifica) ---
     // Uso: $npc -> Lista ultimi NPC
+    // Uso: $npc <session_id> -> NPC incontrati in una sessione specifica
     // Uso: $npc Mario -> Vedi scheda di Mario
     // Uso: $npc Mario | È un bravo idraulico -> Aggiorna descrizione
     // Uso: $npc merge Vecchio | Nuovo -> Unisce due NPC
@@ -1077,6 +1134,29 @@ client.on('messageCreate', async (message: Message) => {
 
             const list = npcs.map((n: any) => `👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
             return message.reply(`**📂 Dossier NPC Recenti**\n${list}`);
+        }
+
+        // --- SESSIONE SPECIFICA: $npc <session_id> ---
+        if (argsStr.startsWith('session_')) {
+            const sessionId = argsStr.trim();
+            const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
+
+            if (encounteredNPCs.length === 0) {
+                return message.reply(`👥 Nessun NPC incontrato nella sessione \`${sessionId}\`.`);
+            }
+
+            let msg = `**👥 NPC della Sessione \`${sessionId}\`:**\n\n`;
+            encounteredNPCs.forEach((npc: any) => {
+                const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+                msg += `${statusIcon} **${npc.name}** (${npc.role || '?'}) [${npc.status}]\n`;
+                if (npc.description) {
+                    const preview = npc.description.substring(0, 100) + (npc.description.length > 100 ? '...' : '');
+                    msg += `   └ _${preview}_\n`;
+                }
+            });
+            msg += `\n💡 Usa \`$npc <Nome>\` per vedere la scheda completa.`;
+
+            return message.reply(msg);
         }
 
         // Sottocomandi avanzati
@@ -1278,39 +1358,70 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: $presenze (Debug) ---
+    // Uso: $presenze -> NPC della sessione corrente
+    // Uso: $presenze <session_id> -> NPC di una sessione specifica
     if (command === 'presenze') {
-        const sessionId = guildSessions.get(message.guild.id);
-        if (!sessionId) return await message.reply("⚠️ Nessuna sessione attiva.");
+        const argsStr = args.join(' ').trim();
 
-        // Recupera tutti gli NPC univoci visti nelle registrazioni della sessione
-        const rows = db.prepare(`
-            SELECT DISTINCT present_npcs
-            FROM recordings
-            WHERE session_id = ? AND present_npcs IS NOT NULL
-        `).all(sessionId) as { present_npcs: string }[];
+        // Determina la sessione target
+        let targetSessionId: string | undefined;
+        let sessionLabel: string;
 
-        // Unisci e pulisci le stringhe (es. "Grog,Mario" e "Mario,Luigi")
-        const allNpcs = new Set<string>();
-        rows.forEach(r => r.present_npcs.split(',').forEach(n => {
-            const trimmed = n.trim();
-            if (trimmed) allNpcs.add(trimmed);
-        }));
-
-        if (allNpcs.size === 0) {
-            return message.reply(`👥 **NPC Incontrati:** Nessuno rilevato finora.`);
+        if (argsStr && argsStr.startsWith('session_')) {
+            targetSessionId = argsStr;
+            sessionLabel = `sessione \`${targetSessionId}\``;
+        } else {
+            targetSessionId = guildSessions.get(message.guild.id);
+            sessionLabel = 'questa sessione';
+            if (!targetSessionId) return await message.reply("⚠️ Nessuna sessione attiva. Specifica un ID: `$presenze session_xxxxx`");
         }
 
-        return message.reply(`👥 **NPC Incontrati in questa sessione:**\n${Array.from(allNpcs).join(', ')}`);
+        // Recupera NPC con dettagli dal dossier
+        const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
+
+        if (encounteredNPCs.length === 0) {
+            return message.reply(`👥 **NPC Incontrati in ${sessionLabel}:** Nessuno rilevato.`);
+        }
+
+        let msg = `👥 **NPC Incontrati in ${sessionLabel}:**\n`;
+        encounteredNPCs.forEach((npc: any) => {
+            const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+            msg += `${statusIcon} **${npc.name}** (${npc.role || '?'}) [${npc.status}]\n`;
+        });
+
+        return message.reply(msg);
     }
 
     // --- NUOVO: $quest ---
+    // Uso: $quest -> Mostra quest attive
+    // Uso: $quest <session_id> -> Mostra quest aggiunte in una sessione
     if (command === 'quest' || command === 'obiettivi') {
         const arg = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $quest <session_id> ---
+        if (arg && arg.startsWith('session_')) {
+            const sessionId = arg.trim();
+            const sessionQuests = getSessionQuests(sessionId);
+
+            if (sessionQuests.length === 0) {
+                return message.reply(
+                    `🗺️ Nessuna quest aggiunta nella sessione \`${sessionId}\`.\n` +
+                    `*Nota: Solo le quest aggiunte dopo l'aggiornamento vengono tracciate per sessione.*`
+                );
+            }
+
+            const list = sessionQuests.map((q: any) => {
+                const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '🔹';
+                return `${statusIcon} **${q.title}** [${q.status}]`;
+            }).join('\n');
+            return message.reply(`**🗺️ Quest della Sessione \`${sessionId}\`:**\n\n${list}`);
+        }
 
         // Sottocomandi manuali: $quest add Titolo / $quest done Titolo
         if (arg.toLowerCase().startsWith('add ')) {
             const title = arg.substring(4);
-            addQuest(activeCampaign!.id, title);
+            const currentSession = guildSessions.get(message.guild.id);
+            addQuest(activeCampaign!.id, title, currentSession);
             return message.reply(`🗺️ Quest aggiunta: **${title}**`);
         }
         if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
@@ -1328,13 +1439,32 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: $inventario ---
+    // Uso: $inventario -> Mostra inventario completo
+    // Uso: $inventario <session_id> -> Mostra oggetti acquisiti in una sessione
     if (command === 'inventario' || command === 'loot' || command === 'bag' || command === 'inventory') {
         const arg = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $inventario <session_id> ---
+        if (arg && arg.startsWith('session_')) {
+            const sessionId = arg.trim();
+            const sessionItems = getSessionInventory(sessionId);
+
+            if (sessionItems.length === 0) {
+                return message.reply(
+                    `💰 Nessun oggetto acquisito nella sessione \`${sessionId}\`.\n` +
+                    `*Nota: Solo gli oggetti aggiunti dopo l'aggiornamento vengono tracciati per sessione.*`
+                );
+            }
+
+            const list = sessionItems.map((i: any) => `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}`).join('\n');
+            return message.reply(`**💰 Loot della Sessione \`${sessionId}\`:**\n\n${list}`);
+        }
 
         // Sottocomandi manuali: $loot add Pozione / $loot use Pozione
         if (arg.toLowerCase().startsWith('add ')) {
             const item = arg.substring(4);
-            addLoot(activeCampaign!.id, item, 1);
+            const currentSession = guildSessions.get(message.guild.id);
+            addLoot(activeCampaign!.id, item, 1, currentSession);
             return message.reply(`💰 Aggiunto: **${item}**`);
         }
         if (arg.toLowerCase().startsWith('use ') || arg.toLowerCase().startsWith('usa ') || arg.toLowerCase().startsWith('remove ')) {

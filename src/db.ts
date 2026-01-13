@@ -215,6 +215,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS bestiary (
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_bestiary_campaign ON bestiary (campaign_id)`);
+// 🆕 FIX: Indice univoco per upsert bestiario (per nuove installazioni)
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bestiary_unique ON bestiary(campaign_id, name, session_id) WHERE session_id IS NOT NULL`);
 
 // --- TABELLA INVENTORY ---
 db.exec(`CREATE TABLE IF NOT EXISTS inventory (
@@ -287,7 +289,9 @@ const migrations = [
     // 🆕 SISTEMA IBRIDO RAG: Alias per NPC (soprannomi, titoli)
     "ALTER TABLE npc_dossier ADD COLUMN aliases TEXT",
     // 🆕 SISTEMA ENTITY REFS: Rinomina per supportare prefissi tipizzati (npc:1, pc:15, etc.)
-    "ALTER TABLE knowledge_fragments ADD COLUMN associated_entity_ids TEXT"
+    "ALTER TABLE knowledge_fragments ADD COLUMN associated_entity_ids TEXT",
+    // 🆕 FIX: Indice univoco per upsert bestiario
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_bestiary_unique ON bestiary(campaign_id, name, session_id) WHERE session_id IS NOT NULL"
 ];
 
 for (const m of migrations) {
@@ -296,7 +300,7 @@ for (const m of migrations) {
     } catch (e) { 
         // Ignora se la colonna esiste già, ma logga se è altro errore
         const err = e as { message: string };
-        if (!err.message.includes('duplicate column name')) {
+        if (!err.message.includes('duplicate column name') && !err.message.includes('index idx_bestiary_unique already exists')) {
             console.error(`[DB] ⚠️ Migration error: "${m}"`, err);
         }
     }

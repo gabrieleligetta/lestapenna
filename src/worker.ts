@@ -1,15 +1,83 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
+import axios from 'axios';
 import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, getCampaignLocationById, getUserProfile, saveRawTranscription } from './db';
 import { convertPcmToWav, transcribeLocal } from './transcriptionService';
-import { downloadFromOracle, uploadToOracle } from './backupService';
+import { downloadFromOracle, uploadToOracle, getPresignedUrl } from './backupService';
 import { monitor } from './monitor';
 import { correctTranscription } from './bard';
 import { correctionQueue } from './queue';
 import { filterWhisperHallucinations } from './whisperHallucinationFilter';
 
+// --- CONFIGURAZIONE PC REMOTO ---
+const REMOTE_WHISPER_URL = process.env.REMOTE_WHISPER_URL;
+const REMOTE_TIMEOUT = 2700000; // 45 minuti
+
 // Worker BullMQ - LO SCRIBA (Audio Worker)
 // Si occupa di: Download -> Trascrizione -> Backup -> Accodamento Correzione
+
+/**
+ * Tenta trascrizione su PC remoto (es. Ryzen 7800X3D + large-v3-turbo),
+ * fallback automatico su Whisper locale del server se:
+ * - PC remoto non configurato
+ * - PC remoto non raggiungibile
+ * - Timeout o errore
+ */
+async function transcribeWithFallback(
+    localPath: string,
+    sessionId: string,
+    fileName: string
+): Promise<any> {
+
+    // 🔥 TENTATIVO 1: PC Remoto via Tailscale
+    if (REMOTE_WHISPER_URL) {
+        try {
+            // Genera presigned URL on-demand (valido 1 ora)
+            console.log('[Scriba] 🔗 Generazione presigned URL per PC remoto...');
+            const presignedUrl = await getPresignedUrl(fileName, sessionId, 3600);
+
+            if (!presignedUrl) {
+                console.warn('[Scriba] ⚠️ Impossibile generare presigned URL, uso fallback locale');
+            } else {
+                console.log('[Scriba] 🌐 Tentativo PC remoto...');
+                const startRemote = Date.now();
+
+                const response = await axios.post(
+                    REMOTE_WHISPER_URL,
+                    { fileUrl: presignedUrl },
+                    {
+                        timeout: REMOTE_TIMEOUT,
+                        headers: { 'Content-Type': 'application/json' }
+                    }
+                );
+
+                if (response.data && !response.data.error) {
+                    const elapsed = ((Date.now() - startRemote) / 1000).toFixed(1);
+                    console.log(`[Scriba] ✅ PC remoto completato in ${elapsed}s`);
+                    return response.data;
+                }
+
+                throw new Error(response.data.error || 'Remote returned error');
+            }
+
+        } catch (error: any) {
+            const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+            const isNetworkError = error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENETUNREACH';
+
+            if (isTimeout) {
+                console.warn(`[Scriba] ⏱️ Timeout PC remoto dopo ${REMOTE_TIMEOUT / 1000}s`);
+            } else if (isNetworkError) {
+                console.warn(`[Scriba] 🔌 PC remoto non raggiungibile (spento o disconnesso)`);
+            } else {
+                console.warn(`[Scriba] ⚠️ Errore PC remoto: ${error.message}`);
+            }
+        }
+    }
+
+    // 🔄 FALLBACK: Whisper Locale (server)
+    console.log('[Scriba] 💻 Uso Whisper locale (server)...');
+    return await transcribeLocal(localPath);
+}
 
 export function startWorker() {
     // --- WORKER 1: AUDIO PROCESSING ---
@@ -109,7 +177,7 @@ export function startWorker() {
             }
 
             // console.log(`[Scriba] 🗣️  Inizio trascrizione Whisper: ${fileName}`); // Rimosso per evitare doppio log
-            const result = await transcribeLocal(transcriptionPath);
+            const result = await transcribeWithFallback(transcriptionPath, sessionId, fileName);
 
             // 🆕 GESTISCI ESPLICITAMENTE GLI ERRORI DI WHISPER
             if (result.error) {

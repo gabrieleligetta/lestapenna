@@ -6,6 +6,7 @@
     "@discordjs/voice": "^0.19.0",
     "@snazzah/davey": "^0.1.9",
     "@types/pidusage": "^2.0.5",
+    "axios": "^1.13.2",
     "better-sqlite3": "^12.5.0",
     "bullmq": "^5.4.0",
     "discord.js": "^14.25.1",

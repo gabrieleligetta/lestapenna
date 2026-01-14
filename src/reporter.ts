@@ -589,7 +589,8 @@ export async function archiveSessionTranscripts(sessionId: string, campaignId: n
         };
     });
 
-    const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId);
+    // ✅ MODIFICA: Passiamo compact=true per il raw
+    const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId, true);
     const rawText = processedRaw.formattedText;
 
     // --- ELABORAZIONE NARRATIVE ---

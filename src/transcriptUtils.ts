@@ -86,7 +86,8 @@ export function processChronologicalSession(
     transcripts: TranscriptEntry[],
     notes: SessionNote[],
     sessionStartTime: number | null,
-    campaignId?: number
+    campaignId?: number,
+    compact: boolean = false
 ): ProcessedSession {
     const segments: FlattenedSegment[] = [];
     
@@ -168,7 +169,7 @@ export function processChronologicalSession(
 
     // 4. Generate Outputs
     return {
-        formattedText: generateFormattedOutput(segments),
+        formattedText: generateFormattedOutput(segments, compact),
         linearText: generateLinearOutput(segments),
         segments: segments as ProcessedSegment[] // Per Narrative Filter
     };
@@ -190,7 +191,7 @@ export function formatRelativeTime(absTime: number, refTime: number): string {
     }
 }
 
-function generateFormattedOutput(segments: FlattenedSegment[]): string {
+function generateFormattedOutput(segments: FlattenedSegment[], compact: boolean = false): string {
     let output = "";
     let lastHeader = "";
 
@@ -202,7 +203,11 @@ function generateFormattedOutput(segments: FlattenedSegment[]): string {
             lastHeader = header;
         }
         
-        output += `${seg.formattedTime} ${seg.text}\n`;
+        if (compact) {
+            output += `${seg.formattedTime} ${seg.text}`;
+        } else {
+            output += `${seg.formattedTime} ${seg.text}\n`;
+        }
     });
 
     return output.trim();

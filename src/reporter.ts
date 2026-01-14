@@ -8,6 +8,7 @@ import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSes
 import { processChronologicalSession } from './transcriptUtils';
 import { monitor } from './monitor';
 import { normalizeToNarrative, formatNarrativeTranscript } from './narrativeFilter';
+import axios from "axios";
 
 // Configurazione SMTP per Porkbun
 const transporter = nodemailer.createTransport({
@@ -529,6 +530,27 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
         return true;
     } catch (e) {
         return false;
+    }
+}
+
+export async  function testRemoteConnection() {
+    const REMOTE_WHISPER_URL = "http://100.80.204.16:3001/health";
+    if (!REMOTE_WHISPER_URL) return;
+
+    console.log(`[System] 📡 Test connessione PC remoto (${REMOTE_WHISPER_URL})...`);
+    try {
+        // Timeout breve per il test (3s). Usiamo GET che è meno invasivo di POST.
+        // Anche un 404 o 405 conferma che il server è raggiungibile.
+        await axios.get(REMOTE_WHISPER_URL, { timeout: 3000 });
+        console.log(`[System] ✅ PC remoto ONLINE e raggiungibile.`);
+    } catch (error: any) {
+        if (error.response) {
+            // Il server ha risposto (es. 404, 405, 500), quindi è online
+            console.log(`[System] ✅ PC remoto ONLINE (risposta HTTP ${error.response.status}).`);
+        } else {
+            // Nessuna risposta (timeout, connection refused)
+            console.warn(`[System] ⚠️ PC remoto NON RAGGIUNGIBILE: ${error.message}`);
+        }
     }
 }
 

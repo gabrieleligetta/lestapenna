@@ -131,7 +131,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
 import * as path from 'path';
 import { monitor, SessionMetrics, startMemoryMonitor } from './monitor';
-import { processSessionReport, sendTestEmail, sendSessionRecap, archiveSessionTranscripts } from './reporter';
+import {
+    processSessionReport,
+    sendTestEmail,
+    sendSessionRecap,
+    archiveSessionTranscripts,
+    testRemoteConnection
+} from './reporter';
 import { exec } from 'child_process';
 import { pipeline } from 'stream/promises';
 import { initIdentityGuard, handleIdentityReply, checkAndPromptMerge } from './identityGuard';
@@ -4128,6 +4134,7 @@ async function processOrphanedSessionsSequentially(sessionIds: string[]): Promis
 
 client.once('ready', async () => {
     console.log(`✅ Bot online: ${client.user?.tag}`);
+    await testRemoteConnection();
     
     // Inizializza Identity Guard
     initIdentityGuard();

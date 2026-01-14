@@ -1729,6 +1729,21 @@ export const saveRawTranscription = (filename: string, rawJson: string) => {
     db.prepare('UPDATE recordings SET raw_transcription_text = ? WHERE filename = ?').run(rawJson, filename);
 };
 
+/**
+ * Aggiorna present_npcs per tutte le registrazioni PROCESSED di una sessione.
+ * Usato dopo generateSummary() per popolare gli NPC incontrati a livello di sessione.
+ */
+export const updateSessionPresentNPCs = (sessionId: string, npcs: string[]) => {
+    if (!npcs || npcs.length === 0) return;
+    const npcString = npcs.join(',');
+    db.prepare(`
+        UPDATE recordings
+        SET present_npcs = ?
+        WHERE session_id = ? AND status = 'PROCESSED'
+    `).run(npcString, sessionId);
+    console.log(`[DB] 👥 Aggiornati ${npcs.length} NPC per sessione ${sessionId}`);
+};
+
 export const getUnprocessedRecordings = () => {
     return db.prepare(`
         SELECT * FROM recordings 

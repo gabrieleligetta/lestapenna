@@ -1992,12 +1992,26 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
         memoryContext += `📍 LUOGO: ${snapshot.location_context}\n`;
         memoryContext += `⚔️ QUEST ATTIVE: ${snapshot.quest_context}\n`;
         if (snapshot.atlasDesc) memoryContext += `📖 GUIDA ATLANTE: ${snapshot.atlasDesc}\n`;
-        
+
+        // 🆕 LISTA NPC ESISTENTI (per riconciliazione nomi)
+        const existingNpcs = listNpcs(campaignId);
+        if (existingNpcs.length > 0) {
+            memoryContext += `\n👥 NPC GIÀ NOTI (DOSSIER ESISTENTE - USA QUESTI NOMI!):\n`;
+            existingNpcs.forEach((npc: any) => {
+                let npcLine = `- "${npc.name}" (${npc.role || '?'})`;
+                if (npc.aliases) {
+                    npcLine += ` [Alias: ${npc.aliases}]`;
+                }
+                memoryContext += npcLine + '\n';
+            });
+            memoryContext += `⚠️ Se senti nomi simili a quelli sopra (es. "Leo Sin" per "Leosin"), USA IL NOME COMPLETO DAL DOSSIER!\n`;
+        }
+
         // Aggiungiamo i risultati RAG
         const allMemories = [...staticResults.flat(), ...dynamicResults.flat()];
         // Deduplica stringhe identiche
         const uniqueMemories = Array.from(new Set(allMemories));
-        
+
         if (uniqueMemories.length > 0) {
             memoryContext += `\n🔍 RICORDI RILEVANTI (Dall'Archivio):\n${uniqueMemories.map(m => `- ${m}`).join('\n')}\n`;
         }
@@ -2112,9 +2126,15 @@ REGOLE IMPORTANTI:
 4. Rispondi SEMPRE in ITALIANO.
 5. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
 6. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
-7. "npc_dossier_updates": Solo NPC con nome proprio menzionati nella trascrizione. NON includere i PG.
+7. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
 8. "location_updates": Solo luoghi visitati/descritti nella sessione. Descrizioni concise ma evocative.
 9. "present_npcs": Lista semplice di TUTTI gli NPC nominati nella sessione (anche se non hanno eventi).
+
+**REGOLA CRITICA - RICONCILIAZIONE NPC:**
+- CONTROLLA SEMPRE la lista "👥 NPC GIÀ NOTI" nel contesto!
+- Se senti un nome SIMILE a uno esistente (es. "Leo Sin", "Rantar" per "Leosin Erentar"), USA IL NOME DAL DOSSIER.
+- Nomi parziali, soprannomi o pronunce errate vanno RICONCILIATI col nome canonico.
+- NON creare nuove voci per lo stesso NPC con nomi diversi!
 
 **REGOLE PER IL LOOT:**
 - Oggetti magici/unici: Descrivi proprietà e maledizioni.
@@ -2164,7 +2184,13 @@ REGOLE IMPORTANTI:
         5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.
         6. IMPORTANTE: 'loot', 'loot_removed', 'quests', 'present_npcs' devono essere array di STRINGHE SEMPLICI.
         7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
-        8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.`;
+        8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
+
+        **REGOLA CRITICA - RICONCILIAZIONE NPC:**
+        - CONTROLLA SEMPRE la lista "👥 NPC GIÀ NOTI" nel contesto!
+        - Se senti un nome SIMILE a uno esistente (es. "Leo Sin" per "Leosin"), USA IL NOME DAL DOSSIER.
+        - Nomi parziali, soprannomi o pronunce errate vanno RICONCILIATI col nome canonico.
+        - NON creare nuove voci per lo stesso NPC con nomi diversi!`;
     }
 
     const startAI = Date.now();

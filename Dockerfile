@@ -24,8 +24,8 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release
 
-# Scarica il modello MEDIUM
-RUN bash ./models/download-ggml-model.sh medium
+# Scarica il modello LARGE-V3
+RUN bash ./models/download-ggml-model.sh large-v3
 
 # --- STAGE 3: PRODUCTION RUNNER (BOOKWORM = FFmpeg 5.1+) ---
 FROM node:22-bookworm-slim
@@ -58,17 +58,27 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# Copia Whisper (compilato con Bullseye GCC 10)
-RUN mkdir -p /app/whisper
-# FIX: Copiamo 'whisper-cli' (il nuovo binario) ma lo salviamo come 'main'
-# per mantenere la compatibilità con il codice TypeScript esistente.
-COPY --from=whisper-builder /build/build/bin/whisper-cli /app/whisper/main
-COPY --from=whisper-builder /build/models/ggml-medium.bin /app/whisper/model.bin
+# === WHISPER PERSISTENCE ===
+# Whisper viene salvato in due posti:
+# 1. /app/whisper-backup (interno all'immagine, sempre disponibile)
+# 2. /app/whisper (volume, persiste dopo docker system prune)
+# L'entrypoint copia dal backup al volume se necessario.
 
-# Assicuriamo i permessi di esecuzione
-RUN chmod +x /app/whisper/main
+# Backup interno (sopravvive ai rebuild dell'immagine)
+RUN mkdir -p /app/whisper-backup
+COPY --from=whisper-builder /build/build/bin/whisper-cli /app/whisper-backup/main
+COPY --from=whisper-builder /build/models/ggml-large-v3.bin /app/whisper-backup/model.bin
+RUN chmod +x /app/whisper-backup/main
+
+# Directory per il volume (sarà popolata dall'entrypoint)
+RUN mkdir -p /app/whisper
+
+# Entrypoint per gestire la persistenza
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Cartelle dati
 RUN mkdir -p recordings batch_processing data mixed_sessions
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]

@@ -37,6 +37,8 @@ services:
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
       - ./data:/app/data
+      # 🆕 Whisper persiste nel volume (sopravvive a docker system prune)
+      - whisper_data:/app/whisper
 
   redis:
     image: redis:alpine
@@ -51,3 +53,4 @@ services:
 volumes:
   ollama_data:
   redis_data:
+  whisper_data:  # 🆕 Persiste whisper.cpp e modello large-v3

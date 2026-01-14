@@ -88,6 +88,7 @@ import {
     deleteAtlasEntry,
     getAtlasEntryFull,
     getNpcEntry,
+    getNpcHistory, // 🆕 Per selezione NPC per ID
     updateNpcEntry,
     listNpcs,
     addQuest,
@@ -121,7 +122,8 @@ import {
     setCampaignAutoUpdate, // NUOVO - Toggle auto-update PG
     addNpcAlias, // NUOVO - Sistema Ibrido RAG
     removeNpcAlias, // NUOVO - Sistema Ibrido RAG
-    upsertMonster // NUOVO - Bestiario (Architettura Unificata)
+    upsertMonster, // NUOVO - Bestiario (Architettura Unificata)
+    updateSessionPresentNPCs // NUOVO - Salva NPC incontrati a livello sessione
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -1188,12 +1190,42 @@ client.on('messageCreate', async (message: Message) => {
         const argsStr = args.join(' ');
 
         if (!argsStr) {
-            // LISTA
+            // LISTA con ID numerici
             const npcs = listNpcs(activeCampaign!.id);
             if (npcs.length === 0) return message.reply("L'archivio NPC è vuoto.");
 
-            const list = npcs.map((n: any) => `👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
-            return message.reply(`**📂 Dossier NPC Recenti**\n${list}`);
+            const list = npcs.map((n: any, i: number) => `\`${i + 1}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
+            return message.reply(`**📂 Dossier NPC Recenti**\n${list}\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`);
+        }
+
+        // --- SELEZIONE PER ID NUMERICO: $npc 1, $npc #2 ---
+        const numericMatch = argsStr.match(/^#?(\d+)$/);
+        if (numericMatch) {
+            const idx = parseInt(numericMatch[1]) - 1; // 1-based to 0-based
+            const npcs = listNpcs(activeCampaign!.id);
+
+            if (idx < 0 || idx >= npcs.length) {
+                return message.reply(`❌ ID non valido. Usa un numero da 1 a ${npcs.length}.`);
+            }
+
+            const npc = npcs[idx];
+            const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+            let response = `${statusIcon} **${npc.name}**\n`;
+            response += `🎭 **Ruolo:** ${npc.role || 'Sconosciuto'}\n`;
+            response += `📊 **Stato:** ${npc.status}\n`;
+            response += `📜 **Note:**\n> ${npc.description || '_Nessuna nota_'}`;
+
+            // Cronologia eventi (ultimi 5)
+            const history = getNpcHistory(activeCampaign!.id, npc.name).slice(-5);
+            if (history.length > 0) {
+                response += `\n\n📖 **Cronologia Recente:**\n`;
+                history.forEach((h: any) => {
+                    const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
+                    response += `${typeIcon} ${h.description}\n`;
+                });
+            }
+
+            return message.reply(response);
         }
 
         // --- SESSIONE SPECIFICA: $npc <session_id> ---
@@ -1261,15 +1293,15 @@ client.on('messageCreate', async (message: Message) => {
                 const mergedDesc = await smartMergeBios(targetNpc.description || "", sourceNpc.description || "");
                 
                 // Aggiorna Target
-                db.prepare(`UPDATE npcdossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
+                db.prepare(`UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
                   .run(mergedDesc, targetNpc.id);
-                
+
                 // Aggiorna History (sposta eventi dal vecchio al nuovo)
                 db.prepare(`UPDATE npc_history SET npc_name = ? WHERE campaign_id = ? AND lower(npc_name) = lower(?)`)
                   .run(targetName, activeCampaign!.id, sourceName);
 
                 // Elimina Source
-                db.prepare(`DELETE FROM npcdossier WHERE id = ?`).run(sourceNpc.id);
+                db.prepare(`DELETE FROM npc_dossier WHERE id = ?`).run(sourceNpc.id);
 
                 return message.reply(`✅ **Unito!**\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
             } else {
@@ -2054,6 +2086,11 @@ client.on('messageCreate', async (message: Message) => {
                             );
                         }
                     }
+                }
+
+                // --- GESTIONE NPC INCONTRATI (per tabella "NPC Incontrati") ---
+                if (result.present_npcs && result.present_npcs.length > 0) {
+                    updateSessionPresentNPCs(currentSessionId, result.present_npcs);
                 }
 
                 // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
@@ -3129,6 +3166,11 @@ client.on('messageCreate', async (message: Message) => {
                 }
             }
 
+            // --- GESTIONE NPC INCONTRATI (per tabella "NPC Incontrati") ---
+            if (result.present_npcs?.length) {
+                updateSessionPresentNPCs(targetSessionId, result.present_npcs);
+            }
+
             // Sync NPC, PG e Atlante
             syncAllDirtyNpcs(campaignId).catch(console.error);
             syncAllDirtyCharacters(campaignId).catch(console.error);
@@ -3257,7 +3299,7 @@ client.on('messageCreate', async (message: Message) => {
 async function waitForCompletionAndSummarize(sessionId: string, channel?: TextChannel): Promise<void> {
     return new Promise<void>(async (resolve, reject) => {
         const CHECK_INTERVAL = 30000; // 5s
-        const MAX_WAIT_TIME = 3600000; // 1 ora max
+        const MAX_WAIT_TIME = 86400000; // 1 ora max
         const startTime = Date.now();
         
         const checkCompletion = async () => {
@@ -3494,6 +3536,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                                     );
                                 }
                             }
+                        }
+
+                        // --- GESTIONE NPC INCONTRATI (per tabella "NPC Incontrati") ---
+                        if (result.present_npcs && result.present_npcs.length > 0) {
+                            updateSessionPresentNPCs(currentSessionId, result.present_npcs);
                         }
 
                         // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)

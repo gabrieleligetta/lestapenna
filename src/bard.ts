@@ -1046,7 +1046,7 @@ Restituisci SOLO il testo aggiornato della descrizione (senza introduzioni o spi
                 { role: "system", content: "Sei un biografo esperto che aggiorna schede personaggio rispettando l'agency del giocatore." },
                 { role: "user", content: prompt }
             ],
-            max_tokens: 1000
+            max_completion_tokens: 1000
         });
 
         const latency = Date.now() - startAI;
@@ -2795,6 +2795,224 @@ export async function smartMergeBios(existingBio: string, newInfo: string): Prom
         monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return `${existingBio} | ${newInfo}`; // Fallback sicuro
     }
+}
+
+// --- NPC NAME RECONCILIATION (Fuzzy + AI) ---
+
+/**
+ * Calcola la distanza di Levenshtein normalizzata (0-1, dove 1 = identico)
+ */
+function levenshteinSimilarity(a: string, b: string): number {
+    const al = a.toLowerCase().trim();
+    const bl = b.toLowerCase().trim();
+
+    if (al === bl) return 1;
+    if (al.length === 0 || bl.length === 0) return 0;
+
+    const matrix: number[][] = [];
+
+    for (let i = 0; i <= bl.length; i++) {
+        matrix[i] = [i];
+    }
+    for (let j = 0; j <= al.length; j++) {
+        matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= bl.length; i++) {
+        for (let j = 1; j <= al.length; j++) {
+            if (bl.charAt(i - 1) === al.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
+    }
+
+    const distance = matrix[bl.length][al.length];
+    const maxLen = Math.max(al.length, bl.length);
+    return 1 - distance / maxLen;
+}
+
+/**
+ * Verifica se un nome contiene l'altro come sottostringa (es. "Leo Sin" in "Leosin")
+ */
+function containsSubstring(name1: string, name2: string): boolean {
+    const n1 = name1.toLowerCase().replace(/\s+/g, '');
+    const n2 = name2.toLowerCase().replace(/\s+/g, '');
+    return n1.includes(n2) || n2.includes(n1);
+}
+
+/**
+ * Chiede all'AI se due nomi si riferiscono alla stessa persona.
+ */
+async function aiConfirmSamePerson(name1: string, name2: string, context: string = ""): Promise<boolean> {
+    const prompt = `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${name1}" e "${name2}" sono la STESSA persona/NPC?
+
+Considera che:
+- I nomi potrebbero essere pronunce errate o parziali (es. "Leo Sin" = "Leosin")
+- Potrebbero essere soprannomi (es. "Rantar" potrebbe essere il cognome di "Leosin Erantar")
+- Le trascrizioni audio spesso dividono i nomi (es. "Leosin Erantar" → "Leo Sin" + "Rantar")
+
+${context ? `Contesto aggiuntivo: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
+ * Trova il nome canonico se esiste un NPC simile nel dossier.
+ * Ritorna { canonicalName, shouldMerge } o null se non trovato.
+ */
+export async function reconcileNpcName(
+    campaignId: number,
+    newName: string,
+    newDescription: string = ""
+): Promise<{ canonicalName: string; existingNpc: any } | null> {
+    const existingNpcs = listNpcs(campaignId);
+    if (existingNpcs.length === 0) return null;
+
+    const newNameLower = newName.toLowerCase().trim();
+
+    // 1. Match esatto (case-insensitive) → nessuna riconciliazione necessaria
+    const exactMatch = existingNpcs.find((n: any) => n.name.toLowerCase() === newNameLower);
+    if (exactMatch) return null; // Già esiste con lo stesso nome
+
+    // 2. Cerca candidati simili
+    const candidates: Array<{ npc: any; similarity: number; reason: string }> = [];
+
+    for (const npc of existingNpcs) {
+        const existingName = npc.name;
+        const similarity = levenshteinSimilarity(newName, existingName);
+
+        // Threshold dinamico basato sulla lunghezza
+        const minLen = Math.min(newName.length, existingName.length);
+        const threshold = minLen < 6 ? 0.7 : 0.6;
+
+        // Check 1: Alta similarità Levenshtein
+        if (similarity >= threshold) {
+            candidates.push({ npc, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
+            continue;
+        }
+
+        // Check 2: Uno contiene l'altro (senza spazi)
+        if (containsSubstring(newName, existingName)) {
+            candidates.push({ npc, similarity: 0.8, reason: 'substring_match' });
+            continue;
+        }
+
+        // Check 3: Parti del nome in comune (es. "Leosin" e "Leo Sin")
+        const newParts = newName.toLowerCase().split(/\s+/);
+        const existingParts = existingName.toLowerCase().split(/\s+/);
+
+        for (const np of newParts) {
+            for (const ep of existingParts) {
+                if (np.length > 3 && ep.length > 3 && levenshteinSimilarity(np, ep) > 0.8) {
+                    candidates.push({ npc, similarity: 0.75, reason: `part_match: ${np}≈${ep}` });
+                }
+            }
+        }
+    }
+
+    if (candidates.length === 0) return null;
+
+    // Ordina per similarità decrescente
+    candidates.sort((a, b) => b.similarity - a.similarity);
+
+    // 3. Per ogni candidato, chiedi conferma all'AI
+    for (const candidate of candidates.slice(0, 3)) { // Max 3 tentativi
+        console.log(`[Reconcile] 🔍 "${newName}" simile a "${candidate.npc.name}" (${candidate.reason}). Chiedo conferma AI...`);
+
+        const isSame = await aiConfirmSamePerson(
+            newName,
+            candidate.npc.name,
+            `Nuovo: ${newDescription}. Esistente: ${candidate.npc.description || ''}`
+        );
+
+        if (isSame) {
+            console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.npc.name}"`);
+            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
+        } else {
+            console.log(`[Reconcile] ❌ "${newName}" ≠ "${candidate.npc.name}"`);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Pre-deduplica un batch di NPC updates PRIMA di salvarli.
+ * Unisce nomi simili nello stesso batch (es. "Leosin Erantar" e "Leosin Erentar").
+ */
+export async function deduplicateNpcBatch(
+    npcs: Array<{ name: string; description: string; role?: string; status?: string }>
+): Promise<Array<{ name: string; description: string; role?: string; status?: string }>> {
+    if (npcs.length <= 1) return npcs;
+
+    const result: Array<{ name: string; description: string; role?: string; status?: string }> = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < npcs.length; i++) {
+        if (processed.has(i)) continue;
+
+        let merged = { ...npcs[i] };
+        processed.add(i);
+
+        // Cerca duplicati nel resto del batch
+        for (let j = i + 1; j < npcs.length; j++) {
+            if (processed.has(j)) continue;
+
+            const similarity = levenshteinSimilarity(merged.name, npcs[j].name);
+            const hasSubstring = containsSubstring(merged.name, npcs[j].name);
+
+            if (similarity > 0.7 || hasSubstring) {
+                // Chiedi all'AI se sono la stessa persona
+                const isSame = await aiConfirmSamePerson(merged.name, npcs[j].name);
+
+                if (isSame) {
+                    console.log(`[Batch Dedup] 🔄 "${npcs[j].name}" → "${merged.name}"`);
+                    // Usa il nome più lungo come canonico
+                    if (npcs[j].name.length > merged.name.length) {
+                        merged.name = npcs[j].name;
+                    }
+                    // Unisci descrizioni
+                    if (npcs[j].description && npcs[j].description !== merged.description) {
+                        merged.description = `${merged.description} ${npcs[j].description}`;
+                    }
+                    // Prendi il ruolo/status se mancante
+                    merged.role = merged.role || npcs[j].role;
+                    merged.status = merged.status || npcs[j].status;
+
+                    processed.add(j);
+                }
+            }
+        }
+
+        result.push(merged);
+    }
+
+    if (result.length < npcs.length) {
+        console.log(`[Batch Dedup] ✅ Ridotti ${npcs.length} NPC a ${result.length}`);
+    }
+
+    return result;
 }
 
 // --- RAG: SYNC DOSSIER ---

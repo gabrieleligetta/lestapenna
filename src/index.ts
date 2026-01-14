@@ -34,6 +34,8 @@ import {
     ingestLootEvent,
     smartMergeBios,
     regenerateNpcNotes,
+    reconcileNpcName,        // NUOVO - Riconciliazione NPC fuzzy + AI
+    deduplicateNpcBatch,     // NUOVO - Pre-dedup batch NPC
     validateBatch,           // NUOVO
     syncAllDirtyNpcs,        // NUOVO
     syncNpcDossierIfNeeded,   // NUOVO
@@ -2050,11 +2052,24 @@ client.on('messageCreate', async (message: Message) => {
                 // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
                 // ============================================
 
-                // --- GESTIONE NPC DOSSIER ---
+                // --- GESTIONE NPC DOSSIER (con dedup batch + riconciliazione DB) ---
                 if (result.npc_dossier_updates && result.npc_dossier_updates.length > 0) {
-                    console.log(`[Biografo] 📝 Aggiornamento ${result.npc_dossier_updates.length} NPC...`);
-                    for (const npc of result.npc_dossier_updates) {
-                        if (npc.name && npc.description) {
+                    console.log(`[Biografo] 📝 Processamento ${result.npc_dossier_updates.length} NPC...`);
+
+                    // STEP 1: Deduplica DENTRO il batch (es. "Leosin Erantar" + "Leosin Erentar" → 1 solo)
+                    const validNpcs = result.npc_dossier_updates.filter((n: any) => n.name && n.description);
+                    const dedupedBatch = await deduplicateNpcBatch(validNpcs);
+
+                    // STEP 2: Riconcilia contro il DB esistente
+                    for (const npc of dedupedBatch) {
+                        const reconciled = await reconcileNpcName(currentCampaignId, npc.name, npc.description);
+
+                        if (reconciled) {
+                            console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
+                            const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
+                            updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status);
+                            markNpcDirty(currentCampaignId, reconciled.canonicalName);
+                        } else {
                             updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status);
                             markNpcDirty(currentCampaignId, npc.name);
                         }
@@ -3141,10 +3156,19 @@ client.on('messageCreate', async (message: Message) => {
                 }
             }
 
-            // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
+            // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI (con dedup + riconciliazione)
             if (result.npc_dossier_updates?.length) {
-                for (const npc of result.npc_dossier_updates) {
-                    if (npc.name && npc.description) {
+                const validNpcs = result.npc_dossier_updates.filter((n: any) => n.name && n.description);
+                const dedupedBatch = await deduplicateNpcBatch(validNpcs);
+
+                for (const npc of dedupedBatch) {
+                    const reconciled = await reconcileNpcName(campaignId, npc.name, npc.description);
+                    if (reconciled) {
+                        console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
+                        const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
+                        updateNpcEntry(campaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status);
+                        markNpcDirty(campaignId, reconciled.canonicalName);
+                    } else {
                         updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status);
                         markNpcDirty(campaignId, npc.name);
                     }
@@ -3500,11 +3524,21 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
                         // ============================================
 
-                        // --- GESTIONE NPC DOSSIER ---
+                        // --- GESTIONE NPC DOSSIER (con dedup batch + riconciliazione DB) ---
                         if (result.npc_dossier_updates && result.npc_dossier_updates.length > 0) {
-                            console.log(`[Biografo] 📝 Aggiornamento ${result.npc_dossier_updates.length} NPC...`);
-                            for (const npc of result.npc_dossier_updates) {
-                                if (npc.name && npc.description) {
+                            console.log(`[Biografo] 📝 Processamento ${result.npc_dossier_updates.length} NPC...`);
+
+                            const validNpcs = result.npc_dossier_updates.filter((n: any) => n.name && n.description);
+                            const dedupedBatch = await deduplicateNpcBatch(validNpcs);
+
+                            for (const npc of dedupedBatch) {
+                                const reconciled = await reconcileNpcName(currentCampaignId, npc.name, npc.description);
+                                if (reconciled) {
+                                    console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
+                                    const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
+                                    updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status);
+                                    markNpcDirty(currentCampaignId, reconciled.canonicalName);
+                                } else {
                                     updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status);
                                     markNpcDirty(currentCampaignId, npc.name);
                                 }

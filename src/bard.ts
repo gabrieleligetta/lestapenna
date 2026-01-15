@@ -2361,7 +2361,7 @@ ISTRUZIONI DI STILE:
 **OUTPUT JSON** (SOLO questi campi narrativi):
 {
   "title": "Titolo evocativo per la sessione",
-  "summary": "Il testo narrativo completo della sessione. MASSIMO 6500 caratteri.",
+  "narrative": "Il testo narrativo COMPLETO della sessione. Scrivi in prosa avvincente, terza persona, tempo passato. Includi dialoghi (con «»), atmosfera, emozioni. NESSUN LIMITE di lunghezza - sii dettagliato!",
   "narrativeBrief": "Mini-racconto autonomo per Discord/email. MASSIMO 1800 caratteri.",
   "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM)"],
   "character_growth": [
@@ -2441,11 +2441,12 @@ ISTRUZIONI DI STILE:
             };
         }
 
-        let finalSummary = parsed.summary;
-        if (Array.isArray(parsed.log)) {
+        // finalSummary: campo legacy, usa narrative se disponibile
+        let finalSummary = parsed.narrative || parsed.summary || "";
+
+        // Fallback estremo: se non c'è narrativa, usa i log
+        if (!finalSummary && Array.isArray(parsed.log) && parsed.log.length > 0) {
             finalSummary = parsed.log.join('\n');
-        } else if (!finalSummary && parsed.narrative) {
-            finalSummary = parsed.narrative;
         }
 
         // ESTRAZIONE DATI STRUTTURATI DAL DB (identici alla mail)
@@ -2497,11 +2498,11 @@ ISTRUZIONI DI STILE:
         // ============================================
         return {
             // DALLO SCRITTORE (narrazione)
-            summary: finalSummary || "Errore generazione.",
+            summary: finalSummary || "Errore generazione.", // Legacy field (stesso contenuto di narrative)
             title: parsed.title || "Sessione Senza Titolo",
             tokens: accumulatedTokens,
-            narrative: parsed.narrative,
-            narrativeBrief: parsed.narrativeBrief || (parsed.narrative?.substring(0, 1800) + (parsed.narrative?.length > 1800 ? "..." : "")),
+            narrative: finalSummary || "Errore generazione.", // Per RAG (senza limiti)
+            narrativeBrief: parsed.narrativeBrief || (finalSummary.substring(0, 1800) + (finalSummary.length > 1800 ? "..." : "")), // Per Discord/Email (~1800 chars)
             log: Array.isArray(parsed.log) ? parsed.log : [],
             character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
             npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],

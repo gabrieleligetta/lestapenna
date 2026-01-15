@@ -173,6 +173,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS location_atlas (
     description TEXT,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
     rag_sync_needed INTEGER DEFAULT 0,
+    first_session_id TEXT, -- 🆕 Tracciamento origine
     UNIQUE(campaign_id, macro_location, micro_location)
 )`);
 
@@ -188,6 +189,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS npc_dossier (
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
     rag_sync_needed INTEGER DEFAULT 0,
     aliases TEXT,
+    first_session_id TEXT, -- 🆕 Tracciamento origine
     UNIQUE(campaign_id, name)
 )`);
 
@@ -291,7 +293,10 @@ const migrations = [
     // 🆕 SISTEMA ENTITY REFS: Rinomina per supportare prefissi tipizzati (npc:1, pc:15, etc.)
     "ALTER TABLE knowledge_fragments ADD COLUMN associated_entity_ids TEXT",
     // 🆕 FIX: Indice univoco per upsert bestiario
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_bestiary_unique ON bestiary(campaign_id, name, session_id) WHERE session_id IS NOT NULL"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_bestiary_unique ON bestiary(campaign_id, name, session_id) WHERE session_id IS NOT NULL",
+    // 🆕 TRACCIAMENTO ORIGINE PER RESET PULITO
+    "ALTER TABLE npc_dossier ADD COLUMN first_session_id TEXT",
+    "ALTER TABLE location_atlas ADD COLUMN first_session_id TEXT"
 ];
 
 for (const m of migrations) {
@@ -417,6 +422,7 @@ export interface NpcEntry {
     last_seen_location: string | null;
     last_updated: string;
     aliases?: string | null; // 🆕 Sistema Ibrido RAG (soprannomi, titoli)
+    first_session_id?: string | null; // 🆕 Tracciamento origine
 }
 
 export interface Quest {
@@ -597,17 +603,19 @@ export const getAtlasEntry = (campaignId: number, macro: string, micro: string):
     return row ? row.description : null;
 };
 
-export const updateAtlasEntry = (campaignId: number, macro: string, micro: string, newDescription: string) => {
+export const updateAtlasEntry = (campaignId: number, macro: string, micro: string, newDescription: string, sessionId?: string) => {
     // Sanitize: Force string if object is passed (AI hallucination fix)
     const safeDesc = (typeof newDescription === 'object') ? JSON.stringify(newDescription) : String(newDescription);
 
     // Upsert: Inserisci o Aggiorna se esiste
+    // Se inseriamo (nuovo), salviamo first_session_id
+    // Se aggiorniamo, manteniamo il first_session_id originale
     db.prepare(`
-        INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated)
-        VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP)
+        INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id)
+        VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId)
         ON CONFLICT(campaign_id, macro_location, micro_location) 
         DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP
-    `).run({ campaignId, macro, micro, desc: safeDesc });
+    `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null });
     
     console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
 };
@@ -753,21 +761,23 @@ export const fixCurrentLocation = (campaignId: number, newMacro: string, newMicr
 
 // --- FUNZIONI DOSSIER NPC ---
 
-export const updateNpcEntry = (campaignId: number, name: string, description: string, role?: string, status?: string) => {
+export const updateNpcEntry = (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string) => {
     // Sanitize: Force string if object is passed
     const safeDesc = (typeof description === 'object') ? JSON.stringify(description) : String(description);
 
     // Upsert intelligente
+    // Se inseriamo (nuovo), salviamo first_session_id
+    // Se aggiorniamo, manteniamo il first_session_id originale
     db.prepare(`
-        INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated)
-        VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP)
+        INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id)
+        VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId)
         ON CONFLICT(campaign_id, name) 
         DO UPDATE SET 
             description = CASE WHEN $description IS NOT NULL THEN $description ELSE description END,
             role = CASE WHEN $role IS NOT NULL THEN $role ELSE role END,
             status = CASE WHEN $status IS NOT NULL THEN $status ELSE status END,
             last_updated = CURRENT_TIMESTAMP
-    `).run({ campaignId, name, description: safeDesc, role: role || null, status: status || null });
+    `).run({ campaignId, name, description: safeDesc, role: role || null, status: status || null, sessionId: sessionId || null });
     
     console.log(`[Dossier] 👤 Aggiornato NPC: ${name}`);
 };
@@ -1770,7 +1780,17 @@ export const resetSessionData = (sessionId: string): Recording[] => {
     db.prepare('DELETE FROM character_history WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM world_history WHERE session_id = ?').run(sessionId);
-    console.log(`[DB] 🧹 Dati derivati puliti per sessione ${sessionId}`);
+    
+    // 🆕 PULIZIA MOSTRI (Bestiario)
+    db.prepare('DELETE FROM bestiary WHERE session_id = ?').run(sessionId);
+
+    // 🆕 PULIZIA NPC CREATI IN QUESTA SESSIONE
+    db.prepare('DELETE FROM npc_dossier WHERE first_session_id = ?').run(sessionId);
+
+    // 🆕 PULIZIA LUOGHI CREATI IN QUESTA SESSIONE
+    db.prepare('DELETE FROM location_atlas WHERE first_session_id = ?').run(sessionId);
+
+    console.log(`[DB] 🧹 Dati derivati (inclusi NPC/Mostri/Luoghi originali) puliti per sessione ${sessionId}`);
 
     // 4. RESET STATO FILE
     db.prepare(`
@@ -2119,6 +2139,7 @@ export const wipeDatabase = () => {
         description TEXT,
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
+        first_session_id TEXT,
         UNIQUE(campaign_id, macro_location, micro_location)
     )`);
 
@@ -2134,6 +2155,7 @@ export const wipeDatabase = () => {
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         aliases TEXT,
+        first_session_id TEXT,
         UNIQUE(campaign_id, name)
     )`);
 

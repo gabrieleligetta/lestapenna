@@ -1849,42 +1849,40 @@ client.on('messageCreate', async (message: Message) => {
         await waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
     }
 
-    // --- NUOVO: !scaricatrascrizioni <ID> ---
+    // --- $scaricatrascrizioni <ID> [raw|cleaned|summary|all] ---
+    // 🆕 SEMPLIFICATO: 2 file base (raw + cleaned), summary opzionale
     if (command === 'scaricatrascrizioni' || command === 'downloadtxt') {
         const targetSessionId = args[0];
-        const type = args[1]?.toLowerCase() || 'corrected'; // raw, corrected, narrative, all
+        const type = args[1]?.toLowerCase() || 'all'; // raw, cleaned, summary, all
 
         if (!targetSessionId) {
-            return await message.reply("Uso: `$scaricatrascrizioni <ID> [raw|corrected|narrative|all]`");
+            return await message.reply("Uso: `$scaricatrascrizioni <ID> [raw|cleaned|summary|all]`");
         }
 
         const loadingMsg = await message.reply(`🔍 Ricerca trascrizioni per sessione \`${targetSessionId}\`...`);
 
-        // 1. Tenta di ottenere URL dal Cloud (Lazy Check)
-        const correctedKey = `transcripts/${targetSessionId}/transcript_corrected.txt`;
+        // 1. Tenta di ottenere URL dal Cloud
+        const cleanedKey = `transcripts/${targetSessionId}/transcript_cleaned.txt`;
         const rawKey = `transcripts/${targetSessionId}/transcript_raw.txt`;
-        const narrativeKey = `transcripts/${targetSessionId}/transcript_narrative.txt`;
+        const summaryKey = `transcripts/${targetSessionId}/summary_narrative.txt`;
 
-        let correctedUrl = await getPresignedUrl(correctedKey, undefined, 604800); // 7 giorni
+        let cleanedUrl = await getPresignedUrl(cleanedKey, undefined, 604800); // 7 giorni
         let rawUrl = await getPresignedUrl(rawKey, undefined, 604800);
-        let narrativeUrl = await getPresignedUrl(narrativeKey, undefined, 604800);
+        let summaryUrl = await getPresignedUrl(summaryKey, undefined, 604800);
 
-        // 2. Se mancano, rigenera (Auto-Fix per sessioni vecchie)
-        if (!correctedUrl || !rawUrl || !narrativeUrl) {
+        // 2. Se mancano i file base, rigenera
+        if (!cleanedUrl || !rawUrl) {
             await loadingMsg.edit(`⚙️ Archivi Cloud non trovati. Generazione e upload in corso...`);
-            
+
             try {
-                // Recupera ID campagna (necessario per generazione)
                 const campaignId = getSessionCampaignId(targetSessionId);
                 if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
 
-                // Genera e carica
                 await archiveSessionTranscripts(targetSessionId, campaignId);
 
-                // Riprova a ottenere URL
-                correctedUrl = await getPresignedUrl(correctedKey, undefined, 604800);
+                cleanedUrl = await getPresignedUrl(cleanedKey, undefined, 604800);
                 rawUrl = await getPresignedUrl(rawKey, undefined, 604800);
-                narrativeUrl = await getPresignedUrl(narrativeKey, undefined, 604800);
+                summaryUrl = await getPresignedUrl(summaryKey, undefined, 604800);
 
             } catch (e: any) {
                 console.error(`Errore rigenerazione trascrizioni:`, e);
@@ -1896,11 +1894,11 @@ client.on('messageCreate', async (message: Message) => {
         const embed = new EmbedBuilder()
             .setTitle(`📜 Trascrizioni Sessione ${targetSessionId}`)
             .setColor("#2ECC71")
-            .setDescription("Ecco i link per scaricare le trascrizioni (validi per 7 giorni).")
+            .setDescription("Link per scaricare le trascrizioni (validi per 7 giorni).")
             .addFields(
-                { name: "✨ Corretta (Leggibile)", value: correctedUrl ? `[Download](${correctedUrl})` : "Non disponibile", inline: true },
+                { name: "✨ Pulita (Regex)", value: cleanedUrl ? `[Download](${cleanedUrl})` : "Non disponibile", inline: true },
                 { name: "🎙️ Raw (Whisper)", value: rawUrl ? `[Download](${rawUrl})` : "Non disponibile", inline: true },
-                { name: "📖 Narrativa (RAG)", value: narrativeUrl ? `[Download](${narrativeUrl})` : "Non disponibile", inline: true }
+                { name: "📖 Riassunto", value: summaryUrl ? `[Download](${summaryUrl})` : "Non generato", inline: true }
             )
             .setFooter({ text: "File ospitati su Oracle Cloud Object Storage" });
 
@@ -2122,10 +2120,10 @@ client.on('messageCreate', async (message: Message) => {
                         if (reconciled) {
                             console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
                             const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
-                            updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status);
+                            updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status, currentSessionId);
                             markNpcDirty(currentCampaignId, reconciled.canonicalName);
                         } else {
-                            updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status);
+                            updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status, currentSessionId);
                             markNpcDirty(currentCampaignId, npc.name);
                         }
                     }
@@ -2136,7 +2134,7 @@ client.on('messageCreate', async (message: Message) => {
                     console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} luoghi...`);
                     for (const loc of result.location_updates) {
                         if (loc.macro && loc.micro && loc.description) {
-                            updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description);
+                            updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
                             markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
                         }
                     }
@@ -3167,6 +3165,15 @@ client.on('messageCreate', async (message: Message) => {
             db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(targetSessionId);
             db.prepare('DELETE FROM world_history WHERE session_id = ?').run(targetSessionId);
             
+            // 🆕 PULIZIA MOSTRI (Bestiario)
+            db.prepare('DELETE FROM bestiary WHERE session_id = ?').run(targetSessionId);
+
+            // 🆕 PULIZIA NPC CREATI IN QUESTA SESSIONE
+            db.prepare('DELETE FROM npc_dossier WHERE first_session_id = ?').run(targetSessionId);
+
+            // 🆕 PULIZIA LUOGHI CREATI IN QUESTA SESSIONE
+            db.prepare('DELETE FROM location_atlas WHERE first_session_id = ?').run(targetSessionId);
+
             await channel.send(`2. Preparazione testo e Analisi Eventi...`);
 
             // 2. PREPARAZIONE TESTO PULITO
@@ -3238,10 +3245,10 @@ client.on('messageCreate', async (message: Message) => {
                     if (reconciled) {
                         console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
                         const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
-                        updateNpcEntry(campaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status);
+                        updateNpcEntry(campaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status, targetSessionId);
                         markNpcDirty(campaignId, reconciled.canonicalName);
                     } else {
-                        updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status);
+                        updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status, targetSessionId);
                         markNpcDirty(campaignId, npc.name);
                     }
                 }
@@ -3249,7 +3256,7 @@ client.on('messageCreate', async (message: Message) => {
             if (result.location_updates?.length) {
                 for (const loc of result.location_updates) {
                     if (loc.macro && loc.micro && loc.description) {
-                        updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description);
+                        updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description, targetSessionId);
                         markAtlasDirty(campaignId, loc.macro, loc.micro);
                     }
                 }
@@ -3457,16 +3464,12 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 }
                 
                 try {
-                    // Preparazione testo pulito
-                    const cleanText = prepareCleanText(sessionId);
-                    console.log(`[Monitor] 📝 Testo preparato`);
-
-                    // Genera riassunto (usando il testo pulito)
-                    const result = await generateSummary(sessionId, 'DM', cleanText);
-
-                    // Ingestione RAG (con dati dall'Analista)
-                    await ingestSessionComplete(sessionId, result);
+                    // Ingestione memoria
+                    const narrativeText = await ingestSessionRaw(sessionId);
                     console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
+
+                    // Genera riassunto (usando il testo narrativo pulito!)
+                    const result = await generateSummary(sessionId, 'DM', narrativeText);
                     
                     // Salva titolo
                     updateSessionTitle(sessionId, result.title);
@@ -3629,10 +3632,10 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                                 if (reconciled) {
                                     console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
                                     const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
-                                    updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status);
+                                    updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status, currentSessionId);
                                     markNpcDirty(currentCampaignId, reconciled.canonicalName);
                                 } else {
-                                    updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status);
+                                    updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status, currentSessionId);
                                     markNpcDirty(currentCampaignId, npc.name);
                                 }
                             }
@@ -3643,7 +3646,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} luoghi...`);
                             for (const loc of result.location_updates) {
                                 if (loc.macro && loc.micro && loc.description) {
-                                    updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description);
+                                    updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
                                     markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
                                 }
                             }

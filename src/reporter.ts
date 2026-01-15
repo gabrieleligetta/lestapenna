@@ -7,7 +7,7 @@ import * as path from 'path';
 import { getSessionTravelLog, getSessionEncounteredNPCs, getCampaignById, getSessionStartTime, getSessionTranscript, getExplicitSessionNumber, db, getSessionNotes } from './db';
 import { processChronologicalSession } from './transcriptUtils';
 import { monitor } from './monitor';
-import { normalizeToNarrative, formatNarrativeTranscript } from './narrativeFilter';
+// 🆕 Rimosso import narrativeFilter - ora usiamo solo regex per pulizia
 import axios from "axios";
 
 // Configurazione SMTP per Porkbun
@@ -570,10 +570,17 @@ export async  function testRemoteConnection() {
 }
 
 /**
- * Genera e archivia le trascrizioni (Raw, Corrected, Narrative) su Oracle Cloud.
- * Restituisce i percorsi locali dei file temporanei per l'invio via email.
+ * Genera e archivia le trascrizioni (Raw + Cleaned) su Oracle Cloud.
+ * 🆕 SEMPLIFICATO: Rimossa generazione AI narrativa, solo regex cleaning.
+ * - raw: Output Whisper grezzo
+ * - cleaned: Pulito con regex anti-allucinazioni (ex "corrected")
+ * - summary: Il riassunto narrativo da generateSummary (opzionale)
  */
-export async function archiveSessionTranscripts(sessionId: string, campaignId: number, narrativeText?: string): Promise<{ raw: string, corrected: string, narrative: string }> {
+export async function archiveSessionTranscripts(
+    sessionId: string,
+    campaignId: number,
+    summaryNarrative?: string
+): Promise<{ raw: string; cleaned: string; summary?: string }> {
     console.log(`[Reporter] 📦 Archiviazione trascrizioni per sessione ${sessionId}...`);
 
     // 1. Recupero Dati
@@ -586,15 +593,15 @@ export async function archiveSessionTranscripts(sessionId: string, campaignId: n
     }
 
     // 2. Generazione Testi
-    // --- ELABORAZIONE CORRECTED ---
-    const processedCorrected = processChronologicalSession(transcripts, notes, startTime, campaignId);
-    const correctedText = processedCorrected.formattedText;
+    // --- ELABORAZIONE CLEANED (regex-filtered, no AI) ---
+    const processedCleaned = processChronologicalSession(transcripts, notes, startTime, campaignId);
+    const cleanedText = processedCleaned.formattedText;
 
     // --- ELABORAZIONE RAW ---
     const rawTranscripts = transcripts.map(t => {
         const recording = db.prepare(`
-            SELECT raw_transcription_text 
-            FROM recordings 
+            SELECT raw_transcription_text
+            FROM recordings
             WHERE session_id = ? AND user_id = ? AND timestamp = ?
         `).get(sessionId, t.user_id, t.timestamp) as { raw_transcription_text: string | null } | undefined;
 
@@ -604,45 +611,39 @@ export async function archiveSessionTranscripts(sessionId: string, campaignId: n
         };
     });
 
-    // ✅ MODIFICA: Passiamo compact=true per il raw
     const processedRaw = processChronologicalSession(rawTranscripts, notes, startTime, campaignId, true);
     const rawText = processedRaw.formattedText;
-
-    // --- ELABORAZIONE NARRATIVE ---
-    let finalNarrativeText = narrativeText;
-    if (!finalNarrativeText) {
-        console.log(`[Reporter] 🎭 Generazione versione Narrativa (Fallback)...`);
-        const narrativeSegments = await normalizeToNarrative(processedCorrected.segments, campaignId);
-        finalNarrativeText = formatNarrativeTranscript(narrativeSegments);
-    }
 
     // 3. Salvataggio Temporaneo
     const tempDir = path.join(__dirname, '..', 'temp_emails');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-    const correctedPath = path.join(tempDir, `${sessionId}_corrected.txt`);
+    const cleanedPath = path.join(tempDir, `${sessionId}_cleaned.txt`);
     const rawPath = path.join(tempDir, `${sessionId}_raw_whisper.txt`);
-    const narrativePath = path.join(tempDir, `${sessionId}_narrative.txt`);
+    const summaryPath = summaryNarrative ? path.join(tempDir, `${sessionId}_summary.txt`) : undefined;
 
-    fs.writeFileSync(correctedPath, correctedText, 'utf-8');
+    fs.writeFileSync(cleanedPath, cleanedText, 'utf-8');
     fs.writeFileSync(rawPath, rawText, 'utf-8');
-    fs.writeFileSync(narrativePath, finalNarrativeText, 'utf-8');
+    if (summaryPath && summaryNarrative) {
+        fs.writeFileSync(summaryPath, summaryNarrative, 'utf-8');
+    }
 
     // 4. Upload su Cloud
     try {
-        await uploadToOracle(correctedPath, 'transcript_corrected.txt', sessionId, `transcripts/${sessionId}/transcript_corrected.txt`);
+        await uploadToOracle(cleanedPath, 'transcript_cleaned.txt', sessionId, `transcripts/${sessionId}/transcript_cleaned.txt`);
         await uploadToOracle(rawPath, 'transcript_raw.txt', sessionId, `transcripts/${sessionId}/transcript_raw.txt`);
-        await uploadToOracle(narrativePath, 'transcript_narrative.txt', sessionId, `transcripts/${sessionId}/transcript_narrative.txt`);
+        if (summaryPath) {
+            await uploadToOracle(summaryPath, 'summary_narrative.txt', sessionId, `transcripts/${sessionId}/summary_narrative.txt`);
+        }
         console.log(`[Reporter] ☁️ Trascrizioni archiviate su Oracle Cloud.`);
     } catch (e) {
         console.error(`[Reporter] ❌ Errore upload trascrizioni:`, e);
-        // Non blocchiamo il flusso, i file locali sono comunque disponibili
     }
 
     return {
         raw: rawPath,
-        corrected: correctedPath,
-        narrative: narrativePath
+        cleaned: cleanedPath,
+        summary: summaryPath
     };
 }
 
@@ -657,22 +658,20 @@ export async function sendSessionRecap(
 ): Promise<boolean> {
 
     // 1. Generazione e Archiviazione (Sempre, anche se email disabilitata)
-    let filePaths: { raw: string, corrected: string, narrative: string } | null = null;
+    let filePaths: { raw: string; cleaned: string; summary?: string } | null = null;
     try {
         filePaths = await archiveSessionTranscripts(sessionId, campaignId, narrative);
     } catch (e) {
         console.error(`[Reporter] ❌ Errore archiviazione trascrizioni:`, e);
-        // Se fallisce l'archiviazione, non possiamo allegare i file, ma proviamo a mandare l'email senza
     }
 
     if (!process.env.EMAIL_ENABLED || process.env.EMAIL_ENABLED !== 'true') {
         console.log(`[Reporter] ✉️ Email disabilitata`);
-        // Pulizia file se generati
         if (filePaths) {
             try {
-                if (fs.existsSync(filePaths.corrected)) fs.unlinkSync(filePaths.corrected);
+                if (fs.existsSync(filePaths.cleaned)) fs.unlinkSync(filePaths.cleaned);
                 if (fs.existsSync(filePaths.raw)) fs.unlinkSync(filePaths.raw);
-                if (fs.existsSync(filePaths.narrative)) fs.unlinkSync(filePaths.narrative);
+                if (filePaths.summary && fs.existsSync(filePaths.summary)) fs.unlinkSync(filePaths.summary);
             } catch (e) {}
         }
         return false;
@@ -697,8 +696,8 @@ export async function sendSessionRecap(
 
         // Leggi contenuto narrative per l'email (se disponibile)
         let narrativeText = narrative;
-        if (!narrativeText && filePaths && fs.existsSync(filePaths.narrative)) {
-            narrativeText = fs.readFileSync(filePaths.narrative, 'utf-8');
+        if (!narrativeText && filePaths?.summary && fs.existsSync(filePaths.summary)) {
+            narrativeText = fs.readFileSync(filePaths.summary, 'utf-8');
         }
 
         // Genera Link Raw Full Session
@@ -822,9 +821,9 @@ export async function sendSessionRecap(
         
         const attachments = [];
         if (filePaths) {
-            if (fs.existsSync(filePaths.corrected)) attachments.push({ filename: `Sessione_${sessionNum}_Corretta.txt`, path: filePaths.corrected });
+            if (fs.existsSync(filePaths.cleaned)) attachments.push({ filename: `Sessione_${sessionNum}_Trascrizione.txt`, path: filePaths.cleaned });
             if (fs.existsSync(filePaths.raw)) attachments.push({ filename: `Sessione_${sessionNum}_Raw_Whisper.txt`, path: filePaths.raw });
-            if (fs.existsSync(filePaths.narrative)) attachments.push({ filename: `Sessione_${sessionNum}_Narrative.txt`, path: filePaths.narrative });
+            if (filePaths.summary && fs.existsSync(filePaths.summary)) attachments.push({ filename: `Sessione_${sessionNum}_Riassunto.txt`, path: filePaths.summary });
         }
 
         const mailOptions = {
@@ -841,9 +840,9 @@ export async function sendSessionRecap(
         // 🧹 PULIZIA
         if (filePaths) {
             try {
-                if (fs.existsSync(filePaths.corrected)) fs.unlinkSync(filePaths.corrected);
+                if (fs.existsSync(filePaths.cleaned)) fs.unlinkSync(filePaths.cleaned);
                 if (fs.existsSync(filePaths.raw)) fs.unlinkSync(filePaths.raw);
-                if (fs.existsSync(filePaths.narrative)) fs.unlinkSync(filePaths.narrative);
+                if (filePaths.summary && fs.existsSync(filePaths.summary)) fs.unlinkSync(filePaths.summary);
             } catch (e) {
                 console.warn(`[Reporter] ⚠️ Errore pulizia temp:`, e);
             }

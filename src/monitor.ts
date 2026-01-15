@@ -5,7 +5,7 @@ import * as path from 'path';
 import { exec } from 'child_process';
 
 interface CostBreakdown {
-    phase: string;           // 'transcription', 'metadata', 'map', 'summary', 'chat', 'embeddings'
+    phase: string;           // 'analyst', 'map', 'summary', 'chat', 'embeddings', 'metadata' (NO 'transcription' - ora solo regex)
     provider: 'ollama' | 'openai';
     model: string;
     inputTokens: number;

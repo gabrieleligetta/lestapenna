@@ -654,9 +654,9 @@ client.on('messageCreate', async (message: Message) => {
                 {
                     name: "🐲 Bestiary",
                     value:
-                        "`$bestiary`: Show encountered monsters.\n" +
-                        "`$bestiary <Name>`: Monster details (abilities, weaknesses, etc.).\n" +
-                        "`$bestiary merge <Old> | <New>`: Merge two monsters."
+                        "`$bestiario`: Show encountered monsters.\n" +
+                        "`$bestiario <Name>`: Monster details (abilities, weaknesses, etc.).\n" +
+                        "`$bestiario merge <Old> | <New>`: Merge two monsters."
                 },
                 {
                     name: "🎒 Inventory & Quests",
@@ -2436,7 +2436,16 @@ client.on('messageCreate', async (message: Message) => {
                     console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
                     for (const step of result.travel_sequence) {
                         if (step.macro && step.micro) {
-                            updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                            // Riconciliazione Fuzzy + AI per evitare duplicati (es. "Cancello" vs "Cancelli")
+                            const reconciled = await reconcileLocationName(currentCampaignId, step.macro, step.micro);
+                            
+                            if (reconciled) {
+                                console.log(`[GPS] 🔄 Riconciliato: "${step.macro} - ${step.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                            } else {
+                                updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                            }
+                            
                             console.log(`[GPS] → ${step.macro} - ${step.micro}${step.reason ? ` (${step.reason})` : ''}`);
                             await new Promise(r => setTimeout(r, 100)); // Delay per timestamp univoci
                         }
@@ -2445,7 +2454,15 @@ client.on('messageCreate', async (message: Message) => {
                     // Fallback: usa primo location_update come posizione finale
                     const fallbackLoc = result.location_updates[0];
                     if (fallbackLoc.macro && fallbackLoc.micro) {
-                        updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                        // Riconciliazione anche per il fallback
+                        const reconciled = await reconcileLocationName(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro);
+                        
+                        if (reconciled) {
+                            console.log(`[GPS] 🔄 Fallback Riconciliato: "${fallbackLoc.macro} - ${fallbackLoc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                            updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                        } else {
+                            updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                        }
                         console.log(`[GPS] 📍 Fallback posizione: ${fallbackLoc.macro} - ${fallbackLoc.micro}`);
                     }
                 }
@@ -2941,7 +2958,7 @@ client.on('messageCreate', async (message: Message) => {
     // Questo comando fa un'ingestione veloce solo con testo pulito
     if (command === 'ingest' || command === 'memorizza') {
         const targetSessionId = args[0];
-        if (!targetSessionId) return await message.reply("Uso: `$memorizza <ID_SESSIONE>`\nPer reingestione completa con NPC/Quest usa `$riprocessa`");
+        if (!targetSessionId) return await message.reply("Uso: `$memorizza <ID_SESSIONE>`\nPer reingestione completa con metadati usa `$riprocessa`");
 
         await message.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${targetSessionId}\`...\nℹ️ Usa \`$riprocessa\` per reingestione completa con metadati.`);
 
@@ -3633,7 +3650,15 @@ client.on('messageCreate', async (message: Message) => {
                 console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
                 for (const step of result.travel_sequence) {
                     if (step.macro && step.micro) {
-                        updateLocation(campaignId, step.macro, step.micro, targetSessionId);
+                        // Riconciliazione Fuzzy + AI
+                        const reconciled = await reconcileLocationName(campaignId, step.macro, step.micro);
+                        
+                        if (reconciled) {
+                            console.log(`[GPS] 🔄 Riconciliato: "${step.macro} - ${step.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                            updateLocation(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, targetSessionId);
+                        } else {
+                            updateLocation(campaignId, step.macro, step.micro, targetSessionId);
+                        }
                         await new Promise(r => setTimeout(r, 100));
                     }
                 }
@@ -3641,7 +3666,15 @@ client.on('messageCreate', async (message: Message) => {
                 // Fallback GPS
                 const fallbackLoc = result.location_updates[0];
                 if (fallbackLoc.macro && fallbackLoc.micro) {
-                    updateLocation(campaignId, fallbackLoc.macro, fallbackLoc.micro, targetSessionId);
+                    // Riconciliazione Fallback
+                    const reconciled = await reconcileLocationName(campaignId, fallbackLoc.macro, fallbackLoc.micro);
+                    
+                    if (reconciled) {
+                        console.log(`[GPS] 🔄 Fallback Riconciliato: "${fallbackLoc.macro} - ${fallbackLoc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                        updateLocation(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, targetSessionId);
+                    } else {
+                        updateLocation(campaignId, fallbackLoc.macro, fallbackLoc.micro, targetSessionId);
+                    }
                 }
             }
             // ATLANTE (Descrizioni con RICONCILIAZIONE)
@@ -4076,16 +4109,33 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
                             for (const step of result.travel_sequence) {
                                 if (step.macro && step.micro) {
-                                    updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                                    // Riconciliazione Fuzzy + AI per evitare duplicati (es. "Cancello" vs "Cancelli")
+                                    const reconciled = await reconcileLocationName(currentCampaignId, step.macro, step.micro);
+                                    
+                                    if (reconciled) {
+                                        console.log(`[GPS] 🔄 Riconciliato: "${step.macro} - ${step.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                        updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                                    } else {
+                                        updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                                    }
+                                    
                                     console.log(`[GPS] → ${step.macro} - ${step.micro}${step.reason ? ` (${step.reason})` : ''}`);
-                                    await new Promise(r => setTimeout(r, 100));
+                                    await new Promise(r => setTimeout(r, 100)); // Delay per timestamp univoci
                                 }
                             }
                         } else if (result.location_updates && result.location_updates.length > 0) {
-                            // Fallback GPS
+                            // Fallback: usa primo location_update come posizione finale
                             const fallbackLoc = result.location_updates[0];
                             if (fallbackLoc.macro && fallbackLoc.micro) {
-                                updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                                // Riconciliazione anche per il fallback
+                                const reconciled = await reconcileLocationName(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro);
+                                
+                                if (reconciled) {
+                                    console.log(`[GPS] 🔄 Fallback Riconciliato: "${fallbackLoc.macro} - ${fallbackLoc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                    updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                                } else {
+                                    updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                                }
                                 console.log(`[GPS] 📍 Fallback posizione: ${fallbackLoc.macro} - ${fallbackLoc.micro}`);
                             }
                         }

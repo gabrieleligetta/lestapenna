@@ -126,7 +126,9 @@ import {
     addNpcAlias, // NUOVO - Sistema Ibrido RAG
     removeNpcAlias, // NUOVO - Sistema Ibrido RAG
     upsertMonster, // NUOVO - Bestiario (Architettura Unificata)
-    updateSessionPresentNPCs // NUOVO - Salva NPC incontrati a livello sessione
+    updateSessionPresentNPCs, // NUOVO - Salva NPC incontrati a livello sessione
+    deleteQuest, // NUOVO - Cancella quest
+    updateQuestStatusById // NUOVO - Aggiorna stato quest per ID
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -486,6 +488,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$quest`: Visualizza quest attive.\n" +
                         "`$quest add <Titolo>`: Aggiunge una quest.\n" +
                         "`$quest done <Titolo>`: Completa una quest.\n" +
+                        "`$quest delete <ID>`: Elimina una quest.\n" +
                         "`$inventario`: Visualizza inventario.\n" +
                         "`$loot add <Oggetto>`: Aggiunge un oggetto.\n" +
                         "`$loot use <Oggetto>`: Rimuove/Usa un oggetto."
@@ -627,6 +630,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$quest`: View active quests.\n" +
                         "`$quest add <Title>`: Add a quest.\n" +
                         "`$quest done <Title>`: Complete a quest.\n" +
+                        "`$quest delete <ID>`: Delete a quest.\n" +
                         "`$inventory`: View inventory.\n" +
                         "`$loot add <Item>`: Add an item.\n" +
                         "`$loot use <Item>`: Remove/Use an item."
@@ -1714,16 +1718,41 @@ client.on('messageCreate', async (message: Message) => {
         }
         if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
             const search = arg.split(' ').slice(1).join(' '); // Rimuove 'done'
+            
+            // 🆕 Supporto per ID numerico
+            const questId = parseInt(search);
+            if (!isNaN(questId)) {
+                const success = updateQuestStatusById(questId, 'COMPLETED');
+                if (success) return message.reply(`✅ Quest #${questId} completata!`);
+                else return message.reply(`❌ Quest #${questId} non trovata.`);
+            }
+
             updateQuestStatus(activeCampaign!.id, search, 'COMPLETED');
             return message.reply(`✅ Quest aggiornata come completata (ricerca: "${search}")`);
+        }
+
+        // 🆕 Sottocomando: $quest delete <ID>
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('del ') || arg.toLowerCase().startsWith('remove ') || arg.toLowerCase().startsWith('rm ')) {
+            const idStr = arg.split(' ')[1];
+            const questId = parseInt(idStr);
+
+            if (isNaN(questId)) return message.reply("Uso: `$quest delete <ID>` (L'ID deve essere un numero)");
+
+            const success = deleteQuest(questId);
+            if (success) {
+                return message.reply(`🗑️ Quest #${questId} eliminata definitivamente.`);
+            } else {
+                return message.reply(`❌ Quest #${questId} non trovata.`);
+            }
         }
 
         // Visualizzazione
         const quests = getOpenQuests(activeCampaign!.id);
         if (quests.length === 0) return message.reply("Nessuna quest attiva al momento.");
 
-        const list = quests.map((q: any) => `🔹 **${q.title}**`).join('\n');
-        return message.reply(`**🗺️ Quest Attive (${activeCampaign?.name})**\n\n${list}`);
+        // 🆕 Visualizzazione con ID
+        const list = quests.map((q: any) => `\`#${q.id}\` 🔹 **${q.title}**`).join('\n');
+        return message.reply(`**🗺️ Quest Attive (${activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$quest done <ID>\` per completare o \`$quest delete <ID>\` per eliminare.`);
     }
 
     // --- NUOVO: $inventario ---
@@ -2272,12 +2301,12 @@ client.on('messageCreate', async (message: Message) => {
             // 🆕 Recupera NPC incontrati
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
 
-            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
             if (currentCampaignId) {
-                await sendSessionRecap(targetSessionId, currentCampaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
             }
 
             // 🆕 REPORT TECNICO CON COSTI
@@ -3360,10 +3389,10 @@ client.on('messageCreate', async (message: Message) => {
 
             // 5. PUBBLICAZIONE
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
-            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Email recap
-            await sendSessionRecap(targetSessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
+            await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
             // 🆕 REPORT TECNICO CON COSTI
             if (monitorStartedByUs) {
@@ -3544,13 +3573,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 
                 try {
                     // Ingestione memoria
-                    // 🆕 Prepara testo pulito
-                    const cleanText = prepareCleanText(sessionId);
-                    if (!cleanText) throw new Error("Nessuna trascrizione disponibile");
+                    const narrativeText = await ingestSessionRaw(sessionId);
                     console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
 
                     // Genera riassunto (usando il testo narrativo pulito!)
-                    let result = await generateSummary(sessionId, 'DM', cleanText);
+                    let result = await generateSummary(sessionId, 'DM', narrativeText);
                     
                     // 🆕 FASE 2.1: PRE-RECONCILIATION (Normalizzazione Nomi)
                     if (activeCampaign) {
@@ -3797,11 +3824,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
 
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.log || [], channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
                     }
 
                     // Invia email DM
-                    await sendSessionRecap(sessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
+                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
                     // 🆕 LOG DEBUG
                     console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');
@@ -3896,7 +3923,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
+async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -3971,12 +3998,13 @@ async function publishSummary(sessionId: string, log: string[], defaultChannel: 
     // --- RACCONTO NARRATIVO BREVE (max 1900 char) ---
     if (narrative && narrative.length > 10) {
         await targetChannel.send(`### 📖 Racconto\n${narrative}`);
+        await targetChannel.send(`---`); // Separatore
     }
+    // ---------------------------------
 
-    // --- RIASSUNTO EVENTI (LOG) ---
-    if (log && log.length > 0) {
-        const logText = log.map(entry => `• ${entry}`).join('\n');
-        await targetChannel.send(`### 📝 Riassunto Eventi\n${logText}`);
+    const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
+    for (const chunk of chunks) {
+        await targetChannel.send(chunk);
     }
 
     // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---

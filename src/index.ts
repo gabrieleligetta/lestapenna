@@ -1907,7 +1907,7 @@ client.on('messageCreate', async (message: Message) => {
         // FASE 2: RIASSUNTO
         try {
             await channel.send("✍️ Inizio stesura del racconto...");
-            const result = await generateSummary(targetSessionId, requestedTone || 'DM');
+            const result = await generateSummary(targetSessionId, requestedTone || 'DM', narrativeText);
 
             // SALVATAGGIO TITOLO
             updateSessionTitle(targetSessionId, result.title);
@@ -2155,12 +2155,12 @@ client.on('messageCreate', async (message: Message) => {
             // 🆕 Recupera NPC incontrati
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, narrativeText || result.narrative, result.monsters, encounteredNPCs);
-            
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
             if (currentCampaignId) {
-                await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, narrativeText || result.narrative, result.monsters);
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
             }
 
             const processingTime = Date.now() - startProcessing;
@@ -3111,7 +3111,7 @@ client.on('messageCreate', async (message: Message) => {
             const narrativeText = await ingestSessionRaw(targetSessionId);
 
             // 3. RIGENERAZIONE SUMMARY & DATI
-            const result = await generateSummary(targetSessionId, 'DM');
+            const result = await generateSummary(targetSessionId, 'DM', narrativeText);
             updateSessionTitle(targetSessionId, result.title);
 
             // 4. VALIDAZIONE E SALVATAGGIO (Logica copiata da waitForCompletionAndSummarize)
@@ -3208,10 +3208,10 @@ client.on('messageCreate', async (message: Message) => {
 
             // 5. PUBBLICAZIONE
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, narrativeText || result.narrative, result.monsters, encounteredNPCs);
-            
+            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+
             // Email
-            await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, narrativeText || result.narrative, result.monsters);
+            await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
             await channel.send(`✅ **Riprocessamento Completato!** Dati aggiornati.`);
 
@@ -3377,9 +3377,9 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     // Ingestione memoria
                     const narrativeText = await ingestSessionRaw(sessionId);
                     console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
-                    
-                    // Genera riassunto
-                    const result = await generateSummary(sessionId, 'DM');
+
+                    // Genera riassunto (usando il testo narrativo pulito!)
+                    const result = await generateSummary(sessionId, 'DM', narrativeText);
                     
                     // Salva titolo
                     updateSessionTitle(sessionId, result.title);
@@ -3621,11 +3621,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
 
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, narrativeText || result.narrative, result.monsters, encounteredNPCs);
+                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
                     }
-                    
+
                     // Invia email DM
-                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, narrativeText || result.narrative, result.monsters);
+                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
                     // 🆕 LOG DEBUG
                     console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');
@@ -3792,14 +3792,10 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
 
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
 
-    // --- NUOVO: RACCONTO NARRATIVO ---
+    // --- RACCONTO NARRATIVO BREVE (max 1900 char) ---
     if (narrative && narrative.length > 10) {
-        await targetChannel.send(`### 📖 Racconto`);
-        const narrativeChunks = narrative.match(/[\s\S]{1,1900}/g) || [];
-        for (const chunk of narrativeChunks) {
-            await targetChannel.send(chunk);
-        }
-        await targetChannel.send(`---\n`); // Separatore
+        await targetChannel.send(`### 📖 Racconto\n${narrative}`);
+        await targetChannel.send(`---`); // Separatore
     }
     // ---------------------------------
 

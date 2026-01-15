@@ -256,6 +256,7 @@ export interface SummaryResponse {
     loot_removed?: string[];
     quests?: string[];
     narrative?: string;
+    narrativeBrief?: string;
     log?: string[];
     character_growth?: Array<{
         name: string;
@@ -1926,8 +1927,11 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 }
 
 // --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
-export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): Promise<SummaryResponse> {
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string): Promise<SummaryResponse> {
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
+    if (narrativeText) {
+        console.log(`[Bardo] 📝 Usando testo narrativo pre-elaborato (${narrativeText.length} chars)`);
+    }
 
     const transcriptions = getSessionTranscript(sessionId);
     const notes = getSessionNotes(sessionId);
@@ -2019,8 +2023,16 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM'): 
     }
 
     // Ricostruzione dialogo lineare usando la nuova utility
-    const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
-    const fullDialogue = processed.linearText;
+    // Se abbiamo il testo narrativo pre-elaborato, usiamo quello (più pulito)
+    let fullDialogue: string;
+    if (narrativeText && narrativeText.length > 100) {
+        fullDialogue = narrativeText;
+        console.log(`[Bardo] ✅ Usando testo narrativo pulito (${fullDialogue.length} chars) invece delle trascrizioni raw`);
+    } else {
+        const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
+        fullDialogue = processed.linearText;
+        console.log(`[Bardo] ⚠️ Fallback a trascrizioni standard (${fullDialogue.length} chars)`);
+    }
 
     let contextForFinalStep = "";
     let accumulatedTokens = 0;
@@ -2067,6 +2079,7 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
 {
   "title": "Titolo evocativo della sessione",
   "narrative": "Scrivi qui un riassunto discorsivo e coinvolgente degli eventi, scritto come un racconto in terza persona al passato (es: 'Il gruppo è arrivato alla zona Ovest...'). Usa un tono epico ma conciso. Includi i colpi di scena e le interazioni principali.",
+  "narrativeBrief": "OBBLIGATORIO: Un riassunto BREVISSIMO (massimo 1800 caratteri) del narrative. Deve catturare l'essenza della sessione in modo coinvolgente. Questo sarà pubblicato su Discord e email.",
   "loot": [
       "FORMATO: Nome Oggetto (proprietà magiche se presenti)",
       "SE oggetto magico: Arma Magica (+bonus attacco, effetto speciale se presente)",
@@ -2121,14 +2134,15 @@ Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esat
 
 REGOLE IMPORTANTI:
 1. "narrative": Deve essere un testo fluido, non un elenco. Racconta la storia della sessione.
-2. "loot": Solo oggetti di valore, monete o oggetti magici.
-3. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
-4. Rispondi SEMPRE in ITALIANO.
-5. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
-6. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
-7. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
-8. "location_updates": Solo luoghi visitati/descritti nella sessione. Descrizioni concise ma evocative.
-9. "present_npcs": Lista semplice di TUTTI gli NPC nominati nella sessione (anche se non hanno eventi).
+2. "narrativeBrief": MASSIMO 1800 CARATTERI! È una versione super-condensata del narrative. Deve essere un mini-racconto autonomo, non un troncamento.
+3. "loot": Solo oggetti di valore, monete o oggetti magici.
+4. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
+5. Rispondi SEMPRE in ITALIANO.
+6. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
+7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
+8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
+9. "location_updates": Solo luoghi visitati/descritti nella sessione. Descrizioni concise ma evocative.
+10. "present_npcs": Lista semplice di TUTTI gli NPC nominati nella sessione (anche se non hanno eventi).
 
 **REGOLA CRITICA - RICONCILIAZIONE NPC:**
 - CONTROLLA SEMPRE la lista "👥 NPC GIÀ NOTI" nel contesto!
@@ -2173,6 +2187,7 @@ REGOLE IMPORTANTI:
         4. L'output deve essere un oggetto JSON valido con le seguenti chiavi:
            - "title": Un titolo evocativo per la sessione.
            - "summary": Il testo narrativo completo.
+           - "narrativeBrief": Un riassunto BREVISSIMO (MASSIMO 1800 caratteri) della sessione. Mini-racconto autonomo per Discord/email.
            - "loot": Array di stringhe (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
            - "loot_removed": Array di stringhe degli oggetti consumati/persi. Se nessuno, array vuoto.
            - "quests": Array di stringhe delle missioni accettate/aggiornate/concluse. Se nessuna, array vuoto.
@@ -2185,6 +2200,7 @@ REGOLE IMPORTANTI:
         6. IMPORTANTE: 'loot', 'loot_removed', 'quests', 'present_npcs' devono essere array di STRINGHE SEMPLICI.
         7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
         8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
+        9. "narrativeBrief": MASSIMO 1800 CARATTERI! È una versione super-condensata del summary. Deve essere un mini-racconto autonomo.
 
         **REGOLA CRITICA - RICONCILIAZIONE NPC:**
         - CONTROLLA SEMPRE la lista "👥 NPC GIÀ NOTI" nel contesto!
@@ -2313,6 +2329,7 @@ REGOLE IMPORTANTI:
             loot_removed: normalizeStringList(parsed.loot_removed),
             quests: normalizeStringList(parsed.quests),
             narrative: parsed.narrative,
+            narrativeBrief: parsed.narrativeBrief || (parsed.narrative?.substring(0, 1800) + (parsed.narrative?.length > 1800 ? "..." : "")),
             log: Array.isArray(parsed.log) ? parsed.log : [],
             character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
             npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],

@@ -653,14 +653,15 @@ export async function sendSessionRecap(
     log: string[],
     loot?: string[],
     lootRemoved?: string[],
-    narrative?: string,
+    narrativeBrief?: string,
+    fullNarrative?: string,
     monsters?: Array<{ name: string; status: string; count?: string }>
 ): Promise<boolean> {
 
     // 1. Generazione e Archiviazione (Sempre, anche se email disabilitata)
     let filePaths: { raw: string; cleaned: string; summary?: string } | null = null;
     try {
-        filePaths = await archiveSessionTranscripts(sessionId, campaignId, narrative);
+        filePaths = await archiveSessionTranscripts(sessionId, campaignId, fullNarrative);
     } catch (e) {
         console.error(`[Reporter] ❌ Errore archiviazione trascrizioni:`, e);
     }
@@ -694,11 +695,8 @@ export async function sendSessionRecap(
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
             });
 
-        // Leggi contenuto narrative per l'email (se disponibile)
-        let narrativeText = narrative;
-        if (!narrativeText && filePaths?.summary && fs.existsSync(filePaths.summary)) {
-            narrativeText = fs.readFileSync(filePaths.summary, 'utf-8');
-        }
+        // Usa il racconto breve per l'email body (il lungo va in allegato)
+        let narrativeText = narrativeBrief;
 
         // Genera Link Raw Full Session
         let fullMixUrl = "";
@@ -825,7 +823,7 @@ export async function sendSessionRecap(
         if (filePaths) {
             if (fs.existsSync(filePaths.cleaned)) attachments.push({ filename: `Sessione_${sessionNum}_Trascrizione.txt`, path: filePaths.cleaned });
             if (fs.existsSync(filePaths.raw)) attachments.push({ filename: `Sessione_${sessionNum}_Raw_Whisper.txt`, path: filePaths.raw });
-            if (filePaths.summary && fs.existsSync(filePaths.summary)) attachments.push({ filename: `Sessione_${sessionNum}_Riassunto.txt`, path: filePaths.summary });
+            if (filePaths.summary && fs.existsSync(filePaths.summary)) attachments.push({ filename: `Sessione_${sessionNum}_Racconto_Completo.txt`, path: filePaths.summary });
         }
 
         const mailOptions = {

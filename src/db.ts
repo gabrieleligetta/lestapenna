@@ -1439,6 +1439,26 @@ export const updateQuestStatus = (campaignId: number, titlePart: string, status:
     console.log(`[Quest] 📝 Stato aggiornato a ${status} per quest simile a: ${titlePart}`);
 };
 
+// 🆕 NUOVO: Aggiorna stato quest per ID
+export const updateQuestStatusById = (questId: number, status: 'COMPLETED' | 'FAILED' | 'OPEN'): boolean => {
+    const result = db.prepare("UPDATE quests SET status = ?, last_updated = ? WHERE id = ?").run(status, Date.now(), questId);
+    if (result.changes > 0) {
+        console.log(`[Quest] 📝 Stato aggiornato a ${status} per quest #${questId}`);
+        return true;
+    }
+    return false;
+};
+
+// 🆕 NUOVO: Elimina quest per ID
+export const deleteQuest = (questId: number): boolean => {
+    const result = db.prepare("DELETE FROM quests WHERE id = ?").run(questId);
+    if (result.changes > 0) {
+        console.log(`[Quest] 🗑️ Quest #${questId} eliminata.`);
+        return true;
+    }
+    return false;
+};
+
 export const getOpenQuests = (campaignId: number): Quest[] => {
     return db.prepare("SELECT * FROM quests WHERE campaign_id = ? AND status = 'OPEN' ORDER BY created_at DESC").all(campaignId) as Quest[];
 };

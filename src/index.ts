@@ -2277,7 +2277,7 @@ client.on('messageCreate', async (message: Message) => {
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
             if (currentCampaignId) {
-                await sendSessionRecap(targetSessionId, currentCampaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
             }
 
             // 🆕 REPORT TECNICO CON COSTI
@@ -3363,7 +3363,7 @@ client.on('messageCreate', async (message: Message) => {
             await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Email recap
-            await sendSessionRecap(targetSessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+            await sendSessionRecap(targetSessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
 
             // 🆕 REPORT TECNICO CON COSTI
             if (monitorStartedByUs) {
@@ -3801,7 +3801,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                     }
 
                     // Invia email DM
-                    await sendSessionRecap(sessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+                    await sendSessionRecap(sessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
 
                     // 🆕 LOG DEBUG
                     console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');

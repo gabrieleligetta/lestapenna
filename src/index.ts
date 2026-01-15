@@ -2228,9 +2228,28 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
 
-                // --- GESTIONE LOCATIONS (ATLANTE) ---
+                // --- 🆕 TRAVEL SEQUENCE (GPS - Traccia spostamenti cronologici) ---
+                if (result.travel_sequence && result.travel_sequence.length > 0) {
+                    console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
+                    for (const step of result.travel_sequence) {
+                        if (step.macro && step.micro) {
+                            updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                            console.log(`[GPS] → ${step.macro} - ${step.micro}${step.reason ? ` (${step.reason})` : ''}`);
+                            await new Promise(r => setTimeout(r, 100)); // Delay per timestamp univoci
+                        }
+                    }
+                } else if (result.location_updates && result.location_updates.length > 0) {
+                    // Fallback: usa primo location_update come posizione finale
+                    const fallbackLoc = result.location_updates[0];
+                    if (fallbackLoc.macro && fallbackLoc.micro) {
+                        updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                        console.log(`[GPS] 📍 Fallback posizione: ${fallbackLoc.macro} - ${fallbackLoc.micro}`);
+                    }
+                }
+
+                // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi) ---
                 if (result.location_updates && result.location_updates.length > 0) {
-                    console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} luoghi...`);
+                    console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
                     for (const loc of result.location_updates) {
                         if (loc.macro && loc.micro && loc.description) {
                             updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
@@ -2301,12 +2320,12 @@ client.on('messageCreate', async (message: Message) => {
             // 🆕 Recupera NPC incontrati
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
             if (currentCampaignId) {
-                await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
             }
 
             // 🆕 REPORT TECNICO CON COSTI
@@ -3361,6 +3380,23 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
             }
+            // 🆕 TRAVEL SEQUENCE (GPS)
+            if (result.travel_sequence?.length) {
+                console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
+                for (const step of result.travel_sequence) {
+                    if (step.macro && step.micro) {
+                        updateLocation(campaignId, step.macro, step.micro, targetSessionId);
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                }
+            } else if (result.location_updates?.length) {
+                // Fallback GPS
+                const fallbackLoc = result.location_updates[0];
+                if (fallbackLoc.macro && fallbackLoc.micro) {
+                    updateLocation(campaignId, fallbackLoc.macro, fallbackLoc.micro, targetSessionId);
+                }
+            }
+            // ATLANTE (Descrizioni)
             if (result.location_updates?.length) {
                 for (const loc of result.location_updates) {
                     if (loc.macro && loc.micro && loc.description) {
@@ -3389,10 +3425,10 @@ client.on('messageCreate', async (message: Message) => {
 
             // 5. PUBBLICAZIONE
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Email recap
-            await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+            await sendSessionRecap(targetSessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
 
             // 🆕 REPORT TECNICO CON COSTI
             if (monitorStartedByUs) {
@@ -3572,12 +3608,16 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 }
                 
                 try {
-                    // Ingestione memoria
-                    const narrativeText = await ingestSessionRaw(sessionId);
-                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
+                    // 🆕 Prepara testo pulito
+                    const cleanText = prepareCleanText(sessionId);
+                    if (!cleanText) throw new Error("Nessuna trascrizione disponibile");
 
-                    // Genera riassunto (usando il testo narrativo pulito!)
-                    let result = await generateSummary(sessionId, 'DM', narrativeText);
+                    // Genera riassunto (con metadata per ingestione RAG)
+                    let result = await generateSummary(sessionId, 'DM', cleanText);
+
+                    // Ingestione RAG con metadata
+                    await ingestSessionComplete(sessionId, result);
+                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
                     
                     // 🆕 FASE 2.1: PRE-RECONCILIATION (Normalizzazione Nomi)
                     if (activeCampaign) {
@@ -3754,9 +3794,28 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             }
                         }
 
-                        // --- GESTIONE LOCATIONS (ATLANTE) ---
+                        // --- 🆕 TRAVEL SEQUENCE (GPS - Traccia spostamenti cronologici) ---
+                        if (result.travel_sequence && result.travel_sequence.length > 0) {
+                            console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
+                            for (const step of result.travel_sequence) {
+                                if (step.macro && step.micro) {
+                                    updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                                    console.log(`[GPS] → ${step.macro} - ${step.micro}${step.reason ? ` (${step.reason})` : ''}`);
+                                    await new Promise(r => setTimeout(r, 100));
+                                }
+                            }
+                        } else if (result.location_updates && result.location_updates.length > 0) {
+                            // Fallback GPS
+                            const fallbackLoc = result.location_updates[0];
+                            if (fallbackLoc.macro && fallbackLoc.micro) {
+                                updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                                console.log(`[GPS] 📍 Fallback posizione: ${fallbackLoc.macro} - ${fallbackLoc.micro}`);
+                            }
+                        }
+
+                        // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi) ---
                         if (result.location_updates && result.location_updates.length > 0) {
-                            console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} luoghi...`);
+                            console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
                             for (const loc of result.location_updates) {
                                 if (loc.macro && loc.micro && loc.description) {
                                     updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
@@ -3824,11 +3883,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
 
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+                        await publishSummary(sessionId, result.log || [], channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
                     }
 
                     // Invia email DM
-                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+                    await sendSessionRecap(sessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
 
                     // 🆕 LOG DEBUG
                     console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');
@@ -3923,7 +3982,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
+async function publishSummary(sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -4002,9 +4061,19 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     }
     // ---------------------------------
 
-    const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-    for (const chunk of chunks) {
-        await targetChannel.send(chunk);
+    // --- RIASSUNTO EVENTI (LOG) ---
+    if (log && log.length > 0) {
+        const logText = log.map(entry => `• ${entry}`).join('\n');
+        // Chunk se troppo lungo
+        if (logText.length <= 1900) {
+            await targetChannel.send(`### 📝 Riassunto Eventi\n${logText}`);
+        } else {
+            await targetChannel.send(`### 📝 Riassunto Eventi`);
+            const chunks = logText.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) {
+                await targetChannel.send(chunk);
+            }
+        }
     }
 
     // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---

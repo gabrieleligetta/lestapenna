@@ -292,6 +292,12 @@ export interface SummaryResponse {
         micro: string;
         description: string;
     }>;
+    // 🆕 TRAVEL SEQUENCE: Sequenza cronologica dei luoghi visitati (per tracking GPS)
+    travel_sequence?: Array<{
+        macro: string;
+        micro: string;
+        reason?: string; // Motivo dello spostamento (opzionale)
+    }>;
     present_npcs?: string[];
 
     session_data?: {
@@ -2032,6 +2038,7 @@ interface AnalystOutput {
     monsters: Array<{ name: string; status: string; count?: string }>;
     npc_dossier_updates: Array<{ name: string; description: string; role?: string; status?: 'ALIVE' | 'DEAD' | 'MISSING' }>;
     location_updates: Array<{ macro: string; micro: string; description: string }>;
+    travel_sequence: Array<{ macro: string; micro: string; reason?: string }>; // 🆕 Sequenza spostamenti cronologica
     present_npcs: string[];
 }
 
@@ -2079,7 +2086,14 @@ ${memoryContext}
         {
             "macro": "Città/Regione (es. 'Waterdeep')",
             "micro": "Luogo specifico (es. 'Taverna del Drago')",
-            "description": "Descrizione atmosferica del luogo"
+            "description": "Descrizione atmosferica del luogo (per Atlante)"
+        }
+    ],
+    "travel_sequence": [
+        {
+            "macro": "Città/Regione",
+            "micro": "Luogo specifico",
+            "reason": "Motivo spostamento (opzionale)"
         }
     ],
     "present_npcs": ["Lista TUTTI i nomi NPC menzionati nel testo"]
@@ -2090,6 +2104,7 @@ ${memoryContext}
 - Per il loot: "parlano di una spada" ≠ "trovano una spada". Estrai SOLO acquisizioni certe.
 - Per le quest: Solo se c'è una chiara accettazione/completamento/aggiornamento
 - Per i mostri: Solo creature ostili combattute, non NPC civili
+- **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dei luoghi FISICAMENTE visitati (dall'inizio alla fine, l'ultimo è la posizione finale). location_updates = descrizioni per l'Atlante (solo luoghi con descrizione significativa)
 
 **TESTO DA ANALIZZARE**:
 ${narrativeText.substring(0, 80000)}
@@ -2141,6 +2156,7 @@ Rispondi SOLO con JSON valido.`;
             monsters: Array.isArray(parsed?.monsters) ? parsed.monsters : [],
             npc_dossier_updates: normalizedNpcUpdates,
             location_updates: Array.isArray(parsed?.location_updates) ? parsed.location_updates : [],
+            travel_sequence: Array.isArray(parsed?.travel_sequence) ? parsed.travel_sequence : [],
             present_npcs: normalizeStringList(parsed?.present_npcs)
         };
 
@@ -2154,6 +2170,7 @@ Rispondi SOLO con JSON valido.`;
             monsters: [],
             npc_dossier_updates: [],
             location_updates: [],
+            travel_sequence: [],
             present_npcs: []
         };
     }
@@ -2529,6 +2546,7 @@ ISTRUZIONI DI STILE:
             monsters: analystData.monsters,
             npc_dossier_updates: analystData.npc_dossier_updates,
             location_updates: analystData.location_updates,
+            travel_sequence: analystData.travel_sequence, // 🆕 Sequenza spostamenti cronologica
             present_npcs: analystData.present_npcs,
             // METADATI SESSIONE
             session_data: sessionData

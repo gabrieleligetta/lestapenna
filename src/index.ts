@@ -3100,6 +3100,8 @@ client.on('messageCreate', async (message: Message) => {
         await channel.send(`🔄 **Riprocessamento Logico** avviato per sessione \`${targetSessionId}\`...\n1. Pulizia dati derivati (Loot, Quest, Storia, RAG)...`);
 
         try {
+            const startProcessing = Date.now();
+
             // 1. PULIZIA MIRATA DATI DERIVATI
             const campaignId = getSessionCampaignId(targetSessionId);
             if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
@@ -3216,8 +3218,25 @@ client.on('messageCreate', async (message: Message) => {
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
             await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
-            // Email
+            // Email recap
             await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+
+            // Email tecnica con costi
+            const processingTime = Date.now() - startProcessing;
+            const transcripts = getSessionTranscript(targetSessionId);
+            const reprocessMetrics: SessionMetrics = {
+                sessionId: targetSessionId,
+                startTime: startProcessing,
+                endTime: Date.now(),
+                totalFiles: transcripts.length,
+                totalAudioDurationSec: 0,
+                transcriptionTimeMs: 0,
+                summarizationTimeMs: processingTime,
+                totalTokensUsed: result.tokens,
+                errors: [],
+                resourceUsage: { cpuSamples: [], ramSamplesMB: [] }
+            };
+            processSessionReport(reprocessMetrics).catch(e => console.error("Err Report Riprocessa:", e));
 
             await channel.send(`✅ **Riprocessamento Completato!** Dati aggiornati.`);
 

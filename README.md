@@ -106,28 +106,20 @@ Il bot traccia automaticamente gli spostamenti, ma puoi intervenire manualmente.
     *   `$viaggi fixcurrent <Regione> | <Luogo>`: Corregge la posizione corrente della campagna.
 *   `$atlante` (o `$atlas`, `$memoria`):
     *   Senza argomenti: Mostra la "memoria" che il bot ha del luogo attuale.
-    *   Con descrizione: Aggiorna il luogo attuale (es. `$atlante La locanda è bruciata`).
+    *   `$atlante <Macro> | <Micro>`: Visualizza la scheda completa di un luogo specifico.
+    *   `$atlante <Macro> | <Micro> | <Descrizione>`: Aggiorna il luogo con Smart Merge (integra nuova descrizione con quella esistente).
+    *   `$atlante <Macro> | <Micro> | <Descrizione> | force`: Sovrascrive completamente la descrizione senza merge.
 
     #### Comandi Avanzati Atlante
     *   **List (Elenco)**: `$atlante list`
         *   Mostra tutti i luoghi salvati nella campagna con descrizione breve.
         *   **Esempio**: `$atlante list`
 
-    *   **View (Visualizza)**: `$atlante <NomeLuogo>`
-        *   Visualizza la scheda completa di un luogo specifico.
-        *   **Esempio**: `$atlante Waterdeep`
-
-    *   **Delete (Elimina)**: `$atlante delete <NomeLuogo>`
+    *   **Delete (Elimina)**: `$atlante delete <Macro> | <Micro>`
         *   Elimina definitivamente un luogo dall'Atlante.
-        *   **Esempio**: `$atlante delete "Grotta Abbandonata"`
+        *   **Esempio**: `$atlante delete Waterdeep | Grotta Abbandonata`
 
-    *   **Update (Modifica)**: `$atlante update <NomeLuogo> | <Descrizione> [| force]`
-        *   Aggiorna la descrizione di un luogo specifico usando Smart Merge (unisce nuova descrizione con quella esistente).
-        *   **Esempio**: `$atlante update Waterdeep | Il porto è stato distrutto`
-        *   **Force Mode**: Aggiungi `| force` per sovrascrivere completamente la descrizione.
-        *   **Esempio Force**: `$atlante update Waterdeep | Nuova descrizione completa | force`
-
-    *   **Sync (Sincronizza RAG)**: `$atlante sync [all|<Regione>|<Luogo>]`
+    *   **Sync (Sincronizza RAG)**: `$atlante sync [all|<Macro>|<Micro>]`
         *   Forza la sincronizzazione della memoria RAG per i luoghi modificati ("dirty").
         *   **Esempio**: `$atlante sync all` - Sincronizza tutti i luoghi in attesa
         *   **Esempio**: `$atlante sync Waterdeep | Porto` - Sincronizza un luogo specifico
@@ -145,17 +137,21 @@ Il bot tiene traccia di chi incontrate.
     *   Senza argomenti: Mostra la lista degli ultimi NPC incontrati.
     *   Con nome: `$npc Grog` mostra la scheda dettagliata (Ruolo, Stato, Note).
     *   Aggiornamento rapido: `$npc Grog | È un traditore` aggiorna le note.
-    
-    #### Comandi Avanzati
+
+    #### Comandi Avanzati NPC
+    *   **Add (Crea)**: `$npc add <Nome> | <Ruolo> | <Descrizione>`
+        *   Crea manualmente un nuovo NPC nel dossier.
+        *   **Esempio**: `$npc add Theron | Fabbro | Un anziano nano esperto di armi magiche`
+
     *   **Merge (Unisci)**: `$npc merge <Vecchio Nome> | <Nuovo Nome>`
         *   Unisce due schede NPC in una sola. Utile se l'AI ha creato duplicati (es. "Il Fabbro" e "Gorim").
         *   **Esempio**: `$npc merge "Il Fabbro" | "Gorim"`
         *   **Risultato**: La scheda "Il Fabbro" viene eliminata. Tutte le note e la storia vengono trasferite su "Gorim".
-    
+
     *   **Delete (Elimina)**: `$npc delete <Nome>`
         *   Elimina definitivamente un NPC dal dossier. Utile per rimuovere mostri o errori.
         *   **Esempio**: `$npc delete "Goblin Generico"`
-    
+
     *   **Update (Modifica)**: `$npc update <Nome> | <Campo> | <Valore> [| force]`
         *   Modifica un attributo specifico di un NPC.
         *   **Campi validi**:
@@ -168,7 +164,7 @@ Il bot tiene traccia di chi incontrate.
         *   **Esempio Ruolo**: `$npc update "Siri" | role | Mercante di Pozioni`
         *   **Esempio Nome**: `$npc update "Siri" | name | Ciri`
         *   **Esempio Force**: `$npc update "Gandalf" | description | Mago bianco | force`
-    
+
     *   **Regen (Rigenera)**: `$npc regen <Nome>`
         *   Rigenera le note dell'NPC analizzando tutta la cronologia degli eventi. Utile se la descrizione sembra obsoleta.
         *   **Esempio**: `$npc regen "Gandalf"`
@@ -238,11 +234,11 @@ Gestisci lo scorrere del tempo e gli eventi storici della tua campagna.
 *   `$setcmd`: Imposta il canale testuale corrente come canale per i comandi del bot.
 *   `$setsummary`: Imposta il canale testuale corrente per la pubblicazione dei riassunti.
 *   `$stato` (o `$status`): Mostra lo stato delle code di elaborazione (audio e correzione).
+*   `$metriche` (o `$metrics`): Mostra le metriche live della sessione corrente (file audio processati, utilizzo CPU/RAM, crescita del database).
 *   `$sync`: Forza una sincronizzazione completa della memoria RAG per tutti gli NPC "dirty" (non sincronizzati).
 
 ### 🧪 Debug e Test
 *   `$teststream <URL>`: Simula una sessione scaricando un file audio da un URL.
-*   `$cleantest`: Rimuove tutte le sessioni di test dal database.
 
 ## 🐳 Docker
 
@@ -250,6 +246,7 @@ Puoi eseguire Lestapenna anche tramite Docker:
 
 ```bash
 docker-compose up -d
+
 ```
 
 Assicurati di aver configurato correttamente il file `.env` e `docker-compose.yml`.

@@ -278,7 +278,15 @@ export interface SummaryResponse {
         event: string;
         type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
     }>;
-    monsters?: Array<{ name: string; status: string; count?: string }>;
+    monsters?: Array<{
+        name: string;
+        status: string;
+        count?: string;
+        description?: string;
+        abilities?: string[];
+        weaknesses?: string[];
+        resistances?: string[];
+    }>;
 
     // 🆕 METADATI ESTRATTI (Architettura Unificata)
     npc_dossier_updates?: Array<{
@@ -2035,7 +2043,15 @@ interface AnalystOutput {
     loot: string[];
     loot_removed: string[];
     quests: string[];
-    monsters: Array<{ name: string; status: string; count?: string }>;
+    monsters: Array<{
+        name: string;
+        status: string;
+        count?: string;
+        description?: string;      // Descrizione fisica/comportamento
+        abilities?: string[];      // Abilità speciali osservate
+        weaknesses?: string[];     // Debolezze scoperte
+        resistances?: string[];    // Resistenze osservate
+    }>;
     npc_dossier_updates: Array<{ name: string; description: string; role?: string; status?: 'ALIVE' | 'DEAD' | 'MISSING' }>;
     location_updates: Array<{ macro: string; micro: string; description: string }>;
     travel_sequence: Array<{ macro: string; micro: string; reason?: string }>; // 🆕 Sequenza spostamenti cronologica
@@ -2072,7 +2088,15 @@ ${memoryContext}
     "loot_removed": ["Lista oggetti PERSI/USATI/CONSUMATI - SOLO se esplicitamente menzionato"],
     "quests": ["Lista missioni ACCETTATE/COMPLETATE/AGGIORNATE in questa sessione"],
     "monsters": [
-        {"name": "Nome creatura", "status": "DEFEATED|ALIVE|FLED", "count": "numero o 'molti'"}
+        {
+            "name": "Nome creatura",
+            "status": "DEFEATED|ALIVE|FLED",
+            "count": "numero o 'molti'",
+            "description": "Descrizione fisica/aspetto (se menzionato)",
+            "abilities": ["Abilità speciali osservate (es. 'soffio di fuoco', 'attacco multiplo')"],
+            "weaknesses": ["Debolezze scoperte (es. 'vulnerabile al fuoco')"],
+            "resistances": ["Resistenze osservate (es. 'immune al veleno')"]
+        }
     ],
     "npc_dossier_updates": [
         {
@@ -2103,7 +2127,7 @@ ${memoryContext}
 - I PG (Personaggi Giocanti nel CONTESTO sopra) NON vanno in npc_dossier_updates
 - Per il loot: "parlano di una spada" ≠ "trovano una spada". Estrai SOLO acquisizioni certe.
 - Per le quest: Solo se c'è una chiara accettazione/completamento/aggiornamento
-- Per i mostri: Solo creature ostili combattute, non NPC civili
+- Per i mostri: Solo creature ostili combattute, non NPC civili. **ESTRAI DETTAGLI**: se i PG scoprono abilità, debolezze o resistenze durante il combattimento, REGISTRALE (es. "il drago sputa fuoco" → abilities: ["soffio di fuoco"])
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dei luoghi FISICAMENTE visitati (dall'inizio alla fine, l'ultimo è la posizione finale). location_updates = descrizioni per l'Atlante (solo luoghi con descrizione significativa)
 
 **TESTO DA ANALIZZARE**:
@@ -3442,6 +3466,433 @@ export async function deduplicateLocationBatch(
 
     if (result.length < locations.length) {
         console.log(`[Location Batch Dedup] ✅ Ridotti ${locations.length} luoghi a ${result.length}`);
+    }
+
+    return result;
+}
+
+// =============================================
+// === MONSTER RECONCILIATION (Bestiary) ===
+// =============================================
+
+/**
+ * Chiede all'AI se due mostri sono lo stesso tipo.
+ */
+async function aiConfirmSameMonster(name1: string, name2: string, context: string = ""): Promise<boolean> {
+    const prompt = `Sei un esperto di D&D e creature fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${name1}" e "${name2}" sono lo STESSO tipo di mostro/creatura?
+
+Considera che:
+- I nomi potrebbero essere singolari/plurali (es. "Goblin" = "Goblins")
+- Potrebbero essere varianti ortografiche (es. "Orco" = "Orchi")
+- Potrebbero essere nomi parziali (es. "Scheletro" ≈ "Scheletro Guerriero")
+- NON unire creature diverse (es. "Goblin" ≠ "Hobgoblin")
+
+${context ? `Contesto: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Monster Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
+ * Trova il nome canonico se esiste un mostro simile nel bestiario.
+ */
+export async function reconcileMonsterName(
+    campaignId: number,
+    newName: string,
+    newDescription: string = ""
+): Promise<{ canonicalName: string; existingMonster: any } | null> {
+    const { listAllMonsters } = await import('./db.js');
+    const existingMonsters = listAllMonsters(campaignId);
+    if (existingMonsters.length === 0) return null;
+
+    const newNameLower = newName.toLowerCase().trim();
+
+    // 1. Match esatto → nessuna riconciliazione
+    const exactMatch = existingMonsters.find((m: any) => m.name.toLowerCase() === newNameLower);
+    if (exactMatch) return null;
+
+    // 2. Cerca candidati simili
+    const candidates: Array<{ monster: any; similarity: number; reason: string }> = [];
+
+    for (const monster of existingMonsters) {
+        const existingName = monster.name;
+        const similarity = levenshteinSimilarity(newName, existingName);
+
+        // Threshold dinamico
+        const minLen = Math.min(newName.length, existingName.length);
+        const threshold = minLen < 6 ? 0.7 : 0.6;
+
+        if (similarity >= threshold) {
+            candidates.push({ monster, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
+            continue;
+        }
+
+        // Check substring (singolare/plurale)
+        if (containsSubstring(newName, existingName)) {
+            candidates.push({ monster, similarity: 0.8, reason: 'substring_match' });
+        }
+    }
+
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => b.similarity - a.similarity);
+
+    for (const candidate of candidates.slice(0, 3)) {
+        console.log(`[Monster Reconcile] 🔍 "${newName}" simile a "${candidate.monster.name}" (${candidate.reason}). Chiedo conferma AI...`);
+
+        const isSame = await aiConfirmSameMonster(newName, candidate.monster.name, newDescription);
+
+        if (isSame) {
+            console.log(`[Monster Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.monster.name}"`);
+            return { canonicalName: candidate.monster.name, existingMonster: candidate.monster };
+        } else {
+            console.log(`[Monster Reconcile] ❌ "${newName}" ≠ "${candidate.monster.name}"`);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Pre-deduplica un batch di mostri.
+ */
+export async function deduplicateMonsterBatch(
+    monsters: Array<{ name: string; status?: string; count?: string; description?: string; abilities?: string[]; weaknesses?: string[]; resistances?: string[] }>
+): Promise<Array<{ name: string; status?: string; count?: string; description?: string; abilities?: string[]; weaknesses?: string[]; resistances?: string[] }>> {
+    if (monsters.length <= 1) return monsters;
+
+    const result: typeof monsters = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < monsters.length; i++) {
+        if (processed.has(i)) continue;
+
+        let merged = { ...monsters[i] };
+        processed.add(i);
+
+        for (let j = i + 1; j < monsters.length; j++) {
+            if (processed.has(j)) continue;
+
+            const similarity = levenshteinSimilarity(merged.name, monsters[j].name);
+            const hasSubstring = containsSubstring(merged.name, monsters[j].name);
+
+            if (similarity > 0.7 || hasSubstring) {
+                const isSame = await aiConfirmSameMonster(merged.name, monsters[j].name);
+
+                if (isSame) {
+                    console.log(`[Monster Batch Dedup] 🔄 "${monsters[j].name}" → "${merged.name}"`);
+                    // Usa nome più lungo
+                    if (monsters[j].name.length > merged.name.length) {
+                        merged.name = monsters[j].name;
+                    }
+                    // Unisci dettagli
+                    merged.description = merged.description || monsters[j].description;
+                    merged.abilities = [...new Set([...(merged.abilities || []), ...(monsters[j].abilities || [])])];
+                    merged.weaknesses = [...new Set([...(merged.weaknesses || []), ...(monsters[j].weaknesses || [])])];
+                    merged.resistances = [...new Set([...(merged.resistances || []), ...(monsters[j].resistances || [])])];
+                    // Status più grave
+                    if (monsters[j].status === 'DEFEATED') merged.status = 'DEFEATED';
+                    processed.add(j);
+                }
+            }
+        }
+
+        result.push(merged);
+    }
+
+    if (result.length < monsters.length) {
+        console.log(`[Monster Batch Dedup] ✅ Ridotti ${monsters.length} mostri a ${result.length}`);
+    }
+
+    return result;
+}
+
+// =============================================
+// === ITEM RECONCILIATION (Inventory) ===
+// =============================================
+
+/**
+ * Chiede all'AI se due oggetti sono lo stesso item.
+ */
+async function aiConfirmSameItem(item1: string, item2: string, context: string = ""): Promise<boolean> {
+    const prompt = `Sei un esperto di D&D e oggetti fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${item1}" e "${item2}" sono lo STESSO oggetto?
+
+Considera che:
+- Potrebbero essere abbreviazioni (es. "Pozione di cura" = "Pozione Cura")
+- Potrebbero essere varianti (es. "100 monete d'oro" ≈ "100 mo")
+- NON unire oggetti diversi (es. "Spada +1" ≠ "Spada +2")
+- NON unire categorie diverse (es. "Pozione di cura" ≠ "Pozione di forza")
+
+${context ? `Contesto: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Item Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
+ * Trova il nome canonico se esiste un oggetto simile nell'inventario.
+ */
+export async function reconcileItemName(
+    campaignId: number,
+    newItem: string
+): Promise<{ canonicalName: string; existingItem: any } | null> {
+    const { listAllInventory } = await import('./db.js');
+    const existingItems = listAllInventory(campaignId);
+    if (existingItems.length === 0) return null;
+
+    const newItemLower = newItem.toLowerCase().trim();
+
+    // Match esatto
+    const exactMatch = existingItems.find((i: any) => i.item_name.toLowerCase() === newItemLower);
+    if (exactMatch) return null;
+
+    // Cerca candidati
+    const candidates: Array<{ item: any; similarity: number; reason: string }> = [];
+
+    for (const item of existingItems) {
+        const existingName = item.item_name;
+        const similarity = levenshteinSimilarity(newItem, existingName);
+
+        if (similarity >= 0.65) {
+            candidates.push({ item, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
+            continue;
+        }
+
+        if (containsSubstring(newItem, existingName)) {
+            candidates.push({ item, similarity: 0.75, reason: 'substring_match' });
+        }
+    }
+
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => b.similarity - a.similarity);
+
+    for (const candidate of candidates.slice(0, 3)) {
+        console.log(`[Item Reconcile] 🔍 "${newItem}" simile a "${candidate.item.item_name}" (${candidate.reason}). Chiedo conferma AI...`);
+
+        const isSame = await aiConfirmSameItem(newItem, candidate.item.item_name);
+
+        if (isSame) {
+            console.log(`[Item Reconcile] ✅ CONFERMATO: "${newItem}" = "${candidate.item.item_name}"`);
+            return { canonicalName: candidate.item.item_name, existingItem: candidate.item };
+        } else {
+            console.log(`[Item Reconcile] ❌ "${newItem}" ≠ "${candidate.item.item_name}"`);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Pre-deduplica un batch di loot.
+ */
+export async function deduplicateItemBatch(
+    items: string[]
+): Promise<string[]> {
+    if (items.length <= 1) return items;
+
+    const result: string[] = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < items.length; i++) {
+        if (processed.has(i)) continue;
+
+        let merged = items[i];
+        processed.add(i);
+
+        for (let j = i + 1; j < items.length; j++) {
+            if (processed.has(j)) continue;
+
+            const similarity = levenshteinSimilarity(merged, items[j]);
+            const hasSubstring = containsSubstring(merged, items[j]);
+
+            if (similarity > 0.7 || hasSubstring) {
+                const isSame = await aiConfirmSameItem(merged, items[j]);
+
+                if (isSame) {
+                    console.log(`[Item Batch Dedup] 🔄 "${items[j]}" → "${merged}"`);
+                    // Usa nome più lungo/descrittivo
+                    if (items[j].length > merged.length) {
+                        merged = items[j];
+                    }
+                    processed.add(j);
+                }
+            }
+        }
+
+        result.push(merged);
+    }
+
+    if (result.length < items.length) {
+        console.log(`[Item Batch Dedup] ✅ Ridotti ${items.length} oggetti a ${result.length}`);
+    }
+
+    return result;
+}
+
+// =============================================
+// === QUEST RECONCILIATION ===
+// =============================================
+
+/**
+ * Chiede all'AI se due quest sono la stessa missione.
+ */
+async function aiConfirmSameQuest(title1: string, title2: string, context: string = ""): Promise<boolean> {
+    const prompt = `Sei un esperto di D&D e missioni. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${title1}" e "${title2}" sono la STESSA missione/quest?
+
+Considera che:
+- I titoli potrebbero essere varianti (es. "Salvare il villaggio" = "Salvare il Villaggio")
+- Potrebbero essere abbreviati (es. "Trova l'artefatto" ≈ "Trovare l'artefatto antico")
+- NON unire missioni diverse (es. "Salvare Alice" ≠ "Salvare Bob")
+
+${context ? `Contesto: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Quest Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
+ * Trova il titolo canonico se esiste una quest simile.
+ */
+export async function reconcileQuestTitle(
+    campaignId: number,
+    newTitle: string
+): Promise<{ canonicalTitle: string; existingQuest: any } | null> {
+    const { listAllQuests } = await import('./db.js');
+    const existingQuests = listAllQuests(campaignId);
+    if (existingQuests.length === 0) return null;
+
+    const newTitleLower = newTitle.toLowerCase().trim();
+
+    // Match esatto
+    const exactMatch = existingQuests.find((q: any) => q.title.toLowerCase() === newTitleLower);
+    if (exactMatch) return null;
+
+    // Cerca candidati
+    const candidates: Array<{ quest: any; similarity: number; reason: string }> = [];
+
+    for (const quest of existingQuests) {
+        const existingTitle = quest.title;
+        const similarity = levenshteinSimilarity(newTitle, existingTitle);
+
+        if (similarity >= 0.6) {
+            candidates.push({ quest, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
+            continue;
+        }
+
+        if (containsSubstring(newTitle, existingTitle)) {
+            candidates.push({ quest, similarity: 0.7, reason: 'substring_match' });
+        }
+    }
+
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => b.similarity - a.similarity);
+
+    for (const candidate of candidates.slice(0, 3)) {
+        console.log(`[Quest Reconcile] 🔍 "${newTitle}" simile a "${candidate.quest.title}" (${candidate.reason}). Chiedo conferma AI...`);
+
+        const isSame = await aiConfirmSameQuest(newTitle, candidate.quest.title);
+
+        if (isSame) {
+            console.log(`[Quest Reconcile] ✅ CONFERMATO: "${newTitle}" = "${candidate.quest.title}"`);
+            return { canonicalTitle: candidate.quest.title, existingQuest: candidate.quest };
+        } else {
+            console.log(`[Quest Reconcile] ❌ "${newTitle}" ≠ "${candidate.quest.title}"`);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Pre-deduplica un batch di quest.
+ */
+export async function deduplicateQuestBatch(
+    quests: Array<{ title: string; status?: string }>
+): Promise<Array<{ title: string; status?: string }>> {
+    if (quests.length <= 1) return quests;
+
+    const result: typeof quests = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < quests.length; i++) {
+        if (processed.has(i)) continue;
+
+        let merged = { ...quests[i] };
+        processed.add(i);
+
+        for (let j = i + 1; j < quests.length; j++) {
+            if (processed.has(j)) continue;
+
+            const similarity = levenshteinSimilarity(merged.title, quests[j].title);
+            const hasSubstring = containsSubstring(merged.title, quests[j].title);
+
+            if (similarity > 0.65 || hasSubstring) {
+                const isSame = await aiConfirmSameQuest(merged.title, quests[j].title);
+
+                if (isSame) {
+                    console.log(`[Quest Batch Dedup] 🔄 "${quests[j].title}" → "${merged.title}"`);
+                    // Usa titolo più lungo
+                    if (quests[j].title.length > merged.title.length) {
+                        merged.title = quests[j].title;
+                    }
+                    // Status più avanzato
+                    if (quests[j].status === 'COMPLETED' || quests[j].status === 'FAILED') {
+                        merged.status = quests[j].status;
+                    }
+                    processed.add(j);
+                }
+            }
+        }
+
+        result.push(merged);
+    }
+
+    if (result.length < quests.length) {
+        console.log(`[Quest Batch Dedup] ✅ Ridotte ${quests.length} quest a ${result.length}`);
     }
 
     return result;

@@ -296,7 +296,17 @@ const migrations = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_bestiary_unique ON bestiary(campaign_id, name, session_id) WHERE session_id IS NOT NULL",
     // 🆕 TRACCIAMENTO ORIGINE PER RESET PULITO
     "ALTER TABLE npc_dossier ADD COLUMN first_session_id TEXT",
-    "ALTER TABLE location_atlas ADD COLUMN first_session_id TEXT"
+    "ALTER TABLE location_atlas ADD COLUMN first_session_id TEXT",
+    // 🆕 BESTIARIO ESTESO (dettagli mostri)
+    "ALTER TABLE bestiary ADD COLUMN description TEXT",
+    "ALTER TABLE bestiary ADD COLUMN abilities TEXT",      // JSON array: ["Attacco multiplo", "Soffio di fuoco"]
+    "ALTER TABLE bestiary ADD COLUMN weaknesses TEXT",     // JSON array: ["Fuoco", "Luce"]
+    "ALTER TABLE bestiary ADD COLUMN resistances TEXT",    // JSON array: ["Freddo", "Necrotico"]
+    "ALTER TABLE bestiary ADD COLUMN notes TEXT",          // Note libere
+    "ALTER TABLE bestiary ADD COLUMN first_session_id TEXT",
+    // 🆕 INVENTARIO ESTESO
+    "ALTER TABLE inventory ADD COLUMN description TEXT",
+    "ALTER TABLE inventory ADD COLUMN notes TEXT"
 ];
 
 for (const m of migrations) {
@@ -443,6 +453,8 @@ export interface InventoryItem {
     acquired_at: number;
     last_updated: number;
     session_id?: string;
+    description?: string;
+    notes?: string;
 }
 
 export interface PendingMerge {
@@ -875,36 +887,153 @@ export interface BestiaryEntry {
     count: string | null;
     session_id: string | null;
     last_seen: number | null;
+    description: string | null;
+    abilities: string | null;    // JSON array
+    weaknesses: string | null;   // JSON array
+    resistances: string | null;  // JSON array
+    notes: string | null;
+    first_session_id: string | null;
+}
+
+export interface MonsterDetails {
+    description?: string;
+    abilities?: string[];
+    weaknesses?: string[];
+    resistances?: string[];
+    notes?: string;
 }
 
 /**
- * Aggiunge o aggiorna un mostro nel bestiario
+ * Aggiunge o aggiorna un mostro nel bestiario (con dettagli opzionali)
  */
 export const upsertMonster = (
     campaignId: number,
     name: string,
     status: string,
     count?: string,
-    sessionId?: string
+    sessionId?: string,
+    details?: MonsterDetails
 ): void => {
+    // Serializza arrays come JSON
+    const abilitiesJson = details?.abilities?.length ? JSON.stringify(details.abilities) : null;
+    const weaknessesJson = details?.weaknesses?.length ? JSON.stringify(details.weaknesses) : null;
+    const resistancesJson = details?.resistances?.length ? JSON.stringify(details.resistances) : null;
+
     db.prepare(`
-        INSERT INTO bestiary (campaign_id, name, status, count, session_id, last_seen)
-        VALUES ($campaignId, $name, $status, $count, $sessionId, $now)
+        INSERT INTO bestiary (campaign_id, name, status, count, session_id, last_seen, description, abilities, weaknesses, resistances, notes, first_session_id)
+        VALUES ($campaignId, $name, $status, $count, $sessionId, $now, $description, $abilities, $weaknesses, $resistances, $notes, $firstSessionId)
         ON CONFLICT(campaign_id, name, session_id) WHERE session_id IS NOT NULL
         DO UPDATE SET
             status = $status,
             count = COALESCE($count, count),
-            last_seen = $now
+            last_seen = $now,
+            description = COALESCE($description, description),
+            abilities = COALESCE($abilities, abilities),
+            weaknesses = COALESCE($weaknesses, weaknesses),
+            resistances = COALESCE($resistances, resistances),
+            notes = CASE WHEN $notes IS NOT NULL AND $notes != '' THEN
+                COALESCE(notes || ' | ' || $notes, $notes) ELSE notes END
     `).run({
         campaignId,
         name,
         status: status || 'ALIVE',
         count: count || null,
         sessionId: sessionId || null,
-        now: Date.now()
+        now: Date.now(),
+        description: details?.description || null,
+        abilities: abilitiesJson,
+        weaknesses: weaknessesJson,
+        resistances: resistancesJson,
+        notes: details?.notes || null,
+        firstSessionId: sessionId || null
     });
-    console.log(`[Bestiario] 👹 ${name} (${status})`);
+    console.log(`[Bestiario] 👹 ${name} (${status})${details?.abilities?.length ? ` - ${details.abilities.length} abilità` : ''}`);
 };
+
+/**
+ * Lista TUTTI i mostri di una campagna (per riconciliazione)
+ */
+export const listAllMonsters = (campaignId: number): BestiaryEntry[] => {
+    return db.prepare(`
+        SELECT DISTINCT name, id, campaign_id, status, count, session_id, last_seen,
+               description, abilities, weaknesses, resistances, notes, first_session_id
+        FROM bestiary
+        WHERE campaign_id = ?
+        ORDER BY name ASC
+    `).all(campaignId) as BestiaryEntry[];
+};
+
+/**
+ * Ottiene un mostro per nome (case-insensitive)
+ */
+export const getMonsterByName = (campaignId: number, name: string): BestiaryEntry | null => {
+    return db.prepare(`
+        SELECT * FROM bestiary
+        WHERE campaign_id = ? AND lower(name) = lower(?)
+        ORDER BY last_seen DESC
+        LIMIT 1
+    `).get(campaignId, name) as BestiaryEntry | null;
+};
+
+/**
+ * Unisce due mostri nel bestiario (merge)
+ */
+export const mergeMonsters = (
+    campaignId: number,
+    oldName: string,
+    newName: string,
+    mergedDescription?: string
+): boolean => {
+    const source = getMonsterByName(campaignId, oldName);
+    const target = getMonsterByName(campaignId, newName);
+
+    if (!source) return false;
+
+    db.transaction(() => {
+        if (target) {
+            // Merge: unisci i dettagli e cancella il source
+            const mergedAbilities = mergeJsonArrays(source.abilities, target.abilities);
+            const mergedWeaknesses = mergeJsonArrays(source.weaknesses, target.weaknesses);
+            const mergedResistances = mergeJsonArrays(source.resistances, target.resistances);
+            const mergedNotes = [target.notes, source.notes].filter(Boolean).join(' | ');
+
+            db.prepare(`
+                UPDATE bestiary SET
+                    description = COALESCE(?, description),
+                    abilities = ?,
+                    weaknesses = ?,
+                    resistances = ?,
+                    notes = ?
+                WHERE campaign_id = ? AND lower(name) = lower(?)
+            `).run(
+                mergedDescription || target.description || source.description,
+                mergedAbilities,
+                mergedWeaknesses,
+                mergedResistances,
+                mergedNotes || null,
+                campaignId,
+                newName
+            );
+
+            // Cancella tutte le entry del vecchio nome
+            db.prepare(`DELETE FROM bestiary WHERE campaign_id = ? AND lower(name) = lower(?)`).run(campaignId, oldName);
+        } else {
+            // Rinomina: aggiorna il nome
+            db.prepare(`UPDATE bestiary SET name = ? WHERE campaign_id = ? AND lower(name) = lower(?)`).run(newName, campaignId, oldName);
+        }
+    })();
+
+    console.log(`[Bestiario] 🔀 Merged: ${oldName} -> ${newName}`);
+    return true;
+};
+
+// Helper per unire JSON arrays
+function mergeJsonArrays(json1: string | null, json2: string | null): string | null {
+    const arr1 = json1 ? JSON.parse(json1) : [];
+    const arr2 = json2 ? JSON.parse(json2) : [];
+    const merged = [...new Set([...arr1, ...arr2])];
+    return merged.length > 0 ? JSON.stringify(merged) : null;
+}
 
 /**
  * Lista tutti i mostri incontrati in una campagna
@@ -1574,6 +1703,118 @@ export const getSessionInventory = (sessionId: string): any[] => {
         WHERE session_id = ?
         ORDER BY acquired_at DESC
     `).all(sessionId);
+};
+
+/**
+ * Lista TUTTI gli oggetti di una campagna (per riconciliazione)
+ */
+export const listAllInventory = (campaignId: number): InventoryItem[] => {
+    return db.prepare(`
+        SELECT * FROM inventory
+        WHERE campaign_id = ?
+        ORDER BY item_name ASC
+    `).all(campaignId) as InventoryItem[];
+};
+
+/**
+ * Ottiene un oggetto per nome (case-insensitive)
+ */
+export const getInventoryItemByName = (campaignId: number, itemName: string): InventoryItem | null => {
+    return db.prepare(`
+        SELECT * FROM inventory
+        WHERE campaign_id = ? AND lower(item_name) = lower(?)
+        LIMIT 1
+    `).get(campaignId, itemName) as InventoryItem | null;
+};
+
+/**
+ * Unisce due oggetti nell'inventario (merge)
+ */
+export const mergeInventoryItems = (
+    campaignId: number,
+    oldName: string,
+    newName: string
+): boolean => {
+    const source = getInventoryItemByName(campaignId, oldName);
+    const target = getInventoryItemByName(campaignId, newName);
+
+    if (!source) return false;
+
+    db.transaction(() => {
+        if (target) {
+            // Merge: somma quantità e cancella source
+            const mergedNotes = [target.notes, source.notes].filter(Boolean).join(' | ');
+            db.prepare(`
+                UPDATE inventory SET
+                    quantity = quantity + ?,
+                    last_updated = ?,
+                    description = COALESCE(description, ?),
+                    notes = ?
+                WHERE id = ?
+            `).run(source.quantity, Date.now(), source.description, mergedNotes || null, target.id);
+
+            db.prepare(`DELETE FROM inventory WHERE id = ?`).run(source.id);
+        } else {
+            // Rinomina
+            db.prepare(`UPDATE inventory SET item_name = ?, last_updated = ? WHERE id = ?`).run(newName, Date.now(), source.id);
+        }
+    })();
+
+    console.log(`[Loot] 🔀 Merged: ${oldName} -> ${newName}`);
+    return true;
+};
+
+/**
+ * Lista TUTTE le quest di una campagna (per riconciliazione)
+ */
+export const listAllQuests = (campaignId: number): Quest[] => {
+    return db.prepare(`
+        SELECT * FROM quests
+        WHERE campaign_id = ?
+        ORDER BY title ASC
+    `).all(campaignId) as Quest[];
+};
+
+/**
+ * Ottiene una quest per titolo (case-insensitive)
+ */
+export const getQuestByTitle = (campaignId: number, title: string): Quest | null => {
+    return db.prepare(`
+        SELECT * FROM quests
+        WHERE campaign_id = ? AND lower(title) = lower(?)
+        LIMIT 1
+    `).get(campaignId, title) as Quest | null;
+};
+
+/**
+ * Unisce due quest (merge)
+ */
+export const mergeQuests = (
+    campaignId: number,
+    oldTitle: string,
+    newTitle: string
+): boolean => {
+    const source = getQuestByTitle(campaignId, oldTitle);
+    const target = getQuestByTitle(campaignId, newTitle);
+
+    if (!source) return false;
+
+    db.transaction(() => {
+        if (target) {
+            // Merge: mantieni target con status più avanzato, cancella source
+            const statusPriority: Record<string, number> = { 'OPEN': 1, 'COMPLETED': 2, 'FAILED': 3 };
+            const finalStatus = statusPriority[source.status] > statusPriority[target.status] ? source.status : target.status;
+
+            db.prepare(`UPDATE quests SET status = ?, last_updated = ? WHERE id = ?`).run(finalStatus, Date.now(), target.id);
+            db.prepare(`DELETE FROM quests WHERE id = ?`).run(source.id);
+        } else {
+            // Rinomina
+            db.prepare(`UPDATE quests SET title = ?, last_updated = ? WHERE id = ?`).run(newTitle, Date.now(), source.id);
+        }
+    })();
+
+    console.log(`[Quest] 🔀 Merged: ${oldTitle} -> ${newTitle}`);
+    return true;
 };
 
 // --- FUNZIONI STORIA PERSONAGGI ---

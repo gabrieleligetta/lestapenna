@@ -37,7 +37,7 @@ interface FilterDecision {
  */
 function consolidateFragments(segments: ProcessedSegment[]): ProcessedSegment[] {
     const consolidated: ProcessedSegment[] = [];
-    
+
     for (let i = 0; i < segments.length; i++) {
         let current = segments[i];
         

@@ -39,6 +39,12 @@ import {
     deduplicateNpcBatch,     // NUOVO - Pre-dedup batch NPC
     reconcileLocationName,   // NUOVO - Riconciliazione Location fuzzy + AI
     deduplicateLocationBatch, // NUOVO - Pre-dedup batch Location
+    reconcileMonsterName,    // NUOVO - Riconciliazione Monster fuzzy + AI
+    deduplicateMonsterBatch, // NUOVO - Pre-dedup batch Monster
+    reconcileItemName,       // NUOVO - Riconciliazione Item fuzzy + AI
+    deduplicateItemBatch,    // NUOVO - Pre-dedup batch Item
+    reconcileQuestTitle,     // NUOVO - Riconciliazione Quest fuzzy + AI
+    deduplicateQuestBatch,   // NUOVO - Pre-dedup batch Quest
     validateBatch,           // NUOVO
     syncAllDirtyNpcs,        // NUOVO
     syncNpcDossierIfNeeded,   // NUOVO
@@ -132,7 +138,14 @@ import {
     upsertMonster, // NUOVO - Bestiario (Architettura Unificata)
     updateSessionPresentNPCs, // NUOVO - Salva NPC incontrati a livello sessione
     deleteQuest, // NUOVO - Cancella quest
-    updateQuestStatusById // NUOVO - Aggiorna stato quest per ID
+    updateQuestStatusById, // NUOVO - Aggiorna stato quest per ID
+    // NUOVO - Merge/Reconciliation
+    mergeMonsters,
+    mergeInventoryItems,
+    mergeQuests,
+    listAllMonsters,
+    listAllInventory,
+    listAllQuests
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker } from './worker';
@@ -407,7 +420,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     let activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche', 'sync'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche', 'sync', 'bestiario', 'bestiary', 'mostri', 'monsters', 'unisciitem', 'mergeitem', 'mergeitems', 'unisciquest', 'mergequest', 'mergequests'];
 
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -487,6 +500,13 @@ client.on('messageCreate', async (message: Message) => {
                         "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)."
                 },
                 {
+                    name: "🐲 Bestiario",
+                    value:
+                        "`$bestiario`: Mostra i mostri incontrati.\n" +
+                        "`$bestiario <Nome>`: Dettagli del mostro (abilità, debolezze, ecc.).\n" +
+                        "`$bestiario merge <Vecchio> | <Nuovo>`: Unisce due mostri."
+                },
+                {
                     name: "🎒 Inventario & Quest",
                     value:
                         "`$quest`: Visualizza quest attive.\n" +
@@ -495,7 +515,9 @@ client.on('messageCreate', async (message: Message) => {
                         "`$quest delete <ID>`: Elimina una quest.\n" +
                         "`$inventario`: Visualizza inventario.\n" +
                         "`$loot add <Oggetto>`: Aggiunge un oggetto.\n" +
-                        "`$loot use <Oggetto>`: Rimuove/Usa un oggetto."
+                        "`$loot use <Oggetto>`: Rimuove/Usa un oggetto.\n" +
+                        "`$unisciitem <Vecchio> | <Nuovo>`: Unisce due oggetti.\n" +
+                        "`$unisciquest <Vecchia> | <Nuova>`: Unisce due quest."
                 },
                 {
                     name: "👤 Scheda Personaggio (Campagna Attiva)",
@@ -549,7 +571,7 @@ client.on('messageCreate', async (message: Message) => {
                 },
                 {
                     name: "💡 Alias Comandi",
-                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, ecc."
+                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$dossier`/`$npc`, `$viaggi`/`$travels`, `$inventario`/`$inventory`, `$bestiario`/`$bestiary`, `$unisciitem`/`$mergeitem`, `$unisciquest`/`$mergequest`, ecc."
                 }
             )
             .setFooter({ text: "Per la versione inglese usa $help" });
@@ -630,6 +652,13 @@ client.on('messageCreate', async (message: Message) => {
                         "`$downloadtxt <ID>`: Download transcriptions (txt)."
                 },
                 {
+                    name: "🐲 Bestiary",
+                    value:
+                        "`$bestiary`: Show encountered monsters.\n" +
+                        "`$bestiary <Name>`: Monster details (abilities, weaknesses, etc.).\n" +
+                        "`$bestiary merge <Old> | <New>`: Merge two monsters."
+                },
+                {
                     name: "🎒 Inventory & Quests",
                     value:
                         "`$quest`: View active quests.\n" +
@@ -638,7 +667,9 @@ client.on('messageCreate', async (message: Message) => {
                         "`$quest delete <ID>`: Delete a quest.\n" +
                         "`$inventory`: View inventory.\n" +
                         "`$loot add <Item>`: Add an item.\n" +
-                        "`$loot use <Item>`: Remove/Use an item."
+                        "`$loot use <Item>`: Remove/Use an item.\n" +
+                        "`$mergeitem <Old> | <New>`: Merge two items.\n" +
+                        "`$mergequest <Old> | <New>`: Merge two quests."
                 },
                 {
                     name: "👤 Character Sheet (Active Campaign)",
@@ -684,7 +715,7 @@ client.on('messageCreate', async (message: Message) => {
                 },
                 {
                     name: "💡 Command Aliases",
-                    value: "Many commands have Italian aliases: `$location`/`$luogo`, `$atlas`/`$atlante`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, etc."
+                    value: "Many commands have Italian aliases: `$location`/`$luogo`, `$atlas`/`$atlante`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, `$bestiary`/`$bestiario`, `$mergeitem`/`$unisciitem`, `$mergequest`/`$unisciquest`, etc."
                 }
             )
             .setFooter({ text: "Per la versione italiana usa $aiuto" });
@@ -1852,6 +1883,117 @@ client.on('messageCreate', async (message: Message) => {
         return message.reply(`**💰 Inventario di Gruppo (${activeCampaign?.name})**\n\n${list}`);
     }
 
+    // --- NUOVO: $bestiario ---
+    // Uso: $bestiario -> Mostra tutti i mostri incontrati
+    // Uso: $bestiario <nome> -> Dettagli di un mostro
+    // Uso: $bestiario merge <vecchio> | <nuovo> -> Unisce due mostri
+    if (command === 'bestiario' || command === 'bestiary' || command === 'mostri' || command === 'monsters') {
+        const arg = args.join(' ');
+
+        // Sottocomando: $bestiario merge <vecchio> | <nuovo>
+        if (arg.toLowerCase().startsWith('merge ')) {
+            const parts = arg.substring(6).split('|').map(s => s.trim());
+            if (parts.length !== 2) {
+                return message.reply("Uso: `$bestiario merge <nome vecchio> | <nome nuovo>`");
+            }
+            const [oldName, newName] = parts;
+            const success = mergeMonsters(activeCampaign!.id, oldName, newName);
+            if (success) {
+                return message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);
+            } else {
+                return message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nel bestiario.`);
+            }
+        }
+
+        // Dettagli di un mostro specifico
+        if (arg && !arg.includes('|')) {
+            const monster = listAllMonsters(activeCampaign!.id).find((m: any) =>
+                m.name.toLowerCase().includes(arg.toLowerCase())
+            );
+            if (!monster) {
+                return message.reply(`❌ Mostro "${arg}" non trovato nel bestiario.`);
+            }
+
+            let details = `**👹 ${monster.name}**\n`;
+            details += `**Status:** ${monster.status}\n`;
+            if (monster.count) details += `**Numero:** ${monster.count}\n`;
+            if (monster.description) details += `\n**Descrizione:** ${monster.description}\n`;
+
+            const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
+            const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
+            const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
+
+            if (abilities.length > 0) details += `\n⚔️ **Abilità:** ${abilities.join(', ')}\n`;
+            if (weaknesses.length > 0) details += `🎯 **Debolezze:** ${weaknesses.join(', ')}\n`;
+            if (resistances.length > 0) details += `🛡️ **Resistenze:** ${resistances.join(', ')}\n`;
+            if (monster.notes) details += `\n📝 **Note:** ${monster.notes}\n`;
+
+            return message.reply(details);
+        }
+
+        // Visualizzazione lista
+        const monsters = listAllMonsters(activeCampaign!.id);
+        if (monsters.length === 0) return message.reply("👹 Nessun mostro incontrato in questa campagna.");
+
+        // Raggruppa per status
+        const defeated = monsters.filter((m: any) => m.status === 'DEFEATED');
+        const alive = monsters.filter((m: any) => m.status === 'ALIVE');
+        const fled = monsters.filter((m: any) => m.status === 'FLED');
+
+        let response = `**👹 Bestiario (${activeCampaign?.name})**\n\n`;
+
+        if (alive.length > 0) {
+            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+        }
+        if (defeated.length > 0) {
+            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+        }
+        if (fled.length > 0) {
+            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+        }
+
+        response += `💡 Usa \`$bestiario <nome>\` per dettagli o \`$bestiario merge <v> | <n>\` per unire duplicati.`;
+        return message.reply(response);
+    }
+
+    // --- NUOVO: $unisciitem ---
+    // Uso: $unisciitem <vecchio> | <nuovo> -> Unisce due oggetti nell'inventario
+    if (command === 'unisciitem' || command === 'mergeitems' || command === 'mergeitem') {
+        const arg = args.join(' ');
+        const parts = arg.split('|').map(s => s.trim());
+
+        if (parts.length !== 2) {
+            return message.reply("Uso: `$unisciitem <nome vecchio> | <nome nuovo>`\nEsempio: `$unisciitem Pozione Cura | Pozione di cura`");
+        }
+
+        const [oldName, newName] = parts;
+        const success = mergeInventoryItems(activeCampaign!.id, oldName, newName);
+        if (success) {
+            return message.reply(`✅ **Oggetti uniti!**\n💰 **${oldName}** è stato integrato in **${newName}**\nLe quantità sono state sommate.`);
+        } else {
+            return message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nell'inventario.`);
+        }
+    }
+
+    // --- NUOVO: $unisciquest ---
+    // Uso: $unisciquest <vecchio> | <nuovo> -> Unisce due quest
+    if (command === 'unisciquest' || command === 'mergequest' || command === 'mergequests') {
+        const arg = args.join(' ');
+        const parts = arg.split('|').map(s => s.trim());
+
+        if (parts.length !== 2) {
+            return message.reply("Uso: `$unisciquest <titolo vecchio> | <titolo nuovo>`\nEsempio: `$unisciquest Trova l'artefatto | Trovare l'artefatto antico`");
+        }
+
+        const [oldTitle, newTitle] = parts;
+        const success = mergeQuests(activeCampaign!.id, oldTitle, newTitle);
+        if (success) {
+            return message.reply(`✅ **Quest unite!**\n🗺️ **${oldTitle}** è stata integrata in **${newTitle}**`);
+        } else {
+            return message.reply(`❌ Impossibile unire. Verifica che "${oldTitle}" esista tra le quest.`);
+        }
+    }
+
     // --- NUOVO: !stato ---
     if (command === 'stato' || command === 'status') {
         const audioCounts = await audioQueue.getJobCounts();
@@ -2218,23 +2360,31 @@ client.on('messageCreate', async (message: Message) => {
                 }
                 }
 
-                // --- GESTIONE LOOT ---
+                // --- GESTIONE LOOT (con RICONCILIAZIONE) ---
                 if (validated?.loot.keep && validated.loot.keep.length > 0) {
-                for (const item of validated.loot.keep) {
-                    addLoot(currentCampaignId, item, 1);
-                    console.log(`[Tesoriere] 💰 Aggiunto: ${item}`);
+                    // Pre-deduplica batch
+                    const dedupedItems = await deduplicateItemBatch(validated.loot.keep);
 
-                    // ✅ Embedding selettivo: solo se NON è valuta semplice
-                    const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(item) && item.length < 30;
+                    for (const item of dedupedItems) {
+                        // Riconcilia con inventario esistente
+                        const reconciled = await reconcileItemName(currentCampaignId, item);
+                        const finalName = reconciled ? reconciled.canonicalName : item;
+                        if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
 
-                    if (!isSimpleCurrency) {
-                    try {
-                        await ingestLootEvent(currentCampaignId, currentSessionId, item);
-                    } catch (err: any) {
-                        console.error(`[RAG] Errore indicizzazione ${item}:`, err.message);
+                        addLoot(currentCampaignId, finalName, 1);
+                        console.log(`[Tesoriere] 💰 Aggiunto: ${finalName}`);
+
+                        // ✅ Embedding selettivo: solo se NON è valuta semplice
+                        const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
+
+                        if (!isSimpleCurrency) {
+                            try {
+                                await ingestLootEvent(currentCampaignId, currentSessionId, finalName);
+                            } catch (err: any) {
+                                console.error(`[RAG] Errore indicizzazione ${finalName}:`, err.message);
+                            }
+                        }
                     }
-                    }
-                }
                 }
 
                 // --- RIMOZIONE LOOT ---
@@ -2332,17 +2482,35 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
 
-                // --- GESTIONE BESTIARIO (MOSTRI) ---
+                // --- GESTIONE BESTIARIO (MOSTRI con RICONCILIAZIONE) ---
                 if (result.monsters && result.monsters.length > 0) {
                     console.log(`[Bestiario] 👹 Registrazione ${result.monsters.length} creature...`);
-                    for (const monster of result.monsters) {
+
+                    // 1. Pre-deduplica batch
+                    const dedupedMonsters = await deduplicateMonsterBatch(result.monsters);
+
+                    // 2. Riconcilia con bestiario esistente
+                    for (const monster of dedupedMonsters) {
                         if (monster.name) {
+                            const reconciled = await reconcileMonsterName(currentCampaignId, monster.name, monster.description);
+
+                            const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                            if (reconciled) {
+                                console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
+                            }
+
                             upsertMonster(
                                 currentCampaignId,
-                                monster.name,
+                                finalName,
                                 monster.status || 'ALIVE',
                                 monster.count,
-                                currentSessionId
+                                currentSessionId,
+                                {
+                                    description: monster.description,
+                                    abilities: monster.abilities,
+                                    weaknesses: monster.weaknesses,
+                                    resistances: monster.resistances
+                                }
                             );
                         }
                     }
@@ -3421,11 +3589,17 @@ client.on('messageCreate', async (message: Message) => {
                         ingestWorldEvent(campaignId, targetSessionId, evt.event, evt.type).catch(console.error);
                     }
                 }
+                // LOOT (con RICONCILIAZIONE)
                 if (validated.loot.keep) {
-                    for (const item of validated.loot.keep) {
-                        addLoot(campaignId, item, 1, targetSessionId);
-                        if (!/^[\d\s]+(mo|monete?)/i.test(item)) {
-                            ingestLootEvent(campaignId, targetSessionId, item).catch(console.error);
+                    const dedupedItems = await deduplicateItemBatch(validated.loot.keep);
+                    for (const item of dedupedItems) {
+                        const reconciled = await reconcileItemName(campaignId, item);
+                        const finalName = reconciled ? reconciled.canonicalName : item;
+                        if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
+
+                        addLoot(campaignId, finalName, 1, targetSessionId);
+                        if (!/^[\d\s]+(mo|monete?)/i.test(finalName)) {
+                            ingestLootEvent(campaignId, targetSessionId, finalName).catch(console.error);
                         }
                     }
                 }
@@ -3491,10 +3665,21 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
             }
+            // BESTIARIO (con RICONCILIAZIONE)
             if (result.monsters?.length) {
-                for (const monster of result.monsters) {
+                const dedupedMonsters = await deduplicateMonsterBatch(result.monsters);
+                for (const monster of dedupedMonsters) {
                     if (monster.name) {
-                        upsertMonster(campaignId, monster.name, monster.status || 'ALIVE', monster.count, targetSessionId);
+                        const reconciled = await reconcileMonsterName(campaignId, monster.name, monster.description);
+                        const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                        if (reconciled) console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
+
+                        upsertMonster(campaignId, finalName, monster.status || 'ALIVE', monster.count, targetSessionId, {
+                            description: monster.description,
+                            abilities: monster.abilities,
+                            weaknesses: monster.weaknesses,
+                            resistances: monster.resistances
+                        });
                     }
                 }
             }
@@ -3820,25 +4005,31 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         }
                         }
                         
-                        // --- GESTIONE LOOT ---
+                        // --- GESTIONE LOOT (con RICONCILIAZIONE) ---
                         if (validated?.loot.keep && validated.loot.keep.length > 0) {
-                        for (const item of validated.loot.keep) {
-                            addLoot(currentCampaignId, item, 1);
-                            console.log(`[Tesoriere] 💰 Aggiunto: ${item}`);
-                            
-                            // ✅ Embedding selettivo: solo se NON è valuta semplice
-                            const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(item) && item.length < 30;
-                            
-                            if (!isSimpleCurrency) {
-                            try {
-                                await ingestLootEvent(currentCampaignId, currentSessionId, item);
-                            } catch (err: any) {
-                                console.error(`[RAG] Errore indicizzazione ${item}:`, err.message);
-                            }
+                            const dedupedItems = await deduplicateItemBatch(validated.loot.keep);
+
+                            for (const item of dedupedItems) {
+                                const reconciled = await reconcileItemName(currentCampaignId, item);
+                                const finalName = reconciled ? reconciled.canonicalName : item;
+                                if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
+
+                                addLoot(currentCampaignId, finalName, 1);
+                                console.log(`[Tesoriere] 💰 Aggiunto: ${finalName}`);
+
+                                // ✅ Embedding selettivo: solo se NON è valuta semplice
+                                const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
+
+                                if (!isSimpleCurrency) {
+                                    try {
+                                        await ingestLootEvent(currentCampaignId, currentSessionId, finalName);
+                                    } catch (err: any) {
+                                        console.error(`[RAG] Errore indicizzazione ${finalName}:`, err.message);
+                                    }
+                                }
                             }
                         }
-                        }
-                        
+
                         // --- RIMOZIONE LOOT ---
                         if (result.loot_removed && result.loot_removed.length > 0) {
                         result.loot_removed.forEach((item: string) => {
@@ -3928,17 +4119,29 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             }
                         }
 
-                        // --- GESTIONE BESTIARIO (MOSTRI) ---
+                        // --- GESTIONE BESTIARIO (MOSTRI con RICONCILIAZIONE) ---
                         if (result.monsters && result.monsters.length > 0) {
                             console.log(`[Bestiario] 👹 Registrazione ${result.monsters.length} creature...`);
-                            for (const monster of result.monsters) {
+
+                            const dedupedMonsters = await deduplicateMonsterBatch(result.monsters);
+                            for (const monster of dedupedMonsters) {
                                 if (monster.name) {
+                                    const reconciled = await reconcileMonsterName(currentCampaignId, monster.name, monster.description);
+                                    const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                                    if (reconciled) console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
+
                                     upsertMonster(
                                         currentCampaignId,
-                                        monster.name,
+                                        finalName,
                                         monster.status || 'ALIVE',
                                         monster.count,
-                                        currentSessionId
+                                        currentSessionId,
+                                        {
+                                            description: monster.description,
+                                            abilities: monster.abilities,
+                                            weaknesses: monster.weaknesses,
+                                            resistances: monster.resistances
+                                        }
                                     );
                                 }
                             }

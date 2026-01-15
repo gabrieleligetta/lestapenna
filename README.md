@@ -12,6 +12,7 @@ Lestapenna è un bot Discord avanzato progettato per registrare, trascrivere e n
 *   **Archivio Cloud**: Backup automatico delle registrazioni su Oracle Cloud Object Storage.
 *   **Tracciamento Luoghi (Atlas)**: Mantiene memoria dei luoghi visitati e adatta la narrazione all'ambiente.
 *   **Sistema Armonico**: Validazione intelligente degli eventi, sincronizzazione RAG lazy e protezione dell'Atlante.
+*   **Riconciliazione Intelligente**: Deduplica automaticamente NPC, luoghi, mostri, oggetti e quest usando fuzzy matching e conferma AI per evitare duplicati nel database.
 
 ## 🛠️ Installazione e Configurazione
 
@@ -181,6 +182,19 @@ Il bot tiene traccia di chi incontrate.
 
 *   `$presenze`: Mostra un elenco rapido degli NPC rilevati nella sessione corrente (utile per il DM per verificare se l'AI sta ascoltando bene).
 
+### 🐲 Bestiario
+Il bot tiene traccia dei mostri incontrati, incluse abilità, debolezze e resistenze scoperte in combattimento.
+
+*   `$bestiario` (o `$bestiary`, `$mostri`, `$monsters`):
+    *   Senza argomenti: Mostra l'elenco dei mostri incontrati nella campagna.
+    *   Con nome: `$bestiario Drago Rosso` mostra la scheda dettagliata (Descrizione, Abilità, Debolezze, Resistenze, Note).
+
+    #### Comandi Avanzati Bestiario
+    *   **Merge (Unisci)**: `$bestiario merge <Vecchio Nome> | <Nuovo Nome>`
+        *   Unisce due schede mostro in una sola. Utile se l'AI ha creato duplicati (es. "Goblin" e "Goblin Guerriero").
+        *   **Esempio**: `$bestiario merge "Orco Selvaggio" | "Orco"`
+        *   **Risultato**: La scheda "Orco Selvaggio" viene eliminata. Tutte le informazioni vengono trasferite su "Orco".
+
 ### 🎒 Inventario e Quest
 *   `$quest` (o `$obiettivi`): Visualizza le quest attive.
     *   `$quest add <Titolo>`: Aggiunge manualmente una quest.
@@ -188,6 +202,14 @@ Il bot tiene traccia di chi incontrate.
 *   `$inventario` (o `$loot`): Visualizza l'inventario del gruppo.
     *   `$loot add <Oggetto>`: Aggiunge un oggetto.
     *   `$loot use <Oggetto>`: Rimuove o usa un oggetto.
+
+    #### Comandi Avanzati Inventario e Quest
+    *   **Merge Oggetti**: `$unisciitem <Vecchio> | <Nuovo>` (o `$mergeitem`)
+        *   Unisce due oggetti in uno solo. Utile per oggetti con nomi leggermente diversi.
+        *   **Esempio**: `$unisciitem "Pozione di Cura" | "Pozione Curativa"`
+    *   **Merge Quest**: `$unisciquest <Vecchia> | <Nuova>` (o `$mergequest`)
+        *   Unisce due quest in una sola. Utile per obiettivi duplicati.
+        *   **Esempio**: `$unisciquest "Trova il tesoro" | "Recupera il tesoro perduto"`
 
 ### 👤 Scheda Personaggio
 Ogni giocatore può definire il proprio personaggio per la campagna attiva. Questo aiuta l'IA a attribuire correttamente le azioni.

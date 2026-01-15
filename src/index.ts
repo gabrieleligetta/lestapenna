@@ -1895,8 +1895,14 @@ client.on('messageCreate', async (message: Message) => {
         // FASE 1: INGESTIONE (Opzionale ma consigliata)
         let narrativeText: string | undefined;
         try {
-            await channel.send("🧠 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
+            await channel.send("📚 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
             narrativeText = await ingestSessionRaw(targetSessionId);
+            
+            // 🆕 Log per conferma
+            if (narrativeText) {
+                console.log(`[Ingest] ✅ NARRATIVE generato: ${narrativeText.length} caratteri`);
+            }
+
             await channel.send("✅ Memoria aggiornata.");
         } catch (ingestErr: any) {
             console.error(`⚠️ Errore ingestione ${targetSessionId}:`, ingestErr);

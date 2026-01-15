@@ -32,6 +32,41 @@ interface FilterDecision {
 }
 
 /**
+ * Pre-processa i segmenti per consolidare frasi frammentate dello stesso speaker
+ * (elimina rumore da interruzioni audio/latenza Discord)
+ */
+function consolidateFragments(segments: ProcessedSegment[]): ProcessedSegment[] {
+    const consolidated: ProcessedSegment[] = [];
+    
+    for (let i = 0; i < segments.length; i++) {
+        let current = segments[i];
+        
+        // Loop per unire frammenti multipli consecutivi
+        while (i + 1 < segments.length) {
+            const next = segments[i + 1];
+            
+            // Consolida se: stesso speaker, timestamp <3 secondi, testo breve (<50 char)
+            if (current.character === next.character &&
+                (next.absoluteTime - current.absoluteTime) < 3000 &&
+                current.text.length < 50) {
+                
+                current = {
+                    ...current,
+                    text: `${current.text} ${next.text}`.trim()
+                };
+                i++; // Salta il prossimo segmento perché è stato unito
+            } else {
+                break; // Interrompi se non soddisfa i criteri
+            }
+        }
+        
+        consolidated.push(current);
+    }
+    
+    return consolidated;
+}
+
+/**
  * Normalizza trascrizioni corrette in forma narrativa per RAG.
  * Elimina metagaming, preserva semantica, risolve referenze.
  *
@@ -42,13 +77,16 @@ export async function normalizeToNarrative(
     campaignId?: number
 ): Promise<NarrativeSegment[]> {
 
+    // Pre-processing: consolida frammenti
+    const consolidatedSegments = consolidateFragments(segments);
+    
     const results: NarrativeSegment[] = [];
 
     // Calcola numero batch con sliding window
     const effectiveBatchSize = NARRATIVE_BATCH_SIZE - NARRATIVE_OVERLAP;
-    const totalBatches = Math.ceil(segments.length / effectiveBatchSize);
+    const totalBatches = Math.ceil(consolidatedSegments.length / effectiveBatchSize);
 
-    console.log(`[NarrativeFilter] Inizio normalizzazione di ${segments.length} segmenti (batch: ${NARRATIVE_BATCH_SIZE}, overlap: ${NARRATIVE_OVERLAP})`);
+    console.log(`[NarrativeFilter] Inizio normalizzazione: ${segments.length} → ${consolidatedSegments.length} segmenti (consolidati: ${segments.length - consolidatedSegments.length})`);
 
     let processedUpTo = 0; // Tiene traccia di quanti segmenti abbiamo già processato
 
@@ -56,12 +94,12 @@ export async function normalizeToNarrative(
         // Calcola indici per sliding window
         const batchStart = batchNum * effectiveBatchSize;
         const contextStart = Math.max(0, batchStart - NARRATIVE_OVERLAP);
-        const batchEnd = Math.min(segments.length, batchStart + NARRATIVE_BATCH_SIZE);
+        const batchEnd = Math.min(consolidatedSegments.length, batchStart + NARRATIVE_BATCH_SIZE);
 
         // Segmenti di contesto (già processati, solo per riferimento)
-        const contextSegments = segments.slice(contextStart, batchStart);
+        const contextSegments = consolidatedSegments.slice(contextStart, batchStart);
         // Segmenti da processare in questo batch
-        const newSegments = segments.slice(batchStart, batchEnd);
+        const newSegments = consolidatedSegments.slice(batchStart, batchEnd);
 
         if (newSegments.length === 0) break;
 
@@ -98,7 +136,29 @@ export async function normalizeToNarrative(
             );
 
             const parsed = JSON.parse(response.choices[0].message.content || "{}");
-            const decisions: FilterDecision[] = parsed.decisions || [];
+
+            // VALIDAZIONE JSON AGGIUNTIVA
+            if (!parsed.decisions || !Array.isArray(parsed.decisions)) {
+                console.warn(`[NarrativeFilter] Batch ${batchNum + 1}: JSON malformato o chiave 'decisions' mancante.`);
+                throw new Error('Invalid JSON structure: decisions array missing');
+            }
+
+            const decisions: FilterDecision[] = parsed.decisions;
+
+            // Valida contenuto decisioni
+            for (const decision of decisions) {
+                // Check indice fuori range
+                if (typeof decision.index !== 'number' || decision.index < 0 || decision.index >= newSegments.length) {
+                    console.warn(`[NarrativeFilter] Batch ${batchNum + 1}: Indice ${decision.index} fuori range (max: ${newSegments.length - 1})`);
+                    continue;
+                }
+
+                // Check presenza testo per narrate
+                if ((decision.action === 'narrate' || decision.action === 'translate') && (!decision.text || decision.text.trim() === '')) {
+                    console.warn(`[NarrativeFilter] Batch ${batchNum + 1}: Decisione ${decision.index} manca "text" field, uso fallback 'keep'`);
+                    decision.action = 'keep';
+                }
+            }
 
             // Processa SOLO i nuovi segmenti (ignora contesto)
             for (let j = 0; j < newSegments.length; j++) {
@@ -153,9 +213,9 @@ export async function normalizeToNarrative(
     }
 
     const narrativeCount = results.filter(r => r.isNarrative).length;
-    const skippedCount = segments.length - results.length;
+    const skippedCount = consolidatedSegments.length - results.length;
 
-    console.log(`[NarrativeFilter] Completato: ${results.length}/${segments.length} segmenti (tradotti: ${narrativeCount}, saltati: ${skippedCount})`);
+    console.log(`[NarrativeFilter] Completato: ${results.length}/${consolidatedSegments.length} segmenti (tradotti: ${narrativeCount}, saltati: ${skippedCount})`);
 
     return results;
 }
@@ -187,9 +247,53 @@ ${contextSegments.map((s, idx) => `[CTX-${idx}] [${s.character}] ${s.text}`).joi
 
     return `Sei uno SCRITTORE FANTASY che traspone sessioni D&D in prosa romanzesca.
 
+**VINCOLI ASSOLUTI - NON VIOLARE MAI:**
+1. **ZERO INVENZIONI**: Non aggiungere dettagli non presenti nell'input (esiti azioni, oggetti, motivazioni non dichiarate)
+2. **PRESERVA AMBIGUITÀ**: Se l'input non specifica l'esito ("cerco trappole"), scrivi solo il tentativo, non il risultato
+3. **METAGAMING = SKIP**: Tiri dadi, riferimenti meccaniche pure, calcoli HP → sempre skip (salvo se contengono narrazione)
+4. **COERENZA CON CONTESTO**: Usa i segmenti CTX- per risolvere pronomi e mantenere continuità stilistica
+
+**LISTA NERA - FRASI VIETATE** (causano "AI slop"):
+❌ "un brivido corse lungo la schiena"
+❌ "un sorriso che non raggiungeva gli occhi"
+❌ "il cuore batteva nel petto"
+❌ "la tensione era palpabile nell'aria"
+❌ "aggrottò la fronte"
+❌ "sospirò pesantemente"
+❌ "con occhi socchiusi"
+
+Invece: Descrivi azioni fisiche specifiche e osservabili.
+✅ "Le dita gli si strinsero sull'elsa della spada"
+✅ "La mascella si contrasse. Una vena pulsava sulla tempia"
+
 **OBIETTIVO FONDAMENTALE**: Crea una TRASPOSIZIONE NARRATIVA RICCA E DETTAGLIATA.
 NON stai riassumendo. Stai SCRIVENDO UN ROMANZO basato su questi dialoghi.
 L'output deve essere LUNGO e RICCO quanto l'input (o più!).
+
+**GESTIONE SPEAKER**:
+
+**DM**: Descrizioni ambientali e NPC → Mantieni prosa in terza persona
+  Input: "[DM] Vedete una stanza con pilastri di marmo"
+  Output: "La stanza si apriva davanti a loro, sostenuta da pilastri di marmo bianco."
+
+**NPC attraverso DM**: Dialoghi diretti NPC → Usa virgolette con attribuzione
+  Input: "[DM] La mano di Ogma dice: 'Dovete fermare la corruzione'"
+  Output: "La Mano di Ogma parlò, la voce solenne: «Dovete fermare la corruzione»."
+  Input: "[DM] Un cittadino si avvicina scortato da un pari"
+  Output: "Un cittadino si avvicinò, scortato da uno degli angeli pari."
+  **REGOLA**: Se DM riporta dialogo NPC, mantieni virgolette + attribuzione al PNG.
+
+**Giocatori**: Azioni e dialoghi → Trasforma in narrazione con nome PG
+  Input: "[Viktor] Mi avvicino cauto alla porta"
+  Output: "Viktor si avvicinò alla porta con cautela."
+
+**Distinzione**: Se speaker != "DM", è un personaggio giocante (usa sempre il nome).
+
+**TEMPO VERBALE**:
+- Usa SEMPRE passato remoto per azioni concluse ("Viktor colpì", "Kira disse")
+- Usa imperfetto per stati/descrizioni ("La stanza era buia", "L'arcimago tremava")
+- NON mescolare presente storico con passato (incoerente)
+- Se CTX- usa passato remoto, continua con passato remoto
 
 ${contextText}**AZIONI POSSIBILI**:
 
@@ -197,36 +301,59 @@ ${contextText}**AZIONI POSSIBILI**:
    - Problemi tecnici puri ("audio tagliato", "non sento", "mic rotto")
    - Riferimenti Discord/software ("aspetta che mi connetto", "sei mutato")
    - Pause vuote pure ("[SILENZIO]", "...", "ehm" isolati)
+   - Metagaming puro (numeri, calcoli) senza narrazione associata.
 
 2. **"narrate"** - USA PER LA MAGGIOR PARTE! Trasforma in prosa ricca:
 
-   DIALOGHI → Mantienili come dialoghi con contesto emotivo:
-   Input: "Non mi fido di lui"
-   Output: "«Non mi fido di lui» disse Kira, gli occhi ridotti a fessure mentre osservava il mercante."
+   DIALOGHI → Mantienili integrali + contesto osservabile:
+     Input: "Non mi fido di lui"
+     ✅ CORRETTO: "«Non mi fido di lui» disse Kira, incrociando le braccia."
+     ❌ SBAGLIATO: "«Non mi fido di lui» disse Kira, ricordando il tradimento subito." [INVENTA MOTIVAZIONE]
 
-   AZIONI → Descrizioni immersive:
-   Input: "Vado a controllare la porta"
-   Output: "Viktor si avvicinò alla porta con cautela, le dita che sfioravano l'elsa della spada. Ogni suo passo era misurato, silenzioso come quello di un predatore."
+   AZIONI CON ESITO → Trascrivi solo ciò che viene dichiarato:
+     Input: "Apro la porta e vedo una stanza vuota"
+     ✅ CORRETTO: "Viktor aprì la porta. La stanza al di là era vuota, spoglia."
+     ❌ SBAGLIATO: "Viktor aprì la porta, sollevato di non trovare nemici." [INVENTA EMOZIONE]
 
-   MECCANICHE DI GIOCO → Trasponi in narrazione se rilevanti:
-   Input: "Faccio un tiro percezione... 18!"
-   Output: "I sensi affinati di Kira colsero ciò che altri avrebbero ignorato. Notò le impronte fresche sul pavimento polveroso, il lieve bagliore di una runa nascosta."
+   **ESPANSIONE DEL RITMO** (Una linea di gioco → Paragrafo ricco):
+     Input breve DM: "Entrate. C'è un tavolo rotto e tracce di sangue"
+     ❌ TELEGRAFICO: "Entrarono. C'era un tavolo rotto e tracce di sangue."
+     ✅ ESPANSO: "Varcarono la soglia. L'aria stagnante sapeva di muffa e ferro. Al centro della stanza, un tavolo giaceva rovesciato, le gambe spezzate. Strisce scure di sangue rappreso serpeggiavano sul pavimento di pietra, tracciando una scia verso l'ombra oltre la porta sul fondo."
+     **REGOLA**: Se l'input è descrittivo (non solo dialogo), ESPANDI con dettagli sensoriali. Non inventare fatti, ma arricchisci atmosfera con elementi coerenti alla scena.
 
-   EMOZIONI/REAZIONI → Espandi con introspezione:
-   Input: "Cazzo, è morto!"
-   Output: "Il colpo fu letale. Viktor fissò il corpo che si accasciava, un misto di sollievo e inquietudine nel petto. Un altro nemico abbattuto, ma a quale costo?"
+   **COMBATTIMENTI** - Caso speciale (molto frequente):
+     Input: "[Viktor] 29, 10 danni necrotici; poi 24, altri 15 danni"
+     ✅ SKIP (solo numeri)
+     Input: "[DM] Il mago crolla a terra. L'angelo scompare in una luce divina"
+     ✅ NARRATE: "Il mago si accasciò al suolo, esanime. L'angelo celeste svanì in un'esplosione di luce divina che illuminò la stanza."
+     Input: "[Viktor] Faccio cinque passi e attacco con il pugno"
+     ✅ NARRATE: "Viktor avanzò di qualche metro e scagliò un pugno contro il nemico."
+     **REGOLA COMBATTIMENTI**: Tiri e danni → skip. Dichiarazioni d'azione e esiti visibili → narrate espanso.
+
+   MECCANICHE → Skip se puro metagame, traduci se contiene narrazione:
+     Input: "Tiro percezione... 18!"
+     ✅ SKIP (solo meccanica)
+     Input: "Tiro percezione... 18! Noto delle impronte"
+     ✅ NARRATE: "I sensi di Kira colsero dettagli che altri avrebbero ignorato: impronte fresche sul pavimento."
 
 3. **"keep"** - Solo se il testo è già perfetto così com'è (raro)
 
-**REGOLE CRITICHE**:
-- L'OUTPUT DEVE ESSERE RICCO! Non frasi telegrafiche.
-- Mantieni TUTTI i dettagli: nomi, oggetti, luoghi, decisioni.
-- I dialoghi restano dialoghi (con «» all'italiana), ma aggiungi azione/emozione.
-- Risolvi pronomi vaghi usando il contesto: "lui" → nome proprio.
-- Il metagaming PURO va eliminato, ma se contiene info rilevanti (es. "ho 3 HP") → trasponi ("Viktor barcollò, sentendo le forze abbandonarlo").
+**USO DEL CONTESTO PRECEDENTE:**
+- Risolvi pronomi vaghi ("lui" → usa ultimo nome citato in CTX-)
+- Mantieni tono narrativo coerente (se CTX- usa passato remoto, continua così)
+- NON contraddire eventi già narrati in CTX-
+- Se CTX- menziona un PNG, usa lo stesso nome (non sinonimi)
 
 **INPUT DA TRASPORRE** (${newSegments.length} segmenti):
 ${batchText}
+
+**AUTO-VERIFICA PRIMA DI RISPONDERE:**
+Per ogni "narrate", chiediti:
+- Ho aggiunto dettagli non presenti nell'input? → ERRORE
+- Ho specificato un esito non dichiarato? → ERRORE
+- Ho inventato pensieri/motivazioni dei PG? → ERRORE
+- Ho usato frasi della LISTA NERA? → ERRORE
+- Ho solo riscritto ciò che è stato detto/mostrato? → OK
 
 **OUTPUT JSON**:
 {

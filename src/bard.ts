@@ -1820,13 +1820,19 @@ async function identifyRelevantContext(
 
     const TARGET_CHARS = 300000; // ~75k token per GPT-5.2
     
-    // SELEZIONE INTELLIGENTE FONTE
-    const sourceText = (narrativeText && narrativeText.length > 1000) ? narrativeText : rawTranscript;
-    const isNarrative = sourceText === narrativeText;
-
+    // 🆕 Prioritizza NARRATIVE se disponibile, fallback su RAW
+    const sourceText = narrativeText || rawTranscript;
+    
+    // 🆕 Log per debug e monitoring
+    if (narrativeText) {
+        console.log(`[Context] ✅ Usando testo NARRATIVO filtrato (${sourceText.length} caratteri)`);
+    } else {
+        console.log(`[Context] ⚠️ NARRATIVE non disponibile, fallback su RAW (${sourceText.length} caratteri)`);
+    }
+    
     const USE_MAP_PHASE = sourceText.length > 50000;
 
-    console.log(`[identifyRelevantContext] Input: ${sourceText.length} chars (Source: ${isNarrative ? 'Narrative Clean' : 'Raw Transcript'})`);
+    console.log(`[identifyRelevantContext] Input: ${sourceText.length} chars`);
 
     let processedText = sourceText;
 

@@ -460,10 +460,29 @@ client.on('messageCreate', async (message: Message) => {
                         "`$metriche`: Mostra le metriche live della sessione."
                 },
                 {
+                    name: "🔧 Comandi Avanzati",
+                    value:
+                        "**NPC Alias (per RAG)**\n" +
+                        "`$npc alias <Nome> add <Soprannome>`: Aggiungi alias.\n" +
+                        "`$npc alias <Nome> remove <Soprannome>`: Rimuovi alias.\n\n" +
+                        "**Timeline**\n" +
+                        "`$timeline delete <ID>`: Elimina evento storico.\n\n" +
+                        "**Viaggi**\n" +
+                        "`$viaggi fixcurrent <R> | <L>`: Correggi posizione corrente.\n\n" +
+                        "**Altro**\n" +
+                        "`$toni`: Lista toni narrativi per `$racconta`.\n" +
+                        "`$autoaggiorna on/off`: Toggle auto-update biografie PG.\n" +
+                        "`$riprocessa <ID>`: Rigenera memoria/dati (no ritrascrizione)."
+                },
+                {
                     name: "🧪 Test & Debug",
                     value:
                         "`$teststream <URL>`: Simula una sessione via link audio.\n" +
                         "`$cleantest`: Rimuove tutte le sessioni di test dal DB."
+                },
+                {
+                    name: "💡 Alias Comandi",
+                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$npc`/`$dossier`, `$viaggi`/`$travels`, `$inventario`/`$inventory`, ecc."
                 }
             )
             .setFooter({ text: "Per la versione inglese usa $help" });
@@ -574,10 +593,29 @@ client.on('messageCreate', async (message: Message) => {
                         "`$metrics`: Show live session metrics."
                 },
                 {
+                    name: "🔧 Advanced Commands",
+                    value:
+                        "**NPC Alias (for RAG)**\n" +
+                        "`$npc alias <Name> add <Alias>`: Add alias.\n" +
+                        "`$npc alias <Name> remove <Alias>`: Remove alias.\n\n" +
+                        "**Timeline**\n" +
+                        "`$timeline delete <ID>`: Delete historical event.\n\n" +
+                        "**Travels**\n" +
+                        "`$travels fixcurrent <R> | <L>`: Fix current position.\n\n" +
+                        "**Other**\n" +
+                        "`$tones`: List narrative tones for `$narrate`.\n" +
+                        "`$autoupdate on/off`: Toggle auto-update PC biographies.\n" +
+                        "`$reprocess <ID>`: Regenerate memory/data (no re-transcription)."
+                },
+                {
                     name: "🧪 Test & Debug",
                     value:
                         "`$teststream <URL>`: Simulate a session via direct audio link.\n" +
                         "`$cleantest`: Remove all test sessions from DB."
+                },
+                {
+                    name: "💡 Command Aliases",
+                    value: "Many commands have Italian aliases: `$location`/`$luogo`, `$atlas`/`$atlante`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, etc."
                 }
             )
             .setFooter({ text: "Per la versione italiana usa $aiuto" });

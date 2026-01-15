@@ -154,6 +154,7 @@ const TRANSCRIPTION_PROVIDER = getProvider('TRANSCRIPTION_PROVIDER', 'AI_PROVIDE
 const METADATA_PROVIDER = getProvider('METADATA_PROVIDER', 'AI_PROVIDER');
 const MAP_PROVIDER = getProvider('MAP_PROVIDER', 'AI_PROVIDER');
 const SUMMARY_PROVIDER = getProvider('SUMMARY_PROVIDER', 'AI_PROVIDER');
+const ANALYST_PROVIDER = getProvider('ANALYST_PROVIDER', 'AI_PROVIDER'); // Estrazione dati strutturati
 const CHAT_PROVIDER = getProvider('CHAT_PROVIDER', 'AI_PROVIDER');
 const EMBEDDING_PROVIDER = getProvider('EMBEDDING_PROVIDER', 'AI_PROVIDER');
 const NARRATIVE_FILTER_PROVIDER = getProvider('NARRATIVE_FILTER_PROVIDER', 'AI_PROVIDER');
@@ -166,6 +167,7 @@ const TRANSCRIPTION_MODEL = getModel(TRANSCRIPTION_PROVIDER, 'OPEN_AI_MODEL_TRAN
 const METADATA_MODEL = getModel(METADATA_PROVIDER, 'OPEN_AI_MODEL_METADATA', 'gpt-5-mini');
 const MAP_MODEL = getModel(MAP_PROVIDER, 'OPEN_AI_MODEL_MAP', 'gpt-5-mini');
 const SUMMARY_MODEL = getModel(SUMMARY_PROVIDER, 'OPEN_AI_MODEL_SUMMARY', 'gpt-5.2');
+const ANALYST_MODEL = getModel(METADATA_PROVIDER, 'OPEN_AI_MODEL_METADATA', 'gpt-5-mini'); // Modello economico per dati
 const CHAT_MODEL = getModel(CHAT_PROVIDER, 'OPEN_AI_MODEL_CHAT', 'gpt-5-mini');
 const NARRATIVE_FILTER_MODEL = getModel(NARRATIVE_FILTER_PROVIDER, 'OPEN_AI_MODEL_NARRATIVE_FILTER', 'gpt-5-mini');
 
@@ -181,6 +183,7 @@ const transcriptionClient = createClient(TRANSCRIPTION_PROVIDER);
 const metadataClient = createClient(METADATA_PROVIDER);
 const mapClient = createClient(MAP_PROVIDER);
 const summaryClient = createClient(SUMMARY_PROVIDER);
+const analystClient = createClient(ANALYST_PROVIDER); // Per estrazione dati strutturati
 const chatClient = createClient(CHAT_PROVIDER);
 const narrativeFilterClient = createClient(NARRATIVE_FILTER_PROVIDER);
 
@@ -219,7 +222,8 @@ console.log('\n🎭 BARDO AI - CONFIG GRANULARE');
 console.log(`Correzione:  ${TRANSCRIPTION_PROVIDER.padEnd(8)} → ${TRANSCRIPTION_MODEL.padEnd(20)}`);
 console.log(`Metadati:    ${METADATA_PROVIDER.padEnd(8)} → ${METADATA_MODEL.padEnd(20)}`);
 console.log(`Map:         ${MAP_PROVIDER.padEnd(8)} → ${MAP_MODEL.padEnd(20)}`);
-console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${SUMMARY_MODEL.padEnd(20)}`);
+console.log(`Analyst:     ${ANALYST_PROVIDER.padEnd(8)} → ${ANALYST_MODEL.padEnd(20)} (estrazione dati)`);
+console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${SUMMARY_MODEL.padEnd(20)} (narrazione)`);
 console.log(`Chat/RAG:    ${CHAT_PROVIDER.padEnd(8)} → ${CHAT_MODEL.padEnd(20)}`);
 console.log(`NarrFilter:  ${NARRATIVE_FILTER_PROVIDER.padEnd(8)} → ${NARRATIVE_FILTER_MODEL.padEnd(20)} (batch: ${NARRATIVE_BATCH_SIZE})`);
 console.log(`Embeddings:  DOPPIO      → OpenAI (${EMBEDDING_MODEL_OPENAI}) + Ollama (${EMBEDDING_MODEL_OLLAMA})`);
@@ -1810,21 +1814,27 @@ function smartTruncate(text: string, maxChars: number): string {
 async function identifyRelevantContext(
     campaignId: number,
     rawTranscript: string,
-    snapshot: any
+    snapshot: any,
+    narrativeText?: string
 ): Promise<string[]> {
 
     const TARGET_CHARS = 300000; // ~75k token per GPT-5.2
-    const USE_MAP_PHASE = rawTranscript.length > 50000;
+    
+    // SELEZIONE INTELLIGENTE FONTE
+    const sourceText = (narrativeText && narrativeText.length > 1000) ? narrativeText : rawTranscript;
+    const isNarrative = sourceText === narrativeText;
 
-    console.log(`[identifyRelevantContext] Input: ${rawTranscript.length} chars`);
+    const USE_MAP_PHASE = sourceText.length > 50000;
 
-    let processedText = rawTranscript;
+    console.log(`[identifyRelevantContext] Input: ${sourceText.length} chars (Source: ${isNarrative ? 'Narrative Clean' : 'Raw Transcript'})`);
+
+    let processedText = sourceText;
 
     // FASE 1: Condensazione con MAP (solo se necessario)
     if (USE_MAP_PHASE) {
         console.log(`[identifyRelevantContext] 📊 MAP phase attiva per condensazione...`);
 
-        const chunks = splitTextInChunks(rawTranscript, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
+        const chunks = splitTextInChunks(sourceText, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
 
         const characters = getCampaignCharacters(campaignId);
         const castContext = characters.length > 0
@@ -1847,7 +1857,7 @@ async function identifyRelevantContext(
 
         processedText = condensedChunks.map(c => c.text).join('\n\n');
 
-        const ratio = (rawTranscript.length / processedText.length).toFixed(2);
+        const ratio = (sourceText.length / processedText.length).toFixed(2);
         console.log(`[identifyRelevantContext] ✅ MAP completato: ${processedText.length} chars (${ratio}x compressione)`);
     } else {
         console.log(`[identifyRelevantContext] ⚡ Sessione breve, skip MAP phase`);
@@ -1926,7 +1936,147 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
     }
 }
 
-// --- FUNZIONE PRINCIPALE (RIASSUNTO)sessionId: string, p0: string, narrativeText: string | undefined, tone: ToneKey = 'DM'
+// ============================================
+// STEP 1: ANALISTA - Estrazione Dati Strutturati
+// ============================================
+
+interface AnalystOutput {
+    loot: string[];
+    loot_removed: string[];
+    quests: string[];
+    monsters: Array<{ name: string; status: string; count?: string }>;
+    npc_dossier_updates: Array<{ name: string; description: string; role?: string; status?: 'ALIVE' | 'DEAD' | 'MISSING' }>;
+    location_updates: Array<{ macro: string; micro: string; description: string }>;
+    present_npcs: string[];
+}
+
+/**
+ * STEP 1: Analista - Estrae dati strutturati dal testo narrativo.
+ * Usa un modello economico (gpt-4o-mini) per precisione sui dati.
+ */
+async function extractStructuredData(
+    narrativeText: string,
+    castContext: string,
+    memoryContext: string
+): Promise<AnalystOutput> {
+    console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)...`);
+
+    const prompt = `Sei un ANALISTA DATI esperto di D&D. Il tuo UNICO compito è ESTRARRE DATI STRUTTURATI.
+NON scrivere narrativa. NON riassumere. SOLO estrai e cataloga.
+
+${castContext}
+${memoryContext}
+
+**ISTRUZIONI RIGOROSE**:
+1. Leggi ATTENTAMENTE il testo
+2. Estrai SOLO ciò che è ESPLICITAMENTE menzionato
+3. NON inventare, NON inferire, NON aggiungere
+4. Se non trovi qualcosa, lascia array vuoto []
+
+**OUTPUT JSON RICHIESTO**:
+{
+    "loot": ["Lista oggetti TROVATI/OTTENUTI nella sessione - SOLO se esplicitamente menzionato il ritrovamento"],
+    "loot_removed": ["Lista oggetti PERSI/USATI/CONSUMATI - SOLO se esplicitamente menzionato"],
+    "quests": ["Lista missioni ACCETTATE/COMPLETATE/AGGIORNATE in questa sessione"],
+    "monsters": [
+        {"name": "Nome creatura", "status": "DEFEATED|ALIVE|FLED", "count": "numero o 'molti'"}
+    ],
+    "npc_dossier_updates": [
+        {
+            "name": "Nome PROPRIO dell'NPC (es. 'Elminster', non 'il mago')",
+            "description": "Descrizione fisica/personalità basata su ciò che emerge dal testo",
+            "role": "Ruolo (es. 'Mercante', 'Guardia')",
+            "status": "ALIVE|DEAD|MISSING"
+        }
+    ],
+    "location_updates": [
+        {
+            "macro": "Città/Regione (es. 'Waterdeep')",
+            "micro": "Luogo specifico (es. 'Taverna del Drago')",
+            "description": "Descrizione atmosferica del luogo"
+        }
+    ],
+    "present_npcs": ["Lista TUTTI i nomi NPC menzionati nel testo"]
+}
+
+**REGOLE CRITICHE**:
+- I PG (Personaggi Giocanti nel CONTESTO sopra) NON vanno in npc_dossier_updates
+- Per il loot: "parlano di una spada" ≠ "trovano una spada". Estrai SOLO acquisizioni certe.
+- Per le quest: Solo se c'è una chiara accettazione/completamento/aggiornamento
+- Per i mostri: Solo creature ostili combattute, non NPC civili
+
+**TESTO DA ANALIZZARE**:
+${narrativeText.substring(0, 80000)}
+
+Rispondi SOLO con JSON valido.`;
+
+    const startAI = Date.now();
+    try {
+        const options: any = {
+            model: ANALYST_MODEL,
+            messages: [
+                { role: "system", content: "Sei un analista dati. Rispondi SOLO con JSON valido." },
+                { role: "user", content: prompt }
+            ]
+        };
+
+        if (ANALYST_PROVIDER === 'openai') {
+            options.response_format = { type: "json_object" };
+        } else if (ANALYST_PROVIDER === 'ollama') {
+            options.format = 'json';
+        }
+
+        const response = await analystClient.chat.completions.create(options);
+        const latency = Date.now() - startAI;
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+
+        monitor.logAIRequestWithCost('analyst', ANALYST_PROVIDER, ANALYST_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+
+        const parsed = safeJsonParse(response.choices[0].message.content || "{}");
+        console.log(`[Analista] ✅ Dati estratti in ${latency}ms`);
+
+        // Normalizza status NPC al tipo corretto
+        const validStatuses = ['ALIVE', 'DEAD', 'MISSING'] as const;
+        const normalizedNpcUpdates = Array.isArray(parsed?.npc_dossier_updates)
+            ? parsed.npc_dossier_updates.map((npc: any) => ({
+                name: npc.name,
+                description: npc.description,
+                role: npc.role,
+                status: validStatuses.includes(npc.status) ? npc.status as 'ALIVE' | 'DEAD' | 'MISSING' : undefined
+            }))
+            : [];
+
+        return {
+            loot: normalizeStringList(parsed?.loot),
+            loot_removed: normalizeStringList(parsed?.loot_removed),
+            quests: normalizeStringList(parsed?.quests),
+            monsters: Array.isArray(parsed?.monsters) ? parsed.monsters : [],
+            npc_dossier_updates: normalizedNpcUpdates,
+            location_updates: Array.isArray(parsed?.location_updates) ? parsed.location_updates : [],
+            present_npcs: normalizeStringList(parsed?.present_npcs)
+        };
+
+    } catch (e: any) {
+        console.error('[Analista] ❌ Errore estrazione dati:', e.message);
+        monitor.logAIRequestWithCost('analyst', ANALYST_PROVIDER, ANALYST_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        return {
+            loot: [],
+            loot_removed: [],
+            quests: [],
+            monsters: [],
+            npc_dossier_updates: [],
+            location_updates: [],
+            present_npcs: []
+        };
+    }
+}
+
+// ============================================
+// STEP 2: SCRITTORE - Narrazione (generateSummary)
+// ============================================
+
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string): Promise<SummaryResponse> {
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
     if (narrativeText) {
@@ -1980,7 +2130,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         const rawTranscript = transcriptions.map(t => t.transcription_text).join('\n');
         
         // L'agente decide cosa cercare
-        const dynamicQueries = await identifyRelevantContext(campaignId, rawTranscript, snapshot);
+        const dynamicQueries = await identifyRelevantContext(campaignId, rawTranscript, snapshot, narrativeText);
         
         // Eseguiamo le ricerche dinamiche
         const dynamicPromises = dynamicQueries.map(q => searchKnowledge(campaignId, q, 3));
@@ -2037,7 +2187,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
     let contextForFinalStep = "";
     let accumulatedTokens = 0;
 
-    // FASE MAP: Analisi frammenti
+    // ============================================
+    // STEP 1: ANALISTA - Estrazione Dati Strutturati
+    // ============================================
+    console.log(`[Bardo] 📊 STEP 1: Analista - Estrazione dati strutturati...`);
+    const analystData = await extractStructuredData(fullDialogue, castContext, memoryContext);
+    console.log(`[Bardo] ✅ Analista completato: ${analystData.loot.length} loot, ${analystData.monsters.length} mostri, ${analystData.npc_dossier_updates.length} NPC`);
+
+    // FASE MAP: Analisi frammenti (solo per testi molto lunghi)
     if (fullDialogue.length > MAX_CHUNK_SIZE) {
         console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars). Avvio Map-Reduce.`);
         const chunks = splitTextInChunks(fullDialogue, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
@@ -2051,162 +2208,94 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         contextForFinalStep = fullDialogue;
     }
 
-    // FASE REDUCE: Scrittura finale
-    console.log(`[Bardo] ✍️  Fase REDUCE: Scrittura racconto finale (${tone})...`);
+    // ============================================
+    // STEP 2: SCRITTORE - Narrazione Epica
+    // ============================================
+    console.log(`[Bardo] ✍️ STEP 2: Scrittore - Narrazione epica (${tone})...`);
 
     let reducePrompt = "";
     if (tone === 'DM') {
-        reducePrompt = `Sei un assistente esperto di D&D (Dungeons & Dragons).
-Analizza la seguente trascrizione grezza di una sessione di gioco.
-Il tuo compito è estrarre informazioni strutturate E scrivere un riassunto narrativo.
+        // PROMPT SCRITTORE: Solo narrazione, i dati strutturati vengono dall'Analista
+        reducePrompt = `Sei uno SCRITTORE FANTASY esperto di D&D. Il tuo UNICO compito è SCRIVERE.
+I dati strutturati (loot, quest, mostri, NPC) sono già stati estratti da un analista.
+Tu devi concentrarti SOLO sulla NARRAZIONE EPICA.
 
-CONTESTO:
+CONTESTO PERSONAGGI:
+${castContext}
+
+MEMORIA DEL MONDO (per riferimento, NON inventare eventi):
+${memoryContext}
+
+**IL TUO COMPITO**: Scrivi un racconto epico e coinvolgente della sessione.
+Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei personaggi.
+
+**OUTPUT JSON** (SOLO questi campi):
+{
+  "title": "Titolo evocativo e memorabile per la sessione",
+  "narrative": "Il racconto COMPLETO della sessione. Scrivi in prosa romanzesca, terza persona, passato. Includi dialoghi (con «»), descrizioni atmosferiche, emozioni dei personaggi. DEVE essere LUNGO e DETTAGLIATO - almeno 3000-5000 caratteri.",
+  "narrativeBrief": "MASSIMO 1800 caratteri. Mini-racconto autonomo che cattura l'essenza della sessione. Per Discord/email.",
+  "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM)"],
+  "character_growth": [
+    {"name": "Nome PG", "event": "Evento significativo per il personaggio", "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"}
+  ],
+  "npc_events": [
+    {"name": "Nome NPC", "event": "Evento chiave che coinvolge questo NPC", "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"}
+  ],
+  "world_events": [
+    {"event": "Evento che cambia il mondo di gioco", "type": "POLITICS|WAR|DISASTER|DISCOVERY"}
+  ]
+}
+
+**STILE NARRATIVO**:
+- "Show, don't tell": Non dire "era coraggioso", mostra le sue azioni
+- I dialoghi devono essere vivi e caratterizzanti
+- Descrivi le emozioni e i pensieri dei personaggi
+- Usa i cambi di scena per strutturare il racconto
+- Il "narrative" deve essere un RACCONTO COMPLETO, non un riassunto
+
+**REGOLE**:
+- NON estrarre loot/quest/mostri (fatto dall'Analista)
+- NON inventare eventi non presenti nel testo
+- Rispondi SOLO in ITALIANO
+- Il "log" è tecnico e conciso, il "narrative" è epico e dettagliato
+`;
+    } else {
+        // PROMPT SCRITTORE (non-DM): Solo narrazione, i dati strutturati vengono dall'Analista
+        reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
 ${castContext}
 ${memoryContext}
 
-"""
-FONTI DI DATI - LEGGI ATTENTAMENTE:
-1. [[MEMORIA DEL MONDO]]: Serve SOLO per contesto (capire chi sono i nomi citati). NON USARE QUESTI DATI PER IL REPORT.
-2. TRASCRIZIONE: È l'UNICA fonte di verità per gli eventi, il loot e le quest di QUESTA sessione.
+**IL TUO COMPITO**: Scrivi un racconto della sessione nel tono richiesto.
+I dati strutturati (loot, quest, mostri, NPC, luoghi) sono già stati estratti da un analista separato.
+Tu devi concentrarti SOLO sulla NARRAZIONE.
 
-DIVIETO ASSOLUTO:
-- NON riportare oggetti, quest o eventi citati solo nella MEMORIA.
-- Se la trascrizione non menziona esplicitamente il ritrovamento di un oggetto, NON scriverlo nel loot.
-- NON inserire i PG (Personaggi Giocanti elencati sopra) nella lista "npc_dossier_updates".
-"""
+ISTRUZIONI DI STILE:
+- "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
+- Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono dalla trascrizione del DM.
+- Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori.
+- Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il racconto in capitoli.
 
-Devi rispondere ESCLUSIVAMENTE con un oggetto JSON valido in questo formato esatto:
+**OUTPUT JSON** (SOLO questi campi narrativi):
 {
-  "title": "Titolo evocativo della sessione",
-  "narrative": "Scrivi qui un riassunto discorsivo e coinvolgente degli eventi, scritto come un racconto in terza persona al passato (es: 'Il gruppo è arrivato alla zona Ovest...'). Usa un tono epico ma conciso. Includi i colpi di scena e le interazioni principali.",
-  "narrativeBrief": "OBBLIGATORIO: Un riassunto BREVISSIMO (massimo 1800 caratteri) del narrative. Deve catturare l'essenza della sessione in modo coinvolgente. Questo sarà pubblicato su Discord e email.",
-  "loot": [
-      "FORMATO: Nome Oggetto (proprietà magiche se presenti)",
-      "SE oggetto magico: Arma Magica (+bonus attacco, effetto speciale se presente)",
-      "SE valuta semplice: 100 monete d'oro",
-      "IMPORTANTE: Estrai SOLO oggetti menzionati nella trascrizione, NON inventare!"
-  ],
-  "loot_removed": ["lista", "oggetti", "persi/usati"],
-  "quests": ["lista", "missioni", "accettate/completate"],
+  "title": "Titolo evocativo per la sessione",
+  "summary": "Il testo narrativo completo della sessione. MASSIMO 6500 caratteri.",
+  "narrativeBrief": "Mini-racconto autonomo per Discord/email. MASSIMO 1800 caratteri.",
+  "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM)"],
   "character_growth": [
-    {
-        "name": "Nome PG",
-        "event": "Descrizione dell'evento significativo",
-        "type": "TRAUMA"
-    }
+    {"name": "Nome PG", "event": "Evento significativo", "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"}
   ],
   "npc_events": [
-      {
-          "name": "Nome NPC",
-          "event": "Descrizione dell'evento chiave",
-          "type": "ALLIANCE"
-      }
+    {"name": "Nome NPC", "event": "Evento chiave", "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"}
   ],
   "world_events": [
-      {
-          "event": "Descrizione dell'evento globale",
-          "type": "POLITICS"
-      }
-  ],
-  "log": [
-    "[luogo - stanza] Chi -> Azione -> Risultato"
-  ],
-  "monsters": [
-       { "name": "Nome Mostro", "status": "DEFEATED" | "ALIVE" | "FLED", "count": "quantità approssimativa" }
-  ],
-  "npc_dossier_updates": [
-      {
-          "name": "Nome Proprio NPC (es. 'Elminster', non 'il mago')",
-          "description": "Descrizione fisica e/o di personalità in ITALIANO",
-          "role": "Ruolo sociale (es. 'Arcimago', 'Locandiere', 'Mercante')",
-          "status": "ALIVE" | "DEAD" | "MISSING"
-      }
-  ],
-  "location_updates": [
-      {
-          "macro": "Nome città/regione (es. 'Waterdeep')",
-          "micro": "Nome luogo specifico (es. 'Taverna del Drago')",
-          "description": "Descrizione atmosferica del luogo in ITALIANO"
-      }
-  ],
-  "present_npcs": ["Nome1", "Nome2", "...tutti gli NPC presenti nella sessione"]
+    {"event": "Evento che cambia il mondo", "type": "POLITICS|WAR|DISASTER|DISCOVERY"}
+  ]
 }
 
-REGOLE IMPORTANTI:
-1. "narrative": Deve essere un testo fluido, non un elenco. Racconta la storia della sessione.
-2. "narrativeBrief": MASSIMO 1800 CARATTERI! È una versione super-condensata del narrative. Deve essere un mini-racconto autonomo, non un troncamento.
-3. "loot": Solo oggetti di valore, monete o oggetti magici.
-4. "log": Sii conciso. Usa il formato [Luogo] Chi -> Azione.
-5. Rispondi SEMPRE in ITALIANO.
-6. IMPORTANTE: 'loot', 'loot_removed' e 'quests' devono essere array di STRINGHE SEMPLICI, NON oggetti.
-7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
-8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
-9. "location_updates": Solo luoghi visitati/descritti nella sessione. Descrizioni concise ma evocative.
-10. "present_npcs": Lista semplice di TUTTI gli NPC nominati nella sessione (anche se non hanno eventi).
-
-**REGOLA CRITICA - RICONCILIAZIONE NPC:**
-- CONTROLLA SEMPRE la lista "👥 NPC GIÀ NOTI" nel contesto!
-- Se senti un nome SIMILE a uno esistente (es. "Leo Sin", "Rantar" per "Leosin Erentar"), USA IL NOME DAL DOSSIER.
-- Nomi parziali, soprannomi o pronunce errate vanno RICONCILIATI col nome canonico.
-- NON creare nuove voci per lo stesso NPC con nomi diversi!
-
-**REGOLE PER IL LOOT:**
-- Oggetti magici/unici: Descrivi proprietà e maledizioni.
-- Valuta semplice: Scrivi solo "X monete d'oro".
-- Se un oggetto viene solo menzionato ma non descritto, scrivi il nome base.
-`;
-    } else {
-        reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
-        ${castContext}
-        ${memoryContext}
-
-        """
-        FONTI DI DATI - LEGGI ATTENTAMENTE:
-        1. [[MEMORIA DEL MONDO]]: Serve SOLO per contesto (capire chi sono i nomi citati). NON USARE QUESTI DATI PER IL REPORT.
-        2. TRASCRIZIONE: È l'UNICA fonte di verità per gli eventi, il loot e le quest di QUESTA sessione.
-
-        DIVIETO ASSOLUTO:
-        - NON riportare oggetti, quest o eventi citati solo nella MEMORIA.
-        - Se la trascrizione non menziona esplicitamente il ritrovamento di un oggetto, NON scriverlo nel loot.
-        - NON inserire i PG (Personaggi Giocanti elencati sopra) nella lista "npc_dossier_updates".
-        """
-
-        ISTRUZIONI DI STILE:
-        - "Show, don't tell": Non dire che un personaggio è coraggioso, descrivi le sue azioni intrepide.
-        - Se le azioni di un personaggio contraddicono il suo profilo, dai priorità ai fatti accaduti nelle sessioni.
-        - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono tecnicamente dalla trascrizione del Dungeon Master, basandoti sul contesto della scena.
-        - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori. Usale come punti fermi della narrazione, hanno priorità sull'audio trascritto.
-        - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il riassunto in capitoli o paragrafi distinti basati sui luoghi.
-
-        Usa gli appunti seguenti per scrivere un riassunto coerente della sessione.
-
-        ISTRUZIONI DI FORMATTAZIONE RIGIDE:
-        1. Non usare preamboli (es. "Ecco il riassunto").
-        2. Non usare chiusure conversazionali (es. "Fammi sapere se...", "Spero ti piaccia").
-        3. Non offrire di convertire il testo in altri formati o chiedere dettagli sul sistema di gioco.
-        4. L'output deve essere un oggetto JSON valido con le seguenti chiavi:
-           - "title": Un titolo evocativo per la sessione.
-           - "summary": Il testo narrativo completo.
-           - "narrativeBrief": Un riassunto BREVISSIMO (MASSIMO 1800 caratteri) della sessione. Mini-racconto autonomo per Discord/email.
-           - "loot": Array di stringhe (es. ["Spada +1", "100 monete d'oro"]). Se nessuno, array vuoto.
-           - "loot_removed": Array di stringhe degli oggetti consumati/persi. Se nessuno, array vuoto.
-           - "quests": Array di stringhe delle missioni accettate/aggiornate/concluse. Se nessuna, array vuoto.
-           - "character_growth": Array di oggetti {name, event, type} per eventi significativi dei personaggi.
-           - "monsters": Array di oggetti {name, status, count} per le creature ostili.
-           - "npc_dossier_updates": Array di oggetti {name, description, role, status} per NPC incontrati.
-           - "location_updates": Array di oggetti {macro, micro, description} per luoghi visitati.
-           - "present_npcs": Array di stringhe con i nomi di tutti gli NPC presenti nella sessione.
-        5. LUNGHEZZA MASSIMA: Il riassunto NON DEVE superare i 6500 caratteri. Sii conciso ma evocativo.
-        6. IMPORTANTE: 'loot', 'loot_removed', 'quests', 'present_npcs' devono essere array di STRINGHE SEMPLICI.
-        7. IMPORTANTE: Inserisci in 'monsters' solo le creature ostili o combattute. Non inserire NPC civili.
-        8. "npc_dossier_updates": Solo NPC con nome proprio. NON includere i PG.
-        9. "narrativeBrief": MASSIMO 1800 CARATTERI! È una versione super-condensata del summary. Deve essere un mini-racconto autonomo.
-
-        **REGOLA CRITICA - RICONCILIAZIONE NPC:**
-        - CONTROLLA SEMPRE la lista "👥 NPC GIÀ NOTI" nel contesto!
-        - Se senti un nome SIMILE a uno esistente (es. "Leo Sin" per "Leosin"), USA IL NOME DAL DOSSIER.
-        - Nomi parziali, soprannomi o pronunce errate vanno RICONCILIATI col nome canonico.
-        - NON creare nuove voci per lo stesso NPC con nomi diversi!`;
+**REGOLE**:
+- NON estrarre loot/quest/mostri/NPC/luoghi (fatto dall'Analista)
+- NON inventare eventi non presenti nel testo
+- Rispondi SOLO con JSON valido in ITALIANO`;
     }
 
     const startAI = Date.now();
@@ -2320,25 +2409,29 @@ REGOLE IMPORTANTI:
             };
         }
 
+        // ============================================
+        // MERGE: Dati Analista + Narrazione Scrittore
+        // ============================================
         return {
+            // DALLO SCRITTORE (narrazione)
             summary: finalSummary || "Errore generazione.",
             title: parsed.title || "Sessione Senza Titolo",
             tokens: accumulatedTokens,
-            // NORMALIZZAZIONE LISTE (Evita oggetti nel DB)
-            loot: normalizeStringList(parsed.loot),
-            loot_removed: normalizeStringList(parsed.loot_removed),
-            quests: normalizeStringList(parsed.quests),
             narrative: parsed.narrative,
             narrativeBrief: parsed.narrativeBrief || (parsed.narrative?.substring(0, 1800) + (parsed.narrative?.length > 1800 ? "..." : "")),
             log: Array.isArray(parsed.log) ? parsed.log : [],
             character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
             npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],
             world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [],
-            monsters: Array.isArray(parsed.monsters) ? parsed.monsters : [],
-            // 🆕 METADATI UNIFICATI (Architettura Ottimizzata)
-            npc_dossier_updates: Array.isArray(parsed.npc_dossier_updates) ? parsed.npc_dossier_updates : [],
-            location_updates: Array.isArray(parsed.location_updates) ? parsed.location_updates : [],
-            present_npcs: Array.isArray(parsed.present_npcs) ? parsed.present_npcs : [],
+            // DALL'ANALISTA (dati strutturati)
+            loot: analystData.loot,
+            loot_removed: analystData.loot_removed,
+            quests: analystData.quests,
+            monsters: analystData.monsters,
+            npc_dossier_updates: analystData.npc_dossier_updates,
+            location_updates: analystData.location_updates,
+            present_npcs: analystData.present_npcs,
+            // METADATI SESSIONE
             session_data: sessionData
         };
     } catch (err: any) {

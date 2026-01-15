@@ -250,7 +250,19 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
     }
 
     // Ordina per fase (opzionale, per avere un ordine consistente)
-    const phaseOrder = ['transcription', 'metadata', 'embeddings', 'map', 'summary', 'chat'];
+    const phaseOrder = ['transcription', 'metadata', 'embeddings', 'map', 'analyst', 'narrative_filter', 'summary', 'chat'];
+    
+    const phaseDisplayNames: Record<string, string> = {
+        'transcription': 'Transcription (Whisper/Correction)',
+        'metadata': 'Metadata Validation',
+        'embeddings': 'RAG Embeddings',
+        'map': 'Map Phase (Condensation)',
+        'analyst': 'Data Analyst (Extraction)',
+        'narrative_filter': 'Narrative Filter',
+        'summary': 'Storyteller (Summary)',
+        'chat': 'Chat / RAG Query'
+    };
+
     const sortedPhases = Object.values(aggregatedByPhase).sort((a, b) => {
         const indexA = phaseOrder.indexOf(a.phase);
         const indexB = phaseOrder.indexOf(b.phase);
@@ -429,10 +441,12 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
         <tr style="background-color: #f9f9f9;">
             <td colspan="2"><strong>📊 Cost Breakdown by Phase</strong></td>
         </tr>
-        ${sortedPhases.length > 0 ? sortedPhases.map(cost => `
+        ${sortedPhases.length > 0 ? sortedPhases.map(cost => {
+            const displayName = phaseDisplayNames[cost.phase] || (cost.phase.charAt(0).toUpperCase() + cost.phase.slice(1));
+            return `
         <tr>
             <td style="padding-left: 20px;">
-                <strong>${cost.phase.charAt(0).toUpperCase() + cost.phase.slice(1)}</strong>
+                <strong>${displayName}</strong>
                 <br/><small style="color: #666;">
                     ${Array.from(cost.providers).join(', ')} • ${cost.models.join(', ')}
                 </small>
@@ -450,7 +464,8 @@ Se tutti i parametri sono nella norma, dillo chiaramente senza inventare problem
                 </strong>
             </td>
         </tr>
-        `).join('') : '<tr><td colspan="2" style="padding: 8px; color: #999;">Nessun dato disponibile</td></tr>'}
+        `;
+        }).join('') : '<tr><td colspan="2" style="padding: 8px; color: #999;">Nessun dato disponibile</td></tr>'}
         
         <!-- STORAGE -->
         <tr style="background-color: #e3f2fd;">

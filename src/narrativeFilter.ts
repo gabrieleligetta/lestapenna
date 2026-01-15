@@ -26,7 +26,7 @@ export interface NarrativeSegment {
 
 interface FilterDecision {
     index: number;
-    action: 'keep' | 'translate' | 'skip';
+    action: 'keep' | 'narrate' | 'translate' | 'skip'; // narrate = prosa ricca, translate = legacy
     text?: string;
     reason?: string;
 }
@@ -107,7 +107,9 @@ export async function normalizeToNarrative(
 
                 if (decision.action === 'skip') {
                     continue;
-                } else if (decision.action === 'translate') {
+                } else if (decision.action === 'narrate' || decision.action === 'translate') {
+                    // "narrate" = nuova azione per prosa ricca
+                    // "translate" = legacy, trattato come narrate
                     results.push({
                         speaker: segment.character,
                         text: decision.text || segment.text,
@@ -115,6 +117,7 @@ export async function normalizeToNarrative(
                         isNarrative: true
                     });
                 } else {
+                    // "keep" = mantieni originale
                     results.push({
                         speaker: segment.character,
                         text: segment.text,
@@ -160,6 +163,8 @@ export async function normalizeToNarrative(
 /**
  * Costruisce il prompt con contesto dalla sliding window.
  * I segmenti di contesto sono mostrati per riferimento ma NON devono essere processati.
+ *
+ * OBIETTIVO: Produrre una TRASPOSIZIONE ROMANZESCA RICCA, non un riassunto!
  */
 function buildNarrativePromptWithContext(
     contextSegments: ProcessedSegment[],
@@ -169,7 +174,7 @@ function buildNarrativePromptWithContext(
     // Contesto precedente (per risolvere pronomi)
     let contextText = "";
     if (contextSegments.length > 0) {
-        contextText = `**CONTESTO PRECEDENTE** (già processato, usa per risolvere pronomi):
+        contextText = `**CONTESTO PRECEDENTE** (già processato, usa per risolvere pronomi e continuità):
 ${contextSegments.map((s, idx) => `[CTX-${idx}] [${s.character}] ${s.text}`).join('\n')}
 
 ---
@@ -180,47 +185,63 @@ ${contextSegments.map((s, idx) => `[CTX-${idx}] [${s.character}] ${s.text}`).joi
     // Segmenti da processare
     const batchText = newSegments.map((s, idx) => `${idx}. [${s.character}] ${s.text}`).join('\n');
 
-    return `Sei un editor narrativo per trascrizioni D&D destinate a sistemi RAG.
+    return `Sei uno SCRITTORE FANTASY che traspone sessioni D&D in prosa romanzesca.
 
-**OBIETTIVO**: Trasforma in narrazione pulita mantenendo TUTTI i riferimenti semantici.
+**OBIETTIVO FONDAMENTALE**: Crea una TRASPOSIZIONE NARRATIVA RICCA E DETTAGLIATA.
+NON stai riassumendo. Stai SCRIVENDO UN ROMANZO basato su questi dialoghi.
+L'output deve essere LUNGO e RICCO quanto l'input (o più!).
 
-${contextText}**REGOLE**:
+${contextText}**AZIONI POSSIBILI**:
 
-1. **ELIMINA** (action: "skip"):
-   - Problemi tecnici ("audio tagliato", "non sento", "mic")
-   - Riferimenti Discord/software ("aspetta che mi connetto")
-   - Pause pure ("ehm", "[SILENZIO]", "...")
-   - Commenti fuori personaggio sul gioco ("tiro dado", "bonus +3")
+1. **"skip"** - USA RARAMENTE! Solo per:
+   - Problemi tecnici puri ("audio tagliato", "non sento", "mic rotto")
+   - Riferimenti Discord/software ("aspetta che mi connetto", "sei mutato")
+   - Pause vuote pure ("[SILENZIO]", "...", "ehm" isolati)
 
-2. **TRADUCI in terza persona** (action: "translate"):
-   - "Mi riprendo l'anello" -> "Viktor recupera l'Anello di Spell Storing"
-   - "Chi ha la spilla?" -> "Il gruppo discute sulla custodia della Spilla della Luna"
-   - "Vado a parlare con lui" -> "Kira si avvicina al mercante per interrogarlo"
-   - USA IL CONTESTO PRECEDENTE per risolvere pronomi come "lui", "lei", "quello"
+2. **"narrate"** - USA PER LA MAGGIOR PARTE! Trasforma in prosa ricca:
 
-3. **PRESERVA semanticamente** (action: "keep" o "translate"):
-   - Possesso oggetti: "la spilla e in mano a Viktor" DEVE risultare chiaro
-   - Decisioni tattiche, stati del mondo, dialoghi rilevanti
-   - Informazioni su PNG, luoghi, eventi
+   DIALOGHI → Mantienili come dialoghi con contesto emotivo:
+   Input: "Non mi fido di lui"
+   Output: "«Non mi fido di lui» disse Kira, gli occhi ridotti a fessure mentre osservava il mercante."
 
-4. **NORMALIZZA referenze**:
-   - "Ce l'hai tu" -> Nome esplicito se chiaro dal contesto
-   - Pronomi vaghi -> Nomi propri quando possibile (USA IL CONTESTO!)
+   AZIONI → Descrizioni immersive:
+   Input: "Vado a controllare la porta"
+   Output: "Viktor si avvicinò alla porta con cautela, le dita che sfioravano l'elsa della spada. Ogni suo passo era misurato, silenzioso come quello di un predatore."
 
-**INPUT DA PROCESSARE** (${newSegments.length} segmenti):
+   MECCANICHE DI GIOCO → Trasponi in narrazione se rilevanti:
+   Input: "Faccio un tiro percezione... 18!"
+   Output: "I sensi affinati di Kira colsero ciò che altri avrebbero ignorato. Notò le impronte fresche sul pavimento polveroso, il lieve bagliore di una runa nascosta."
+
+   EMOZIONI/REAZIONI → Espandi con introspezione:
+   Input: "Cazzo, è morto!"
+   Output: "Il colpo fu letale. Viktor fissò il corpo che si accasciava, un misto di sollievo e inquietudine nel petto. Un altro nemico abbattuto, ma a quale costo?"
+
+3. **"keep"** - Solo se il testo è già perfetto così com'è (raro)
+
+**REGOLE CRITICHE**:
+- L'OUTPUT DEVE ESSERE RICCO! Non frasi telegrafiche.
+- Mantieni TUTTI i dettagli: nomi, oggetti, luoghi, decisioni.
+- I dialoghi restano dialoghi (con «» all'italiana), ma aggiungi azione/emozione.
+- Risolvi pronomi vaghi usando il contesto: "lui" → nome proprio.
+- Il metagaming PURO va eliminato, ma se contiene info rilevanti (es. "ho 3 HP") → trasponi ("Viktor barcollò, sentendo le forze abbandonarlo").
+
+**INPUT DA TRASPORRE** (${newSegments.length} segmenti):
 ${batchText}
 
-**OUTPUT JSON** (SOLO per gli indici 0-${newSegments.length - 1}, NON per CTX-*):
+**OUTPUT JSON**:
 {
   "decisions": [
-    {"index": 0, "action": "keep"},
-    {"index": 1, "action": "translate", "text": "Viktor recupera l'anello magico"},
+    {"index": 0, "action": "narrate", "text": "«Non possiamo fidarci di lui» mormorò Kira, lanciando un'occhiata diffidente verso il mercante."},
+    {"index": 1, "action": "narrate", "text": "Viktor si fece avanti, la mano che andava istintivamente all'elsa della spada. «Lascia parlare me» disse, la voce bassa ma ferma."},
     {"index": 2, "action": "skip"}
   ]
 }
 
-Rispondi SOLO con JSON valido. Per "keep" non serve il campo "text".
-IMPORTANTE: Processa SOLO i segmenti numerati (0, 1, 2...), NON quelli CTX-*.`;
+IMPORTANTE:
+- Per "narrate": il campo "text" è OBBLIGATORIO e deve essere RICCO.
+- Per "keep": nessun campo "text" necessario.
+- Per "skip": nessun campo "text" necessario.
+- Processa SOLO gli indici numerati (0, 1, 2...), NON quelli CTX-*.`;
 }
 
 // Legacy function (non più usata, mantenuta per compatibilità)

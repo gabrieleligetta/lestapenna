@@ -520,7 +520,7 @@ function buildValidationPrompt(context: any, input: ValidationBatchInput): strin
 
     // Aggiungi quest attive
     if (context.existingQuests && context.existingQuests.length > 0) {
-        prompt += `\n**Quest Attive:** ${context.existingQuests.slice(0, 5).join(', ')}${context.existingQuests.length > 5 ? '...' : ''}\n`;
+        prompt += `\n**Quest Attive (DA NON DUPLICARE):**\n${context.existingQuests.map((q: string) => `- ${q}`).join('\n')}\n`;
     }
 
     prompt += "\n**DATI DA VALIDARE:**\n\n";
@@ -593,8 +593,10 @@ function buildValidationPrompt(context: any, input: ValidationBatchInput): strin
 - Aggrega valuta: "150 mo" invece di liste multiple
 
 **Quest:**
-- SKIP: micro-task immediate (es. "Parlare con X", "Comprare Y"), duplicati semantici delle quest attive
-- KEEP: obiettivi principali con impatto trama, side-quest con ricompense significative
+- **CRITICO**: Confronta OGNI quest di input con la lista "Quest Attive" nel contesto.
+- Se esiste già una quest con significato simile (es. "Uccidere Drago" vs "Sconfiggere il Drago"), **SKIP**.
+- Se l'input include stati come "(Completata)", "(In corso)", ignorali per il confronto semantico.
+- Mantieni SOLO le quest che sono *veramente* nuove (mai viste prima).
 - Normalizza: rimuovi prefissi come "Quest:", "TODO:", capitalizza correttamente
 
 **Atlante:**
@@ -623,7 +625,7 @@ function buildValidationPrompt(context: any, input: ValidationBatchInput): strin
   },
   "quests": {
     "keep": ["Recuperare la Spada del Destino"],
-    "skip": ["parlare con oste - micro-task"]
+    "skip": ["parlare con oste - micro-task", "duplicato di quest attiva"]
   },
   "atlas": {
     "action": "keep" | "skip" | "merge",

@@ -1361,13 +1361,65 @@ export const getAllPendingMerges = (): PendingMerge[] => {
 
 // --- FUNZIONI QUESTS ---
 
-export const addQuest = (campaignId: number, title: string, sessionId?: string) => {
-    // Evitiamo duplicati identici
-    const exists = db.prepare("SELECT id FROM quests WHERE campaign_id = ? AND title = ?").get(campaignId, title);
-    if (!exists) {
-        db.prepare("INSERT INTO quests (campaign_id, title, status, created_at, last_updated, session_id) VALUES (?, ?, 'OPEN', ?, ?, ?)").run(campaignId, title, Date.now(), Date.now(), sessionId || null);
-        console.log(`[Quest] 🗺️ Nuova quest aggiunta: ${title}`);
+// Helper per calcolare la distanza di Levenshtein (Fuzzy Match)
+function levenshteinDistance(a: string, b: string): number {
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
     }
+    return matrix[b.length][a.length];
+}
+
+function calculateSimilarity(a: string, b: string): number {
+    const distance = levenshteinDistance(a, b);
+    const maxLength = Math.max(a.length, b.length);
+    return maxLength === 0 ? 1.0 : 1.0 - (distance / maxLength);
+}
+
+// Helper per pulire il titolo della quest dai suffissi di stato
+function cleanQuestTitle(title: string): string {
+    // Rimuove suffissi come (Completata), (In corso), - Attiva, ecc.
+    // Rimuove anche spazi extra e converte in lowercase per il confronto
+    return title
+        .replace(/[-\s\(]*(completata|in corso|attiva|fallita|parzialmente|sospesa)[^)]*\)?\s*$/i, '')
+        .trim()
+        .toLowerCase();
+}
+
+export const addQuest = (campaignId: number, title: string, sessionId?: string) => {
+    // 1. Normalizza il titolo in ingresso
+    const cleanTitle = cleanQuestTitle(title);
+    
+    // 2. Recupera tutte le quest attive (o anche completate recenti se necessario, ma per ora attive)
+    const existingQuests = db.prepare("SELECT title FROM quests WHERE campaign_id = ?").all(campaignId) as { title: string }[];
+
+    // 3. Controllo Fuzzy Match
+    for (const q of existingQuests) {
+        const cleanExisting = cleanQuestTitle(q.title);
+        
+        // Se sono molto simili (> 85%), consideralo un duplicato
+        if (calculateSimilarity(cleanTitle, cleanExisting) > 0.85) {
+            console.log(`[Quest] 🛡️ Duplicato evitato: "${title}" è simile a "${q.title}"`);
+            return; // Esci senza inserire
+        }
+    }
+
+    // 4. Inserimento se nessun duplicato trovato
+    db.prepare("INSERT INTO quests (campaign_id, title, status, created_at, last_updated, session_id) VALUES (?, ?, 'OPEN', ?, ?, ?)").run(campaignId, title, Date.now(), Date.now(), sessionId || null);
+    console.log(`[Quest] 🗺️ Nuova quest aggiunta: ${title}`);
 };
 
 /**

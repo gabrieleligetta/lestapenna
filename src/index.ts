@@ -2272,12 +2272,12 @@ client.on('messageCreate', async (message: Message) => {
             // 🆕 Recupera NPC incontrati
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
 
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Invia email DM con mostri
             const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
             if (currentCampaignId) {
-                await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
             }
 
             // 🆕 REPORT TECNICO CON COSTI
@@ -3360,10 +3360,10 @@ client.on('messageCreate', async (message: Message) => {
 
             // 5. PUBBLICAZIONE
             const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
-            await publishSummary(targetSessionId, result.summary, channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
 
             // Email recap
-            await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+            await sendSessionRecap(targetSessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
             // 🆕 REPORT TECNICO CON COSTI
             if (monitorStartedByUs) {
@@ -3797,11 +3797,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
 
                     // Pubblica in Discord
                     if (channel) {
-                        await publishSummary(sessionId, result.summary, channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+                        await publishSummary(sessionId, result.log || [], channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
                     }
 
                     // Invia email DM
-                    await sendSessionRecap(sessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
+                    await sendSessionRecap(sessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
                     // 🆕 LOG DEBUG
                     console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');
@@ -3896,7 +3896,7 @@ async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId
     return { lastRealNumber, sessionNumber: foundSessionNumber };
 }
 
-async function publishSummary(sessionId: string, summary: string, defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
+async function publishSummary(sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{name: string; role: string | null; status: string; description: string | null}>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -3971,13 +3971,12 @@ async function publishSummary(sessionId: string, summary: string, defaultChannel
     // --- RACCONTO NARRATIVO BREVE (max 1900 char) ---
     if (narrative && narrative.length > 10) {
         await targetChannel.send(`### 📖 Racconto\n${narrative}`);
-        await targetChannel.send(`---`); // Separatore
     }
-    // ---------------------------------
 
-    const chunks = summary.match(/[\s\S]{1,1900}/g) || [];
-    for (const chunk of chunks) {
-        await targetChannel.send(chunk);
+    // --- RIASSUNTO EVENTI (LOG) ---
+    if (log && log.length > 0) {
+        const logText = log.map(entry => `• ${entry}`).join('\n');
+        await targetChannel.send(`### 📝 Riassunto Eventi\n${logText}`);
     }
 
     // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---

@@ -650,7 +650,7 @@ export async function archiveSessionTranscripts(
 export async function sendSessionRecap(
     sessionId: string,
     campaignId: number,
-    summary: string,
+    log: string[],
     loot?: string[],
     lootRemoved?: string[],
     narrative?: string,
@@ -744,8 +744,10 @@ export async function sendSessionRecap(
     ` : ''}
 
     <h2>📝 Riassunto Eventi (Log)</h2>
-    <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; white-space: pre-line;">
-        ${summary}
+    <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;">
+        <ul style="margin: 0; padding-left: 20px;">
+            ${log && log.length > 0 ? log.map(entry => `<li>${entry}</li>`).join('\n            ') : '<li>Nessun evento registrato</li>'}
+        </ul>
     </div>
 
     <div style="margin-top: 20px;">

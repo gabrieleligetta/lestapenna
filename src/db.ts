@@ -1764,10 +1764,18 @@ export const resetSessionData = (sessionId: string): Recording[] => {
         // Ignora se la colonna non esiste ancora
     }
 
-    // 3. RESET STATO FILE
+    // 3. PULIZIA DATI DERIVATI (come $riprocessa)
+    db.prepare('DELETE FROM inventory WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM quests WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM character_history WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM world_history WHERE session_id = ?').run(sessionId);
+    console.log(`[DB] 🧹 Dati derivati puliti per sessione ${sessionId}`);
+
+    // 4. RESET STATO FILE
     db.prepare(`
-        UPDATE recordings 
-        SET status = 'PENDING', transcription_text = NULL, error_log = NULL 
+        UPDATE recordings
+        SET status = 'PENDING', transcription_text = NULL, error_log = NULL
         WHERE session_id = ?
     `).run(sessionId);
     return getSessionRecordings(sessionId);

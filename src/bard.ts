@@ -1926,7 +1926,7 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
     }
 }
 
-// --- FUNZIONE PRINCIPALE (RIASSUNTO) ---
+// --- FUNZIONE PRINCIPALE (RIASSUNTO)sessionId: string, p0: string, narrativeText: string | undefined, tone: ToneKey = 'DM'
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string): Promise<SummaryResponse> {
     console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
     if (narrativeText) {

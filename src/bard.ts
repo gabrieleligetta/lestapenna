@@ -135,14 +135,14 @@ function createClient(provider: 'ollama' | 'openai'): OpenAI {
         return new OpenAI({
             baseURL: process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1',
             apiKey: 'ollama',
-            timeout: 600 * 1000,
+            timeout: 1800 * 1000, // 30 minuti (per batch NarrativeFilter grandi)
         });
     }
 
     return new OpenAI({
         apiKey: process.env.OPENAI_API_KEY || 'dummy',
         project: process.env.OPENAI_PROJECT_ID,
-        timeout: 600 * 1000,
+        timeout: 1800 * 1000, // 30 minuti
     });
 }
 

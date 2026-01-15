@@ -14,6 +14,9 @@ import {
 import { monitor } from './monitor';
 import { ProcessedSegment } from './transcriptUtils';
 
+// Sliding Window: overlap con batch precedente per mantenere coerenza
+const NARRATIVE_OVERLAP = parseInt(process.env.NARRATIVE_OVERLAP || '20', 10);
+
 export interface NarrativeSegment {
     speaker: string;
     text: string;
@@ -31,6 +34,8 @@ interface FilterDecision {
 /**
  * Normalizza trascrizioni corrette in forma narrativa per RAG.
  * Elimina metagaming, preserva semantica, risolve referenze.
+ *
+ * Usa sliding window con overlap per mantenere coerenza tra batch.
  */
 export async function normalizeToNarrative(
     segments: ProcessedSegment[],
@@ -38,15 +43,29 @@ export async function normalizeToNarrative(
 ): Promise<NarrativeSegment[]> {
 
     const results: NarrativeSegment[] = [];
-    const totalBatches = Math.ceil(segments.length / NARRATIVE_BATCH_SIZE);
 
-    console.log(`[NarrativeFilter] Inizio normalizzazione di ${segments.length} segmenti (batch: ${NARRATIVE_BATCH_SIZE})`);
+    // Calcola numero batch con sliding window
+    const effectiveBatchSize = NARRATIVE_BATCH_SIZE - NARRATIVE_OVERLAP;
+    const totalBatches = Math.ceil(segments.length / effectiveBatchSize);
 
-    for (let i = 0; i < segments.length; i += NARRATIVE_BATCH_SIZE) {
-        const batch = segments.slice(i, i + NARRATIVE_BATCH_SIZE);
-        const batchNum = Math.floor(i / NARRATIVE_BATCH_SIZE) + 1;
+    console.log(`[NarrativeFilter] Inizio normalizzazione di ${segments.length} segmenti (batch: ${NARRATIVE_BATCH_SIZE}, overlap: ${NARRATIVE_OVERLAP})`);
 
-        const prompt = buildNarrativePrompt(batch, i);
+    let processedUpTo = 0; // Tiene traccia di quanti segmenti abbiamo già processato
+
+    for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+        // Calcola indici per sliding window
+        const batchStart = batchNum * effectiveBatchSize;
+        const contextStart = Math.max(0, batchStart - NARRATIVE_OVERLAP);
+        const batchEnd = Math.min(segments.length, batchStart + NARRATIVE_BATCH_SIZE);
+
+        // Segmenti di contesto (già processati, solo per riferimento)
+        const contextSegments = segments.slice(contextStart, batchStart);
+        // Segmenti da processare in questo batch
+        const newSegments = segments.slice(batchStart, batchEnd);
+
+        if (newSegments.length === 0) break;
+
+        const prompt = buildNarrativePromptWithContext(contextSegments, newSegments, batchStart);
 
         const startAI = Date.now();
         try {
@@ -81,9 +100,10 @@ export async function normalizeToNarrative(
             const parsed = JSON.parse(response.choices[0].message.content || "{}");
             const decisions: FilterDecision[] = parsed.decisions || [];
 
-            for (let j = 0; j < batch.length; j++) {
+            // Processa SOLO i nuovi segmenti (ignora contesto)
+            for (let j = 0; j < newSegments.length; j++) {
                 const decision = decisions.find(d => d.index === j) || { action: 'keep' as const };
-                const segment = batch[j];
+                const segment = newSegments[j];
 
                 if (decision.action === 'skip') {
                     continue;
@@ -104,10 +124,11 @@ export async function normalizeToNarrative(
                 }
             }
 
-            console.log(`[NarrativeFilter] Batch ${batchNum}/${totalBatches} completato (${latency}ms)`);
+            processedUpTo = batchEnd;
+            console.log(`[NarrativeFilter] Batch ${batchNum + 1}/${totalBatches} completato (${latency}ms) - ctx: ${contextSegments.length}, new: ${newSegments.length}`);
 
         } catch (e: any) {
-            console.error(`[NarrativeFilter] Errore batch ${batchNum}:`, e.message);
+            console.error(`[NarrativeFilter] Errore batch ${batchNum + 1}:`, e.message);
             monitor.logAIRequestWithCost(
                 'narrative_filter',
                 NARRATIVE_FILTER_PROVIDER,
@@ -117,13 +138,14 @@ export async function normalizeToNarrative(
                 true
             );
 
-            // Fallback: mantieni invariato
-            results.push(...batch.map(s => ({
+            // Fallback: mantieni invariato i nuovi segmenti
+            results.push(...newSegments.map(s => ({
                 speaker: s.character,
                 text: s.text,
                 timestamp: s.absoluteTime,
                 isNarrative: false
             })));
+            processedUpTo = batchEnd;
         }
     }
 
@@ -135,17 +157,34 @@ export async function normalizeToNarrative(
     return results;
 }
 
-function buildNarrativePrompt(
-    batch: ProcessedSegment[],
-    startIndex: number
+/**
+ * Costruisce il prompt con contesto dalla sliding window.
+ * I segmenti di contesto sono mostrati per riferimento ma NON devono essere processati.
+ */
+function buildNarrativePromptWithContext(
+    contextSegments: ProcessedSegment[],
+    newSegments: ProcessedSegment[],
+    globalStartIndex: number
 ): string {
-    const batchText = batch.map((s, idx) => `${idx}. [${s.character}] ${s.text}`).join('\n');
+    // Contesto precedente (per risolvere pronomi)
+    let contextText = "";
+    if (contextSegments.length > 0) {
+        contextText = `**CONTESTO PRECEDENTE** (già processato, usa per risolvere pronomi):
+${contextSegments.map((s, idx) => `[CTX-${idx}] [${s.character}] ${s.text}`).join('\n')}
+
+---
+
+`;
+    }
+
+    // Segmenti da processare
+    const batchText = newSegments.map((s, idx) => `${idx}. [${s.character}] ${s.text}`).join('\n');
 
     return `Sei un editor narrativo per trascrizioni D&D destinate a sistemi RAG.
 
 **OBIETTIVO**: Trasforma in narrazione pulita mantenendo TUTTI i riferimenti semantici.
 
-**REGOLE**:
+${contextText}**REGOLE**:
 
 1. **ELIMINA** (action: "skip"):
    - Problemi tecnici ("audio tagliato", "non sento", "mic")
@@ -157,6 +196,7 @@ function buildNarrativePrompt(
    - "Mi riprendo l'anello" -> "Viktor recupera l'Anello di Spell Storing"
    - "Chi ha la spilla?" -> "Il gruppo discute sulla custodia della Spilla della Luna"
    - "Vado a parlare con lui" -> "Kira si avvicina al mercante per interrogarlo"
+   - USA IL CONTESTO PRECEDENTE per risolvere pronomi come "lui", "lei", "quello"
 
 3. **PRESERVA semanticamente** (action: "keep" o "translate"):
    - Possesso oggetti: "la spilla e in mano a Viktor" DEVE risultare chiaro
@@ -165,12 +205,12 @@ function buildNarrativePrompt(
 
 4. **NORMALIZZA referenze**:
    - "Ce l'hai tu" -> Nome esplicito se chiaro dal contesto
-   - Pronomi vaghi -> Nomi propri quando possibile
+   - Pronomi vaghi -> Nomi propri quando possibile (USA IL CONTESTO!)
 
-**INPUT** (${batch.length} segmenti):
+**INPUT DA PROCESSARE** (${newSegments.length} segmenti):
 ${batchText}
 
-**OUTPUT JSON**:
+**OUTPUT JSON** (SOLO per gli indici 0-${newSegments.length - 1}, NON per CTX-*):
 {
   "decisions": [
     {"index": 0, "action": "keep"},
@@ -179,7 +219,16 @@ ${batchText}
   ]
 }
 
-Rispondi SOLO con JSON valido. Per "keep" non serve il campo "text".`;
+Rispondi SOLO con JSON valido. Per "keep" non serve il campo "text".
+IMPORTANTE: Processa SOLO i segmenti numerati (0, 1, 2...), NON quelli CTX-*.`;
+}
+
+// Legacy function (non più usata, mantenuta per compatibilità)
+function buildNarrativePrompt(
+    batch: ProcessedSegment[],
+    startIndex: number
+): string {
+    return buildNarrativePromptWithContext([], batch, startIndex);
 }
 
 /**

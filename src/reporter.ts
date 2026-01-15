@@ -33,7 +33,7 @@ function getRecipients(envVarName: string): string[] {
     // 1. Cerca la variabile specifica (es. TECHNICAL_REPORT_RECIPIENT)
     // 2. Se manca, cerca quella generica (REPORT_RECIPIENT)
     // 3. Se manca anche quella, usa il default
-    const recipientEnv = 'gabligetta@gmail.com' //|| process.env[envVarName] || process.env.REPORT_RECIPIENT;
+    const recipientEnv =  process.env[envVarName] || process.env.REPORT_RECIPIENT;
 
     if (!recipientEnv) return ['gabligetta@gmail.com'];
 

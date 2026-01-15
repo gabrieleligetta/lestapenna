@@ -2130,7 +2130,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         const rawTranscript = transcriptions.map(t => t.transcription_text).join('\n');
         
         // L'agente decide cosa cercare
-        const dynamicQueries = await identifyRelevantContext(campaignId, rawTranscript, snapshot, narrativeText);
+        const textForAnalysis = (narrativeText && narrativeText.length > 100) ? narrativeText : rawTranscript;
+        const dynamicQueries = await identifyRelevantContext(campaignId, textForAnalysis, snapshot, narrativeText);
         
         // Eseguiamo le ricerche dinamiche
         const dynamicPromises = dynamicQueries.map(q => searchKnowledge(campaignId, q, 3));

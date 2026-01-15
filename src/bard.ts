@@ -1830,9 +1830,17 @@ async function identifyRelevantContext(
         console.log(`[Context] ⚠️ NARRATIVE non disponibile, fallback su RAW (${sourceText.length} caratteri)`);
     }
     
-    const USE_MAP_PHASE = sourceText.length > 50000;
+    // Calcolo approssimativo token (italiano: ~2.5 char/token)
+    const estimatedTokens = Math.ceil(sourceText.length / 2.5);
+    // GPT-5 mini: 400k context - margine sicurezza 50k per prompt + metadata
+    const MAX_CONTEXT_TOKENS = 350000;
+    const USE_MAP_PHASE = estimatedTokens > MAX_CONTEXT_TOKENS;
 
-    console.log(`[identifyRelevantContext] Input: ${sourceText.length} chars`);
+    if (USE_MAP_PHASE) {
+        console.log(`[MAP] ⚠️ Testo troppo lungo (${estimatedTokens.toLocaleString()} token stimati > ${MAX_CONTEXT_TOKENS.toLocaleString()}), attivo MAP Phase`);
+    } else {
+        console.log(`[Context] ✅ Testo gestibile direttamente (${estimatedTokens.toLocaleString()} token << ${MAX_CONTEXT_TOKENS.toLocaleString()}), skip MAP`);
+    }
 
     let processedText = sourceText;
 
@@ -1865,9 +1873,8 @@ async function identifyRelevantContext(
 
         const ratio = (sourceText.length / processedText.length).toFixed(2);
         console.log(`[identifyRelevantContext] ✅ MAP completato: ${processedText.length} chars (${ratio}x compressione)`);
-    } else {
-        console.log(`[identifyRelevantContext] ⚡ Sessione breve, skip MAP phase`);
     }
+    // (Log skip MAP già emesso sopra)
 
     // FASE 2: Smart Truncate (sempre, anche dopo MAP)
     const analysisText = smartTruncate(processedText, TARGET_CHARS);

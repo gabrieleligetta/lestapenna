@@ -37,6 +37,8 @@ import {
     regenerateNpcNotes,
     reconcileNpcName,        // NUOVO - Riconciliazione NPC fuzzy + AI
     deduplicateNpcBatch,     // NUOVO - Pre-dedup batch NPC
+    reconcileLocationName,   // NUOVO - Riconciliazione Location fuzzy + AI
+    deduplicateLocationBatch, // NUOVO - Pre-dedup batch Location
     validateBatch,           // NUOVO
     syncAllDirtyNpcs,        // NUOVO
     syncNpcDossierIfNeeded,   // NUOVO
@@ -117,8 +119,10 @@ import {
     markAtlasDirty, // NUOVO IMPORT - Atlas dirty sync
     getDirtyAtlasEntries, // NUOVO IMPORT - Atlas dirty sync
     renameAtlasEntry, // NUOVO - Rinomina luogo
+    mergeAtlasEntry, // NUOVO - Merge luoghi
     getLocationHistoryWithIds, // NUOVO - Storia con ID
     fixLocationHistoryEntry, // NUOVO - Correggi storia
+    deleteLocationHistoryEntry, // NUOVO - Cancella storia
     fixCurrentLocation, // NUOVO - Correggi posizione corrente
     deleteWorldEvent, // NUOVO - Cancella evento timeline
     markCharacterDirtyByName, // NUOVO - Character dirty sync (by name)
@@ -530,7 +534,8 @@ client.on('messageCreate', async (message: Message) => {
                         "**Timeline**\n" +
                         "`$timeline delete <ID>`: Elimina evento storico.\n\n" +
                         "**Viaggi**\n" +
-                        "`$viaggi fixcurrent <R> | <L>`: Correggi posizione corrente.\n\n" +
+                        "`$viaggi fixcurrent <R> | <L>`: Correggi posizione corrente.\n" +
+                        "`$viaggi delete <ID>`: Elimina voce cronologia.\n\n" +
                         "**Altro**\n" +
                         "`$toni`: Lista toni narrativi per `$racconta`.\n" +
                         "`$autoaggiorna on/off`: Toggle auto-update biografie PG.\n" +
@@ -544,7 +549,7 @@ client.on('messageCreate', async (message: Message) => {
                 },
                 {
                     name: "💡 Alias Comandi",
-                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$npc`/`$dossier`, `$viaggi`/`$travels`, `$inventario`/`$inventory`, ecc."
+                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, ecc."
                 }
             )
             .setFooter({ text: "Per la versione inglese usa $help" });
@@ -664,7 +669,8 @@ client.on('messageCreate', async (message: Message) => {
                         "**Timeline**\n" +
                         "`$timeline delete <ID>`: Delete historical event.\n\n" +
                         "**Travels**\n" +
-                        "`$travels fixcurrent <R> | <L>`: Fix current position.\n\n" +
+                        "`$travels fixcurrent <R> | <L>`: Fix current position.\n" +
+                        "`$travels delete <ID>`: Delete history entry.\n\n" +
                         "**Other**\n" +
                         "`$tones`: List narrative tones for `$narrate`.\n" +
                         "`$autoupdate on/off`: Toggle auto-update PC biographies.\n" +
@@ -951,7 +957,7 @@ client.on('messageCreate', async (message: Message) => {
                 const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
                 msg += `\`#${h.id}\` \`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
             });
-            msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.`;
+            msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.\n💡 Usa \`$viaggi delete #ID\` per eliminare.`;
 
             return message.reply(msg);
         }
@@ -980,6 +986,23 @@ client.on('messageCreate', async (message: Message) => {
             const success = fixLocationHistoryEntry(entryId, newMacro, newMicro);
             if (success) {
                 return message.reply(`✅ **Voce #${entryId} corretta!**\n📍 ${newMacro} - ${newMicro}`);
+            } else {
+                return message.reply(`❌ Voce #${entryId} non trovata.`);
+            }
+        }
+
+        // --- SOTTOCOMANDO: delete (cancella voce) ---
+        if (argsStr.toLowerCase().startsWith('delete ') || argsStr.toLowerCase().startsWith('del ') || argsStr.toLowerCase().startsWith('remove ')) {
+            const idStr = argsStr.split(' ')[1].replace('#', '').trim();
+            const entryId = parseInt(idStr);
+
+            if (isNaN(entryId)) {
+                return message.reply('❌ ID non valido. Usa `$viaggi list` per vedere gli ID.');
+            }
+
+            const success = deleteLocationHistoryEntry(entryId);
+            if (success) {
+                return message.reply(`🗑️ Voce #${entryId} eliminata dalla cronologia viaggi.`);
             } else {
                 return message.reply(`❌ Voce #${entryId} non trovata.`);
             }
@@ -1150,28 +1173,58 @@ client.on('messageCreate', async (message: Message) => {
             const [oldMacro, oldMicro, newMacro, newMicro] = parts;
             const updateHistory = parts[4]?.toLowerCase() === 'history' || parts[4]?.toLowerCase() === 'storia';
 
-            const success = renameAtlasEntry(activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, updateHistory);
+            // Controlla se la destinazione esiste già
+            const existingTarget = getAtlasEntryFull(activeCampaign!.id, newMacro, newMicro);
+            const existingSource = getAtlasEntryFull(activeCampaign!.id, oldMacro, oldMicro);
 
-            if (success) {
-                let response = `✅ **Luogo rinominato!**\n` +
-                    `📖 **${oldMacro} - ${oldMicro}** → **${newMacro} - ${newMicro}**`;
+            if (!existingSource) {
+                return message.reply(`❌ Luogo di origine **${oldMacro} - ${oldMicro}** non trovato.`);
+            }
 
-                if (updateHistory) {
-                    response += `\n📜 Anche la cronologia viaggi è stata aggiornata.`;
+            if (existingTarget) {
+                // SMART MERGE
+                const loadingMsg = await message.reply(`⚙️ **Smart Merge:** Il luogo di destinazione esiste già. Unisco le memorie...`);
+                
+                const mergedDesc = await smartMergeBios(existingTarget.description || "", existingSource.description || "");
+                
+                const success = mergeAtlasEntry(activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, mergedDesc);
+                
+                if (success) {
+                    // Marca per sync RAG
+                    markAtlasDirty(activeCampaign!.id, newMacro, newMicro);
+                    
+                    await loadingMsg.edit(
+                        `✅ **Luoghi Uniti!**\n` +
+                        `📖 **${oldMacro} - ${oldMicro}** è stato integrato in **${newMacro} - ${newMicro}**\n` +
+                        `📜 Cronologia aggiornata. Sync RAG programmato.\n\n` +
+                        `**Nuova Descrizione:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`
+                    );
+                    return;
                 } else {
-                    response += `\n💡 Tip: Aggiungi \`| history\` per aggiornare anche la cronologia.`;
+                    return message.reply(`❌ Errore durante l'unione dei luoghi.`);
                 }
-
-                // Marca per sync RAG
-                markAtlasDirty(activeCampaign!.id, newMacro, newMicro);
-                response += `\n📌 Sync RAG programmato.`;
-
-                return message.reply(response);
             } else {
-                return message.reply(
-                    `❌ Impossibile rinominare.\n` +
-                    `Verifica che **${oldMacro} - ${oldMicro}** esista e che **${newMacro} - ${newMicro}** non esista già.`
-                );
+                // RENAME STANDARD
+                const success = renameAtlasEntry(activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, updateHistory);
+
+                if (success) {
+                    let response = `✅ **Luogo rinominato!**\n` +
+                        `📖 **${oldMacro} - ${oldMicro}** → **${newMacro} - ${newMicro}**`;
+
+                    if (updateHistory) {
+                        response += `\n📜 Anche la cronologia viaggi è stata aggiornata.`;
+                    } else {
+                        response += `\n💡 Tip: Aggiungi \`| history\` per aggiornare anche la cronologia.`;
+                    }
+
+                    // Marca per sync RAG
+                    markAtlasDirty(activeCampaign!.id, newMacro, newMicro);
+                    response += `\n📌 Sync RAG programmato.`;
+
+                    return message.reply(response);
+                } else {
+                    return message.reply(`❌ Impossibile rinominare.`);
+                }
             }
         }
 
@@ -1370,7 +1423,7 @@ client.on('messageCreate', async (message: Message) => {
             }
 
             const [name, role, description] = parts;
-            
+
             const existing = getNpcEntry(activeCampaign!.id, name);
             if (existing) {
                 return message.reply(`⚠️ L'NPC **${name}** esiste già nel dossier. Usa \`$npc update\` per modificarlo.`);
@@ -1384,10 +1437,10 @@ client.on('messageCreate', async (message: Message) => {
         if (argsStr.toLowerCase().startsWith('merge ')) {
             const parts = argsStr.substring(6).split('|').map(s => s.trim());
             if (parts.length !== 2) return message.reply("Uso: `$npc merge <Vecchio Nome> | <Nuovo Nome>`");
-            
+
             const sourceName = parts[0];
             const targetName = parts[1];
-            
+
             const sourceNpc = getNpcEntry(activeCampaign!.id, sourceName);
             const targetNpc = getNpcEntry(activeCampaign!.id, targetName);
 
@@ -1398,9 +1451,9 @@ client.on('messageCreate', async (message: Message) => {
             if (targetNpc) {
                 // MERGE REALE CON AI
                 await message.reply(`⏳ **Smart Merge:** Unione intelligente di "${sourceName}" in "${targetName}"...`);
-                
+
                 const mergedDesc = await smartMergeBios(targetNpc.description || "", sourceNpc.description || "");
-                
+
                 // Aggiorna Target
                 db.prepare(`UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
                   .run(mergedDesc, targetNpc.id);
@@ -1565,16 +1618,16 @@ client.on('messageCreate', async (message: Message) => {
             const name = argsStr.substring(6).trim();
             const npc = getNpcEntry(activeCampaign!.id, name);
             if (!npc) return message.reply(`❌ NPC **${name}** non trovato.`);
-            
+
             const loadingMsg = await message.reply(`⚙️ Rigenerazione Note: Analisi cronologia per **${name}**...`);
-            
+
             // ✅ MODIFICATO: Usa syncNpcDossierIfNeeded con force=true
             const newDesc = await syncNpcDossierIfNeeded(
                 activeCampaign!.id,
                 npc.name,
                 true // Force sync
             );
-            
+
             if (newDesc) {
                 await loadingMsg.edit(`✅ Note Aggiornate e Sincronizzate con RAG!\n\n📜 **Nuova Bio:**\n${newDesc.substring(0, 800)}${newDesc.length > 800 ? '...' : ''}`);
             } else {
@@ -1586,12 +1639,12 @@ client.on('messageCreate', async (message: Message) => {
         // 🆕 NUOVO COMANDO: !npc sync (Sync manuale RAG)
         if (argsStr.toLowerCase().startsWith('sync')) {
             const name = argsStr.substring(5).trim();
-            
+
             if (!name || name === 'all') {
                 // Sync batch di tutti gli NPC dirty
                 const loadingMsg = await message.reply('⚙️ Sincronizzazione batch NPC in corso...');
                 const count = await syncAllDirtyNpcs(activeCampaign!.id);
-                
+
                 if (count > 0) {
                 await loadingMsg.edit(`✅ Sincronizzati **${count} NPC** con RAG.`);
                 } else {
@@ -1601,7 +1654,7 @@ client.on('messageCreate', async (message: Message) => {
                 // Sync singolo NPC
                 const npc = getNpcEntry(activeCampaign!.id, name);
                 if (!npc) return message.reply(`❌ NPC **${name}** non trovato.`);
-                
+
                 const loadingMsg = await message.reply(`⚙️ Sincronizzazione RAG per **${name}**...`);
                 await syncNpcDossierIfNeeded(activeCampaign!.id, name, true);
                 await loadingMsg.edit(`✅ **${name}** sincronizzato con RAG.`);
@@ -1704,7 +1757,7 @@ client.on('messageCreate', async (message: Message) => {
                 const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '🔹';
                 return `${statusIcon} **${q.title}** [${q.status}]`;
             }).join('\n');
-            
+
             const header = showAll ? `Quest della Sessione \`${sessionId}\`` : `Quest Attive della Sessione \`${sessionId}\``;
             return message.reply(`**🗺️ ${header}:**\n\n${list}`);
         }
@@ -1718,7 +1771,7 @@ client.on('messageCreate', async (message: Message) => {
         }
         if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
             const search = arg.split(' ').slice(1).join(' '); // Rimuove 'done'
-            
+
             // 🆕 Supporto per ID numerico
             const questId = parseInt(search);
             if (!isNaN(questId)) {
@@ -2061,68 +2114,68 @@ client.on('messageCreate', async (message: Message) => {
             // ============================================
             // GESTIONE EVENTI/LOOT/QUEST CON VALIDAZIONE
             // ============================================
-            
+
             if (result && activeCampaign) {
                 const currentSessionId = targetSessionId;
                 const currentCampaignId = activeCampaign.id;
-                
+
                 // 🆕 PREPARAZIONE BATCH VALIDATION
                 const batchInput: any = {};
-                
+
                 if (result.character_growth && result.character_growth.length > 0) {
                 batchInput.character_events = result.character_growth;
                 }
-                
+
                 if (result.npc_events && result.npc_events.length > 0) {
                 batchInput.npc_events = result.npc_events;
                 }
-                
+
                 if (result.world_events && result.world_events.length > 0) {
                 batchInput.world_events = result.world_events;
                 }
-                
+
                 if (result.loot && result.loot.length > 0) {
                 batchInput.loot = result.loot;
                 }
-                
+
                 if (result.quests && result.quests.length > 0) {
                 batchInput.quests = result.quests;
                 }
-                
+
                 // Esegui validazione batch se c'è qualcosa da validare
                 let validated: any = null;
-                
+
                 if (Object.keys(batchInput).length > 0) {
                 console.log('[Validator] 🛡️ Validazione batch in corso...');
                 validated = await validateBatch(currentCampaignId, batchInput);
-                
+
                 // Log statistiche
-                const totalInput = 
+                const totalInput =
                     (batchInput.npc_events?.length || 0) +
                     (batchInput.character_events?.length || 0) +
                     (batchInput.world_events?.length || 0) +
                     (batchInput.loot?.length || 0) +
                     (batchInput.quests?.length || 0);
-                
-                const totalKept = 
+
+                const totalKept =
                     (validated.npc_events.keep.length) +
                     (validated.character_events.keep.length) +
                     (validated.world_events.keep.length) +
                     (validated.loot.keep.length) +
                     (validated.quests.keep.length);
-                
+
                 const totalSkipped = totalInput - totalKept;
                 const filterRate = totalInput > 0 ? Math.round((totalSkipped / totalInput) * 100) : 0;
-                
+
                 console.log(`[Validator] ✅ Validazione completata:`);
                 console.log(`  - Accettati: ${totalKept}/${totalInput}`);
                 console.log(`  - Filtrati: ${totalSkipped} (${filterRate}%)`);
-                
+
                 if (validated.npc_events.skip.length > 0) {
                     console.log(`  - Eventi NPC scartati: ${validated.npc_events.skip.slice(0, 3).join('; ')}${validated.npc_events.skip.length > 3 ? '...' : ''}`);
                 }
                 }
-                
+
                 // --- GESTIONE EVENTI PG ---
                 if (validated?.character_events.keep && validated.character_events.keep.length > 0) {
                 for (const evt of validated.character_events.keep) {
@@ -2137,43 +2190,43 @@ client.on('messageCreate', async (message: Message) => {
                     .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
                 }
                 }
-                
+
                 // --- GESTIONE EVENTI NPC ---
                 if (validated?.npc_events.keep && validated.npc_events.keep.length > 0) {
                 for (const evt of validated.npc_events.keep) {
                     addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
                     console.log(`[Storia NPC] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
-                    
+
                     // ✅ Marca NPC come dirty per sync lazy
                     markNpcDirty(currentCampaignId, evt.name);
-                    
+
                     // RAG
                     ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
                     .catch(err => console.error(`[RAG] Errore NPC ${evt.name}:`, err));
                 }
                 }
-                
+
                 // --- GESTIONE EVENTI MONDO ---
                 if (validated?.world_events.keep && validated.world_events.keep.length > 0) {
                 for (const evt of validated.world_events.keep) {
                     addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
                     console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
-                    
+
                     // RAG
                     ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
                     .catch(err => console.error('[RAG] Errore Mondo:', err));
                 }
                 }
-                
+
                 // --- GESTIONE LOOT ---
                 if (validated?.loot.keep && validated.loot.keep.length > 0) {
                 for (const item of validated.loot.keep) {
                     addLoot(currentCampaignId, item, 1);
                     console.log(`[Tesoriere] 💰 Aggiunto: ${item}`);
-                    
+
                     // ✅ Embedding selettivo: solo se NON è valuta semplice
                     const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(item) && item.length < 30;
-                    
+
                     if (!isSimpleCurrency) {
                     try {
                         await ingestLootEvent(currentCampaignId, currentSessionId, item);
@@ -2183,7 +2236,7 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
                 }
-                
+
                 // --- RIMOZIONE LOOT ---
                 if (result.loot_removed && result.loot_removed.length > 0) {
                 result.loot_removed.forEach((item: string) => {
@@ -2191,7 +2244,7 @@ client.on('messageCreate', async (message: Message) => {
                     console.log(`[Tesoriere] 🗑️ Rimosso: ${item}`);
                 });
                 }
-                
+
                 // --- GESTIONE QUEST ---
                 if (validated?.quests.keep && validated.quests.keep.length > 0) {
                 for (const quest of validated.quests.keep) {
@@ -2247,13 +2300,34 @@ client.on('messageCreate', async (message: Message) => {
                     }
                 }
 
-                // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi) ---
+                // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi con RICONCILIAZIONE) ---
                 if (result.location_updates && result.location_updates.length > 0) {
                     console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
-                    for (const loc of result.location_updates) {
+
+                    // 1. Pre-deduplica batch (rimuove duplicati interni)
+                    const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
+
+                    // 2. Per ogni location, riconcilia con l'atlante esistente
+                    for (const loc of dedupedLocations) {
                         if (loc.macro && loc.micro && loc.description) {
-                            updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
-                            markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                            // Cerca se esiste già un luogo simile
+                            const reconciled = await reconcileLocationName(
+                                currentCampaignId,
+                                loc.macro,
+                                loc.micro,
+                                loc.description
+                            );
+
+                            if (reconciled) {
+                                // Usa il nome canonico esistente
+                                console.log(`[Cartografo] 🔄 Riconciliato: "${loc.macro} - ${loc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                updateAtlasEntry(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, currentSessionId);
+                                markAtlasDirty(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
+                            } else {
+                                // Nuovo luogo
+                                updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
+                                markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                            }
                         }
                     }
                 }
@@ -2343,7 +2417,7 @@ client.on('messageCreate', async (message: Message) => {
         } catch (err) {
             console.error(`❌ Errore racconta ${targetSessionId}:`, err);
             await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
-            
+
             // Se errore, e avevamo aperto il monitor, chiudiamolo comunque per pulizia
             if (monitorStartedByUs) {
                 await monitor.endSession();
@@ -2378,10 +2452,10 @@ client.on('messageCreate', async (message: Message) => {
             // ✅ NUOVO: Sync lazy prima di query RAG
             // Estrai nomi NPC dalla domanda
             const allNpcs = listNpcs(activeCampaign!.id, 1000);
-            const mentionedNpcs = allNpcs.filter(npc => 
+            const mentionedNpcs = allNpcs.filter(npc =>
                 question.toLowerCase().includes(npc.name.toLowerCase())
             );
-            
+
             for (const npc of mentionedNpcs) {
                 await syncNpcDossierIfNeeded(activeCampaign!.id, npc.name, false);
             }
@@ -2653,7 +2727,7 @@ client.on('messageCreate', async (message: Message) => {
             if (success) {
                 return await message.reply(`🗑️ Evento #${eventId} eliminato dalla cronologia.`);
             } else {
-                return await message.reply(`❌ Evento #${eventId} non trovato.`);
+                return await message.reply(`❌ Evento #${eventId} non trovata.`);
             }
         }
 
@@ -3066,7 +3140,7 @@ client.on('messageCreate', async (message: Message) => {
 
                 // FASE 1: THE GREAT PURGE
                 await statusMsg.edit(`🏗️ **Fase 1: Tabula Rasa**\nCancellazione dati derivati...`);
-                
+
                 const campaignId = campaign.id;
                 db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId);
                 db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId);
@@ -3103,7 +3177,7 @@ client.on('messageCreate', async (message: Message) => {
                 for (let i = 0; i < sessions.length; i++) {
                     const sess = sessions[i];
                     const progressStr = `[${i + 1}/${sessions.length}] Sessione ${sess.session_number || '?'} (${sess.session_id})`;
-                    
+
                     await statusMsg.edit(`🏗️ **Elaborazione in corso...**\n${progressStr}\n- Pulizia e Ripristino...`);
                     console.log(`[Rebuild] Inizio ${progressStr}`);
 
@@ -3147,12 +3221,12 @@ client.on('messageCreate', async (message: Message) => {
                         }
 
                         await statusMsg.edit(`🏗️ **Elaborazione in corso...**\n${progressStr}\n- File: ${filesToProcess.length} (Ripristinati: ${restoredCount})\n- In attesa trascrizione e riassunto...`);
-                        
+
                         // Resume queue just in case
                         await audioQueue.resume();
 
                         // c. Blocking Wait
-                        // Passiamo message.channel per avere i log progressivi anche in chat se serve, 
+                        // Passiamo message.channel per avere i log progressivi anche in chat se serve,
                         // ma waitForCompletionAndSummarize manda già messaggi.
                         // Per evitare spam eccessivo potremmo passare undefined, ma la richiesta dice "Log progress".
                         // waitForCompletionAndSummarize manda il riassunto finale nel canale.
@@ -3288,7 +3362,7 @@ client.on('messageCreate', async (message: Message) => {
             db.prepare('DELETE FROM character_history WHERE session_id = ?').run(targetSessionId);
             db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(targetSessionId);
             db.prepare('DELETE FROM world_history WHERE session_id = ?').run(targetSessionId);
-            
+
             // 🆕 PULIZIA MOSTRI (Bestiario)
             db.prepare('DELETE FROM bestiary WHERE session_id = ?').run(targetSessionId);
 
@@ -3396,12 +3470,24 @@ client.on('messageCreate', async (message: Message) => {
                     updateLocation(campaignId, fallbackLoc.macro, fallbackLoc.micro, targetSessionId);
                 }
             }
-            // ATLANTE (Descrizioni)
+            // ATLANTE (Descrizioni con RICONCILIAZIONE)
             if (result.location_updates?.length) {
-                for (const loc of result.location_updates) {
+                // 1. Pre-deduplica batch
+                const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
+
+                // 2. Riconcilia con atlante esistente
+                for (const loc of dedupedLocations) {
                     if (loc.macro && loc.micro && loc.description) {
-                        updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description, targetSessionId);
-                        markAtlasDirty(campaignId, loc.macro, loc.micro);
+                        const reconciled = await reconcileLocationName(campaignId, loc.macro, loc.micro, loc.description);
+
+                        if (reconciled) {
+                            console.log(`[Cartografo] 🔄 Riconciliato: "${loc.macro} - ${loc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                            updateAtlasEntry(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, targetSessionId);
+                            markAtlasDirty(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
+                        } else {
+                            updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description, targetSessionId);
+                            markAtlasDirty(campaignId, loc.macro, loc.micro);
+                        }
                     }
                 }
             }
@@ -3447,7 +3533,7 @@ client.on('messageCreate', async (message: Message) => {
         } catch (err: any) {
             console.error(`❌ Errore riprocessa ${targetSessionId}:`, err);
             await channel.send(`❌ Errore critico: ${err.message}`);
-            
+
             // Se errore, e avevamo aperto il monitor, chiudiamolo comunque per pulizia
             if (monitorStartedByUs) {
                 await monitor.endSession();
@@ -3813,13 +3899,31 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             }
                         }
 
-                        // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi) ---
+                        // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi con RICONCILIAZIONE) ---
                         if (result.location_updates && result.location_updates.length > 0) {
                             console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
-                            for (const loc of result.location_updates) {
+
+                            // 1. Pre-deduplica batch
+                            const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
+
+                            // 2. Riconcilia con atlante esistente
+                            for (const loc of dedupedLocations) {
                                 if (loc.macro && loc.micro && loc.description) {
-                                    updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
-                                    markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                                    const reconciled = await reconcileLocationName(
+                                        currentCampaignId,
+                                        loc.macro,
+                                        loc.micro,
+                                        loc.description
+                                    );
+
+                                    if (reconciled) {
+                                        console.log(`[Cartografo] 🔄 Riconciliato: "${loc.macro} - ${loc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                        updateAtlasEntry(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, currentSessionId);
+                                        markAtlasDirty(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
+                                    } else {
+                                        updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
+                                        markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                                    }
                                 }
                             }
                         }
@@ -4082,23 +4186,29 @@ async function publishSummary(sessionId: string, log: string[], defaultChannel: 
         .setColor("#F1C40F")
         .setTitle("🎒 Riepilogo Tecnico");
 
+    // Helper per troncare testo (Discord limit: 1024 char per field)
+    const truncate = (text: string, max: number = 1020) => {
+        if (!text || text.length === 0) return "N/A";
+        return text.length > max ? text.slice(0, max - 3) + '...' : text;
+    };
+
     const lootText = (loot && loot.length > 0) ? loot.map(i => `• ${i}`).join('\n') : "Nessun bottino recuperato";
-    embed.addFields({ name: "💰 Bottino (Loot)", value: lootText });
+    embed.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText) });
 
     const questText = (quests && quests.length > 0) ? quests.map(q => `• ${q}`).join('\n') : "Nessuna missione attiva";
-    embed.addFields({ name: "🗺️ Missioni (Quests)", value: questText });
+    embed.addFields({ name: "🗺️ Missioni (Quests)", value: truncate(questText) });
 
     let monsterText = "Nessun mostro combattuto";
     if (monsters && monsters.length > 0) {
         monsterText = monsters.map(monster => {
             const countText = monster.count ? ` (${monster.count})` : '';
-            const statusEmoji = monster.status === 'DEFEATED' ? '💀' : 
-                               monster.status === 'FLED' ? '🏃' : 
+            const statusEmoji = monster.status === 'DEFEATED' ? '💀' :
+                               monster.status === 'FLED' ? '🏃' :
                                monster.status === 'ALIVE' ? '⚔️' : '❓';
             return `${statusEmoji} **${monster.name}**${countText} - \`${monster.status}\``;
         }).join('\n');
     }
-    embed.addFields({ name: "🐉 Mostri Combattuti", value: monsterText });
+    embed.addFields({ name: "🐉 Mostri Combattuti", value: truncate(monsterText) });
 
     let npcText = "Nessun Npc incontrato";
     if (encounteredNPCs && encounteredNPCs.length > 0) {
@@ -4108,14 +4218,14 @@ async function publishSummary(sessionId: string, log: string[], defaultChannel: 
                                npc.status === 'HOSTILE' ? '⚔️' :
                                npc.status === 'FRIENDLY' ? '🤝' :
                                npc.status === 'NEUTRAL' ? '🔷' : '✅';
-            
+
             // Ruolo (se presente)
             const roleText = npc.role ? ` - *${npc.role}*` : '';
-            
+
             return `${statusEmoji} **${npc.name}**${roleText}`;
         }).join('\n');
     }
-    embed.addFields({ name: '👥 NPC Incontrati', value: npcText });
+    embed.addFields({ name: '👥 NPC Incontrati', value: truncate(npcText) });
 
     await targetChannel.send({ embeds: [embed] });
     // ------------------------------------

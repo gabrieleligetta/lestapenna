@@ -634,6 +634,18 @@ export const listAtlasEntries = (campaignId: number, limit: number = 15): any[] 
 };
 
 /**
+ * Lista TUTTE le voci dell'atlante per una campagna (per riconciliazione)
+ */
+export const listAllAtlasEntries = (campaignId: number): any[] => {
+    return db.prepare(`
+        SELECT id, macro_location, micro_location, description, last_updated
+        FROM location_atlas
+        WHERE campaign_id = ?
+        ORDER BY last_updated DESC
+    `).all(campaignId);
+};
+
+/**
  * Elimina una voce specifica dall'atlante
  */
 export const deleteAtlasEntry = (campaignId: number, macro: string, micro: string): boolean => {
@@ -712,6 +724,49 @@ export const renameAtlasEntry = (
 };
 
 /**
+ * Unisce due voci dell'atlante (Smart Merge).
+ * Aggiorna la descrizione del target, sposta la cronologia e elimina la source.
+ */
+export const mergeAtlasEntry = (
+    campaignId: number,
+    oldMacro: string,
+    oldMicro: string,
+    newMacro: string,
+    newMicro: string,
+    mergedDescription: string
+): boolean => {
+    const source = getAtlasEntryFull(campaignId, oldMacro, oldMicro);
+    const target = getAtlasEntryFull(campaignId, newMacro, newMicro);
+
+    if (!source || !target) return false;
+
+    db.transaction(() => {
+        // 1. Aggiorna descrizione target
+        db.prepare(`
+            UPDATE location_atlas
+            SET description = ?, last_updated = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(mergedDescription, target.id);
+
+        // 2. Sposta cronologia
+        db.prepare(`
+            UPDATE location_history
+            SET macro_location = ?, micro_location = ?,
+                location = ? || ' | ' || ?
+            WHERE campaign_id = ?
+              AND lower(macro_location) = lower(?)
+              AND lower(micro_location) = lower(?)
+        `).run(newMacro, newMicro, newMacro, newMicro, campaignId, oldMacro, oldMicro);
+
+        // 3. Elimina source
+        db.prepare(`DELETE FROM location_atlas WHERE id = ?`).run(source.id);
+    })();
+
+    console.log(`[Atlas] 🔀 Merged: ${oldMacro} - ${oldMicro} -> ${newMacro} - ${newMicro}`);
+    return true;
+};
+
+/**
  * Ottiene la cronologia viaggi con ID per poterla modificare
  */
 export const getLocationHistoryWithIds = (campaignId: number, limit: number = 20): any[] => {
@@ -742,6 +797,18 @@ export const fixLocationHistoryEntry = (
 
     if (result.changes > 0) {
         console.log(`[History] 🔧 Corretta voce #${entryId}: ${newMacro} - ${newMicro}`);
+        return true;
+    }
+    return false;
+};
+
+/**
+ * Elimina una voce dalla cronologia viaggi
+ */
+export const deleteLocationHistoryEntry = (id: number): boolean => {
+    const result = db.prepare('DELETE FROM location_history WHERE id = ?').run(id);
+    if (result.changes > 0) {
+        console.log(`[History] 🗑️ Eliminata voce viaggio #${id}`);
         return true;
     }
     return false;

@@ -3242,6 +3242,211 @@ export async function deduplicateNpcBatch(
     return result;
 }
 
+// =============================================
+// === LOCATION RECONCILIATION (Atlas) ===
+// =============================================
+
+/**
+ * Chiede all'AI se due luoghi si riferiscono allo stesso posto.
+ */
+async function aiConfirmSameLocation(
+    loc1: { macro: string; micro: string },
+    loc2: { macro: string; micro: string },
+    context: string = ""
+): Promise<boolean> {
+    const prompt = `Sei un esperto di D&D e ambientazioni fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${loc1.macro} - ${loc1.micro}" e "${loc2.macro} - ${loc2.micro}" sono lo STESSO luogo?
+
+Considera che:
+- I nomi potrebbero essere trascrizioni errate o parziali (es. "Palazzo centrale" = "Palazzo Centrale")
+- Potrebbero essere descrizioni diverse dello stesso posto (es. "Sala del trono" = "Sala Trono")
+- I luoghi macro potrebbero avere varianti (es. "Dominio di Ogma" = "Regno di Ogma")
+- I micro-luoghi potrebbero essere sottoinsiemi (es. "Cancelli d'Ingresso" ≈ "Cancelli del dominio")
+
+${context ? `Contesto aggiuntivo: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Location Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
+ * Calcola la similarità tra due luoghi (combinando macro e micro).
+ */
+function locationSimilarity(
+    loc1: { macro: string; micro: string },
+    loc2: { macro: string; micro: string }
+): { score: number; reason: string } {
+    const macroSim = levenshteinSimilarity(loc1.macro, loc2.macro);
+    const microSim = levenshteinSimilarity(loc1.micro, loc2.micro);
+
+    // Se i macro sono identici, confronta solo i micro
+    if (macroSim > 0.95) {
+        if (microSim > 0.6) {
+            return { score: microSim, reason: `same_macro, micro_sim=${microSim.toFixed(2)}` };
+        }
+        // Check substring nei micro
+        if (containsSubstring(loc1.micro, loc2.micro)) {
+            return { score: 0.8, reason: 'same_macro, micro_substring' };
+        }
+    }
+
+    // Se i micro sono molto simili, verifica che i macro siano almeno correlati
+    if (microSim > 0.8 && macroSim > 0.5) {
+        return { score: (macroSim + microSim) / 2, reason: `high_micro_sim=${microSim.toFixed(2)}` };
+    }
+
+    // Calcola similarità combinata
+    const combined = (macroSim * 0.4) + (microSim * 0.6);
+    if (combined > 0.6) {
+        return { score: combined, reason: `combined=${combined.toFixed(2)}` };
+    }
+
+    return { score: 0, reason: 'no_match' };
+}
+
+/**
+ * Trova il nome canonico se esiste un luogo simile nell'atlante.
+ * Ritorna { canonicalMacro, canonicalMicro, existingEntry } o null se non trovato.
+ */
+export async function reconcileLocationName(
+    campaignId: number,
+    newMacro: string,
+    newMicro: string,
+    newDescription: string = ""
+): Promise<{ canonicalMacro: string; canonicalMicro: string; existingEntry: any } | null> {
+    const { listAllAtlasEntries } = await import('./db.js');
+    const existingLocations = listAllAtlasEntries(campaignId);
+    if (existingLocations.length === 0) return null;
+
+    const newMacroLower = newMacro.toLowerCase().trim();
+    const newMicroLower = newMicro.toLowerCase().trim();
+
+    // 1. Match esatto (case-insensitive) → nessuna riconciliazione necessaria
+    const exactMatch = existingLocations.find((loc: any) =>
+        loc.macro_location.toLowerCase() === newMacroLower &&
+        loc.micro_location.toLowerCase() === newMicroLower
+    );
+    if (exactMatch) return null; // Già esiste con lo stesso nome
+
+    // 2. Cerca candidati simili
+    const candidates: Array<{ entry: any; similarity: number; reason: string }> = [];
+
+    for (const entry of existingLocations) {
+        const { score, reason } = locationSimilarity(
+            { macro: newMacro, micro: newMicro },
+            { macro: entry.macro_location, micro: entry.micro_location }
+        );
+
+        if (score > 0.55) {
+            candidates.push({ entry, similarity: score, reason });
+        }
+    }
+
+    if (candidates.length === 0) return null;
+
+    // Ordina per similarità decrescente
+    candidates.sort((a, b) => b.similarity - a.similarity);
+
+    // 3. Per ogni candidato, chiedi conferma all'AI
+    for (const candidate of candidates.slice(0, 3)) { // Max 3 tentativi
+        console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" simile a "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason}). Chiedo conferma AI...`);
+
+        const isSame = await aiConfirmSameLocation(
+            { macro: newMacro, micro: newMicro },
+            { macro: candidate.entry.macro_location, micro: candidate.entry.micro_location },
+            `Nuovo: ${newDescription}. Esistente: ${candidate.entry.description || ''}`
+        );
+
+        if (isSame) {
+            console.log(`[Location Reconcile] ✅ CONFERMATO: "${newMacro} - ${newMicro}" = "${candidate.entry.macro_location} - ${candidate.entry.micro_location}"`);
+            return {
+                canonicalMacro: candidate.entry.macro_location,
+                canonicalMicro: candidate.entry.micro_location,
+                existingEntry: candidate.entry
+            };
+        } else {
+            console.log(`[Location Reconcile] ❌ "${newMacro} - ${newMicro}" ≠ "${candidate.entry.macro_location} - ${candidate.entry.micro_location}"`);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Pre-deduplica un batch di location updates PRIMA di salvarli.
+ * Unisce luoghi simili nello stesso batch.
+ */
+export async function deduplicateLocationBatch(
+    locations: Array<{ macro: string; micro: string; description?: string }>
+): Promise<Array<{ macro: string; micro: string; description?: string }>> {
+    if (locations.length <= 1) return locations;
+
+    const result: Array<{ macro: string; micro: string; description?: string }> = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < locations.length; i++) {
+        if (processed.has(i)) continue;
+
+        let merged = { ...locations[i] };
+        processed.add(i);
+
+        // Cerca duplicati nel resto del batch
+        for (let j = i + 1; j < locations.length; j++) {
+            if (processed.has(j)) continue;
+
+            const { score } = locationSimilarity(
+                { macro: merged.macro, micro: merged.micro },
+                { macro: locations[j].macro, micro: locations[j].micro }
+            );
+
+            if (score > 0.6) {
+                // Chiedi all'AI se sono lo stesso luogo
+                const isSame = await aiConfirmSameLocation(
+                    { macro: merged.macro, micro: merged.micro },
+                    { macro: locations[j].macro, micro: locations[j].micro }
+                );
+
+                if (isSame) {
+                    console.log(`[Location Batch Dedup] 🔄 "${locations[j].macro} - ${locations[j].micro}" → "${merged.macro} - ${merged.micro}"`);
+                    // Usa il nome più lungo come canonico
+                    const mergedFull = `${merged.macro} - ${merged.micro}`;
+                    const jFull = `${locations[j].macro} - ${locations[j].micro}`;
+                    if (jFull.length > mergedFull.length) {
+                        merged.macro = locations[j].macro;
+                        merged.micro = locations[j].micro;
+                    }
+                    // Unisci descrizioni
+                    if (locations[j].description && locations[j].description !== merged.description) {
+                        merged.description = `${merged.description || ''} ${locations[j].description}`.trim();
+                    }
+                    processed.add(j);
+                }
+            }
+        }
+
+        result.push(merged);
+    }
+
+    if (result.length < locations.length) {
+        console.log(`[Location Batch Dedup] ✅ Ridotti ${locations.length} luoghi a ${result.length}`);
+    }
+
+    return result;
+}
+
 // --- RAG: SYNC DOSSIER ---
 export async function syncNpcDossier(campaignId: number, npcName: string, description: string, role: string | null, status: string | null) {
     const content = `DOSSIER NPC: ${npcName}. RUOLO: ${role || 'Sconosciuto'}. STATO: ${status || 'Sconosciuto'}. DESCRIZIONE: ${description}`;

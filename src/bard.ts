@@ -52,7 +52,8 @@ import {
     createEntityRef,
     parseEntityRefs,
     filterEntityRefsByType,
-    migrateOldNpcIds
+    migrateOldNpcIds,
+    listAtlasEntries
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
@@ -2054,6 +2055,7 @@ ${memoryContext}
 2. Estrai SOLO ciò che è ESPLICITAMENTE menzionato
 3. NON inventare, NON inferire, NON aggiungere
 4. Se non trovi qualcosa, lascia array vuoto []
+5. **GLOSSARIO CANONICO**: Se trovi nomi simili a quelli nel contesto (NPC, Luoghi), USA IL NOME ESATTO DEL CONTESTO. Non creare duplicati (es. "Filmen" -> "Firnen").
 
 **OUTPUT JSON RICHIESTO**:
 {
@@ -2244,6 +2246,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             memoryContext += `⚠️ Se senti nomi simili a quelli sopra (es. "Leo Sin" per "Leosin"), USA IL NOME COMPLETO DAL DOSSIER!\n`;
         }
 
+        // 🆕 LISTA LUOGHI ESISTENTI (per riconciliazione luoghi)
+        const existingLocations = listAtlasEntries(campaignId, 50); // Limitiamo a 50 per non esplodere il contesto
+        if (existingLocations.length > 0) {
+            memoryContext += `\n🗺️ LUOGHI GIÀ NOTI (ATLANTE - USA QUESTI NOMI!):\n`;
+            existingLocations.forEach((loc: any) => {
+                memoryContext += `- "${loc.macro_location} - ${loc.micro_location}"\n`;
+            });
+        }
+
         // Aggiungiamo i risultati RAG
         const allMemories = [...staticResults.flat(), ...dynamicResults.flat()];
         // Deduplica stringhe identiche
@@ -2335,6 +2346,7 @@ Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei
 - Descrivi le emozioni e i pensieri dei personaggi
 - Usa i cambi di scena per strutturare il racconto
 - Il "narrative" deve essere un RACCONTO COMPLETO, non un riassunto
+- **GLOSSARIO**: Se devi citare NPC o Luoghi, usa i nomi esatti presenti nella MEMORIA DEL MONDO.
 
 **REGOLE**:
 - NON estrarre loot/quest/mostri (fatto dall'Analista)
@@ -2357,6 +2369,7 @@ ISTRUZIONI DI STILE:
 - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono dalla trascrizione del DM.
 - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori.
 - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il racconto in capitoli.
+- **GLOSSARIO**: Se devi citare NPC o Luoghi, usa i nomi esatti presenti nella MEMORIA DEL MONDO.
 
 **OUTPUT JSON** (SOLO questi campi narrativi):
 {

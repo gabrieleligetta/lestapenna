@@ -1616,11 +1616,31 @@ async function correctTextOnly(segments: any[]): Promise<any[]> {
 
     const cleanText = (text: string): string => {
         if (!text) return "";
-        return text.trim()
+
+        // Pattern di allucinazioni note (Case Insensitive)
+        const hallucinations = [
+            /Autore dei.*/gi,
+            /Sottotitoli.*/gi,
+            /Amara\.org/gi,
+            /creati dalla comunità/gi,
+            /A tutti[\.,]?\s*(A tutti[\.,]?\s*)*/gi, // Cattura anche le ripetizioni
+            /A te[\.,]?\s*(A te[\.,]?\s*)*/gi,
+            /A voi[\.,]?\s*(A voi[\.,]?\s*)*/gi,
+            /^Grazie\.?$/gi,     // Solo se isolato
+            /^Mille\.?$/gi,
+            /^Ciao\.?$/gi,
+            /Concentrazione di Chieti/gi,
+            /Noblesse anatema/gi,
+            /Salomando/gi
+        ];
+
+        let cleaned = text;
+        hallucinations.forEach(regex => {
+            cleaned = cleaned.replace(regex, "");
+        });
+
+        return cleaned
             .replace(/\[SILENZIO\]/g, "")
-            .replace(/Sottotitoli.*/gi, "")
-            .replace(/Amara\.org/gi, "")
-            .replace(/creati dalla comunità/gi, "")
             .replace(/\s+/g, " ")
             .trim();
     };
@@ -1631,13 +1651,13 @@ async function correctTextOnly(segments: any[]): Promise<any[]> {
         async (batch, idx) => {
             const prompt = `Correggi ortografia e punteggiatura in italiano.
 - Rimuovi riempitivi (ehm, uhm).
+- SE UNA RIGA CONTIENE SOLO "A tutti", "Autore dei", O FRASI SENZA SENSO: Scrivi "..." (tre puntini).
 - NON aggiungere commenti.
 - IMPORTANTE: Restituisci ESATTAMENTE ${batch.length} righe, una per riga.
 - NON unire né dividere frasi.
-- Se una riga è vuota o incomprensibile, scrivi "..."
 
 TESTO DA CORREGGERE (${batch.length} righe):
-${batch.map((s, i) => `${i+1}. ${s.text}`).join('\n')}`;
+${batch.map((s, i) => `${i+1}. ${cleanText(s.text)}`).join('\n')}`;
 
             const startAI = Date.now();
             try {

@@ -9,7 +9,10 @@ const HALLUCINATION_PATTERNS = [
     /\[?Sottotitoli(\s+e\s+revisione)?\s+(:)?\s+(a\s+cura\s+)?di\s+[A-Za-z\s]+\]?/gi,
     /Sottotitoli:\s+Luca\s+Gardella/gi,
     /Sottotitoli\s+e\s+revisione\s+a\s+cura\s+di\s+QTSS/gi,
-    
+    /Autore\s+dei(\s+sottotitoli)?/gi,
+    /Sottotitoli\s+di/gi,
+    /Sottotitoli.*/gi, // Catch-all per qualsiasi variante
+
     // === MARCATORI AUDIO ===
     /^\s*\[?SILENZIO\]?\s*$/gi,
     /^\s*\[?Silenzio\]?\s*$/gi,
@@ -22,7 +25,7 @@ const HALLUCINATION_PATTERNS = [
     /^\s*\[?sospiro\]?\s*$/gi,
     /^\s*\[?tossisce\]?\s*$/gi,
     /^\s*\[?sussurro\]?\s*$/gi,
-    
+
     // === FRASI GENERICHE STANDALONE (solo se segmento intero) ===
     /^\s*Grazie\.?\s*$/gi,
     /^\s*Ok\.?\s*$/gi,
@@ -31,10 +34,27 @@ const HALLUCINATION_PATTERNS = [
     /^\s*Grazie\s+a\s+(tutti|voi)\.?\s*$/gi,
     /^\s*Ah[!.]?\s*$/gi,
     /^\s*Oh[!.]?\s*$/gi,
-    
+    /^\s*Mille\.?\s*$/gi,
+    /^\s*Ciao\.?\s*$/gi,
+
+    // === ALLUCINAZIONI RIPETUTE (Pattern Aggressivi) ===
+    /^\s*A\s+tutti\.?\s*$/gi,
+    /^\s*A\s+te\.?\s*$/gi,
+    /^\s*A\s+voi\.?\s*$/gi,
+    /^\s*Agli\s+altri\.?\s*$/gi,
+    /A tutti[\.,]?\s*(A tutti[\.,]?\s*)*/gi, // Cattura ripetizioni "A tutti. A tutti."
+    /A te[\.,]?\s*(A te[\.,]?\s*)*/gi,
+    /A voi[\.,]?\s*(A voi[\.,]?\s*)*/gi,
+
+    // === ALLUCINAZIONI SPECIFICHE (Italiano) ===
+    /Concentrazione\s+di\s+Chieti/gi,
+    /Noblesse\s+anatema/gi,
+    /Salomando/gi,
+    /Autore dei.*/gi,
+
     // === LOOPING ===
     /(\b\w{4,}\b)(\s+\1){3,}/gi,
-    
+
     // === YOUTUBE ===
     /Thanks?\s+for\s+(watching|listening)/gi,
     /Subtitles\s+by\s+the\s+Amara\.org\s+community/gi,

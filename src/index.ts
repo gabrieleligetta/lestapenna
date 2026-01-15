@@ -26,7 +26,8 @@ import {
     TONES,
     ToneKey,
     askBard,
-    ingestSessionRaw,
+    prepareCleanText,
+    ingestSessionComplete,
     generateCharacterBiography,
     ingestBioEvent,
     generateNpcBiography,
@@ -1930,28 +1931,32 @@ client.on('messageCreate', async (message: Message) => {
 
         const startProcessing = Date.now();
 
-        // FASE 1: INGESTIONE (Opzionale ma consigliata)
-        let narrativeText: string | undefined;
+        // FASE 1: PREPARAZIONE TESTO PULITO
+        let cleanText: string | undefined;
         try {
-            await channel.send("📚 Il Bardo sta studiando gli eventi per ricordarli in futuro...");
-            narrativeText = await ingestSessionRaw(targetSessionId);
-            
-            // 🆕 Log per conferma
-            if (narrativeText) {
-                console.log(`[Ingest] ✅ NARRATIVE generato: ${narrativeText.length} caratteri`);
-            }
+            await channel.send("📚 Il Bardo sta preparando il testo...");
+            cleanText = prepareCleanText(targetSessionId);
 
-            await channel.send("✅ Memoria aggiornata.");
-        } catch (ingestErr: any) {
-            console.error(`⚠️ Errore ingestione ${targetSessionId}:`, ingestErr);
-            await channel.send(`⚠️ Ingestione memoria fallita: ${ingestErr.message}. Puoi riprovare più tardi con \`$memorizza ${targetSessionId}\`.`);
+            if (cleanText) {
+                console.log(`[Prep] ✅ Testo pulito: ${cleanText.length} caratteri`);
+            }
+        } catch (prepErr: any) {
+            console.error(`⚠️ Errore preparazione ${targetSessionId}:`, prepErr);
             // Non blocchiamo il riassunto
         }
 
         // FASE 2: RIASSUNTO
         try {
             await channel.send("✍️ Inizio stesura del racconto...");
-            const result = await generateSummary(targetSessionId, requestedTone || 'DM', narrativeText);
+            const result = await generateSummary(targetSessionId, requestedTone || 'DM', cleanText);
+
+            // FASE 2.5: INGESTIONE RAG (con dati dall'Analista)
+            try {
+                await ingestSessionComplete(targetSessionId, result);
+                console.log(`[RAG] ✅ Ingestione completata`);
+            } catch (ingestErr: any) {
+                console.error(`⚠️ Errore ingestione RAG:`, ingestErr);
+            }
 
             // SALVATAGGIO TITOLO
             updateSessionTitle(targetSessionId, result.title);
@@ -2575,14 +2580,25 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: !ingest <session_id> ---
+    // NOTA: Per una reingestione completa con metadata, usa $riprocessa
+    // Questo comando fa un'ingestione veloce solo con testo pulito
     if (command === 'ingest' || command === 'memorizza') {
         const targetSessionId = args[0];
-        if (!targetSessionId) return await message.reply("Uso: `$ingest <ID_SESSIONE>`");
+        if (!targetSessionId) return await message.reply("Uso: `$memorizza <ID_SESSIONE>`\nPer reingestione completa con NPC/Quest usa `$riprocessa`");
 
-        await message.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${targetSessionId}\`...\nSto leggendo le trascrizioni e creando i vettori.`);
+        await message.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${targetSessionId}\`...\nℹ️ Usa \`$riprocessa\` per reingestione completa con metadati.`);
 
         try {
-            await ingestSessionRaw(targetSessionId);
+            // Ingestione semplificata: prepara testo e genera summary per avere metadata
+            const cleanText = prepareCleanText(targetSessionId);
+            if (!cleanText) {
+                return await message.reply(`⚠️ Nessuna trascrizione trovata per la sessione.`);
+            }
+
+            // Genera summary veloce per ottenere metadata
+            const result = await generateSummary(targetSessionId, 'DM', cleanText);
+            await ingestSessionComplete(targetSessionId, result);
+
             await message.reply(`✅ Memoria aggiornata per sessione \`${targetSessionId}\`. Ora puoi farmi domande su di essa.`);
         } catch (e: any) {
             console.error(e);
@@ -3151,13 +3167,17 @@ client.on('messageCreate', async (message: Message) => {
             db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(targetSessionId);
             db.prepare('DELETE FROM world_history WHERE session_id = ?').run(targetSessionId);
             
-            await channel.send(`2. Rigenerazione Memoria RAG e Analisi Eventi...`);
+            await channel.send(`2. Preparazione testo e Analisi Eventi...`);
 
-            // 2. RIGENERAZIONE RAG
-            const narrativeText = await ingestSessionRaw(targetSessionId);
+            // 2. PREPARAZIONE TESTO PULITO
+            const cleanText = prepareCleanText(targetSessionId);
 
             // 3. RIGENERAZIONE SUMMARY & DATI
-            const result = await generateSummary(targetSessionId, 'DM', narrativeText);
+            const result = await generateSummary(targetSessionId, 'DM', cleanText);
+
+            // 3.5. INGESTIONE RAG (con dati dall'Analista)
+            await ingestSessionComplete(targetSessionId, result);
+            console.log(`[RAG] ✅ Ingestione completata`);
             updateSessionTitle(targetSessionId, result.title);
 
             // 4. VALIDAZIONE E SALVATAGGIO (Logica copiata da waitForCompletionAndSummarize)
@@ -3437,12 +3457,16 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 }
                 
                 try {
-                    // Ingestione memoria
-                    const narrativeText = await ingestSessionRaw(sessionId);
-                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
+                    // Preparazione testo pulito
+                    const cleanText = prepareCleanText(sessionId);
+                    console.log(`[Monitor] 📝 Testo preparato`);
 
-                    // Genera riassunto (usando il testo narrativo pulito!)
-                    const result = await generateSummary(sessionId, 'DM', narrativeText);
+                    // Genera riassunto (usando il testo pulito)
+                    const result = await generateSummary(sessionId, 'DM', cleanText);
+
+                    // Ingestione RAG (con dati dall'Analista)
+                    await ingestSessionComplete(sessionId, result);
+                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
                     
                     // Salva titolo
                     updateSessionTitle(sessionId, result.title);

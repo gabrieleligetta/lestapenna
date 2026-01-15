@@ -56,7 +56,8 @@ import {
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
-import { normalizeToNarrative, formatNarrativeTranscript } from './narrativeFilter';
+import { filterWhisperHallucinations } from './whisperHallucinationFilter';
+// NarrativeFilter rimosso - ora usiamo solo pulizia regex
 
 // --- CONFIGURAZIONE TONI ---
 export const TONES = {
@@ -1181,86 +1182,127 @@ export async function syncAllDirtyCharacters(campaignId: number): Promise<{ sync
     return { synced: syncedNames.length, names: syncedNames };
 }
 
-// --- RAG: INGESTION ---
-export async function ingestSessionRaw(sessionId: string): Promise<string | undefined> {
+// --- PREPARAZIONE TESTO PULITO (per generateSummary) ---
+export function prepareCleanText(sessionId: string): string | undefined {
     const campaignId = getSessionCampaignId(sessionId);
     if (!campaignId) {
-        console.warn(`[RAG] ⚠️ Sessione ${sessionId} senza campagna. Salto ingestione.`);
+        console.warn(`[Prep] ⚠️ Sessione ${sessionId} senza campagna.`);
         return undefined;
     }
 
-    console.log(`[RAG] 🧠 Ingestione RAW per sessione ${sessionId} (Doppio Embedding + Narrative Filter)...`);
-
-    // 1. Pulisci vecchi frammenti per ENTRAMBI i modelli
-    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
-    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OLLAMA);
-
-    // 2. Recupera e ricostruisci il dialogo completo
     const transcriptions = getSessionTranscript(sessionId);
     const notes = getSessionNotes(sessionId);
     const startTime = getSessionStartTime(sessionId) || 0;
 
     if (transcriptions.length === 0 && notes.length === 0) return undefined;
 
-    // Usa la nuova utility per ottenere il testo lineare e i segmenti
     const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId);
 
-    // 3. Applica Narrative Filter per pulire metagaming e normalizzare eventi
-    console.log(`[RAG] 🎭 Applicazione Narrative Filter (${processed.segments.length} segmenti)...`);
-    const narrativeSegments = await normalizeToNarrative(processed.segments, campaignId);
-    const fullText = formatNarrativeTranscript(narrativeSegments);
-    console.log(`[RAG] 📝 Testo narrativo generato: ${fullText.length} caratteri`);
+    console.log(`[Prep] 🧹 Pulizia anti-allucinazioni (${processed.segments.length} segmenti)...`);
+    const cleanedSegments = processed.segments
+        .map(s => ({
+            ...s,
+            text: filterWhisperHallucinations(s.text || '')
+        }))
+        .filter(s => s.text.length > 0);
 
-    const allNpcs = listNpcs(campaignId, 1000);
-    const npcNames = allNpcs.map(n => n.name);
+    const removedCount = processed.segments.length - cleanedSegments.length;
+    if (removedCount > 0) {
+        console.log(`[Prep] 🗑️ Rimossi ${removedCount} segmenti vuoti/allucinazioni`);
+    }
 
-    // 4. Sliding Window Chunking (su testo narrativo filtrato)
-    const CHUNK_SIZE = 1000;
-    const OVERLAP = 200;
+    const fullText = cleanedSegments.map(s => `[${s.character}] ${s.text}`).join('\n\n');
+    console.log(`[Prep] ✅ Testo pulito: ${fullText.length} caratteri (${cleanedSegments.length} segmenti)`);
 
-    const chunks = [];
-    let i = 0;
-    while (i < fullText.length) {
-        let end = Math.min(i + CHUNK_SIZE, fullText.length);
-        if (end < fullText.length) {
-            const lastNewLine = fullText.lastIndexOf('\n', end);
-            if (lastNewLine > i + (CHUNK_SIZE * 0.5)) end = lastNewLine;
-        }
-        const chunkText = fullText.substring(i, end).trim();
-        let chunkTimestamp = startTime;
-        const timeMatch = chunkText.match(/\[(\d+):(\d+)\]/);
-        if (timeMatch) chunkTimestamp = startTime + (parseInt(timeMatch[1]) * 60000) + (parseInt(timeMatch[2]) * 1000);
+    return fullText;
+}
 
-        // Estrazione metadati dal chunk (approssimativa)
-        // Cerca l'ultimo marker di scena nel testo precedente o nel chunk corrente
-        const textUpToChunk = fullText.substring(0, end);
-        const lastSceneMatch = textUpToChunk.match(/--- CAMBIO SCENA: \[(.*?)\] - \[(.*?)\] ---/g);
-        let macro = null;
-        let micro = null;
-        
-        if (lastSceneMatch && lastSceneMatch.length > 0) {
-            const lastMatch = lastSceneMatch[lastSceneMatch.length - 1];
-            const groups = lastMatch.match(/--- CAMBIO SCENA: \[(.*?)\] - \[(.*?)\] ---/);
-            if (groups) {
-                macro = groups[1] !== "Invariato" ? groups[1] : null;
-                micro = groups[2] !== "Invariato" ? groups[2] : null;
-            }
-        }
+// --- RAG: INGESTION POST-SUMMARY (usa dati Analista) ---
+export async function ingestSessionComplete(
+    sessionId: string,
+    summaryResult: SummaryResponse
+): Promise<void> {
+    const campaignId = getSessionCampaignId(sessionId);
+    if (!campaignId) {
+        console.warn(`[RAG] ⚠️ Sessione ${sessionId} senza campagna. Salto ingestione.`);
+        return;
+    }
 
-        const textNpcs = npcNames.filter(name => chunkText.toLowerCase().includes(name.toLowerCase()));
-        const mergedNpcs = Array.from(new Set(textNpcs));
+    // Usa il narrative/summary come testo principale per il RAG
+    const textToIngest = summaryResult.narrative || summaryResult.summary || '';
+    if (textToIngest.length < 100) {
+        console.warn(`[RAG] ⚠️ Testo troppo corto per ingestione (${textToIngest.length} chars)`);
+        return;
+    }
 
-        // 🆕 Sistema Entity Refs: Crea riferimenti tipizzati (npc:1, npc:2, etc.)
-        const entityRefs: string[] = [];
-        for (const npcName of mergedNpcs) {
+    console.log(`[RAG] 🧠 Ingestione POST-SUMMARY per sessione ${sessionId}...`);
+    console.log(`[RAG] 📊 Metadati Analista: ${summaryResult.present_npcs?.length || 0} NPC, ${summaryResult.location_updates?.length || 0} luoghi`);
+
+    // 1. Pulisci vecchi frammenti per ENTRAMBI i modelli
+    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
+    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OLLAMA);
+
+    const startTime = getSessionStartTime(sessionId) || Date.now();
+
+    // 2. Prepara entity refs dagli NPC estratti dall'Analista
+    const npcEntityRefs: string[] = [];
+    if (summaryResult.present_npcs?.length) {
+        for (const npcName of summaryResult.present_npcs) {
             const npcId = getNpcIdByName(campaignId, npcName);
-            if (npcId) entityRefs.push(createEntityRef('npc', npcId));
+            if (npcId) npcEntityRefs.push(createEntityRef('npc', npcId));
+        }
+    }
+
+    // 3. Estrai location dall'Analista (usa la prima/principale)
+    let mainMacro: string | null = null;
+    let mainMicro: string | null = null;
+    if (summaryResult.location_updates?.length) {
+        mainMacro = summaryResult.location_updates[0].macro || null;
+        mainMicro = summaryResult.location_updates[0].micro || null;
+    }
+
+    // 4. Sliding Window Chunking sul testo narrativo
+    const CHUNK_SIZE = 1500; // Più grande perché è già prosa pulita
+    const OVERLAP = 300;
+
+    const chunks: Array<{
+        text: string;
+        timestamp: number;
+        macro: string | null;
+        micro: string | null;
+        npcs: string[];
+        entityRefs: string[];
+    }> = [];
+
+    let i = 0;
+    while (i < textToIngest.length) {
+        let end = Math.min(i + CHUNK_SIZE, textToIngest.length);
+        // Trova un punto di interruzione naturale
+        if (end < textToIngest.length) {
+            const lastPeriod = textToIngest.lastIndexOf('.', end);
+            const lastNewLine = textToIngest.lastIndexOf('\n', end);
+            const breakPoint = Math.max(lastPeriod, lastNewLine);
+            if (breakPoint > i + (CHUNK_SIZE * 0.5)) end = breakPoint + 1;
         }
 
-        if (chunkText.length > 50) chunks.push({ text: chunkText, timestamp: chunkTimestamp, macro, micro, npcs: mergedNpcs, entityRefs });
-        if (end >= fullText.length) break;
+        const chunkText = textToIngest.substring(i, end).trim();
+
+        if (chunkText.length > 50) {
+            chunks.push({
+                text: chunkText,
+                timestamp: startTime,
+                macro: mainMacro,
+                micro: mainMicro,
+                npcs: summaryResult.present_npcs || [],
+                entityRefs: npcEntityRefs
+            });
+        }
+
+        if (end >= textToIngest.length) break;
         i = end - OVERLAP;
     }
+
+    console.log(`[RAG] 📦 Creati ${chunks.length} chunks (${CHUNK_SIZE} chars, ${OVERLAP} overlap)`);
 
     // 5. Embedding con Progress Bar (DOPPIO - OpenAI + Ollama)
     await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, idx) => {
@@ -1312,14 +1354,14 @@ export async function ingestSessionRaw(sessionId: string): Promise<string | unde
                         val.data,
                         val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
                         chunk.timestamp, chunk.macro, chunk.micro, chunk.npcs,
-                        chunk.entityRefs // 🆕 Sistema Entity Refs (npc:1, pc:15, etc.)
+                        chunk.entityRefs
                     );
                 }
             }
         }
     }, 'Calcolo Embeddings RAG');
 
-    return fullText;
+    console.log(`[RAG] ✅ Ingestione completata per sessione ${sessionId}`);
 }
 
 // --- RAG: SEARCH ---
@@ -1729,22 +1771,29 @@ ${batch.map((s, i) => `${i+1}. ${cleanText(s.text)}`).join('\n')}`;
 }
 
 // --- FUNZIONE PRINCIPALE REFACTORATA ---
-// 🆕 ARCHITETTURA OTTIMIZZATA: Solo correzione testo, metadata estrazione spostata in generateSummary
+// 🆕 ARCHITETTURA SEMPLIFICATA: Solo pulizia regex anti-allucinazioni, niente AI
 export async function correctTranscription(
     segments: any[],
     campaignId?: number
 ): Promise<AIResponse> {
-    console.log(`[Bardo] 🔧 Avvio correzione testo (Provider: ${TRANSCRIPTION_PROVIDER})...`);
+    console.log(`[Bardo] 🧹 Avvio pulizia anti-allucinazioni (${segments.length} segmenti)...`);
 
-    // STEP UNICO: Correzione Testuale Bulk
-    // L'estrazione metadati (NPCs, locations, monsters) è ora centralizzata in generateSummary()
-    // per evitare duplicazioni e sfruttare il contesto completo della sessione
-    const correctedSegments = await correctTextOnly(segments);
+    // STEP UNICO: Pulizia Regex (NO AI)
+    // La correzione AI è stata rimossa - il modello potente può gestire errori minori
+    // L'estrazione metadati è centralizzata in generateSummary()
+    const cleanedSegments = segments.map(segment => ({
+        ...segment,
+        text: filterWhisperHallucinations(segment.text || '')
+    })).filter(segment => segment.text.length > 0); // Rimuovi segmenti vuoti
+
+    const removedCount = segments.length - cleanedSegments.length;
+    if (removedCount > 0) {
+        console.log(`[Bardo] 🗑️ Rimossi ${removedCount} segmenti vuoti/allucinazioni`);
+    }
+    console.log(`[Bardo] ✅ Pulizia completata: ${cleanedSegments.length} segmenti validi`);
 
     return {
-        segments: correctedSegments
-        // NOTA: metadata (npc_updates, detected_location, monsters, etc.)
-        // saranno estratti solo in fase di summary con contesto completo
+        segments: cleanedSegments
     };
 }
 

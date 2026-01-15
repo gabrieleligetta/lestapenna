@@ -1927,6 +1927,13 @@ client.on('messageCreate', async (message: Message) => {
         const channel = message.channel as TextChannel;
         await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
 
+        // 🆕 AVVIO MONITORAGGIO TEMPORANEO (se non attivo)
+        let monitorStartedByUs = false;
+        if (!monitor.isSessionActive()) {
+            monitor.startSession(targetSessionId);
+            monitorStartedByUs = true;
+        }
+
         const startProcessing = Date.now();
 
         // FASE 1: PREPARAZIONE TESTO PULITO
@@ -2210,27 +2217,26 @@ client.on('messageCreate', async (message: Message) => {
                 await sendSessionRecap(targetSessionId, currentCampaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
             }
 
-            const processingTime = Date.now() - startProcessing;
-            const transcripts = getSessionTranscript(targetSessionId);
-
-            const replayMetrics: SessionMetrics = {
-                sessionId: targetSessionId,
-                startTime: startProcessing,
-                endTime: Date.now(),
-                totalFiles: transcripts.length,
-                totalAudioDurationSec: 0,
-                transcriptionTimeMs: 0,
-                summarizationTimeMs: processingTime,
-                totalTokensUsed: result.tokens,
-                errors: [],
-                resourceUsage: { cpuSamples: [], ramSamplesMB: [] }
-            };
-
-            processSessionReport(replayMetrics).catch(e => console.error("Err Report Replay:", e));
+            // 🆕 REPORT TECNICO CON COSTI
+            if (monitorStartedByUs) {
+                const metrics = await monitor.endSession();
+                if (metrics) {
+                    await processSessionReport(metrics);
+                }
+            } else {
+                // Se il monitor era già attivo (sessione live), non lo chiudiamo.
+                // Possiamo opzionalmente loggare che i costi sono confluiti nella sessione attiva.
+                console.log(`[Racconta] Costi confluiti nella sessione attiva monitorata.`);
+            }
 
         } catch (err) {
             console.error(`❌ Errore racconta ${targetSessionId}:`, err);
             await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
+            
+            // Se errore, e avevamo aperto il monitor, chiudiamolo comunque per pulizia
+            if (monitorStartedByUs) {
+                await monitor.endSession();
+            }
         }
     }
 
@@ -3142,7 +3148,7 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     // --- NUOVO: $riprocessa <ID> (SOFT RESET) ---
-    if (command === 'riprocessa' || command === 'reprocess') {
+    if (command === 'riprocessa' || command === 'reprocess' || command === 'regenerate') {
         const targetSessionId = args[0];
         if (!targetSessionId) {
             return await message.reply("Uso: `$riprocessa <ID_SESSIONE>` - Rigenera memoria e dati senza ritrascrivere.");
@@ -3150,6 +3156,13 @@ client.on('messageCreate', async (message: Message) => {
 
         const channel = message.channel as TextChannel;
         await channel.send(`🔄 **Riprocessamento Logico** avviato per sessione \`${targetSessionId}\`...\n1. Pulizia dati derivati (Loot, Quest, Storia, RAG)...`);
+
+        // 🆕 AVVIO MONITORAGGIO TEMPORANEO (se non attivo)
+        let monitorStartedByUs = false;
+        if (!monitor.isSessionActive()) {
+            monitor.startSession(targetSessionId);
+            monitorStartedByUs = true;
+        }
 
         try {
             const startProcessing = Date.now();
@@ -3286,28 +3299,28 @@ client.on('messageCreate', async (message: Message) => {
             // Email recap
             await sendSessionRecap(targetSessionId, campaignId, result.summary, result.loot, result.loot_removed, result.narrativeBrief, result.monsters);
 
-            // Email tecnica con costi
-            const processingTime = Date.now() - startProcessing;
-            const transcripts = getSessionTranscript(targetSessionId);
-            const reprocessMetrics: SessionMetrics = {
-                sessionId: targetSessionId,
-                startTime: startProcessing,
-                endTime: Date.now(),
-                totalFiles: transcripts.length,
-                totalAudioDurationSec: 0,
-                transcriptionTimeMs: 0,
-                summarizationTimeMs: processingTime,
-                totalTokensUsed: result.tokens,
-                errors: [],
-                resourceUsage: { cpuSamples: [], ramSamplesMB: [] }
-            };
-            processSessionReport(reprocessMetrics).catch(e => console.error("Err Report Riprocessa:", e));
+            // 🆕 REPORT TECNICO CON COSTI
+            if (monitorStartedByUs) {
+                const metrics = await monitor.endSession();
+                if (metrics) {
+                    await processSessionReport(metrics);
+                }
+            } else {
+                // Se il monitor era già attivo (sessione live), non lo chiudiamo.
+                // Possiamo opzionalmente loggare che i costi sono confluiti nella sessione attiva.
+                console.log(`[Riprocessa] Costi confluiti nella sessione attiva monitorata.`);
+            }
 
             await channel.send(`✅ **Riprocessamento Completato!** Dati aggiornati.`);
 
         } catch (err: any) {
             console.error(`❌ Errore riprocessa ${targetSessionId}:`, err);
             await channel.send(`❌ Errore critico: ${err.message}`);
+            
+            // Se errore, e avevamo aperto il monitor, chiudiamolo comunque per pulizia
+            if (monitorStartedByUs) {
+                await monitor.endSession();
+            }
         }
     }
 
@@ -3464,12 +3477,16 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 }
                 
                 try {
-                    // Ingestione memoria
-                    const narrativeText = await ingestSessionRaw(sessionId);
-                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
+                    // 🆕 Prepara testo pulito
+                    const cleanText = prepareCleanText(sessionId);
+                    if (!cleanText) throw new Error("Nessuna trascrizione disponibile");
 
-                    // Genera riassunto (usando il testo narrativo pulito!)
-                    const result = await generateSummary(sessionId, 'DM', narrativeText);
+                    // Genera riassunto (con metadata per ingestione RAG)
+                    const result = await generateSummary(sessionId, 'DM', cleanText);
+
+                    // Ingestione RAG con metadata
+                    await ingestSessionComplete(sessionId, result);
+                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
                     
                     // Salva titolo
                     updateSessionTitle(sessionId, result.title);

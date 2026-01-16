@@ -3098,6 +3098,61 @@ function containsSubstring(name1: string, name2: string): boolean {
 }
 
 /**
+ * Versione POTENZIATA: Chiede all'AI se due nomi sono la stessa persona usando RAG + Fonetica
+ */
+async function aiConfirmSamePersonExtended(
+    campaignId: number,
+    newName: string,
+    newDescription: string,
+    candidateName: string,
+    candidateDescription: string
+): Promise<boolean> {
+    
+    // 1. Cerca nel RAG usando la descrizione del NUOVO personaggio
+    // Questo serve a vedere se la descrizione di "Siri" fa emergere ricordi di "Ciri"
+    const ragQuery = `Chi è ${newName}? ${newDescription}`;
+    const ragContext = await searchKnowledge(campaignId, ragQuery, 2); // Prendiamo solo i top 2 frammenti
+    
+    // Filtriamo i frammenti per vedere se menzionano il CANDIDATO
+    const relevantFragments = ragContext.filter(f => 
+        f.toLowerCase().includes(candidateName.toLowerCase())
+    );
+
+    const ragContextText = relevantFragments.length > 0 
+        ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
+        : "";
+
+    const prompt = `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
+
+Domanda: Il nuovo NPC "${newName}" è in realtà l'NPC esistente "${candidateName}" (errore di trascrizione o soprannome)?
+
+CONFRONTO DATI:
+- NUOVO (${newName}): "${newDescription}"
+- ESISTENTE (${candidateName}): "${candidateDescription}"
+${ragContextText}
+
+CRITERI DI GIUDIZIO:
+1. **Fonetica:** Se suonano simili (Siri/Ciri), è un forte indizio.
+2. **Contesto (RAG):** Se la "Memoria Storica" di ${candidateName} descrive fatti identici a quelli del nuovo NPC, SONO la stessa persona.
+3. **Logica:** Se uno è "Ostaggio dei banditi" e l'altro è "Prigioniera dei briganti", SONO la stessa persona.
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
  * Chiede all'AI se due nomi si riferiscono alla stessa persona.
  */
 async function aiConfirmSamePerson(name1: string, name2: string, context: string = ""): Promise<boolean> {
@@ -3187,22 +3242,25 @@ export async function reconcileNpcName(
     // Ordina per similarità decrescente
     candidates.sort((a, b) => b.similarity - a.similarity);
 
-    // 3. Per ogni candidato, chiedi conferma all'AI
-    for (const candidate of candidates.slice(0, 3)) { // Max 3 tentativi
-        console.log(`[Reconcile] 🔍 "${newName}" simile a "${candidate.npc.name}" (${candidate.reason}). Chiedo conferma AI...`);
+    // 3. VERIFICA POTENZIATA CON RAG
+    // Prendiamo solo il miglior candidato per risparmiare token/tempo
+    const bestCandidate = candidates[0]; 
 
-        const isSame = await aiConfirmSamePerson(
-            newName,
-            candidate.npc.name,
-            `Nuovo: ${newDescription}. Esistente: ${candidate.npc.description || ''}`
-        );
+    console.log(`[Reconcile] 🔍 "${newName}" simile a "${bestCandidate.npc.name}" (${bestCandidate.reason}). Avvio Deep Check (RAG)...`);
 
-        if (isSame) {
-            console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.npc.name}"`);
-            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
-        } else {
-            console.log(`[Reconcile] ❌ "${newName}" ≠ "${candidate.npc.name}"`);
-        }
+    const isSame = await aiConfirmSamePersonExtended(
+        campaignId,
+        newName,
+        newDescription, // Passiamo la descrizione estratta dal summary corrente
+        bestCandidate.npc.name,
+        bestCandidate.npc.description || ""
+    );
+
+    if (isSame) {
+        console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${bestCandidate.npc.name}"`);
+        return { canonicalName: bestCandidate.npc.name, existingNpc: bestCandidate.npc };
+    } else {
+        console.log(`[Reconcile] ❌ "${newName}" ≠ "${bestCandidate.npc.name}"`);
     }
 
     return null;

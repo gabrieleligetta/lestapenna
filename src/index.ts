@@ -571,10 +571,10 @@ client.on('messageCreate', async (message: Message) => {
                 },
                 {
                     name: "💡 Alias Comandi",
-                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$dossier`/`$npc`, `$viaggi`/`$travels`, `$inventario`/`$inventory`, `$bestiario`/`$bestiary`, `$unisciitem`/`$mergeitem`, `$unisciquest`/`$mergequest`, ecc."
+                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$dossier`/`$npc`, `$viaggi`/`$travels`, `$inventario`/`$inventario`, `$bestiario`/`$bestiario`, `$unisciitem`/`$mergeitem`, `$unisciquest`/`$mergequest`, etc."
                 }
             )
-            .setFooter({ text: "Per la versione inglese usa $help" });
+            .setFooter({ text: "Per la versione italiana usa $aiuto" });
         return await message.reply({ embeds: [helpEmbed] });
     }
 
@@ -4158,10 +4158,10 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         if (result.location_updates && result.location_updates.length > 0) {
                             console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
 
-                            // 1. Pre-deduplica batch
+                            // 1. Pre-deduplica batch (rimuove duplicati interni)
                             const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
 
-                            // 2. Riconcilia con atlante esistente
+                            // 2. Per ogni location, riconcilia con l'atlante esistente
                             for (const loc of dedupedLocations) {
                                 if (loc.macro && loc.micro && loc.description) {
                                     const reconciled = await reconcileLocationName(
@@ -4217,7 +4217,7 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                         }
 
                         // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
-                        // Condizione espansa per includere metadati unificati
+                        // Condizione espansa per includere metadati unificati (npc_dossier_updates, location_updates)
                         const hasValidatedEvents = validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0);
                         const hasNewMetadata = (result.npc_dossier_updates?.length || 0) > 0 || (result.location_updates?.length || 0) > 0;
 
@@ -4234,6 +4234,11 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                             const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
                             if (charSyncResult.synced > 0) {
                                 console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
+
+                                // Notifica nel canale (opzionale)
+                                if (channel && charSyncResult.names.length > 0) {
+                                    channel.send(`📜 **Schede Aggiornate Automaticamente**\n${charSyncResult.names.map(n => `• ${n}`).join('\n')}`).catch(() => {});
+                                }
                             }
 
                             // 🆕 Sync Atlas (location_updates)
@@ -4692,6 +4697,9 @@ async function processOrphanedSessionsSequentially(sessionIds: string[]): Promis
         console.log(`\n${'='.repeat(60)}`);
         console.log(`📊 [${i+1}/${sessionIds.length}] Inizio recupero sessione: ${sessionId}`);
         console.log(`${'='.repeat(60)}\n`);
+
+        // 🆕 AVVIO MONITORAGGIO PER LA SESSIONE RECUPERATA
+        monitor.startSession(sessionId);
         
         try {
             // 1️⃣ PULIZIA CODA (rimuovi eventuali job vecchi)
@@ -4752,9 +4760,20 @@ async function processOrphanedSessionsSequentially(sessionIds: string[]): Promis
             try {
                 await waitForCompletionAndSummarize(sessionId, channel || undefined);
                 console.log(`✅ Sessione ${sessionId} completata con successo!`);
+
+                // 🆕 CHIUSURA MONITORAGGIO E INVIO REPORT (SUCCESSO)
+                const metrics = await monitor.endSession();
+                if (metrics) {
+                    console.log('[Monitor] 📊 Invio report sessione recuperata...');
+                    await processSessionReport(metrics);
+                }
+
             } catch (err: any) {
                 console.error(`❌ Errore durante elaborazione ${sessionId}:`, err.message);
                 
+                // Assicuriamoci di chiudere la sessione di monitoraggio se qualcosa va storto
+                await monitor.endSession();
+
                 if (channel) {
                     await channel.send(`⚠️ Errore durante elaborazione sessione \`${sessionId}\`. Usa \`$racconta ${sessionId}\` per riprovare.`).catch(() => {});
                 }

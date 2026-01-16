@@ -1,4 +1,12 @@
 /**
+ * @deprecated Questo modulo non è più utilizzato nella pipeline principale.
+ * La logica di filtro narrativo è stata sostituita da una pulizia regex leggera in `bard.ts` (correctTranscription)
+ * e dall'estrazione contestuale in `generateSummary`.
+ *
+ * Mantenuto solo per riferimento storico o eventuale ripristino futuro.
+ */
+
+/**
  * Narrative Filter - Normalizza trascrizioni per RAG
  *
  * Elimina metagaming, preserva semantica, risolve referenze.
@@ -67,6 +75,8 @@ function consolidateFragments(segments: ProcessedSegment[]): ProcessedSegment[] 
 }
 
 /**
+ * @deprecated Funzione non più utilizzata. Vedi `correctTranscription` in `bard.ts`.
+ *
  * Normalizza trascrizioni corrette in forma narrativa per RAG.
  * Elimina metagaming, preserva semantica, risolve referenze.
  *

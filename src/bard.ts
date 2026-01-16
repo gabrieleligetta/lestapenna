@@ -3329,6 +3329,64 @@ export async function deduplicateNpcBatch(
 // =============================================
 
 /**
+ * Versione POTENZIATA: Chiede all'AI se due luoghi sono lo stesso posto usando RAG + Fonetica
+ */
+async function aiConfirmSameLocationExtended(
+    campaignId: number,
+    newMacro: string,
+    newMicro: string,
+    newDescription: string,
+    candidateMacro: string,
+    candidateMicro: string,
+    candidateDescription: string
+): Promise<boolean> {
+
+    // 1. Cerca nel RAG usando la descrizione del NUOVO luogo
+    // Es: "Com'è la 'Grotta Buia'? C'è un altare di ossa."
+    const ragQuery = `Descrivi il luogo ${newMacro} - ${newMicro}. ${newDescription}`;
+    const ragContext = await searchKnowledge(campaignId, ragQuery, 2);
+
+    // Filtriamo i frammenti per vedere se menzionano il CANDIDATO (Macro o Micro)
+    const relevantFragments = ragContext.filter(f =>
+        f.toLowerCase().includes(candidateMacro.toLowerCase()) ||
+        f.toLowerCase().includes(candidateMicro.toLowerCase())
+    );
+
+    const ragContextText = relevantFragments.length > 0
+        ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
+        : "";
+
+    const prompt = `Sei un esperto di D&D e ambientazioni fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: Il nuovo luogo "${newMacro} - ${newMicro}" è in realtà il luogo esistente "${candidateMacro} - ${candidateMicro}"?
+
+CONFRONTO DATI:
+- NUOVO: "${newDescription}"
+- ESISTENTE: "${candidateDescription}"
+${ragContextText}
+
+CRITERI DI GIUDIZIO:
+1. **Fonetica:** Se i nomi suonano simili o sono traduzioni/sinonimi (es. "Torre Nera" vs "Torre Oscura").
+2. **Contesto (RAG):** Se la "Memoria Storica" descrive eventi accaduti nel luogo candidato che coincidono con la descrizione del nuovo luogo.
+3. **Gerarchia:** Se uno è chiaramente un sotto-luogo dell'altro ma usato come nome principale.
+
+Rispondi SOLO: SI oppure NO`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
+            messages: [{ role: "user", content: prompt }],
+            max_completion_tokens: 5
+        });
+        const answer = response.choices[0].message.content?.toUpperCase().trim() || "";
+        return answer.includes("SI") || answer.includes("SÌ") || answer === "YES";
+    } catch (e) {
+        console.error("[Location Reconcile] ❌ Errore AI confirm:", e);
+        return false;
+    }
+}
+
+/**
  * Chiede all'AI se due luoghi si riferiscono allo stesso posto.
  */
 async function aiConfirmSameLocation(
@@ -3442,26 +3500,31 @@ export async function reconcileLocationName(
     // Ordina per similarità decrescente
     candidates.sort((a, b) => b.similarity - a.similarity);
 
-    // 3. Per ogni candidato, chiedi conferma all'AI
-    for (const candidate of candidates.slice(0, 3)) { // Max 3 tentativi
-        console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" simile a "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason}). Chiedo conferma AI...`);
+    // 3. Per ogni candidato, chiedi conferma all'AI (POTENZIATA CON RAG)
+    // Prendiamo solo il miglior candidato per risparmiare token/tempo
+    const bestCandidate = candidates[0];
 
-        const isSame = await aiConfirmSameLocation(
-            { macro: newMacro, micro: newMicro },
-            { macro: candidate.entry.macro_location, micro: candidate.entry.micro_location },
-            `Nuovo: ${newDescription}. Esistente: ${candidate.entry.description || ''}`
-        );
+    console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" simile a "${bestCandidate.entry.macro_location} - ${bestCandidate.entry.micro_location}" (${bestCandidate.reason}). Avvio Deep Check (RAG)...`);
 
-        if (isSame) {
-            console.log(`[Location Reconcile] ✅ CONFERMATO: "${newMacro} - ${newMicro}" = "${candidate.entry.macro_location} - ${candidate.entry.micro_location}"`);
-            return {
-                canonicalMacro: candidate.entry.macro_location,
-                canonicalMicro: candidate.entry.micro_location,
-                existingEntry: candidate.entry
-            };
-        } else {
-            console.log(`[Location Reconcile] ❌ "${newMacro} - ${newMicro}" ≠ "${candidate.entry.macro_location} - ${candidate.entry.micro_location}"`);
-        }
+    const isSame = await aiConfirmSameLocationExtended(
+        campaignId,
+        newMacro,
+        newMicro,
+        newDescription,
+        bestCandidate.entry.macro_location,
+        bestCandidate.entry.micro_location,
+        bestCandidate.entry.description || ""
+    );
+
+    if (isSame) {
+        console.log(`[Location Reconcile] ✅ CONFERMATO: "${newMacro} - ${newMicro}" = "${bestCandidate.entry.macro_location} - ${bestCandidate.entry.micro_location}"`);
+        return {
+            canonicalMacro: bestCandidate.entry.macro_location,
+            canonicalMicro: bestCandidate.entry.micro_location,
+            existingEntry: bestCandidate.entry
+        };
+    } else {
+        console.log(`[Location Reconcile] ❌ "${newMacro} - ${newMicro}" ≠ "${bestCandidate.entry.macro_location} - ${bestCandidate.entry.micro_location}"`);
     }
 
     return null;

@@ -2,7 +2,6 @@ import pidusage from 'pidusage';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
 
 interface CostBreakdown {
     phase: string;           // 'analyst', 'map', 'summary', 'chat', 'embeddings', 'metadata' (NO 'transcription' - ora solo regex)

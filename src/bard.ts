@@ -53,7 +53,12 @@ import {
     parseEntityRefs,
     filterEntityRefsByType,
     migrateOldNpcIds,
-    listAtlasEntries
+    listAtlasEntries,
+    // 🆕 Static imports for reconciliation
+    listAllAtlasEntries,
+    listAllMonsters,
+    listAllInventory,
+    listAllQuests
 } from './db';
 import { monitor } from './monitor';
 import { processChronologicalSession, safeJsonParse } from './transcriptUtils';
@@ -3476,7 +3481,6 @@ export async function reconcileLocationName(
     newMicro: string,
     newDescription: string = ""
 ): Promise<{ canonicalMacro: string; canonicalMicro: string; existingEntry: any } | null> {
-    const { listAllAtlasEntries } = await import('./db.js');
     const existingLocations = listAllAtlasEntries(campaignId);
     if (existingLocations.length === 0) return null;
 
@@ -3645,7 +3649,6 @@ export async function reconcileMonsterName(
     newName: string,
     newDescription: string = ""
 ): Promise<{ canonicalName: string; existingMonster: any } | null> {
-    const { listAllMonsters } = await import('./db.js');
     const existingMonsters = listAllMonsters(campaignId);
     if (existingMonsters.length === 0) return null;
 
@@ -3794,7 +3797,6 @@ export async function reconcileItemName(
     campaignId: number,
     newItem: string
 ): Promise<{ canonicalName: string; existingItem: any } | null> {
-    const { listAllInventory } = await import('./db.js');
     const existingItems = listAllInventory(campaignId);
     if (existingItems.length === 0) return null;
 
@@ -3930,7 +3932,6 @@ export async function reconcileQuestTitle(
     campaignId: number,
     newTitle: string
 ): Promise<{ canonicalTitle: string; existingQuest: any } | null> {
-    const { listAllQuests } = await import('./db.js');
     const existingQuests = listAllQuests(campaignId);
     if (existingQuests.length === 0) return null;
 

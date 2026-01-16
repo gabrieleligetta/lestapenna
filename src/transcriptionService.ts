@@ -163,3 +163,17 @@ export function convertPcmToWav(input: string, output: string): Promise<void> {
 export function transcribeLocal(audioPath: string): Promise<TranscriptionResult> {
     return whisperService.transcribe(audioPath);
 }
+
+/**
+ * Forza il rilascio della memoria per il modello locale.
+ * Poiché whisper.cpp è un processo CLI, la memoria viene liberata automaticamente dall'OS.
+ * Questa funzione serve per forzare il GC di Node.js e mantenere coerenza nell'interfaccia.
+ */
+export async function unloadLocalModel(): Promise<void> {
+    if (global.gc) {
+        console.log('[WhisperLocal] 🧹 Forzatura Garbage Collector Node.js...');
+        global.gc();
+    }
+    // Whisper.cpp libera la memoria automaticamente alla chiusura del processo.
+    console.log('[WhisperLocal] ✅ Memoria processo CLI liberata automaticamente.');
+}

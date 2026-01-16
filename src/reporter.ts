@@ -549,14 +549,16 @@ export async function sendTestEmail(recipient: string): Promise<boolean> {
 }
 
 export async  function testRemoteConnection() {
-    const REMOTE_WHISPER_URL = "http://100.80.204.16:3001/health";
+    const REMOTE_WHISPER_URL = process.env.REMOTE_WHISPER_URL;
     if (!REMOTE_WHISPER_URL) return;
 
-    console.log(`[System] 📡 Test connessione PC remoto (${REMOTE_WHISPER_URL})...`);
+    const healthUrl = `${REMOTE_WHISPER_URL}/health`;
+
+    console.log(`[System] 📡 Test connessione PC remoto (${healthUrl})...`);
     try {
         // Timeout breve per il test (3s). Usiamo GET che è meno invasivo di POST.
         // Anche un 404 o 405 conferma che il server è raggiungibile.
-        await axios.get(REMOTE_WHISPER_URL, { timeout: 3000 });
+        await axios.get(healthUrl, { timeout: 3000 });
         console.log(`[System] ✅ PC remoto ONLINE e raggiungibile.`);
     } catch (error: any) {
         if (error.response) {

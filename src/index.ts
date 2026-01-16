@@ -148,7 +148,7 @@ import {
     listAllQuests
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
-import { startWorker } from './worker';
+import { startWorker, unloadTranscriptionModels } from './worker';
 import * as path from 'path';
 import { monitor, SessionMetrics, startMemoryMonitor } from './monitor';
 import {
@@ -3895,6 +3895,20 @@ async function waitForCompletionAndSummarize(sessionId: string, channel?: TextCh
                 // Tutti completati o con errori
                 console.log(`[Monitor] ✅ Sessione ${sessionId}: Tutti i file processati.`);
                 
+                // 🆕 INVIA SEGNALE UNLOAD AL PC REMOTO (BLOCCANTE)
+                // Mettiamo in pausa la coda per evitare che nuovi job partano mentre scarichiamo il modello
+                console.log(`[Monitor] ⏸️ Pausa coda audio per unload modello...`);
+                await audioQueue.pause();
+                
+                try {
+                    await unloadTranscriptionModels();
+                } catch (e: any) {
+                    console.warn(`[Monitor] ⚠️ Errore durante unload modello: ${e.message}`);
+                } finally {
+                    console.log(`[Monitor] ▶️ Ripresa coda audio...`);
+                    await audioQueue.resume();
+                }
+
                 if (errors.length > 0) {
                     console.warn(`[Monitor] ⚠️ ${errors.length} file con errori`);
                 }

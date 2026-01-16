@@ -2,7 +2,7 @@ import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
 import axios from 'axios';
 import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, getCampaignLocationById, getUserProfile, saveRawTranscription } from './db';
-import { convertPcmToWav, transcribeLocal } from './transcriptionService';
+import { convertPcmToWav, transcribeLocal, unloadLocalModel } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle, getPresignedUrl } from './backupService';
 import { monitor } from './monitor';
 import { correctTranscription } from './bard';
@@ -10,11 +10,47 @@ import { correctionQueue } from './queue';
 import { filterWhisperHallucinations } from './whisperHallucinationFilter';
 
 // --- CONFIGURAZIONE PC REMOTO ---
-const REMOTE_WHISPER_URL = process.env.REMOTE_WHISPER_URL;
+// L'URL base deve essere senza slash finale, es: http://100.80.204.16:3001
+const REMOTE_WHISPER_URL = process.env.REMOTE_WHISPER_URL?.replace(/\/$/, '');
 const REMOTE_TIMEOUT = 2700000; // 45 minuti
 
 // Worker BullMQ - LO SCRIBA (Audio Worker)
 // Si occupa di: Download -> Trascrizione -> Backup -> Accodamento Correzione
+
+/**
+ * Invia un segnale al PC remoto per scaricare il modello dalla VRAM.
+ * Da chiamare quando una sessione è completata.
+ */
+export async function notifyRemoteModelUnload(): Promise<void> {
+    if (REMOTE_WHISPER_URL) {
+        try {
+            console.log('[Scriba] 🧹 Invio segnale di unload modello al PC remoto...');
+            // Endpoint specifico per unload
+            const unloadUrl = `${REMOTE_WHISPER_URL}/unload`;
+            const response = await axios.post(unloadUrl, { unload: true }, { timeout: 10000 });
+            
+            if (response.data && response.data.status === 'unloaded') {
+                console.log('[Scriba] ✅ Segnale unload confermato dal remoto.');
+            } else {
+                console.warn('[Scriba] ⚠️ Risposta inattesa dal remoto per unload:', response.data);
+            }
+        } catch (e: any) {
+            console.warn(`[Scriba] ⚠️ Impossibile inviare segnale unload: ${e.message}`);
+        }
+    }
+}
+
+/**
+ * Scarica i modelli di trascrizione dalla memoria (VRAM o RAM).
+ * Decide se chiamare l'unload remoto o locale in base alla configurazione.
+ */
+export async function unloadTranscriptionModels(): Promise<void> {
+    if (REMOTE_WHISPER_URL) {
+        await notifyRemoteModelUnload();
+    } else {
+        await unloadLocalModel();
+    }
+}
 
 /**
  * Tenta trascrizione su PC remoto (es. Ryzen 7800X3D + large-v3-turbo),
@@ -42,8 +78,11 @@ async function transcribeWithFallback(
                 console.log('[Scriba] 🌐 Tentativo PC remoto...');
                 const startRemote = Date.now();
 
+                // Endpoint specifico per trascrizione
+                const transcribeUrl = `${REMOTE_WHISPER_URL}/transcribe`;
+
                 const response = await axios.post(
-                    REMOTE_WHISPER_URL,
+                    transcribeUrl,
                     { fileUrl: presignedUrl },
                     {
                         timeout: REMOTE_TIMEOUT,

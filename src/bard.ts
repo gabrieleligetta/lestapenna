@@ -2350,6 +2350,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
     // ============================================
     console.log(`[Bardo] ✍️ STEP 2: Scrittore - Narrazione epica (${tone})...`);
 
+    // INIEZIONE DATI ANALISTA
+    const analystJson = JSON.stringify(analystData, null, 2);
+
     let reducePrompt = "";
     if (tone === 'DM') {
         // PROMPT SCRITTORE: Solo narrazione, i dati strutturati vengono dall'Analista
@@ -2362,6 +2365,9 @@ ${castContext}
 
 MEMORIA DEL MONDO (per riferimento, NON inventare eventi):
 ${memoryContext}
+
+DATI ESTRATTI DALL'ANALISTA (Usa questi fatti come ossatura della narrazione):
+${analystJson}
 
 **IL TUO COMPITO**: Scrivi un racconto epico e coinvolgente della sessione.
 Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei personaggi.
@@ -2402,6 +2408,9 @@ Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei
         reducePrompt = `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
 ${castContext}
 ${memoryContext}
+
+DATI ESTRATTI DALL'ANALISTA (Usa questi fatti come ossatura della narrazione):
+${analystJson}
 
 **IL TUO COMPITO**: Scrivi un racconto della sessione nel tono richiesto.
 I dati strutturati (loot, quest, mostri, NPC, luoghi) sono già stati estratti da un analista separato.

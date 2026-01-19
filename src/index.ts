@@ -147,7 +147,8 @@ import {
     mergeQuests,
     listAllMonsters,
     listAllInventory,
-    listAllQuests
+    listAllQuests,
+    getCharacterUserId // NUOVO - Per $chisono <Nome>
 } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { startWorker, unloadTranscriptionModels } from './worker';
@@ -528,7 +529,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$miaclasse <Classe>`: Imposta la tua classe.\n" +
                         "`$miarazza <Razza>`: Imposta la tua razza.\n" +
                         "`$miadesc <Testo>`: Aggiunge dettagli.\n" +
-                        "`$chisono`: Visualizza la tua scheda.\n" +
+                        "`$chisono [Nome]`: Visualizza la scheda (tua o di un altro).\n" +
                         "`$party`: Visualizza tutti i personaggi.\n" +
                         "`$storia <Nome>`: Genera la biografia evolutiva (PG o NPC).\n" +
                         "`$resetpg`: Resetta la tua scheda."
@@ -680,7 +681,7 @@ client.on('messageCreate', async (message: Message) => {
                         "`$myclass <Class>`: Set your class.\n" +
                         "`$myrace <Race>`: Set your race.\n" +
                         "`$mydesc <Text>`: Add details.\n" +
-                        "`$whoami`: View your current sheet.\n" +
+                        "`$whoami [Name]`: View character sheet (yours or others).\n" +
                         "`$party`: View all characters.\n" +
                         "`$story <CharName>`: Generate character biography.\n" +
                         "`$clearchara`: Reset your sheet."
@@ -3840,7 +3841,25 @@ client.on('messageCreate', async (message: Message) => {
     }
 
     if (command === 'whoami' || command === 'chisono') {
-        const p = getUserProfile(message.author.id, activeCampaign!.id);
+        const targetName = args.join(' ');
+        let targetUserId = message.author.id;
+        let targetUser = message.author;
+
+        if (targetName) {
+            const foundId = getCharacterUserId(activeCampaign!.id, targetName);
+            if (!foundId) {
+                return await message.reply(`❌ Non ho trovato nessun personaggio chiamato "**${targetName}**" nel party.`);
+            }
+            targetUserId = foundId;
+            try {
+                targetUser = await client.users.fetch(targetUserId);
+            } catch (e) {
+                // Fallback se l'utente non è fetchabile
+            }
+        }
+
+        const p = getUserProfile(targetUserId, activeCampaign!.id);
+        
         if (p.character_name) {
             // Helper per troncare testo (Discord limit: 1024 char per field)
             const truncate = (text: string, max: number = 1020) => {
@@ -3857,12 +3876,19 @@ client.on('messageCreate', async (message: Message) => {
                     { name: "🛡️ Classe", value: p.class || "Sconosciuta", inline: true },
                     { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
                     { name: "📜 Biografia", value: truncate(p.description || "") }
-                )
-                .setThumbnail(message.author.displayAvatarURL());
+                );
+            
+            if (targetUser && targetUser.id === targetUserId) {
+                 embed.setThumbnail(targetUser.displayAvatarURL());
+            }
 
             await message.reply({ embeds: [embed] });
         } else {
-            await message.reply("Non ti conosco in questa campagna. Usa `$sono <Nome>` per iniziare la tua leggenda!");
+            if (targetName) {
+                 await message.reply(`Il personaggio **${targetName}** esiste ma non ha un profilo completo.`);
+            } else {
+                 await message.reply("Non ti conosco in questa campagna. Usa `$sono <Nome>` per iniziare la tua leggenda!");
+            }
         }
     }
 

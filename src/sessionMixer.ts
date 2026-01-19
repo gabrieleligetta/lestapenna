@@ -28,8 +28,6 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
     // 1. Download e Preparazione Lista
     console.log(`[Mixer] 📥 Verifica/Download di ${recordings.length} file...`);
     
-    // Per risparmiare spazio, potremmo scaricare i file "just in time" nel loop, 
-    // ma per semplicità verifichiamo tutto prima (o scarichiamo a blocchi se preferisci).
     const validFiles: { path: string, delay: number }[] = [];
 
     for (const rec of recordings) {
@@ -46,20 +44,29 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
 
     if (validFiles.length === 0) throw new Error("Nessun file valido.");
 
-    // File "Accumulatore" temporaneo (WAV per non perdere qualità)
-    let accumulatorPath = path.join(TEMP_DIR, `acc_${sessionId}.wav`);
+    // Calcolo statistiche iniziali
+    const totalInputBytes = validFiles.reduce((sum, f) => {
+        try { return sum + fs.statSync(f.path).size; } catch (e) { return sum; }
+    }, 0);
+    const totalInputMB = (totalInputBytes / (1024 * 1024)).toFixed(2);
+    console.log(`[Mixer] 📊 Info Input: ${validFiles.length} file validi. Dimensione totale sorgenti: ${totalInputMB} MB`);
+
+    // File "Accumulatore" temporaneo (FLAC per non perdere qualità e superare limite 4GB WAV)
+    let accumulatorPath = path.join(TEMP_DIR, `acc_${sessionId}.flac`);
     // File temporaneo per il passaggio corrente
-    const stepOutputPath = path.join(TEMP_DIR, `step_${sessionId}.wav`);
+    const stepOutputPath = path.join(TEMP_DIR, `step_${sessionId}.flac`);
 
     // Pulizia preventiva
     if (fs.existsSync(accumulatorPath)) fs.unlinkSync(accumulatorPath);
 
     // 2. Loop a Blocchi (The Accumulator Loop)
     let processedCount = 0;
+    const startTime = Date.now();
     
     while (processedCount < validFiles.length) {
         const batch = validFiles.slice(processedCount, processedCount + BATCH_SIZE);
         const isFirstBatch = processedCount === 0;
+        const batchStart = Date.now();
         
         console.log(`[Mixer] 🔄 Elaborazione blocco ${processedCount + 1} - ${processedCount + batch.length} di ${validFiles.length}...`);
 
@@ -70,7 +77,17 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
             fs.renameSync(stepOutputPath, accumulatorPath);
         }
         
-        // Nel primo batch, processBatch ha scritto direttamente in accumulatorPath (vedi logica sotto)
+        // Statistiche intermedie
+        const batchDuration = ((Date.now() - batchStart) / 1000).toFixed(1);
+        let accSizeMB = "0.00";
+        try {
+            accSizeMB = (fs.statSync(accumulatorPath).size / (1024 * 1024)).toFixed(2);
+        } catch (e) {}
+        
+        const memUsage = process.memoryUsage();
+        const rssMB = (memUsage.rss / 1024 / 1024).toFixed(0);
+        
+        console.log(`[Mixer] 📈 Stats: Batch in ${batchDuration}s | Temp File: ${accSizeMB} MB | RAM: ${rssMB} MB`);
         
         processedCount += batch.length;
         
@@ -78,8 +95,11 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
         if (global.gc) global.gc(); 
     }
 
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[Mixer] ⏱️  Mixaggio completato in ${totalDuration}s.`);
+
     // 3. Conversione Finale in MP3
-    console.log(`[Mixer] 🎛️  Conversione finale WAV -> MP3...`);
+    console.log(`[Mixer] 🎛️  Conversione finale FLAC -> MP3...`);
     const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_full.mp3`);
     
     await convertToMp3(accumulatorPath, finalMp3Path);
@@ -155,7 +175,7 @@ function processBatch(
             '-filter_complex', filterComplex,
             '-map', '[out]',
             '-ac', '2',     // Stereo
-            '-c:a', 'pcm_s16le', // WAV PCM (Lossless) per i passaggi intermedi
+            '-c:a', 'flac', // FLAC (Lossless) per i passaggi intermedi, supporta >4GB
             destination,
             '-y'
         ];
@@ -163,10 +183,18 @@ function processBatch(
         // console.log("Spawn FFmpeg:", ffmpegArgs.join(" "));
 
         const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+        let stderr = "";
+
+        ffmpeg.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
 
         ffmpeg.on('close', (code) => {
             if (code === 0) resolve();
-            else reject(new Error(`FFmpeg step failed with code ${code}`));
+            else {
+                console.error(`[Mixer] FFmpeg Error Log:\n${stderr.slice(-1000)}`); // Ultimi 1000 caratteri
+                reject(new Error(`FFmpeg step failed with code ${code}`));
+            }
         });
 
         ffmpeg.on('error', (err) => reject(err));
@@ -174,7 +202,7 @@ function processBatch(
 }
 
 /**
- * Converte il WAV master finale in MP3 compresso
+ * Converte il FLAC master finale in MP3 compresso
  */
 function convertToMp3(inputPath: string, outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -186,9 +214,17 @@ function convertToMp3(inputPath: string, outputPath: string): Promise<void> {
             '-y'
         ]);
 
+        let stderr = "";
+        ffmpeg.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
         ffmpeg.on('close', (code) => {
             if (code === 0) resolve();
-            else reject(new Error(`MP3 conversion failed code ${code}`));
+            else {
+                console.error(`[Mixer] MP3 Conversion Error Log:\n${stderr.slice(-1000)}`);
+                reject(new Error(`MP3 conversion failed code ${code}`));
+            }
         });
         
         ffmpeg.on('error', reject);

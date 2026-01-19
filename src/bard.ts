@@ -19,6 +19,8 @@ import {
     findNpcDossierByName,
     listNpcs,
     getCharacterHistory,
+    getNewCharacterHistory,
+    updateCharacterLastSyncedHistoryId,
     getNpcHistory,
     getCampaignSnapshot,
     getSessionTravelLog,
@@ -1028,53 +1030,51 @@ export async function syncAllDirtyTimeline(campaignId: number): Promise<number> 
 // --- CHARACTER SYNC FUNCTIONS ---
 
 /**
- * Rigenera la descrizione di un personaggio giocante basandosi sulla storia degli eventi.
+ * Rigenera la descrizione di un personaggio giocante basandosi su NUOVI eventi.
  * Rispetta l'agency del giocatore: modifica solo conseguenze osservabili, non personalità.
+ * @param newEvents - Solo gli eventi NON ancora integrati nella biografia
  */
 export async function regenerateCharacterDescription(
-    campaignId: number,
-    userId: string,
     charName: string,
-    staticDesc: string
+    currentDesc: string,
+    newEvents: Array<{ description: string, event_type: string }>
 ): Promise<string> {
-    const history = getCharacterHistory(campaignId, charName);
-
-    if (history.length === 0) {
-        console.log(`[Character] Nessun evento per ${charName}, mantengo descrizione originale.`);
-        return staticDesc;
+    if (newEvents.length === 0) {
+        console.log(`[Character] Nessun nuovo evento per ${charName}, mantengo descrizione attuale.`);
+        return currentDesc;
     }
 
-    const historyText = history
-        .slice(-10) // Ultimi 10 eventi
+    const historyText = newEvents
+        .slice(-10) // Max 10 eventi nuovi
         .map(h => `[${h.event_type}] ${h.description}`)
         .join('\n');
 
     const prompt = `Sei il Biografo Personale del personaggio giocante **${charName}**.
 
-**DESCRIZIONE INIZIALE (Da preservare come base):**
-${staticDesc || 'Nessuna descrizione iniziale.'}
+**BIOGRAFIA ATTUALE (Contiene già eventi precedenti integrati):**
+${currentDesc || 'Nessuna descrizione iniziale.'}
 
-**CRONOLOGIA CRESCITA PERSONAGGIO (Ultimi eventi):**
+**NUOVI EVENTI DA INTEGRARE (Non ancora nella biografia sopra):**
 ${historyText}
 
 **REGOLE CRITICHE:**
-1. **Rispetta l'Agency del Giocatore**: NON cambiare tratti di personalità scelti dal giocatore.
-2. **Aggiungi Solo Conseguenze Osservabili**: Cicatrici, oggetti iconici, titoli guadagnati, relazioni chiave.
-3. **Non Interpretare Emozioni**: Non scrivere "è diventato triste" o "è più saggio" a meno che non sia esplicito.
-4. **Preserva il 90% del Testo Originale**: Aggiungi massimo 2-3 frasi nuove basate sugli ultimi eventi.
-5. **Formato**: Scrivi in terza persona, stile enciclopedia fantasy.
+1. **NON DUPLICARE**: Gli eventi nella "Biografia Attuale" sono GIÀ integrati. Aggiungi SOLO i "Nuovi Eventi".
+2. **Rispetta l'Agency del Giocatore**: NON cambiare tratti di personalità.
+3. **Aggiungi Solo Conseguenze Osservabili**: Cicatrici, oggetti iconici, titoli, relazioni chiave.
+4. **Preserva il Testo Esistente**: Modifica minimamente, aggiungi max 1-2 frasi per i nuovi eventi.
+5. **Formato**: Terza persona, stile enciclopedia fantasy, max 800 caratteri totali.
 
-Restituisci SOLO il testo aggiornato della descrizione (senza introduzioni o spiegazioni).`;
+Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spiegazioni).`;
 
     const startAI = Date.now();
     try {
         const response = await summaryClient.chat.completions.create({
             model: SUMMARY_MODEL,
             messages: [
-                { role: "system", content: "Sei un biografo esperto che aggiorna schede personaggio rispettando l'agency del giocatore. Scrivi testi CONCISI (max 800 caratteri)." },
+                { role: "system", content: "Sei un biografo esperto. Integra SOLO i nuovi eventi senza duplicare quelli già presenti. Max 800 caratteri." },
                 { role: "user", content: prompt }
             ],
-            max_completion_tokens: 300 // ~800 caratteri per stare sotto il limite Discord embed (1024)
+            max_completion_tokens: 300
         });
 
         const latency = Date.now() - startAI;
@@ -1082,20 +1082,21 @@ Restituisci SOLO il testo aggiornato della descrizione (senza introduzioni o spi
         const outputTokens = response.usage?.completion_tokens || 0;
         monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
 
-        const newDesc = response.choices[0].message.content?.trim() || staticDesc;
-        console.log(`[Character] Biografia rigenerata per ${charName} (${latency}ms)`);
+        const newDesc = response.choices[0].message.content?.trim() || currentDesc;
+        console.log(`[Character] Biografia aggiornata per ${charName} (+${newEvents.length} eventi, ${latency}ms)`);
 
         return newDesc;
 
     } catch (e) {
         console.error(`[Character] Errore rigenerazione ${charName}:`, e);
         monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return staticDesc;
+        return currentDesc;
     }
 }
 
 /**
  * Sincronizza un personaggio giocante nel RAG (LAZY - solo se necessario)
+ * Usa tracking intelligente per evitare di duplicare eventi già integrati.
  */
 export async function syncCharacterIfNeeded(
     campaignId: number,
@@ -1103,10 +1104,15 @@ export async function syncCharacterIfNeeded(
     force: boolean = false
 ): Promise<string | null> {
     const char = db.prepare(`
-        SELECT character_name, description, rag_sync_needed
+        SELECT character_name, description, rag_sync_needed, last_synced_history_id
         FROM characters
         WHERE user_id = ? AND campaign_id = ?
-    `).get(userId, campaignId) as { character_name: string, description: string | null, rag_sync_needed: number } | undefined;
+    `).get(userId, campaignId) as {
+        character_name: string,
+        description: string | null,
+        rag_sync_needed: number,
+        last_synced_history_id: number
+    } | undefined;
 
     if (!char || !char.character_name) return null;
 
@@ -1124,22 +1130,32 @@ export async function syncCharacterIfNeeded(
         return char.description;
     }
 
-    console.log(`[Sync Character] Avvio sync per ${char.character_name}...`);
+    // Recupera SOLO gli eventi nuovi (non ancora integrati)
+    const lastSyncedId = char.last_synced_history_id || 0;
+    const { events: newEvents, maxId } = getNewCharacterHistory(campaignId, char.character_name, lastSyncedId);
 
-    // Rigenera descrizione
+    if (newEvents.length === 0) {
+        console.log(`[Sync Character] ${char.character_name}: nessun nuovo evento da integrare (lastSync: ${lastSyncedId}).`);
+        // Reset flag anche se non ci sono nuovi eventi
+        db.prepare(`UPDATE characters SET rag_sync_needed = 0 WHERE user_id = ? AND campaign_id = ?`).run(userId, campaignId);
+        return char.description;
+    }
+
+    console.log(`[Sync Character] Avvio sync per ${char.character_name} (+${newEvents.length} nuovi eventi, lastSync: ${lastSyncedId} → ${maxId})...`);
+
+    // Rigenera descrizione con SOLO gli eventi nuovi
     const newDesc = await regenerateCharacterDescription(
-        campaignId,
-        userId,
         char.character_name,
-        char.description || ''
+        char.description || '',
+        newEvents
     );
 
-    // Aggiorna SQL
+    // Aggiorna SQL con nuova descrizione e tracking
     db.prepare(`
         UPDATE characters
-        SET description = ?, rag_sync_needed = 0
+        SET description = ?, rag_sync_needed = 0, last_synced_history_id = ?
         WHERE user_id = ? AND campaign_id = ?
-    `).run(newDesc, userId, campaignId);
+    `).run(newDesc, maxId, userId, campaignId);
 
     // Pulisci vecchi snapshot RAG
     db.prepare(`
@@ -1164,8 +1180,117 @@ DESCRIZIONE AGGIORNATA: ${newDesc}
         );
     }
 
-    console.log(`[Sync Character] ${char.character_name} sincronizzato.`);
+    console.log(`[Sync Character] ${char.character_name} sincronizzato (lastSyncedHistoryId: ${maxId}).`);
     return newDesc;
+}
+
+/**
+ * RESET e rigenera la biografia di un PG da zero.
+ * Usa TUTTI gli eventi dalla character_history, ignorando il tracking precedente.
+ */
+export async function resetAndRegenerateCharacterBio(
+    campaignId: number,
+    userId: string
+): Promise<string | null> {
+    const char = db.prepare(`
+        SELECT character_name, description
+        FROM characters
+        WHERE user_id = ? AND campaign_id = ?
+    `).get(userId, campaignId) as { character_name: string, description: string | null } | undefined;
+
+    if (!char || !char.character_name) return null;
+
+    // Recupera TUTTI gli eventi (ignora last_synced_history_id)
+    const allEvents = getCharacterHistory(campaignId, char.character_name);
+
+    if (allEvents.length === 0) {
+        console.log(`[Character Reset] ${char.character_name}: nessun evento in history, reset a vuoto.`);
+        db.prepare(`
+            UPDATE characters
+            SET description = '', last_synced_history_id = 0, rag_sync_needed = 0
+            WHERE user_id = ? AND campaign_id = ?
+        `).run(userId, campaignId);
+        return '';
+    }
+
+    // Trova il maxId per aggiornare il tracking
+    const maxIdResult = db.prepare(`
+        SELECT MAX(id) as maxId FROM character_history
+        WHERE campaign_id = ? AND lower(character_name) = lower(?)
+    `).get(campaignId, char.character_name) as { maxId: number } | undefined;
+    const maxId = maxIdResult?.maxId || 0;
+
+    console.log(`[Character Reset] Rigenerazione completa per ${char.character_name} (${allEvents.length} eventi totali)...`);
+
+    // Rigenera da zero (descrizione vuota + tutti gli eventi)
+    const newDesc = await regenerateCharacterDescription(
+        char.character_name,
+        '', // Descrizione vuota - rigenera tutto da zero
+        allEvents
+    );
+
+    // Aggiorna SQL
+    db.prepare(`
+        UPDATE characters
+        SET description = ?, last_synced_history_id = ?, rag_sync_needed = 0
+        WHERE user_id = ? AND campaign_id = ?
+    `).run(newDesc, maxId, userId, campaignId);
+
+    // Pulisci e ricrea snapshot RAG
+    db.prepare(`
+        DELETE FROM knowledge_fragments
+        WHERE session_id = 'CHARACTER_UPDATE'
+          AND associated_npcs LIKE ?
+    `).run(`%${char.character_name}%`);
+
+    if (newDesc.length > 100) {
+        const ragContent = `[[SCHEDA PERSONAGGIO GIOCANTE: ${char.character_name}]]
+DESCRIZIONE AGGIORNATA: ${newDesc}
+
+(Questa scheda ufficiale del PG ha priorità su informazioni frammentarie precedenti)`;
+
+        await ingestGenericEvent(
+            campaignId,
+            'CHARACTER_UPDATE',
+            ragContent,
+            [char.character_name],
+            'PARTY'
+        );
+    }
+
+    console.log(`[Character Reset] ${char.character_name} rigenerato da zero (${allEvents.length} eventi → ${newDesc.length} chars).`);
+    return newDesc;
+}
+
+/**
+ * RESET e rigenera le biografie di TUTTI i PG della campagna.
+ */
+export async function resetAllCharacterBios(campaignId: number): Promise<{ reset: number, names: string[] }> {
+    const allChars = db.prepare(`
+        SELECT user_id, character_name
+        FROM characters
+        WHERE campaign_id = ? AND character_name IS NOT NULL
+    `).all(campaignId) as { user_id: string, character_name: string }[];
+
+    if (allChars.length === 0) {
+        return { reset: 0, names: [] };
+    }
+
+    console.log(`[Character Reset] Reset batch di ${allChars.length} PG...`);
+    const resetNames: string[] = [];
+
+    for (const char of allChars) {
+        try {
+            const newDesc = await resetAndRegenerateCharacterBio(campaignId, char.user_id);
+            if (newDesc !== null) {
+                resetNames.push(char.character_name);
+            }
+        } catch (e) {
+            console.error(`[Character Reset] Errore per ${char.character_name}:`, e);
+        }
+    }
+
+    return { reset: resetNames.length, names: resetNames };
 }
 
 /**

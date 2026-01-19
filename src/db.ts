@@ -41,9 +41,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS characters (
     class TEXT,
     description TEXT,
     rag_sync_needed INTEGER DEFAULT 0,
+    last_synced_history_id INTEGER DEFAULT 0,
     PRIMARY KEY (user_id, campaign_id),
     FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
 )`);
+
+// Migrazione: aggiungi colonna se non esiste
+try {
+    db.exec(`ALTER TABLE characters ADD COLUMN last_synced_history_id INTEGER DEFAULT 0`);
+} catch (e) { /* colonna già esistente */ }
 
 // --- TABELLA STORIA PERSONAGGI (BIOGRAFIA) ---
 db.exec(`CREATE TABLE IF NOT EXISTS character_history (
@@ -1830,11 +1836,42 @@ export const addCharacterEvent = (campaignId: number, charName: string, sessionI
 export const getCharacterHistory = (campaignId: number, charName: string): { description: string, event_type: string, session_id: string }[] => {
     // Recupera la storia in ordine cronologico (basato sull'ID inserimento che segue la cronologia sessioni)
     return db.prepare(`
-        SELECT description, event_type, session_id 
-        FROM character_history 
+        SELECT description, event_type, session_id
+        FROM character_history
         WHERE campaign_id = ? AND lower(character_name) = lower(?)
         ORDER BY id ASC
     `).all(campaignId, charName) as any[];
+};
+
+/**
+ * Recupera SOLO gli eventi nuovi (non ancora sincronizzati nella biografia)
+ * Restituisce anche il maxId per aggiornare last_synced_history_id dopo il sync
+ */
+export const getNewCharacterHistory = (
+    campaignId: number,
+    charName: string,
+    lastSyncedId: number
+): { events: { id: number, description: string, event_type: string, session_id: string }[], maxId: number } => {
+    const events = db.prepare(`
+        SELECT id, description, event_type, session_id
+        FROM character_history
+        WHERE campaign_id = ? AND lower(character_name) = lower(?) AND id > ?
+        ORDER BY id ASC
+    `).all(campaignId, charName, lastSyncedId) as any[];
+
+    const maxId = events.length > 0 ? Math.max(...events.map(e => e.id)) : lastSyncedId;
+    return { events, maxId };
+};
+
+/**
+ * Aggiorna last_synced_history_id dopo una sincronizzazione biografia
+ */
+export const updateCharacterLastSyncedHistoryId = (userId: string, campaignId: number, historyId: number): void => {
+    db.prepare(`
+        UPDATE characters
+        SET last_synced_history_id = ?
+        WHERE user_id = ? AND campaign_id = ?
+    `).run(historyId, userId, campaignId);
 };
 
 // --- FUNZIONI STORIA NPC ---
@@ -2424,6 +2461,7 @@ export const wipeDatabase = () => {
         class TEXT,
         description TEXT,
         rag_sync_needed INTEGER DEFAULT 0,
+        last_synced_history_id INTEGER DEFAULT 0,
         PRIMARY KEY (user_id, campaign_id),
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);

@@ -52,7 +52,9 @@ import {
     syncAllDirtyAtlas,        // NUOVO - Atlas dirty sync
     syncAtlasEntryIfNeeded,   // NUOVO - Atlas dirty sync
     syncAllDirtyCharacters,   // NUOVO - Character dirty sync
-    syncCharacterIfNeeded     // NUOVO - Character dirty sync
+    syncCharacterIfNeeded,    // NUOVO - Character dirty sync
+    resetAndRegenerateCharacterBio,  // NUOVO - Reset bio PG
+    resetAllCharacterBios     // NUOVO - Reset tutte le bio PG
 } from './bard';
 import { mixSessionAudio } from './sessionMixer';
 import {
@@ -420,7 +422,7 @@ client.on('messageCreate', async (message: Message) => {
     // --- CHECK CAMPAGNA ATTIVA ---
     // Molti comandi richiedono una campagna attiva
     let activeCampaign = getActiveCampaign(message.guild.id);
-    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche', 'sync', 'bestiario', 'bestiary', 'mostri', 'monsters', 'unisciitem', 'mergeitem', 'mergeitems', 'unisciquest', 'mergequest', 'mergequests'];
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'bio', 'biografia', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche', 'sync', 'bestiario', 'bestiary', 'mostri', 'monsters', 'unisciitem', 'mergeitem', 'mergeitems', 'unisciquest', 'mergequest', 'mergequests'];
 
     if (command && campaignCommands.includes(command) && !activeCampaign) {
         return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
@@ -3862,6 +3864,64 @@ client.on('messageCreate', async (message: Message) => {
         } else {
             await message.reply("Non ti conosco in questa campagna. Usa `$sono <Nome>` per iniziare la tua leggenda!");
         }
+    }
+
+    // --- NUOVO: $bio reset ---
+    if (command === 'bio' || command === 'biografia') {
+        const campaignId = activeCampaign!.id;
+        const firstArg = args[0]?.toLowerCase();
+
+        if (firstArg === 'reset') {
+            const targetName = args.slice(1).join(' ');
+
+            if (!targetName) {
+                // Reset TUTTI i PG
+                const loadingMsg = await message.reply(`🔄 **Reset Biografie PG**\nRigenerazione da zero in corso...`);
+                try {
+                    const result = await resetAllCharacterBios(campaignId);
+                    if (result.reset === 0) {
+                        await loadingMsg.edit(`ℹ️ **Nessun PG da resettare.**`);
+                    } else {
+                        await loadingMsg.edit(
+                            `✅ **Biografie Rigenerate!**\n` +
+                            `Reset **${result.reset}** personaggi:\n` +
+                            result.names.map(n => `• ${n}`).join('\n')
+                        );
+                    }
+                } catch (e: any) {
+                    await loadingMsg.edit(`❌ Errore reset: ${e.message}`);
+                }
+                return;
+            }
+
+            // Reset specifico PG
+            const targetPG = db.prepare('SELECT user_id, character_name FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
+            if (!targetPG) {
+                return await message.reply(`❌ Non trovo un PG chiamato "**${targetName}**".`);
+            }
+
+            const loadingMsg = await message.reply(`🔄 Reset biografia di **${targetPG.character_name}**...`);
+            try {
+                const result = await resetAndRegenerateCharacterBio(campaignId, targetPG.user_id);
+                if (result !== null) {
+                    const preview = result.length > 1500 ? result.substring(0, 1500) + '...' : result;
+                    await loadingMsg.edit(`✅ **${targetPG.character_name}** rigenerato da zero!\n\n${preview}`);
+                } else {
+                    await loadingMsg.edit(`❌ Errore: PG non trovato.`);
+                }
+            } catch (e: any) {
+                await loadingMsg.edit(`❌ Errore: ${e.message}`);
+            }
+            return;
+        }
+
+        // Help
+        return await message.reply(
+            "**📜 Gestione Biografie PG**\n\n" +
+            "`$bio reset` - Rigenera da zero tutte le biografie\n" +
+            "`$bio reset <NomePG>` - Rigenera da zero la biografia di un PG\n\n" +
+            "*Le biografie vengono mostrate in `$chisono`/`$whoami`*"
+        );
     }
 
     // --- NUOVO: !party ---

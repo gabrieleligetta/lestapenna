@@ -2114,14 +2114,14 @@ ${memoryContext}
     "location_updates": [
         {
             "macro": "Città/Regione (es. 'Waterdeep')",
-            "micro": "Luogo specifico (es. 'Taverna del Drago')",
+            "micro": "Luogo specifico SENZA il macro (es. 'Taverna del Drago' NON 'Waterdeep - Taverna del Drago')",
             "description": "Descrizione atmosferica del luogo (per Atlante)"
         }
     ],
     "travel_sequence": [
         {
             "macro": "Città/Regione",
-            "micro": "Luogo specifico",
+            "micro": "Luogo specifico SENZA ripetere il macro",
             "reason": "Motivo spostamento (opzionale)"
         }
     ],
@@ -2178,14 +2178,34 @@ Rispondi SOLO con JSON valido.`;
             }))
             : [];
 
+        // Normalizza location_updates (rimuove prefissi duplicati)
+        const rawLocationUpdates = Array.isArray(parsed?.location_updates) ? parsed.location_updates : [];
+        const normalizedLocationUpdates = rawLocationUpdates.map((loc: any) => {
+            if (loc.macro && loc.micro) {
+                const normalized = normalizeLocationNames(loc.macro, loc.micro);
+                return { ...loc, macro: normalized.macro, micro: normalized.micro };
+            }
+            return loc;
+        });
+
+        // Normalizza travel_sequence (rimuove prefissi duplicati)
+        const rawTravelSequence = Array.isArray(parsed?.travel_sequence) ? parsed.travel_sequence : [];
+        const normalizedTravelSequence = rawTravelSequence.map((step: any) => {
+            if (step.macro && step.micro) {
+                const normalized = normalizeLocationNames(step.macro, step.micro);
+                return { ...step, macro: normalized.macro, micro: normalized.micro };
+            }
+            return step;
+        });
+
         return {
             loot: normalizeStringList(parsed?.loot),
             loot_removed: normalizeStringList(parsed?.loot_removed),
             quests: normalizeStringList(parsed?.quests),
             monsters: Array.isArray(parsed?.monsters) ? parsed.monsters : [],
             npc_dossier_updates: normalizedNpcUpdates,
-            location_updates: Array.isArray(parsed?.location_updates) ? parsed.location_updates : [],
-            travel_sequence: Array.isArray(parsed?.travel_sequence) ? parsed.travel_sequence : [],
+            location_updates: normalizedLocationUpdates,
+            travel_sequence: normalizedTravelSequence,
             present_npcs: normalizeStringList(parsed?.present_npcs)
         };
 
@@ -3437,6 +3457,47 @@ Rispondi SOLO: SI oppure NO`;
 }
 
 /**
+ * Normalizza i nomi location rimuovendo prefissi duplicati.
+ * Es: macro="Waterdeep", micro="Waterdeep - Mura di Waterdeep" → micro="Mura di Waterdeep"
+ * Es: macro="Paludi", micro="Paludi - Paludi dei morti" → micro="Paludi dei morti"
+ */
+export function normalizeLocationNames(
+    macro: string,
+    micro: string
+): { macro: string; micro: string } {
+    const macroLower = macro.toLowerCase().trim();
+    const microLower = micro.toLowerCase().trim();
+
+    // Pattern 1: micro = "macro - macro - X" → micro = "X"
+    // Es: "Waterdeep - Waterdeep - Mura" → "Mura"
+    const doublePrefixPattern = new RegExp(`^${escapeRegex(macroLower)}\\s*-\\s*${escapeRegex(macroLower)}\\s*-\\s*`, 'i');
+    if (doublePrefixPattern.test(micro)) {
+        const cleaned = micro.replace(doublePrefixPattern, '').trim();
+        console.log(`[Location Normalize] 🔧 "${macro} - ${micro}" → "${macro} - ${cleaned}" (doppio prefisso)`);
+        return { macro: macro.trim(), micro: cleaned };
+    }
+
+    // Pattern 2: micro = "macro - X" → micro = "X"
+    // Es: "Waterdeep - Mura di Waterdeep" → "Mura di Waterdeep" (quando macro è già "Waterdeep")
+    const singlePrefixPattern = new RegExp(`^${escapeRegex(macroLower)}\\s*-\\s*`, 'i');
+    if (singlePrefixPattern.test(micro)) {
+        const cleaned = micro.replace(singlePrefixPattern, '').trim();
+        // Solo se il risultato non è vuoto
+        if (cleaned.length > 0) {
+            console.log(`[Location Normalize] 🔧 "${macro} - ${micro}" → "${macro} - ${cleaned}" (prefisso singolo)`);
+            return { macro: macro.trim(), micro: cleaned };
+        }
+    }
+
+    return { macro: macro.trim(), micro: micro.trim() };
+}
+
+// Utility per escape regex special chars
+function escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Calcola la similarità tra due luoghi (combinando macro e micro).
  */
 function locationSimilarity(
@@ -3483,6 +3544,11 @@ export async function reconcileLocationName(
 ): Promise<{ canonicalMacro: string; canonicalMicro: string; existingEntry: any } | null> {
     const existingLocations = listAllAtlasEntries(campaignId);
     if (existingLocations.length === 0) return null;
+
+    // Normalizza i nomi in input (rimuove prefissi duplicati)
+    const normalized = normalizeLocationNames(newMacro, newMicro);
+    newMacro = normalized.macro;
+    newMicro = normalized.micro;
 
     const newMacroLower = newMacro.toLowerCase().trim();
     const newMicroLower = newMicro.toLowerCase().trim();

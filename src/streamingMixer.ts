@@ -265,7 +265,7 @@ async function flushPendingFiles(sessionId: string): Promise<void> {
 
 /**
  * Mixa un batch di file con l'accumulatore
- * Logica simile a sessionMixer.ts ma ottimizzata per piccoli batch
+ * OTTIMIZZATO: Forza 48kHz e corregge i timestamp per evitare drift
  */
 function mixBatch(
     files: { path: string, delay: number, userId: string }[],
@@ -276,20 +276,15 @@ function mixBatch(
         // Verifica che i file esistano
         const validFiles = files.filter(f => {
             if (!fs.existsSync(f.path)) {
-                console.warn(`[StreamMixer] ⚠️ File non trovato: ${f.path}`);
+                // console.warn(`[StreamMixer] ⚠️ File non trovato: ${f.path}`);
                 return false;
             }
-            // Controlla durata file prima di mixare
             const stats = fs.statSync(f.path);
-            if (stats.size < 1024) {
-                console.warn(`[StreamMixer] ⚠️ File troppo piccolo, skip: ${f.path}`);
-                return false;
-            }
+            if (stats.size < 1024) return false;
             return true;
         });
 
         if (validFiles.length === 0) {
-            console.log(`[StreamMixer] ⏩ Nessun file valido nel batch, skip`);
             resolve();
             return;
         }
@@ -304,7 +299,9 @@ function mixBatch(
 
         if (hasAccumulator) {
             args.push('-i', accumulatorPath);
-            outputTags.push('[0]');
+            // CORREZIONE 1: Normalizziamo anche l'accumulatore precedente per correggere eventuali drift passati
+            filterComplex += `[0]aresample=48000:async=1[acc_clean];`; 
+            outputTags.push('[acc_clean]');
             inputIndex++;
         }
 
@@ -318,8 +315,9 @@ function mixBatch(
             const realIndex = inputIndex + idx;
             const tag = `s${idx}`;
 
-            // Delay ASSOLUTO dalla start session
-            filterComplex += `[${realIndex}]adelay=${f.delay}|${f.delay}[${tag}];`;
+            // CORREZIONE 2: aresample + async PRIMA del delay
+            // Questo assicura che 1 secondo di audio sia esattamente 1 secondo di clock a 48kHz
+            filterComplex += `[${realIndex}]aresample=48000:async=1,adelay=${f.delay}|${f.delay}[${tag}];`;
             outputTags.push(`[${tag}]`);
         });
 
@@ -327,21 +325,21 @@ function mixBatch(
         const totalInputs = outputTags.length;
         filterComplex += `${outputTags.join('')}amix=inputs=${totalInputs}:dropout_transition=0:normalize=0[out]`;
 
-        // ✅ FIX: FFmpeg 5.1 non accetta .wav.tmp, usiamo _new.wav
         const tempOutput = accumulatorPath.replace('.wav', '_new.wav');
 
         const ffmpegArgs = [
-            '-threads', '1', // LIMITA I THREAD: Il mixer è un job di background
+            '-threads', '1',
             ...args,
             '-filter_complex', filterComplex,
             '-map', '[out]',
             '-ac', '2',
-            '-c:a', 'pcm_s16le',
+            '-ar', '48000',     // CORREZIONE 3: Forza output a 48kHz (standard video/discord)
+            '-c:a', 'pcm_s16le', // WAV standard
             tempOutput,
             '-y'
         ];
 
-        console.log(`[StreamMixer] 🎛️ FFmpeg: ${validFiles.length + (hasAccumulator ? 1 : 0)} inputs, ${outputTags.length} streams`);
+        // console.log(`[StreamMixer] 🎛️ FFmpeg Sync: ${validFiles.length} new files`);
 
         const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
             stdio: ['ignore', 'pipe', 'pipe']
@@ -354,7 +352,6 @@ function mixBatch(
 
         ffmpeg.on('close', (code) => {
             if (code === 0) {
-                // Sostituisci l'accumulatore con il nuovo mix
                 try {
                     if (fs.existsSync(accumulatorPath)) fs.unlinkSync(accumulatorPath);
                     fs.renameSync(tempOutput, accumulatorPath);
@@ -363,32 +360,23 @@ function mixBatch(
                     reject(new Error(`Errore rename accumulatore: ${e.message}`));
                 }
             } else {
-                console.error(`[StreamMixer] FFmpeg stderr:`, stderrData);
-
-                // ✅ NUOVO: Cleanup file temporaneo in caso di errore
+                console.error(`[StreamMixer] FFmpeg Error Log:\n${stderrData.slice(-500)}`);
                 try {
-                    if (fs.existsSync(tempOutput)) {
-                        fs.unlinkSync(tempOutput);
-                        console.log(`[StreamMixer] 🧹 File temporaneo pulito dopo errore`);
-                    }
-                } catch (cleanupErr) {
-                    console.warn(`[StreamMixer] Warning cleanup temp file:`, cleanupErr);
-                }
-
+                    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+                } catch {}
                 reject(new Error(`FFmpeg batch failed with code ${code}`));
             }
         });
 
         ffmpeg.on('error', (err) => {
-            // ✅ NUOVO: Cleanup anche in caso di spawn error
             try {
                 if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
             } catch {}
-
             reject(new Error(`FFmpeg spawn error: ${err.message}`));
         });
     });
 }
+
 /**
  * Finalizza il mixer e converte in MP3
  * Chiamato da recorder.ts quando viene invocato disconnect()
@@ -480,6 +468,8 @@ function convertToMp3(inputPath: string, outputPath: string): Promise<void> {
             '-i', inputPath,
             '-codec:a', 'libmp3lame',
             '-b:a', '128k',
+            '-ar', '48000', // Aggiungi questo per coerenza totale
+            '-ac', '2',
             outputPath,
             '-y'
         ], {

@@ -128,6 +128,35 @@ export async function uploadToOracle(filePath: string, fileName: string, session
 }
 
 /**
+ * Elimina un file da Oracle Cloud.
+ * Cerca il file sia nel percorso sessione che legacy e lo rimuove.
+ */
+export async function deleteFromOracle(fileName: string, sessionId?: string): Promise<boolean> {
+    try {
+        const key = await findS3Key(fileName, sessionId);
+        
+        // Se non trovato con findS3Key, proviamo comunque a cancellare la chiave target prevista
+        // Questo gestisce il caso in cui findS3Key fallisca o vogliamo essere sicuri di pulire la destinazione
+        const targetKey = key || getPreferredKey(fileName, sessionId);
+
+        await getS3Client().send(new DeleteObjectCommand({
+            Bucket: getBucketName(),
+            Key: targetKey
+        }));
+        
+        console.log(`[Custode] 🗑️ Eliminato da Oracle: ${targetKey}`);
+        return true;
+    } catch (err: any) {
+        // Ignoriamo 404 in cancellazione
+        if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
+            return true;
+        }
+        console.error(`[Custode] ❌ Errore eliminazione ${fileName}:`, err);
+        return false;
+    }
+}
+
+/**
  * Scarica un file dal bucket Oracle alla cartella locale.
  */
 export async function downloadFromOracle(fileName: string, localPath: string, sessionId?: string): Promise<boolean> {

@@ -3840,6 +3840,12 @@ client.on('messageCreate', async (message: Message) => {
     if (command === 'whoami' || command === 'chisono') {
         const p = getUserProfile(message.author.id, activeCampaign!.id);
         if (p.character_name) {
+            // Helper per troncare testo (Discord limit: 1024 char per field)
+            const truncate = (text: string, max: number = 1020) => {
+                if (!text || text.length === 0) return "Nessuna descrizione.";
+                return text.length > max ? text.slice(0, max - 3) + '...' : text;
+            };
+
             const embed = new EmbedBuilder()
                 .setTitle(`👤 Profilo di ${p.character_name}`)
                 .setDescription(`Campagna: **${activeCampaign!.name}**`)
@@ -3848,7 +3854,7 @@ client.on('messageCreate', async (message: Message) => {
                     { name: "⚔️ Nome", value: p.character_name || "Non impostato", inline: true },
                     { name: "🛡️ Classe", value: p.class || "Sconosciuta", inline: true },
                     { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
-                    { name: "📜 Biografia", value: p.description || "Nessuna descrizione." }
+                    { name: "📜 Biografia", value: truncate(p.description || "") }
                 )
                 .setThumbnail(message.author.displayAvatarURL());
 

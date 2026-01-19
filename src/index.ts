@@ -18,7 +18,7 @@ import {
     MessageComponentInteraction
 } from 'discord.js';
 import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRecording, isRecordingPaused } from './voicerecorder';
-import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl} from './backupService';
+import {uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl, checkStorageUsage} from './backupService';
 import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
 import * as fs from 'fs';
 import {
@@ -4799,6 +4799,7 @@ async function processOrphanedSessionsSequentially(sessionIds: string[]): Promis
 client.once('ready', async () => {
     console.log(`✅ Bot online: ${client.user?.tag}`);
     await testRemoteConnection();
+    await checkStorageUsage(); // 🆕 Controllo spazio storage all'avvio
     
     // Inizializza Identity Guard
     initIdentityGuard();

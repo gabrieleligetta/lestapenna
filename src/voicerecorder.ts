@@ -202,7 +202,7 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     });
 
     const getNewFile = () => {
-        const filename = `${userId}-${Date.now()}.mp3`;
+        const filename = `${userId}-${Date.now()}.flac`;
         const filepath = path.join(__dirname, '..', 'recordings', filename);
         
         // Assicuriamoci che la cartella recordings esista
@@ -224,11 +224,11 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
         '-ac', '2',
         '-i', 'pipe:0',
         '-filter:a', 'loudnorm',
-        '-codec:a', 'libmp3lame',
-        '-b:a', '64k',
-        '-ar', '16000',  // Downsample per Whisper
-        '-ac', '1',      // Mono per Whisper
-        '-f', 'mp3',
+        '-c:a', 'flac',
+        '-compression_level', '5',
+        '-ar', '48000',  // High Quality
+        '-ac', '1',      // Mono mixdown is safe here
+        '-f', 'flac',
         filepath,
         '-y'
     ]);

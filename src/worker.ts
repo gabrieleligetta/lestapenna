@@ -2,8 +2,8 @@ import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
 import axios from 'axios';
 import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, getCampaignLocationById, getUserProfile, saveRawTranscription } from './db';
-import { convertPcmToWav, transcribeLocal, unloadLocalModel } from './transcriptionService';
-import { downloadFromOracle, uploadToOracle, getPresignedUrl } from './backupService';
+import { convertPcmToWav, transcribeLocal, unloadLocalModel, createRemoteProxy, convertToLocalWav } from './transcriptionService';
+import { downloadFromOracle, uploadToOracle, getPresignedUrl, deleteFromOracle } from './backupService';
 import { monitor } from './monitor';
 import { correctTranscription } from './bard';
 import { correctionQueue } from './queue';
@@ -64,13 +64,32 @@ async function transcribeWithFallback(
     sessionId: string,
     fileName: string
 ): Promise<any> {
+    const isFlac = fileName.toLowerCase().endsWith('.flac');
+    let proxyPath: string | null = null;
+    let proxyKey: string | null = null;
 
     // 🔥 TENTATIVO 1: PC Remoto via Tailscale
     if (REMOTE_WHISPER_URL) {
         try {
-            // Genera presigned URL on-demand (valido 1 ora)
-            console.log('[Scriba] 🔗 Generazione presigned URL per PC remoto...');
-            const presignedUrl = await getPresignedUrl(fileName, sessionId, 3600);
+            let presignedUrl: string | null = null;
+
+            if (isFlac) {
+                // Scenario A: Remote Transcription (Zero Latency Flow)
+                console.log('[Scriba] 🔄 Generazione Proxy MP3 per remoto...');
+                proxyPath = await createRemoteProxy(localPath);
+                const proxyFileName = `proxy_${fileName.replace('.flac', '.mp3')}`;
+                proxyKey = `proxies/${sessionId}/${proxyFileName}`;
+
+                console.log('[Scriba] ☁️ Upload Proxy MP3 su Oracle...');
+                await uploadToOracle(proxyPath, proxyFileName, sessionId, proxyKey);
+
+                console.log('[Scriba] 🔗 Generazione presigned URL per Proxy...');
+                presignedUrl = await getPresignedUrl(proxyKey, undefined, 3600);
+            } else {
+                // Legacy flow for non-FLAC files
+                console.log('[Scriba] 🔗 Generazione presigned URL per PC remoto...');
+                presignedUrl = await getPresignedUrl(fileName, sessionId, 3600);
+            }
 
             if (!presignedUrl) {
                 console.warn('[Scriba] ⚠️ Impossibile generare presigned URL, uso fallback locale');
@@ -93,6 +112,11 @@ async function transcribeWithFallback(
                 if (response.data && !response.data.error) {
                     const elapsed = ((Date.now() - startRemote) / 1000).toFixed(1);
                     console.log(`[Scriba] ✅ PC remoto completato in ${elapsed}s`);
+                    
+                    // Cleanup Proxy
+                    if (proxyPath && fs.existsSync(proxyPath)) fs.unlinkSync(proxyPath);
+                    if (proxyKey) deleteFromOracle(proxyKey); // Async delete from cloud
+
                     return response.data;
                 }
 
@@ -110,12 +134,35 @@ async function transcribeWithFallback(
             } else {
                 console.warn(`[Scriba] ⚠️ Errore PC remoto: ${error.message}`);
             }
+        } finally {
+             // Ensure proxy cleanup even on error
+             if (proxyPath && fs.existsSync(proxyPath)) fs.unlinkSync(proxyPath);
+             if (proxyKey) deleteFromOracle(proxyKey).catch(e => console.error("Proxy delete failed", e));
         }
     }
 
     // 🔄 FALLBACK: Whisper Locale (server)
     console.log('[Scriba] 💻 Uso Whisper locale (server)...');
-    return await transcribeLocal(localPath);
+    
+    let localWavPath = localPath;
+    if (isFlac) {
+        // Scenario B: Local Transcription
+        console.log('[Scriba] 🔄 Conversione FLAC -> WAV locale...');
+        localWavPath = await convertToLocalWav(localPath);
+    }
+
+    try {
+        const result = await transcribeLocal(localWavPath);
+        if (isFlac && localWavPath !== localPath && fs.existsSync(localWavPath)) {
+            fs.unlinkSync(localWavPath);
+        }
+        return result;
+    } catch (e) {
+        if (isFlac && localWavPath !== localPath && fs.existsSync(localWavPath)) {
+            fs.unlinkSync(localWavPath);
+        }
+        throw e;
+    }
 }
 
 export function startWorker() {

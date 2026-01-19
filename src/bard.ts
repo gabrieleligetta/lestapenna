@@ -1071,10 +1071,10 @@ Restituisci SOLO il testo aggiornato della descrizione (senza introduzioni o spi
         const response = await summaryClient.chat.completions.create({
             model: SUMMARY_MODEL,
             messages: [
-                { role: "system", content: "Sei un biografo esperto che aggiorna schede personaggio rispettando l'agency del giocatore." },
+                { role: "system", content: "Sei un biografo esperto che aggiorna schede personaggio rispettando l'agency del giocatore. Scrivi testi CONCISI (max 800 caratteri)." },
                 { role: "user", content: prompt }
             ],
-            max_completion_tokens: 1000
+            max_completion_tokens: 300 // ~800 caratteri per stare sotto il limite Discord embed (1024)
         });
 
         const latency = Date.now() - startAI;

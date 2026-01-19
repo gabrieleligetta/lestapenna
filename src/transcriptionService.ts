@@ -181,28 +181,6 @@ export function convertToLocalWav(input: string): Promise<string> {
     });
 }
 
-export function createRemoteProxy(input: string): Promise<string> {
-    const output = input.replace(/\.[^/.]+$/, "") + "_proxy.mp3";
-    return new Promise((resolve, reject) => {
-        const { spawn } = require('child_process');
-        const ffmpeg = spawn('ffmpeg', [
-            '-i', input,
-            '-ar', '16000', 
-            '-ac', '1',
-            '-c:a', 'libmp3lame',
-            '-b:a', '32k',
-            output,
-            '-y'
-        ]);
-
-        ffmpeg.on('close', (code: number) => {
-            if (code === 0) resolve(output);
-            else reject(new Error(`ffmpeg exited with code ${code}`));
-        });
-        ffmpeg.on('error', (err: Error) => reject(err));
-    });
-}
-
 export function transcribeLocal(audioPath: string): Promise<TranscriptionResult> {
     return whisperService.transcribe(audioPath);
 }

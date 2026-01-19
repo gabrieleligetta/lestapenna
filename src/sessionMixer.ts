@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getSessionRecordings } from './db';
-import { downloadFromOracle, uploadToOracle, deleteFromOracle } from './backupService';
+import { downloadFromOracle, uploadToOracle, deleteFromOracle, getPresignedUrl } from './backupService';
 
 const RECORDINGS_DIR = path.join(__dirname, '..', 'recordings');
 const OUTPUT_DIR = path.join(__dirname, '..', 'mixed_sessions');
@@ -109,7 +109,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 
     // 5. Merge stems to Master
     console.log(`[Mixer] 🌳 Tree Level 2: Merging ${stemPaths.length} stems to Master...`);
-    const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_full.mp3`);
+    const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_master.mp3`);
     await mergeStemsToMaster(stemPaths, finalMp3Path);
 
     // 6. Upload & Cleanup
@@ -117,7 +117,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
     const targetKey = `recordings/${sessionId}/${finalFileName}`;
     
     console.log(`[Mixer] ☁️ Uploading to Oracle: ${targetKey}`);
-    await deleteFromOracle(finalFileName, sessionId);
+    // await deleteFromOracle(finalFileName, sessionId); // Non cancelliamo il vecchio master se esiste, lo sovrascriviamo
     await uploadToOracle(finalMp3Path, finalFileName, sessionId, targetKey);
 
     // Cleanup stems
@@ -200,7 +200,7 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
              const ffmpeg = spawn('ffmpeg', [
                 '-i', stemPaths[0],
                 '-codec:a', 'libmp3lame',
-                '-b:a', '192k',
+                '-q:a', '4', // VBR Quality 4 (~160kbps)
                 '-ac', '2',
                 '-ar', '48000',
                 outputPath,
@@ -237,7 +237,7 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
             '-filter_complex', filterComplex,
             '-map', '[out]',
             '-codec:a', 'libmp3lame',
-            '-b:a', '192k',
+            '-q:a', '4', // VBR Quality 4 (~160kbps)
             '-ac', '2',
             '-ar', '48000',
             outputPath,

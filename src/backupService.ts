@@ -7,7 +7,7 @@ import { Readable } from 'stream';
 
 let _s3Client: S3Client | null = null;
 
-function getS3Client(): S3Client {
+export function getS3Client(): S3Client {
     if (!_s3Client) {
         const region = (process.env.OCI_REGION || '').trim();
         const endpoint = (process.env.OCI_ENDPOINT || '').trim();
@@ -33,7 +33,7 @@ function getS3Client(): S3Client {
     return _s3Client;
 }
 
-const getBucketName = () => (process.env.OCI_BUCKET_NAME || '').trim();
+export const getBucketName = () => (process.env.OCI_BUCKET_NAME || '').trim();
 
 /**
  * Utility per ottenere la chiave S3 preferita (nuova struttura con sessionId)
@@ -382,5 +382,67 @@ export async function checkStorageUsage(): Promise<void> {
 
     } catch (err: any) {
         console.error(`[Oracle] ❌ Errore controllo spazio storage: ${err.message}`);
+    }
+}
+
+/**
+ * Elimina i file RAW (.flac) di una sessione specifica per risparmiare spazio.
+ * Preserva i file .mp3 (Master/Live) e .json (Trascrizioni).
+ */
+export async function deleteRawSessionFiles(sessionId: string): Promise<number> {
+    const client = getS3Client();
+    const bucket = getBucketName();
+    const prefix = `recordings/${sessionId}/`;
+    let deletedCount = 0;
+
+    console.log(`[Custode] 🧹 Pulizia file RAW per sessione ${sessionId}...`);
+
+    try {
+        let continuationToken: string | undefined = undefined;
+        do {
+            const listCmd: ListObjectsV2Command = new ListObjectsV2Command({
+                Bucket: bucket,
+                Prefix: prefix,
+                ContinuationToken: continuationToken
+            });
+
+            const response: ListObjectsV2CommandOutput = await client.send(listCmd);
+
+            if (response.Contents && response.Contents.length > 0) {
+                const objectsToDelete = response.Contents
+                    .filter(obj => obj.Key && obj.Key.endsWith('.flac')) // Solo FLAC
+                    .map(obj => ({ Key: obj.Key! }));
+
+                if (objectsToDelete.length > 0) {
+                    // DeleteObjectsCommand accetta max 1000 oggetti
+                    for (let i = 0; i < objectsToDelete.length; i += 1000) {
+                        const batch = objectsToDelete.slice(i, i + 1000);
+                        await client.send(new DeleteObjectCommand({
+                            Bucket: bucket,
+                            Key: batch[0].Key // DeleteObjectCommand cancella uno alla volta, usiamo loop o DeleteObjectsCommand
+                        }));
+                        
+                        // Nota: DeleteObjectCommand cancella un solo oggetto.
+                        // Per cancellarne molti, dovremmo usare DeleteObjectsCommand.
+                        // Ma il prompt chiedeva di usare le funzioni esistenti o simili.
+                        // Implementiamo un loop parallelo per efficienza.
+                        await Promise.all(batch.map(obj => client.send(new DeleteObjectCommand({
+                            Bucket: bucket,
+                            Key: obj.Key
+                        }))));
+                        
+                        deletedCount += batch.length;
+                    }
+                }
+            }
+            continuationToken = response.NextContinuationToken;
+        } while (continuationToken);
+
+        console.log(`[Custode] ✅ Eliminati ${deletedCount} file RAW (.flac) per sessione ${sessionId}.`);
+        return deletedCount;
+
+    } catch (err: any) {
+        console.error(`[Custode] ❌ Errore pulizia RAW sessione ${sessionId}:`, err);
+        return 0;
     }
 }

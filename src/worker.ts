@@ -1,8 +1,9 @@
 import { Worker, Job } from 'bullmq';
 import * as fs from 'fs';
+import * as path from 'path';
 import axios from 'axios';
 import { updateRecordingStatus, getUserName, getRecording, getSessionCampaignId, getCampaignLocationById, getUserProfile, saveRawTranscription } from './db';
-import { convertPcmToWav, transcribeLocal, unloadLocalModel, createRemoteProxy, convertToLocalWav } from './transcriptionService';
+import { convertPcmToWav, transcribeLocal, unloadLocalModel, convertToLocalWav } from './transcriptionService';
 import { downloadFromOracle, uploadToOracle, getPresignedUrl, deleteFromOracle } from './backupService';
 import { monitor } from './monitor';
 import { correctTranscription } from './bard';
@@ -65,8 +66,7 @@ async function transcribeWithFallback(
     fileName: string
 ): Promise<any> {
     const isFlac = fileName.toLowerCase().endsWith('.flac');
-    let proxyPath: string | null = null;
-    let proxyKey: string | null = null;
+    let tempKey: string | null = null;
 
     // 🔥 TENTATIVO 1: PC Remoto via Tailscale
     if (REMOTE_WHISPER_URL) {
@@ -74,17 +74,15 @@ async function transcribeWithFallback(
             let presignedUrl: string | null = null;
 
             if (isFlac) {
-                // Scenario A: Remote Transcription (Zero Latency Flow)
-                console.log('[Scriba] 🔄 Generazione Proxy MP3 per remoto...');
-                proxyPath = await createRemoteProxy(localPath);
-                const proxyFileName = `proxy_${fileName.replace('.flac', '.mp3')}`;
-                proxyKey = `proxies/${sessionId}/${proxyFileName}`;
+                // Scenario A: Remote Transcription (Pure Lossless Flow)
+                console.log('[Scriba] 📡 Uploading FLAC for High-Fidelity Remote Transcription...');
+                
+                // Upload original FLAC to a temporary location
+                tempKey = `transcription_temp/${path.basename(localPath)}`;
+                await uploadToOracle(localPath, path.basename(localPath), undefined, tempKey);
 
-                console.log('[Scriba] ☁️ Upload Proxy MP3 su Oracle...');
-                await uploadToOracle(proxyPath, proxyFileName, sessionId, proxyKey);
-
-                console.log('[Scriba] 🔗 Generazione presigned URL per Proxy...');
-                presignedUrl = await getPresignedUrl(proxyKey, undefined, 3600);
+                console.log('[Scriba] 🔗 Generazione presigned URL per FLAC...');
+                presignedUrl = await getPresignedUrl(tempKey, undefined, 3600);
             } else {
                 // Legacy flow for non-FLAC files
                 console.log('[Scriba] 🔗 Generazione presigned URL per PC remoto...');
@@ -113,9 +111,8 @@ async function transcribeWithFallback(
                     const elapsed = ((Date.now() - startRemote) / 1000).toFixed(1);
                     console.log(`[Scriba] ✅ PC remoto completato in ${elapsed}s`);
                     
-                    // Cleanup Proxy
-                    if (proxyPath && fs.existsSync(proxyPath)) fs.unlinkSync(proxyPath);
-                    if (proxyKey) deleteFromOracle(proxyKey); // Async delete from cloud
+                    // Cleanup Temp FLAC from Cloud
+                    if (tempKey) deleteFromOracle(path.basename(localPath), undefined).catch(e => console.error("Temp FLAC delete failed", e));
 
                     return response.data;
                 }
@@ -135,9 +132,8 @@ async function transcribeWithFallback(
                 console.warn(`[Scriba] ⚠️ Errore PC remoto: ${error.message}`);
             }
         } finally {
-             // Ensure proxy cleanup even on error
-             if (proxyPath && fs.existsSync(proxyPath)) fs.unlinkSync(proxyPath);
-             if (proxyKey) deleteFromOracle(proxyKey).catch(e => console.error("Proxy delete failed", e));
+             // Ensure temp cleanup even on error
+             if (tempKey) deleteFromOracle(path.basename(localPath), undefined).catch(e => console.error("Temp FLAC delete failed", e));
         }
     }
 
@@ -147,7 +143,7 @@ async function transcribeWithFallback(
     let localWavPath = localPath;
     if (isFlac) {
         // Scenario B: Local Transcription
-        console.log('[Scriba] 🔄 Conversione FLAC -> WAV locale...');
+        console.log('[Scriba] 🖥️ Converting FLAC to WAV for Local Whisper...');
         localWavPath = await convertToLocalWav(localPath);
     }
 
@@ -274,8 +270,14 @@ export function startWorker() {
                 throw new Error(result.error);
             }
 
-            if (transcriptionPath !== filePath && fs.existsSync(transcriptionPath)) {
-                fs.unlinkSync(transcriptionPath);
+            // 🆕 CLEANUP: Elimina il file FLAC originale dopo trascrizione riuscita
+            if (fs.existsSync(filePath)) {
+                try {
+                    fs.unlinkSync(filePath);
+                    // console.log(`[Scriba] 🧹 File originale eliminato: ${fileName}`);
+                } catch (err) {
+                    console.error(`[Scriba] ❌ Errore eliminazione originale ${fileName}:`, err);
+                }
             }
 
             // 3. Gestione Risultato
@@ -301,8 +303,8 @@ export function startWorker() {
                 if (filteredWords.length === 0) {
                     updateRecordingStatus(fileName, 'SKIPPED', null, 'Tutte allucinazioni');
                     console.log(`[Worker] 🔇 ${fileName}: tutto filtrato (allucinazioni)`);
-                    const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
-                    if (isBackedUp) {
+                    // Il file è già stato backuppato in onFileClosed, quindi possiamo solo cancellare se esiste ancora
+                    if (fs.existsSync(filePath)) {
                         try { fs.unlinkSync(filePath); } catch(e) {}
                     }
                     monitor.logJobProcessed(waitTime, job.attemptsMade);
@@ -323,18 +325,6 @@ export function startWorker() {
                 // STEP 4: Salva raw per debug
                 const wordLevelJson = JSON.stringify(filteredWords);
                 saveRawTranscription(fileName, wordLevelJson);
-
-                // Backup e Pulizia Locale
-                const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
-                if (isBackedUp) {
-                    try {
-                        fs.unlinkSync(filePath);
-                        // console.log(`[Scriba] 🧹 File locale eliminato dopo backup: ${fileName}`); // Rimosso per pulizia
-                        monitor.logFileDeleted();
-                    } catch (err) {
-                        console.error(`[Scriba] ❌ Errore durante eliminazione locale ${fileName}:`, err);
-                    }
-                }
 
                 // 4. Decisione: Correzione AI o Bypass?
                 if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION === 'false') {
@@ -384,8 +374,7 @@ export function startWorker() {
                 updateRecordingStatus(fileName, 'SKIPPED', null, 'Silenzio o incomprensibile');
                 console.log(`[Scriba] 🔇 Audio ${fileName} scartato (silenzio o incomprensibile)`);
 
-                const isBackedUp = await uploadToOracle(filePath, fileName, sessionId);
-                if (isBackedUp) {
+                if (fs.existsSync(filePath)) {
                     try { fs.unlinkSync(filePath); } catch(e) {}
                 }
                 monitor.logJobProcessed(waitTime, job.attemptsMade);

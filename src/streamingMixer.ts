@@ -113,7 +113,8 @@ export function startStreamingMixer(sessionId: string): void {
 
     // Changed to .flac for space saving
     const accumulatorPath = path.join(TEMP_DIR, `acc_${sessionId}.flac`);
-    const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_full.mp3`);
+    // Changed to _live.mp3 to distinguish from final master
+    const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_live.mp3`);
     
     try {
         if (fs.existsSync(accumulatorPath)) fs.unlinkSync(accumulatorPath);

@@ -12,6 +12,7 @@
     "discord.js": "^14.25.1",
     "dotenv": "^17.2.3",
     "libsodium-wrappers": "^0.7.15",
+    "node-cron": "^4.2.1",
     "nodemailer": "^7.0.12",
     "openai": "^6.15.0",
     "pidusage": "^4.0.1",

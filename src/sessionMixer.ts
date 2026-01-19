@@ -21,7 +21,7 @@ interface AudioFile {
     delay: number;
 }
 
-export async function mixSessionAudio(sessionId: string): Promise<string> {
+export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean = false): Promise<string> {
     console.log(`[Mixer] 🧱 Starting 2-Level Tree Mix for session ${sessionId}...`);
 
     const recordings = getSessionRecordings(sessionId);
@@ -124,6 +124,22 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
     console.log(`[Mixer] 🧹 Cleaning up temp files...`);
     for (const stem of stemPaths) {
         if (fs.existsSync(stem)) fs.unlinkSync(stem);
+    }
+
+    // Cleanup source files if requested
+    if (!keepLocalFiles) {
+        console.log(`[Mixer] 🧹 Cleaning up source files (keep=${keepLocalFiles})...`);
+        for (const f of validFiles) {
+            if (fs.existsSync(f.path)) {
+                try {
+                    fs.unlinkSync(f.path);
+                } catch (e) {
+                    console.warn(`[Mixer] Failed to delete source file ${f.path}`, e);
+                }
+            }
+        }
+    } else {
+        console.log(`[Mixer] 🛑 Keeping source files locally (keep=${keepLocalFiles}).`);
     }
 
     console.log(`[Mixer] ✅ Mix complete: ${finalMp3Path}`);

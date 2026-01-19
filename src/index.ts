@@ -2997,6 +2997,15 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         let targetSessionId = args[0];
+        let force = false;
+        let keep = false;
+
+        // Parse arguments
+        for (const arg of args) {
+            if (arg === 'force' || arg === '--force') force = true;
+            else if (arg === 'keep' || arg === '--keep') keep = true;
+            else if (!targetSessionId) targetSessionId = arg;
+        }
 
         if (!targetSessionId) {
             targetSessionId = guildSessions.get(message.guild.id) || "";
@@ -3006,10 +3015,22 @@ client.on('messageCreate', async (message: Message) => {
             return await message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `$scarica <ID>`");
         }
 
+        // Check if already exists in cloud
+        const finalFileName = `session_${targetSessionId}_full.mp3`;
+        const cloudKey = `recordings/${targetSessionId}/${finalFileName}`;
+        
+        // If not force, check if exists
+        if (!force) {
+            const existingUrl = await getPresignedUrl(cloudKey, undefined, 3600 * 24);
+            if (existingUrl) {
+                return await (message.channel as TextChannel).send(`✅ **Audio Sessione Già Disponibile**\nPuoi scaricarlo qui (link valido 24h):\n${existingUrl}\n\n💡 Usa \`$scarica ${targetSessionId} force\` per rigenerarlo.`);
+            }
+        }
+
         await message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
 
         try {
-            const filePath = await mixSessionAudio(targetSessionId);
+            const filePath = await mixSessionAudio(targetSessionId, keep);
             const stats = fs.statSync(filePath);
             const sizeMB = stats.size / (1024 * 1024);
 
@@ -3020,8 +3041,10 @@ client.on('messageCreate', async (message: Message) => {
                 });
             } else {
                 const fileName = path.basename(filePath);
-                await uploadToOracle(filePath, fileName, targetSessionId);
-                const presignedUrl = await getPresignedUrl(fileName, targetSessionId, 3600 * 24);
+                // Upload is handled inside mixSessionAudio now, but we double check or just get URL
+                // mixSessionAudio uploads to recordings/SESSION_ID/filename
+                
+                const presignedUrl = await getPresignedUrl(cloudKey, undefined, 3600 * 24);
 
                 if (presignedUrl) {
                     await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
@@ -3029,6 +3052,7 @@ client.on('messageCreate', async (message: Message) => {
                     await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
                 }
 
+                // Cleanup local mixed file
                 try { fs.unlinkSync(filePath); } catch(e) {}
             }
 

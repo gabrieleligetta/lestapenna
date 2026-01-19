@@ -36,6 +36,21 @@ export async function mixSessionAudio(sessionId: string): Promise<string> {
             const success = await downloadFromOracle(rec.filename, filePath, sessionId);
             if (!success) continue;
         }
+
+        // --- FIX: Controllo integrità file ---
+        try {
+            const stats = fs.statSync(filePath);
+            // Se il file è minore di 1KB (o 0 byte), è probabilmente corrotto o vuoto (header MP3 mancante)
+            if (stats.size < 1024) { 
+                console.warn(`[Mixer] ⚠️ Saltato file corrotto/vuoto: ${rec.filename} (${stats.size} bytes)`);
+                continue;
+            }
+        } catch (e) {
+            console.warn(`[Mixer] ⚠️ Errore lettura file: ${rec.filename}`, e);
+            continue;
+        }
+        // -------------------------------------
+
         validFiles.push({ 
             path: filePath, 
             delay: rec.timestamp - sessionStart 

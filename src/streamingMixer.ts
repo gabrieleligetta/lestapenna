@@ -48,14 +48,15 @@ interface MixerState {
     pendingFiles: { path: string, delay: number, userId: string }[];
     accumulatorPath: string; // Now .flac
     lastMixTime: number;
-    mixInterval: NodeJS.Timeout;
+    // mixInterval: NodeJS.Timeout; // ❌ RIMOSSO TIMER
     isMixing: boolean;
+    currentMixPromise: Promise<void> | null;
     finalMp3Path: string;
     isOnDisk: boolean;
 }
 
 const activeMixers = new Map<string, MixerState>();
-const MIX_INTERVAL_MS = 300000; // 5 Minutes
+// const MIX_INTERVAL_MS = 300000; // ❌ RIMOSSO
 
 async function emergencyDiskMigration(state: MixerState): Promise<void> {
     const ramPath = state.accumulatorPath;
@@ -128,9 +129,10 @@ export function startStreamingMixer(sessionId: string): void {
         accumulatorPath,
         lastMixTime: Date.now(),
         isMixing: false,
+        currentMixPromise: null,
         finalMp3Path,
         isOnDisk: false,
-        mixInterval: setInterval(() => flushPendingFiles(sessionId), MIX_INTERVAL_MS)
+        // mixInterval: setInterval(...) // ❌ RIMOSSO
     };
 
     activeMixers.set(sessionId, state);
@@ -150,6 +152,20 @@ export function addFileToStreamingMixer(
     state.pendingFiles.push({ path: filePath, delay, userId });
     
     console.log(`[StreamMixer] 📥 Queued: ${path.basename(filePath)} (delay: ${(delay / 1000).toFixed(1)}s)`);
+
+    // ✅ SMART FLUSH POLICY
+    // Flusha SOLO se:
+    // 1. La RAM è sotto stress (WARNING/CRITICAL)
+    // 2. La coda è troppo lunga (> 30 file) per evitare crash di FFmpeg per troppi argomenti
+    const memStatus = getMemoryStatus();
+    const isQueueFull = state.pendingFiles.length >= 30;
+    const isRamLow = memStatus.status !== MemoryStatus.HEALTHY;
+
+    if ((isQueueFull || isRamLow) && !state.isMixing) {
+        const reason = isRamLow ? `Low RAM (${memStatus.freePercent.toFixed(1)}%)` : 'Queue Full';
+        console.log(`[StreamMixer] ⚠️ Triggering auto-flush: ${reason}`);
+        flushPendingFiles(sessionId).catch(e => console.error(`[StreamMixer] Auto-flush failed:`, e));
+    }
 }
 
 async function flushPendingFiles(sessionId: string): Promise<void> {
@@ -176,16 +192,23 @@ async function flushPendingFiles(sessionId: string): Promise<void> {
 
     console.log(`[StreamMixer] 🔄 Flush: Mixing ${filesToMix.length} files...`);
 
-    try {
-        await mixBatch(filesToMix, state.accumulatorPath);
-        state.lastMixTime = Date.now();
-        console.log(`[StreamMixer] ✅ Batch mixed successfully`);
-    } catch (e: any) {
-        console.error(`[StreamMixer] ❌ Flush error:`, e.message);
-        state.pendingFiles.unshift(...filesToMix);
-    } finally {
-        state.isMixing = false;
-    }
+    // ✅ TRACKING: Salviamo la promessa per poterla attendere in stop()
+    state.currentMixPromise = mixBatch(filesToMix, state.accumulatorPath)
+        .then(() => {
+            state.lastMixTime = Date.now();
+            console.log(`[StreamMixer] ✅ Batch mixed successfully`);
+        })
+        .catch((e: any) => {
+            console.error(`[StreamMixer] ❌ Flush error:`, e.message);
+            // Re-queue files on error
+            state.pendingFiles.unshift(...filesToMix);
+        })
+        .finally(() => {
+            state.isMixing = false;
+            state.currentMixPromise = null;
+        });
+    
+    await state.currentMixPromise;
 }
 
 function mixBatch(
@@ -293,26 +316,32 @@ function mixBatch(
 
 export async function stopStreamingMixer(sessionId: string): Promise<string> {
     const state = activeMixers.get(sessionId);
-    if (!state) {
-        throw new Error(`[StreamMixer] ❌ Mixer not found for ${sessionId}`);
+    if (!state) throw new Error(`[StreamMixer] ❌ Mixer not found for ${sessionId}`);
+
+    console.log(`[StreamMixer] 🛑 Stop richiesto per ${sessionId}.`);
+    
+    // 1. (Timer rimosso, non c'è nulla da pulire)
+
+    // 2. Se c'è un mix in corso, aspettiamo che finisca
+    if (state.currentMixPromise) {
+        console.log(`[StreamMixer] ⏳ Attesa completamento mix in corso...`);
+        await state.currentMixPromise;
     }
 
-    console.log(`[StreamMixer] 🛑 Stop requested for ${sessionId}...`);
-    clearInterval(state.mixInterval);
-
+    // 3. Se ci sono file pendenti (arrivati mentre aspettavamo o non ancora processati), processali TUTTI
     if (state.pendingFiles.length > 0) {
-        state.isMixing = false;
-        const flushPromise = flushPendingFiles(sessionId);
-        const timeoutPromise = new Promise<void>((_, reject) => 
-            setTimeout(() => reject(new Error('Flush timeout')), 60000)
-        );
+        console.log(`[StreamMixer] 🧹 Flushing finale di ${state.pendingFiles.length} file...`);
+        
         try {
-            await Promise.race([flushPromise, timeoutPromise]);
+            // Qui chiamiamo flushPendingFiles che ora è awaitable e sicuro
+            await flushPendingFiles(sessionId); 
+            console.log(`[StreamMixer] ✅ Flush finale completato.`);
         } catch (e: any) {
-            console.error(`[StreamMixer] ⚠️ Final flush failed: ${e.message}`);
+            console.error(`[StreamMixer] ⚠️ Errore flush finale: ${e.message}`);
         }
     }
 
+    // 4. Conversione finale e Upload
     if (!fs.existsSync(state.accumulatorPath)) {
         await generateSilence(state.finalMp3Path, 1);
         activeMixers.delete(sessionId);

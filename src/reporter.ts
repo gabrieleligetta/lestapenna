@@ -703,7 +703,7 @@ export async function sendSessionRecap(
         // Genera Link Raw Full Session
         let fullMixUrl = "";
         try {
-            const mixKey = `mixed_sessions/${sessionId}/session_${sessionId}_full.mp3`;
+            const mixKey = `mixed_sessions/${sessionId}/session_${sessionId}_live.mp3`;
             fullMixUrl = await getPresignedUrl(mixKey, undefined, 604800) || "";
         } catch (e) {
             console.warn(`[Reporter] ⚠️ Traccia raw non disponibile per ${sessionId}`);

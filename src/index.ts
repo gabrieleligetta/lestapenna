@@ -3019,7 +3019,7 @@ client.on('messageCreate', async (message: Message) => {
         }
 
         // Check if already exists in cloud
-        const finalFileName = `session_${targetSessionId}_full.mp3`;
+        const finalFileName = `session_${targetSessionId}_master.mp3`;
         const cloudKey = `recordings/${targetSessionId}/${finalFileName}`;
         
         // If not force, check if exists

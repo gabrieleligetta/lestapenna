@@ -98,6 +98,9 @@ const guildToSession = new Map<string, string>();
 const pendingFileProcessing = new Map<string, Set<string>>(); // guildId -> Set<fileName>
 const fileProcessingResolvers = new Map<string, (() => void)[]>(); // guildId -> resolver callbacks
 
+// 1. Aggiungi variabile di stato in alto
+let isStopping = false;
+
 export function pauseRecording(guildId: string) {
     pausedGuilds.add(guildId);
     console.log(`[Recorder] ⏸️ Registrazione in PAUSA per Guild ${guildId}`);
@@ -150,6 +153,8 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     }
 
     connection.receiver.speaking.on('start', (userId: string) => {
+        if (isStopping) return; // 🛑 BLOCCO HARDWARE NUOVI STREAM
+
         // --- CHECK PAUSA ---
         if (pausedGuilds.has(guildId)) {
             return;
@@ -301,6 +306,7 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
             if (pending) {
                 pending.delete(filename);
                 if (pending.size === 0) {
+                    // 🔥 TRIGGER EVENTO: Sblocca disconnect()
                     const resolvers = fileProcessingResolvers.get(guildId) || [];
                     resolvers.forEach(resolve => resolve());
                     fileProcessingResolvers.delete(guildId);
@@ -373,92 +379,71 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
 
 export async function disconnect(guildId: string): Promise<boolean> {
     const connection = getVoiceConnection(guildId);
-    if (connection) {
-        console.log(`[Recorder] Disconnessione richiesta per Guild ${guildId}...`);
-        
-        const closingPromises: Promise<void>[] = [];
+    if (!connection) return false;
 
-        // Chiudiamo manualmente tutti gli stream attivi per questa gilda
-        for (const [key, stream] of activeStreams) {
-            if (key.startsWith(`${guildId}-`)) {
-                console.log(`[Recorder] Chiusura forzata stream ${key}`);
-                
-                const p = new Promise<void>((resolve) => {
-                    // Se lo stream è già chiuso/in chiusura
-                    if (stream.ffmpeg.stdin?.writableEnded) {
-                        resolve();
-                        return;
-                    }
-                    
-                    // Attendiamo la fine della scrittura (ffmpeg close)
+    console.log(`[Recorder] 🛑 Disconnessione avviata. Chiusura streams...`);
+    isStopping = true; // Attiva il blocco
+
+    // A. Raccogli tutte le promesse di chiusura degli stream attivi
+    const closePromises: Promise<void>[] = [];
+
+    for (const [key, stream] of activeStreams) {
+        if (key.startsWith(`${guildId}-`)) {
+            // Creiamo una Promise che si risolve SOLO quando ffmpeg finisce davvero
+            const p = new Promise<void>((resolve) => {
+                if (stream.ffmpeg.exitCode !== null) {
+                    resolve(); // Già chiuso
+                } else {
                     stream.ffmpeg.on('close', () => resolve());
-                    
-                    // Forziamo la chiusura dello stream di scrittura
-                    stream.ffmpeg.stdin?.end();
-                });
-                
-                closingPromises.push(p);
-                activeStreams.delete(key); // Rimuoviamo dalla mappa
-            }
-        }
-
-        if (closingPromises.length > 0) {
-            await Promise.all(closingPromises);
-            console.log(`[Recorder] ${closingPromises.length} stream chiusi correttamente.`);
-        }
-
-        // ✅ NUOVO: Aspetta che tutti i file siano processati (DB, Backup, Mixer)
-        const pendingFiles = pendingFileProcessing.get(guildId);
-        if (pendingFiles && pendingFiles.size > 0) {
-            console.log(`[Recorder] ⏳ In attesa del completamento di ${pendingFiles.size} file...`);
-            
-            const waitPromise = new Promise<void>((resolve) => {
-                if (!fileProcessingResolvers.has(guildId)) {
-                    fileProcessingResolvers.set(guildId, []);
+                    stream.ffmpeg.on('error', () => resolve()); // Risolvi anche in caso di errore per non bloccare
+                    stream.ffmpeg.stdin?.end(); // Segnale di chiusura gentile
                 }
-                fileProcessingResolvers.get(guildId)!.push(resolve);
             });
-
-            let timeoutHandle: NodeJS.Timeout;
-
-            const timeoutPromise = new Promise<void>((resolve) => {
-                timeoutHandle = setTimeout(() => {
-                    console.warn(`[Recorder] ⚠️ Timeout attesa file, continuo comunque...`);
-                    resolve();
-                }, 30000);
-            });
-            
-            await Promise.race([waitPromise, timeoutPromise]);
-
-            clearTimeout(timeoutHandle!);
-
-            console.log(`[Recorder] ✅ Tutti i file sono stati processati (o timeout)`);
+            closePromises.push(p);
+            activeStreams.delete(key);
         }
-        
-        // Cleanup tracking
-        pendingFileProcessing.delete(guildId);
-        fileProcessingResolvers.delete(guildId);
-
-        // 🆕 USA MAPPA GUILD->SESSION
-        const sessionId = guildToSession.get(guildId);
-
-        if (sessionId && sessionMixers.has(sessionId)) {
-            try {
-                console.log(`[Recorder] 🎵 Finalizzazione mixer streaming per ${sessionId}...`);
-                const mixPath = await stopStreamingMixer(sessionId);
-                console.log(`[Recorder] ✅ Mix streaming completato: ${mixPath}`);
-                sessionMixers.delete(sessionId);
-                guildToSession.delete(guildId); // 🧹 Cleanup
-            } catch (e: any) {
-                console.error(`[Recorder] ❌ Errore finalizzazione mixer:`, e.message);
-            }
-        }
-
-        connection.destroy();
-        console.log("👋 Disconnesso.");
-        return true;
     }
-    return false;
+
+    // B. Aspetta che TUTTI i processi ffmpeg finiscano (senza timeout)
+    if (closePromises.length > 0) {
+        console.log(`[Recorder] ⏳ Attesa chiusura di ${closePromises.length} stream audio...`);
+        await Promise.all(closePromises);
+    }
+
+    // C. Aspetta che la logica di "onFileClosed" (DB + Backup) sia finita
+    // Sostituito il polling con un'attesa reattiva (Promise)
+    const pendingFiles = pendingFileProcessing.get(guildId);
+    if (pendingFiles && pendingFiles.size > 0) {
+        console.log(`[Recorder] ⏳ Attesa elaborazione finale di ${pendingFiles.size} file...`);
+        
+        await new Promise<void>((resolve) => {
+            // Registriamo il resolver. Verrà chiamato da ffmpeg.on('close') -> finally
+            if (!fileProcessingResolvers.has(guildId)) {
+                fileProcessingResolvers.set(guildId, []);
+            }
+            fileProcessingResolvers.get(guildId)!.push(resolve);
+        });
+        
+        console.log(`[Recorder] ✅ Tutti i file sono stati processati.`);
+    }
+
+    // D. Ora che tutto è fermo e salvato, chiudiamo il mixer
+    const sessionId = guildToSession.get(guildId);
+    if (sessionId && sessionMixers.has(sessionId)) {
+        console.log(`[Recorder] 🎵 Audio fermo. Arresto mixer...`);
+        // Questa chiamata ora sarà bloccante e sicura
+        await stopStreamingMixer(sessionId); 
+        sessionMixers.delete(sessionId);
+    }
+
+    guildToSession.delete(guildId);
+    pendingFileProcessing.delete(guildId);
+    fileProcessingResolvers.delete(guildId);
+    
+    connection.destroy();
+    isStopping = false; // Reset per la prossima volta
+    console.log("👋 Disconnesso in sicurezza.");
+    return true;
 }
 
 // Non serve più la rotazione manuale perché usiamo il silenzio naturale per spezzare i file

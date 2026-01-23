@@ -512,7 +512,10 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     // Loot
     if (input.loot && input.loot.length > 0) {
         prompt += `**Loot (${input.loot.length}):**\n`;
-        input.loot.forEach((item: string, i: number) => prompt += `${i + 1}. ${item}\n`);
+        input.loot.forEach((item: any, i: number) => {
+            const desc = typeof item === 'string' ? item : `${item.name} (x${item.quantity}) - ${item.description || ''}`;
+            prompt += `${i + 1}. ${desc}\n`
+        });
         prompt += "\n";
     }
 
@@ -546,6 +549,7 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
 **Loot:**
 - SKIP: spazzatura (<10 monete di valore stimato), oggetti di scena non utilizzabili (es. "sacco vuoto"), duplicati semantici
 - KEEP: oggetti magici o unici (anche se sembrano deboli), valuta >=10 monete, oggetti chiave per la trama
+- MANTIENI STRUTTURA: Restituisci oggetti JSON { name, quantity, description }
 - Normalizza nomi: "Spada +1" invece di "lama affilata magica"
 - Aggrega valuta: "150 mo" invece di liste multiple
 
@@ -577,7 +581,7 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     "skip": ["motivo"]
   },
   "loot": {
-    "keep": ["Spada +1", "150 mo"],
+    "keep": [{"name": "Spada +1", "quantity": 1, "description": "Lama elfica"}, {"name": "150 mo", "quantity": 150, "description": "Valuta"}],
     "skip": ["frecce rotte - valore <10mo"]
   },
   "quests": {

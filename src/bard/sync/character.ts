@@ -10,9 +10,9 @@ import {
     getNewCharacterHistory
 } from '../../db';
 import {
-    summaryClient,
-    SUMMARY_MODEL,
-    SUMMARY_PROVIDER
+    metadataClient,
+    METADATA_MODEL,
+    METADATA_PROVIDER
 } from '../config';
 import { monitor } from '../../monitor';
 import { ingestGenericEvent } from '../rag';
@@ -52,10 +52,11 @@ ${historyText}
 
 Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spiegazioni).`;
 
+
     const startAI = Date.now();
     try {
-        const response = await summaryClient.chat.completions.create({
-            model: SUMMARY_MODEL,
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
             messages: [
                 { role: "system", content: "Sei un biografo esperto. Integra SOLO i nuovi eventi senza duplicare quelli già presenti. Max 800 caratteri." },
                 { role: "user", content: prompt }
@@ -66,7 +67,7 @@ Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spieg
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('summary', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
 
         const newDesc = response.choices[0].message.content?.trim() || currentDesc;
         console.log(`[Character] Biografia aggiornata per ${charName} (+${newEvents.length} eventi, ${latency}ms)`);
@@ -75,7 +76,7 @@ Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spieg
 
     } catch (e) {
         console.error(`[Character] Errore rigenerazione ${charName}:`, e);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('summary', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return currentDesc;
     }
 }

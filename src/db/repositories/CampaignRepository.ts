@@ -82,7 +82,6 @@ export const campaignRepository = {
 
         // Let's implement querying directly for now to avoid circular dependencies between repositories
 
-        const characters = db.prepare('SELECT * FROM user_profiles_view WHERE campaign_id = ?').all(campaignId); // Wait, user_profiles_view does not exist in schema I copied?
         // Checking schema.ts: 'characters' table exists. 
         // The original logic used `getCampaignCharacters`, which joins proper tables.
         // It's safer to defer implementation of `getCampaignSnapshot` until CharacterRepository is ready, 

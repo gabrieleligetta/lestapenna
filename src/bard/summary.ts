@@ -22,6 +22,9 @@ import {
     SUMMARY_MODEL,
     SUMMARY_PROVIDER,
     summaryClient,
+    METADATA_MODEL,
+    METADATA_PROVIDER,
+    metadataClient,
     ANALYST_MODEL,
     ANALYST_PROVIDER,
     analystClient,
@@ -224,8 +227,8 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 
     const startAI = Date.now();
     try {
-        const response = await summaryClient.chat.completions.create({
-            model: SUMMARY_MODEL,
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL,
             messages: [
                 { role: "system", content: "Sei un esperto di ricerca semantica. Rispondi SOLO con JSON." },
                 { role: "user", content: prompt }
@@ -236,7 +239,7 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('summary', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
 
         const parsed = JSON.parse(response.choices[0].message.content || '{"queries":[]}');
         const queries = Array.isArray(parsed) ? parsed : (parsed.queries || parsed.list || []);
@@ -244,7 +247,7 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
         return queries.slice(0, 5);
     } catch (e) {
         console.error('[identifyRelevantContext] ❌ Errore generazione query:', e);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('summary', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return [
             `Eventi recenti ${snapshot.location?.macro || 'campagna'}`,
             `Dialoghi NPC ${snapshot.presentNpcs?.slice(0, 2).join(' ') || ''}`
@@ -499,8 +502,8 @@ ${contextForFinalStep.substring(0, 50000)}`;
  */
 export async function regenerateNpcNotes(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
     const prompt = `Riassumi info su NPC: ${npcName} (${role}). Descrizione: ${staticDesc}`;
-    const response = await summaryClient.chat.completions.create({
-        model: SUMMARY_MODEL,
+    const response = await metadataClient.chat.completions.create({
+        model: METADATA_MODEL,
         messages: [{ role: "user", content: prompt }]
     });
     return response.choices[0].message.content || staticDesc;
@@ -518,8 +521,8 @@ export async function generateNpcBiography(campaignId: number, npcName: string, 
  */
 export async function generateCharacterBiography(campaignId: number, charName: string, charClass: string, charRace: string): Promise<string> {
     const prompt = `Scrivi bio per PG: ${charName} (${charRace} ${charClass}).`;
-    const response = await summaryClient.chat.completions.create({
-        model: SUMMARY_MODEL,
+    const response = await metadataClient.chat.completions.create({
+        model: METADATA_MODEL,
         messages: [{ role: "user", content: prompt }]
     });
     return response.choices[0].message.content || "";

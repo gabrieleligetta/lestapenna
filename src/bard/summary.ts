@@ -300,21 +300,21 @@ Rispondi SOLO con JSON valido.`;
     const startAI = Date.now();
     try {
         const options: any = {
-            model: ANALYST_MODEL,
+            model: SUMMARY_MODEL,
             messages: [
                 { role: "system", content: "Sei un analista dati. Rispondi SOLO con JSON valido." },
                 { role: "user", content: prompt }
             ]
         };
 
-        if (ANALYST_PROVIDER === 'openai') options.response_format = { type: "json_object" };
-        else if (ANALYST_PROVIDER === 'ollama') options.format = 'json';
+        if (SUMMARY_PROVIDER === 'openai') options.response_format = { type: "json_object" };
+        else if (SUMMARY_PROVIDER === 'ollama') options.format = 'json';
 
-        const response = await analystClient.chat.completions.create(options);
+        const response = await summaryClient.chat.completions.create(options);
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('analyst', ANALYST_PROVIDER, ANALYST_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('analyst', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
 
         const parsed = safeJsonParse(response.choices[0].message.content || "{}");
 

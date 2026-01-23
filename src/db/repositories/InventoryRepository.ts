@@ -12,8 +12,11 @@ export const inventoryRepository = {
 
         if (existing) {
             const finalDesc = description ? (existing.description ? existing.description + '\n' + description : description) : existing.description;
-            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ?, description = ? WHERE id = ?')
-                .run(qty, Date.now(), finalDesc, existing.id);
+            // Legacy Parity: Update session_id to current one if provided (or keep existing if null, but usually we want to track latest touch or first? Legacy used COALESCE(session_id, ?), implying keep original if set? Or set if null?)
+            // Legacy: session_id = COALESCE(session_id, ?)
+            // This means: if session_id is NULL, set it to new one. If it IS set, KEEP it (track origin).
+            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ?, description = ?, session_id = COALESCE(session_id, ?) WHERE id = ?')
+                .run(qty, Date.now(), finalDesc, sessionId || null, existing.id);
         } else {
             db.prepare('INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description) VALUES (?, ?, ?, ?, ?, ?, ?)')
                 .run(campaignId, cleanName, qty, Date.now(), Date.now(), sessionId || null, description || null);
@@ -21,8 +24,9 @@ export const inventoryRepository = {
     },
 
     removeLoot: (campaignId: number, itemName: string, qty: number = 1): boolean => {
-        const existing = db.prepare('SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)')
-            .get(campaignId, itemName) as { id: number, quantity: number } | undefined;
+        // Legacy Parity: Use LIKE for looser matching (e.g. "pozione" matches "Pozione di Guarigione")
+        const existing = db.prepare('SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) LIKE lower(?)')
+            .get(campaignId, `%${itemName}%`) as { id: number, quantity: number } | undefined;
 
         if (existing) {
             const newQty = Math.max(0, existing.quantity - qty);

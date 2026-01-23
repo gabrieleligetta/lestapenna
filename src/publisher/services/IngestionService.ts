@@ -137,31 +137,34 @@ export class IngestionService {
     private async processValidatedEvents(campaignId: number, sessionId: string, validated: any): Promise<void> {
         // Character events
         for (const evt of validated.character_events.keep) {
-            console.log(`[PG] ➕ ${evt.name}: ${evt.description}`);
+            const safeDesc = evt.description || "Evento significativo registrato.";
+            console.log(`[PG] ➕ ${evt.name}: ${safeDesc}`);
             // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string)
-            addCharacterEvent(campaignId, evt.name, sessionId, evt.description, 'GROWTH');
+            addCharacterEvent(campaignId, evt.name, sessionId, safeDesc, 'GROWTH');
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string)
-            await ingestBioEvent(campaignId, sessionId, evt.name, evt.description, 'PG');
+            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG');
             markCharacterDirtyByName(campaignId, evt.name);
         }
 
         // NPC events
         for (const evt of validated.npc_events.keep) {
-            console.log(`[NPC] ➕ ${evt.name}: ${evt.description}`);
+            const safeDesc = evt.description || "Interazione rilevante registrata.";
+            console.log(`[NPC] ➕ ${evt.name}: ${safeDesc}`);
             // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string)
-            addNpcEvent(campaignId, evt.name, sessionId, evt.description, 'EVENT');
+            addNpcEvent(campaignId, evt.name, sessionId, safeDesc, 'EVENT');
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string)
-            await ingestBioEvent(campaignId, sessionId, evt.name, evt.description, 'NPC');
+            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'NPC');
             markNpcDirty(campaignId, evt.name);
         }
 
         // World events
         for (const evt of validated.world_events.keep) {
-            console.log(`[World] ➕ ${evt.description}`);
+            const safeDesc = evt.description || "Evento mondiale registrato.";
+            console.log(`[World] ➕ ${safeDesc}`);
             // Signature: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number)
-            addWorldEvent(campaignId, sessionId, evt.description, 'EVENT');
+            addWorldEvent(campaignId, sessionId, safeDesc, 'EVENT');
             // Signature: (campaignId: number, sessionId: string, event: string, type: string)
-            await ingestWorldEvent(campaignId, sessionId, evt.description, 'EVENT');
+            await ingestWorldEvent(campaignId, sessionId, safeDesc, 'EVENT');
         }
 
         // Loot (with reconciliation)

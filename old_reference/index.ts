@@ -1,0 +1,4964 @@
+import 'dotenv/config';
+import sodium from 'libsodium-wrappers';
+import {
+    Client,
+    GatewayIntentBits,
+    Message,
+    VoiceBasedChannel,
+    TextChannel,
+    EmbedBuilder,
+    ChannelType,
+    DMChannel,
+    NewsChannel,
+    ThreadChannel,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ComponentType,
+    MessageComponentInteraction
+} from 'discord.js';
+import { connectToChannel, disconnect, wipeLocalFiles, pauseRecording, resumeRecording, isRecordingPaused } from './voicerecorder';
+import { uploadToOracle, downloadFromOracle, wipeBucket, getPresignedUrl, checkStorageUsage } from './backupService';
+import { audioQueue, correctionQueue, removeSessionJobs, clearQueue } from './queue';
+import * as fs from 'fs';
+import {
+    generateSummary,
+    TONES,
+    ToneKey,
+    askBard,
+    prepareCleanText,
+    ingestSessionComplete,
+    generateCharacterBiography,
+    ingestBioEvent,
+    generateNpcBiography,
+    ingestWorldEvent,
+    ingestLootEvent,
+    smartMergeBios,
+    regenerateNpcNotes,
+    reconcileNpcName,        // NUOVO - Riconciliazione NPC fuzzy + AI
+    deduplicateNpcBatch,     // NUOVO - Pre-dedup batch NPC
+    reconcileLocationName,   // NUOVO - Riconciliazione Location fuzzy + AI
+    deduplicateLocationBatch, // NUOVO - Pre-dedup batch Location
+    reconcileMonsterName,    // NUOVO - Riconciliazione Monster fuzzy + AI
+    deduplicateMonsterBatch, // NUOVO - Pre-dedup batch Monster
+    reconcileItemName,       // NUOVO - Riconciliazione Item fuzzy + AI
+    deduplicateItemBatch,    // NUOVO - Pre-dedup batch Item
+    reconcileQuestTitle,     // NUOVO - Riconciliazione Quest fuzzy + AI
+    deduplicateQuestBatch,   // NUOVO - Pre-dedup batch Quest
+    validateBatch,           // NUOVO
+    syncAllDirtyNpcs,        // NUOVO
+    syncNpcDossierIfNeeded,   // NUOVO
+    syncNpcDossier,
+    syncAllDirtyAtlas,        // NUOVO - Atlas dirty sync
+    syncAtlasEntryIfNeeded,   // NUOVO - Atlas dirty sync
+    syncAllDirtyCharacters,   // NUOVO - Character dirty sync
+    syncCharacterIfNeeded,    // NUOVO - Character dirty sync
+    resetAndRegenerateCharacterBio,  // NUOVO - Reset bio PG
+    resetAllCharacterBios     // NUOVO - Reset tutte le bio PG
+} from './bard';
+import { mixSessionAudio } from './sessionMixer';
+import {
+    getAvailableSessions,
+    updateUserCharacter,
+    getUserProfile,
+    getUnprocessedRecordings,
+    resetSessionData,
+    updateRecordingStatus,
+    resetUnfinishedRecordings,
+    getSessionAuthor,
+    getUserName,
+    getSessionStartTime,
+    setSessionNumber,
+    getExplicitSessionNumber,
+    findSessionByTimestamp,
+    getRecording,
+    addRecording,
+    wipeDatabase,
+    getSessionTranscript,
+    getGuildConfig,
+    setGuildConfig,
+    createCampaign,
+    getCampaigns,
+    getActiveCampaign,
+    setActiveCampaign,
+    createSession,
+    getSessionCampaignId,
+    addChatMessage,
+    getChatHistory,
+    updateSessionTitle,
+    db,
+    addSessionNote,
+    getCampaignCharacters,
+    deleteUserCharacter,
+    deleteCampaign,
+    updateCampaignLocation,
+    getCampaignLocation,
+    getLocationHistory,
+    updateLocation,
+    getAtlasEntry,
+    updateAtlasEntry,
+    listAtlasEntries,
+    deleteAtlasEntry,
+    getAtlasEntryFull,
+    getNpcEntry,
+    getNpcHistory, // 🆕 Per selezione NPC per ID
+    updateNpcEntry,
+    listNpcs,
+    addQuest,
+    updateQuestStatus,
+    getOpenQuests,
+    addLoot,
+    removeLoot,
+    getInventory,
+    addCharacterEvent,
+    addNpcEvent,
+    addWorldEvent,
+    getWorldTimeline,
+    setCampaignYear, getSessionRecordings, Campaign,
+    getSessionEncounteredNPCs,
+    getSessionTravelLog, // NUOVO - Viaggi per sessione
+    getSessionInventory, // NUOVO - Inventario per sessione
+    getSessionQuests, // NUOVO - Quest per sessione
+    renameNpcEntry, // NUOVO IMPORT
+    deleteNpcEntry, // NUOVO IMPORT
+    updateNpcFields, // NUOVO IMPORT
+    migrateKnowledgeFragments, // NUOVO IMPORT
+    markNpcDirty, // NUOVO IMPORT
+    markAtlasDirty, // NUOVO IMPORT - Atlas dirty sync
+    getDirtyAtlasEntries, // NUOVO IMPORT - Atlas dirty sync
+    renameAtlasEntry, // NUOVO - Rinomina luogo
+    mergeAtlasEntry, // NUOVO - Merge luoghi
+    getLocationHistoryWithIds, // NUOVO - Storia con ID
+    fixLocationHistoryEntry, // NUOVO - Correggi storia
+    deleteLocationHistoryEntry, // NUOVO - Cancella storia
+    fixCurrentLocation, // NUOVO - Correggi posizione corrente
+    deleteWorldEvent, // NUOVO - Cancella evento timeline
+    markCharacterDirtyByName, // NUOVO - Character dirty sync (by name)
+    setCampaignAutoUpdate, // NUOVO - Toggle auto-update PG
+    addNpcAlias, // NUOVO - Sistema Ibrido RAG
+    removeNpcAlias, // NUOVO - Sistema Ibrido RAG
+    upsertMonster, // NUOVO - Bestiario (Architettura Unificata)
+    updateSessionPresentNPCs, // NUOVO - Salva NPC incontrati a livello sessione
+    deleteQuest, // NUOVO - Cancella quest
+    updateQuestStatusById, // NUOVO - Aggiorna stato quest per ID
+    // NUOVO - Merge/Reconciliation
+    mergeMonsters,
+    mergeInventoryItems,
+    mergeQuests,
+    listAllMonsters,
+    listAllInventory,
+    listAllQuests,
+    getCharacterUserId // NUOVO - Per $chisono <Nome>
+} from './db';
+import { v4 as uuidv4 } from 'uuid';
+import { startWorker, unloadTranscriptionModels } from './worker';
+import * as path from 'path';
+import { monitor, SessionMetrics, startMemoryMonitor } from './monitor';
+import {
+    processSessionReport,
+    sendTestEmail,
+    sendSessionRecap,
+    archiveSessionTranscripts,
+    testRemoteConnection
+} from './reporter';
+import { exec } from 'child_process';
+import { pipeline } from 'stream/promises';
+import { initIdentityGuard, handleIdentityReply, checkAndPromptMerge } from './identityGuard';
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
+});
+
+const guildSessions = new Map<string, string>(); // GuildId -> SessionId
+const autoLeaveTimers = new Map<string, NodeJS.Timeout>(); // GuildId -> Timer
+
+const getCmdChannelId = (guildId: string) => getGuildConfig(guildId, 'cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID;
+const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
+
+// --- HELPER FUNCTIONS PER ID SESSIONE ---
+
+/**
+ * Verifica se una stringa è un ID di sessione valido (UUID o session_...)
+ */
+function isSessionId(str: string): boolean {
+    if (!str) return false;
+    const clean = str.trim();
+    // Regex per UUID v4 (es. efaebb05-af05-4c02-a346-bebe0375eeaa)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // Regex per session_...
+    const sessionRegex = /^session_[a-zA-Z0-9-]+$/i;
+    // Regex per id:...
+    const explicitIdRegex = /^id:[a-zA-Z0-9-]+$/i;
+
+    return uuidRegex.test(clean) || sessionRegex.test(clean) || explicitIdRegex.test(clean);
+}
+
+/**
+ * Estrae l'ID sessione pulito da una stringa (rimuove prefissi id:)
+ */
+function extractSessionId(str: string): string {
+    if (!str) return "";
+    let clean = str.trim();
+    if (clean.toLowerCase().startsWith('id:')) {
+        clean = clean.substring(3);
+    }
+    return clean;
+}
+
+// --- HELPER: NORMALIZZAZIONE NOMI (PRE-VALIDATION) ---
+/**
+ * Analizza i risultati grezzi dell'Analista e normalizza i nomi NPC
+ * confrontandoli con il DB esistente (Fuzzy + AI).
+ * Evita che "Filmen" venga salvato come nuovo NPC se esiste "Firnen".
+ */
+async function normalizeSummaryNames(campaignId: number, result: any): Promise<any> {
+    console.log(`[Reconcile] 🔄 Avvio normalizzazione nomi pre-validazione...`);
+    const nameMap = new Map<string, string>();
+    const namesToCheck = new Set<string>();
+
+    // 1. Raccogli tutti i nomi potenziali
+    if (result.npc_events) result.npc_events.forEach((e: any) => namesToCheck.add(e.name));
+    if (result.npc_dossier_updates) result.npc_dossier_updates.forEach((e: any) => namesToCheck.add(e.name));
+    if (result.present_npcs) result.present_npcs.forEach((n: string) => namesToCheck.add(n));
+    // A volte i PG finiscono qui per errore, controlliamo anche loro
+    if (result.character_growth) result.character_growth.forEach((e: any) => namesToCheck.add(e.name));
+
+    // 2. Risolvi ogni nome contro il DB
+    for (const name of namesToCheck) {
+        // Cerca una descrizione per il contesto (se disponibile nei dossier updates)
+        const update = result.npc_dossier_updates?.find((u: any) => u.name === name);
+        const desc = update?.description || "";
+
+        // Riconciliazione (Fuzzy + AI)
+        const match = await reconcileNpcName(campaignId, name, desc);
+
+        if (match && match.canonicalName !== name) {
+            nameMap.set(name, match.canonicalName);
+            console.log(`[Reconcile] 🔄 Mappa correttiva: "${name}" -> "${match.canonicalName}"`);
+        }
+    }
+
+    if (nameMap.size === 0) {
+        console.log(`[Reconcile] ✨ Nessuna correzione necessaria.`);
+        return result;
+    }
+
+    // 3. Applica le sostituzioni
+    const replace = (n: string) => nameMap.get(n) || n;
+
+    if (result.npc_events) {
+        result.npc_events.forEach((e: any) => e.name = replace(e.name));
+    }
+    if (result.npc_dossier_updates) {
+        result.npc_dossier_updates.forEach((e: any) => e.name = replace(e.name));
+    }
+    if (result.present_npcs) {
+        result.present_npcs = result.present_npcs.map((n: string) => replace(n));
+    }
+    if (result.character_growth) {
+        result.character_growth.forEach((e: any) => e.name = replace(e.name));
+    }
+
+    console.log(`[Reconcile] ✅ Nomi normalizzati nel summary.`);
+    return result;
+}
+
+client.on('messageCreate', async (message: Message) => {
+    // CAMBIO PREFISSO: ! -> $
+    if (message.author.bot) return;
+    if (!message.guild) return;
+
+    // --- IDENTITY GUARD REPLY HANDLER ---
+    await handleIdentityReply(message);
+
+    if (!message.content.startsWith('$')) return;
+
+    const allowedChannelId = getCmdChannelId(message.guild.id);
+    const isConfigCommand = message.content.startsWith('$setcmd');
+
+    if (allowedChannelId && message.channelId !== allowedChannelId && !isConfigCommand) return;
+
+    const args = message.content.slice(1).split(' ');
+    const command = args.shift()?.toLowerCase();
+
+    // --- COMANDI GESTIONE CAMPAGNE ---
+
+    if (command === 'creacampagna' || command === 'createcampaign') {
+        const name = args.join(' ');
+        if (!name) return await message.reply("Uso: `$creacampagna <Nome Campagna>`");
+
+        createCampaign(message.guild.id, name);
+        return await message.reply(`✅ Campagna **${name}** creata! Usa \`$selezionacampagna ${name}\` per attivarla.`);
+    }
+
+    if (command === 'listacampagne' || command === 'listcampaigns') {
+        const campaigns = getCampaigns(message.guild.id);
+        const active = getActiveCampaign(message.guild.id);
+
+        if (campaigns.length === 0) {
+            return await message.reply("Nessuna campagna trovata. Creane una con `$creacampagna`.");
+        }
+
+        const ITEMS_PER_PAGE = 5;
+        const totalPages = Math.ceil(campaigns.length / ITEMS_PER_PAGE);
+        let currentPage = 0;
+
+        const generateEmbed = (page: number) => {
+            const start = page * ITEMS_PER_PAGE;
+            const end = start + ITEMS_PER_PAGE;
+            const currentCampaigns = campaigns.slice(start, end);
+
+            const list = currentCampaigns.map(c =>
+                `${c.id === active?.id ? '👉 ' : ''}**${c.name}** (ID: ${c.id})`
+            ).join('\n');
+
+            return new EmbedBuilder()
+                .setTitle("🗺️ Campagne di questo Server")
+                .setDescription(list)
+                .setColor("#E67E22")
+                .setFooter({ text: `Pagina ${page + 1} di ${totalPages}` });
+        };
+
+        const generateButtons = (page: number) => {
+            const row = new ActionRowBuilder<ButtonBuilder>();
+
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_page_camp')
+                    .setLabel('⬅️ Precedente')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('next_page_camp')
+                    .setLabel('Successivo ➡️')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+
+            return row;
+        };
+
+        const reply = await message.reply({
+            embeds: [generateEmbed(currentPage)],
+            components: totalPages > 1 ? [generateButtons(currentPage)] : []
+        });
+
+        if (totalPages > 1) {
+            const collector = reply.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000
+            });
+
+            collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                if (interaction.user.id !== message.author.id) {
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    return;
+                }
+
+                if (interaction.customId === 'prev_page_camp') {
+                    currentPage--;
+                } else if (interaction.customId === 'next_page_camp') {
+                    currentPage++;
+                }
+
+                await interaction.update({
+                    embeds: [generateEmbed(currentPage)],
+                    components: [generateButtons(currentPage)]
+                });
+            });
+
+            collector.on('end', () => {
+                reply.edit({ components: [] }).catch(() => { });
+            });
+        }
+    }
+
+    if (command === 'selezionacampagna' || command === 'setcampagna' || command === 'selectcampaign' || command === 'setcampaign') {
+        const nameOrId = args.join(' ');
+        if (!nameOrId) return await message.reply("Uso: `$selezionacampagna <Nome o ID>`");
+
+        const campaigns = getCampaigns(message.guild.id);
+        const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
+
+        if (!target) return await message.reply("⚠️ Campagna non trovata.");
+
+        setActiveCampaign(message.guild.id, target.id);
+        return await message.reply(`✅ Campagna attiva impostata su: **${target.name}**.`);
+    }
+
+    if (command === 'eliminacampagna' || command === 'deletecampaign') {
+        const nameOrId = args.join(' ');
+        if (!nameOrId) return await message.reply("Uso: `$eliminacampagna <Nome o ID>`");
+
+        const campaigns = getCampaigns(message.guild.id);
+        const target = campaigns.find(c => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id.toString() === nameOrId);
+
+        if (!target) return await message.reply("⚠️ Campagna non trovata.");
+
+        // Chiedi conferma
+        await message.reply(`⚠️ **ATTENZIONE**: Stai per eliminare la campagna **${target.name}** e TUTTE le sue sessioni, registrazioni e memorie. Questa azione è irreversibile.\nScrivi \`CONFERMO\` per procedere.`);
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                deleteCampaign(target.id);
+                await message.reply(`🗑️ Campagna **${target.name}** eliminata definitivamente.`);
+            }
+        } catch (e) {
+            await message.reply("⌛ Tempo scaduto. Eliminazione annullata.");
+        }
+    }
+
+    // --- CHECK CAMPAGNA ATTIVA ---
+    // Molti comandi richiedono una campagna attiva
+    let activeCampaign = getActiveCampaign(message.guild.id);
+    const campaignCommands = ['ascolta', 'listen', 'sono', 'iam', 'miaclasse', 'myclass', 'miarazza', 'myrace', 'miadesc', 'mydesc', 'chisono', 'whoami', 'bio', 'biografia', 'listasessioni', 'listsessions', 'chiedialbardo', 'ask', 'ingest', 'memorizza', 'modificatitolo', 'edittitle', 'nota', 'note', 'pausa', 'pause', 'riprendi', 'resume', 'party', 'compagni', 'resetpg', 'clearchara', 'wiki', 'lore', 'luogo', 'location', 'viaggi', 'storia', 'story', 'atlante', 'memoria', 'npc', 'dossier', 'presenze', 'quest', 'obiettivi', 'inventario', 'loot', 'bag', 'timeline', 'cronologia', 'data', 'anno0', 'metrics', 'metriche', 'sync', 'bestiario', 'bestiary', 'mostri', 'monsters', 'unisciitem', 'mergeitem', 'mergeitems', 'unisciquest', 'mergequest', 'mergequests'];
+
+    if (command && campaignCommands.includes(command) && !activeCampaign) {
+        return await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
+    }
+
+    // --- COMANDO AIUTO (ITALIANO) ---
+    if (command === 'aiuto') {
+        const helpEmbed = new EmbedBuilder()
+            .setTitle("🖋️ Lestapenna - Comandi Disponibili")
+            .setColor("#D4AF37")
+            .setDescription("Benvenuti, avventurieri! Io sono il vostro bardo e cronista personale.")
+            .addFields(
+                {
+                    name: "🗺️ Campagne",
+                    value:
+                        "`$creacampagna <Nome>`: Crea nuova campagna.\n" +
+                        "`$selezionacampagna <Nome>`: Attiva una campagna.\n" +
+                        "`$listacampagne`: Mostra le campagne.\n" +
+                        "`$eliminacampagna <Nome>`: Elimina una campagna."
+                },
+                {
+                    name: "🎙️ Gestione Sessione",
+                    value:
+                        "`$ascolta [Luogo]`: Inizia la registrazione (Campagna Attiva).\n" +
+                        "`$termina`: Termina la sessione.\n" +
+                        "`$pausa`: Sospende la registrazione.\n" +
+                        "`$riprendi`: Riprende la registrazione.\n" +
+                        "`$nota <Testo>`: Aggiunge una nota manuale al riassunto.\n" +
+                        "`$impostasessione <N>`: Imposta numero sessione.\n" +
+                        "`$reset <ID>`: Forza la rielaborazione di una sessione."
+                },
+                {
+                    name: "🕰️ Comandi per Sessione Specifica",
+                    value: "Molti comandi accettano un ID sessione (`session_xxxxx` o UUID) per vedere lo storico:\n" +
+                        "`$viaggi <ID>`: Spostamenti della sessione.\n" +
+                        "`$presenze <ID>`: NPC incontrati.\n" +
+                        "`$npc <ID>`: Anteprima NPC.\n" +
+                        "`$atlante <ID>`: Luoghi visitati.\n" +
+                        "`$inventario <ID>`: Oggetti acquisiti.\n" +
+                        "`$quest <ID>`: Quest aggiunte."
+                },
+                {
+                    name: "📍 Luoghi & Atlante",
+                    value:
+                        "`$luogo [Macro | Micro]`: Visualizza o aggiorna il luogo.\n" +
+                        "`$viaggi`: Cronologia spostamenti.\n" +
+                        "`$viaggi fix #ID | <R> | <L>`: Correggi voce cronologia.\n" +
+                        "`$atlante`: Memoria del luogo attuale.\n" +
+                        "`$atlante list`: Elenca tutti i luoghi.\n" +
+                        "`$atlante rename <VR>|<VL>|<NR>|<NL>`: Rinomina luogo.\n" +
+                        "`$atlante <R> | <L> | <Desc> [| force]`: Aggiorna.\n" +
+                        "`$atlante sync [all|Nome]`: Sincronizza RAG."
+                },
+                {
+                    name: "👥 NPC & Dossier",
+                    value:
+                        "`$npc [Nome]`: Visualizza o aggiorna il dossier NPC.\n" +
+                        "`$npc add <Nome> | <Ruolo> | <Desc>`: Crea un nuovo NPC.\n" +
+                        "`$npc merge <Vecchio> | <Nuovo>`: Unisce due NPC.\n" +
+                        "`$npc delete <Nome>`: Elimina un NPC.\n" +
+                        "`$npc update <Nome> | <Campo> | <Val> [| force]`: Aggiorna campi.\n" +
+                        "`$npc regen <Nome>`: Rigenera le note usando la cronologia.\n" +
+                        "`$npc sync [Nome|all]`: Sincronizza manualmente il RAG.\n" +
+                        "`$presenze`: Mostra NPC incontrati nella sessione."
+                },
+                {
+                    name: "📜 Narrazione & Archivi",
+                    value:
+                        "`$listasessioni`: Ultime 5 sessioni (Campagna Attiva).\n" +
+                        "`$racconta <ID> [tono]`: Rigenera riassunto.\n" +
+                        "`$modificatitolo <ID> <Titolo>`: Modifica il titolo di una sessione.\n" +
+                        "`$chiedialbardo <Domanda>`: Chiedi al Bardo qualcosa sulla storia.\n" +
+                        "`$wiki <Termine>`: Cerca frammenti di lore esatti.\n" +
+                        "`$timeline`: Mostra la cronologia degli eventi mondiali.\n" +
+                        "`$memorizza <ID>`: Indicizza manualmente una sessione nella memoria.\n" +
+                        "`$scarica <ID>`: Scarica audio.\n" +
+                        "`$scaricatrascrizioni <ID>`: Scarica testo trascrizioni (txt)."
+                },
+                {
+                    name: "🐲 Bestiario",
+                    value:
+                        "`$bestiario`: Mostra i mostri incontrati.\n" +
+                        "`$bestiario <Nome>`: Dettagli del mostro (abilità, debolezze, ecc.).\n" +
+                        "`$bestiario merge <Vecchio> | <Nuovo>`: Unisce due mostri."
+                },
+                {
+                    name: "🎒 Inventario & Quest",
+                    value:
+                        "`$quest`: Visualizza quest attive.\n" +
+                        "`$quest add <Titolo>`: Aggiunge una quest.\n" +
+                        "`$quest done <Titolo>`: Completa una quest.\n" +
+                        "`$quest delete <ID>`: Elimina una quest.\n" +
+                        "`$inventario`: Visualizza inventario.\n" +
+                        "`$loot add <Oggetto>`: Aggiunge un oggetto.\n" +
+                        "`$loot use <Oggetto>`: Rimuove/Usa un oggetto.\n" +
+                        "`$unisciitem <Vecchio> | <Nuovo>`: Unisce due oggetti.\n" +
+                        "`$unisciquest <Vecchia> | <Nuova>`: Unisce due quest."
+                },
+                {
+                    name: "👤 Scheda Personaggio (Campagna Attiva)",
+                    value:
+                        "`$sono <Nome>`: Imposta il tuo nome.\n" +
+                        "`$miaclasse <Classe>`: Imposta la tua classe.\n" +
+                        "`$miarazza <Razza>`: Imposta la tua razza.\n" +
+                        "`$miadesc <Testo>`: Aggiunge dettagli.\n" +
+                        "`$chisono [Nome]`: Visualizza la scheda (tua o di un altro).\n" +
+                        "`$party`: Visualizza tutti i personaggi.\n" +
+                        "`$storia <Nome>`: Genera la biografia evolutiva (PG o NPC).\n" +
+                        "`$resetpg`: Resetta la tua scheda."
+                },
+                {
+                    name: "⏳ Tempo & Storia",
+                    value:
+                        "`$anno0 <Descrizione>`: Imposta l'evento fondante (Anno 0).\n" +
+                        "`$data <Anno>`: Imposta l'anno corrente della campagna.\n" +
+                        "`$timeline`: Mostra la cronologia degli eventi.\n" +
+                        "`$timeline add <Anno> | <Tipo> | <Desc>`: Aggiunge un evento storico."
+                },
+                {
+                    name: "⚙️ Configurazione & Status",
+                    value:
+                        "`$setcmd`: Imposta questo canale per i comandi.\n" +
+                        "`$setsummary`: Set this channel for summaries.\n" +
+                        "`$stato`: Mostra lo stato delle code di elaborazione.\n" +
+                        "`$metriche`: Mostra le metriche live della sessione."
+                },
+                {
+                    name: "🔧 Comandi Avanzati",
+                    value:
+                        "**NPC Alias (per RAG)**\n" +
+                        "`$npc alias <Nome> add <Soprannome>`: Aggiungi alias.\n" +
+                        "`$npc alias <Nome> remove <Soprannome>`: Rimuovi alias.\n\n" +
+                        "**Timeline**\n" +
+                        "`$timeline delete <ID>`: Elimina evento storico.\n\n" +
+                        "**Viaggi**\n" +
+                        "`$viaggi fixcurrent <R> | <L>`: Correggi posizione corrente.\n" +
+                        "`$viaggi delete <ID>`: Elimina voce cronologia.\n\n" +
+                        "**Altro**\n" +
+                        "`$toni`: Lista toni narrativi per `$racconta`.\n" +
+                        "`$autoaggiorna on/off`: Toggle auto-update biografie PG.\n" +
+                        "`$riprocessa <ID>`: Rigenera memoria/dati (no ritrascrizione)."
+                },
+                {
+                    name: "🧪 Test & Debug",
+                    value:
+                        "`$teststream <URL>`: Simula una sessione via link audio.\n" +
+                        "`$cleantest`: Rimuove tutte le sessioni di test dal DB."
+                },
+                {
+                    name: "💡 Alias Comandi",
+                    value: "Molti comandi hanno alias inglesi: `$luogo`/`$location`, `$atlante`/`$atlas`, `$dossier`/`$npc`, `$viaggi`/`$travels`, `$inventario`/`$inventario`, `$bestiario`/`$bestiario`, `$unisciitem`/`$mergeitem`, `$unisciquest`/`$mergequest`, etc."
+                }
+            )
+            .setFooter({ text: "Per la versione italiana usa $aiuto" });
+        return await message.reply({ embeds: [helpEmbed] });
+    }
+
+    // --- COMANDO HELP (INGLESE) ---
+    if (command === 'help') {
+        const helpEmbed = new EmbedBuilder()
+            .setTitle("🖋️ Lestapenna - Available Commands")
+            .setColor("#D4AF37")
+            .setDescription("Welcome, adventurers! I am your personal bard and chronicler.")
+            .addFields(
+                {
+                    name: "🗺️ Campaigns",
+                    value:
+                        "`$createcampaign <Name>`: Create a new campaign.\n" +
+                        "`$selectcampaign <Name>`: Activate a campaign.\n" +
+                        "`$listcampaigns`: Show available campaigns.\n" +
+                        "`$deletecampaign <Name>`: Delete a campaign."
+                },
+                {
+                    name: "🎙️ Session Management",
+                    value:
+                        "`$listen [Location]`: Start recording (Active Campaign).\n" +
+                        "`$stoplistening`: End the session.\n" +
+                        "`$pause`: Pause recording.\n" +
+                        "`$resume`: Resume recording.\n" +
+                        "`$note <Text>`: Add a manual note to the summary.\n" +
+                        "`$setsession <N>`: Manually set session number.\n" +
+                        "`$reset <ID>`: Force re-processing of a session."
+                },
+                {
+                    name: "🕰️ Session Specific Commands",
+                    value: "Many commands accept a session ID (`session_xxxxx` or UUID) to view history:\n" +
+                        "`$travels <ID>`: Session travels.\n" +
+                        "`$presenze <ID>`: Encountered NPCs.\n" +
+                        "`$npc <ID>`: NPC preview.\n" +
+                        "`$atlas <ID>`: Visited locations.\n" +
+                        "`$inventory <ID>`: Acquired items.\n" +
+                        "`$quest <ID>`: Added quests."
+                },
+                {
+                    name: "📍 Locations & Atlas",
+                    value:
+                        "`$location [Macro | Micro]`: View or update location.\n" +
+                        "`$travels`: Travel history.\n" +
+                        "`$travels fix #ID | <R> | <L>`: Fix history entry.\n" +
+                        "`$atlas`: Current location memory.\n" +
+                        "`$atlas list`: List all locations.\n" +
+                        "`$atlas rename <OR>|<OL>|<NR>|<NL>`: Rename location.\n" +
+                        "`$atlas <R> | <L> | <Desc> [| force]`: Update.\n" +
+                        "`$atlas sync [all|Name]`: Sync RAG."
+                },
+                {
+                    name: "👥 NPC & Dossier",
+                    value:
+                        "`$npc [Name]`: View or update NPC dossier.\n" +
+                        "`$npc add <Name> | <Role> | <Desc>`: Create a new NPC.\n" +
+                        "`$npc merge <Old> | <New>`: Merge two NPCs.\n" +
+                        "`$npc delete <Name>`: Delete an NPC.\n" +
+                        "`$npc update <Name> | <Field> | <Val> [| force]`: Update fields.\n" +
+                        "`$npc regen <Name>`: Regenerate notes using history.\n" +
+                        "`$npc sync [Name|all]`: Manually sync RAG.\n" +
+                        "`$presenze`: Show NPCs encountered in session."
+                },
+                {
+                    name: "📜 Storytelling & Archives",
+                    value:
+                        "`$listsessions`: Last 5 sessions (Active Campaign).\n" +
+                        "`$narrate <ID> [tone]`: Regenerate summary.\n" +
+                        "`$edittitle <ID> <Title>`: Edit session title.\n" +
+                        "`$ask <Question>`: Ask the Bard about the lore.\n" +
+                        "`$lore <Term>`: Search exact lore fragments.\n" +
+                        "`$timeline`: Show world history timeline.\n" +
+                        "`$ingest <ID>`: Manually index a session into memory.\n" +
+                        "`$download <ID>`: Download audio.\n" +
+                        "`$downloadtxt <ID>`: Download transcriptions (txt)."
+                },
+                {
+                    name: "🐲 Bestiary",
+                    value:
+                        "`$bestiario`: Show encountered monsters.\n" +
+                        "`$bestiario <Name>`: Monster details (abilities, weaknesses, etc.).\n" +
+                        "`$bestiario merge <Old> | <New>`: Merge two monsters."
+                },
+                {
+                    name: "🎒 Inventory & Quests",
+                    value:
+                        "`$quest`: View active quests.\n" +
+                        "`$quest add <Title>`: Add a quest.\n" +
+                        "`$quest done <Title>`: Complete a quest.\n" +
+                        "`$quest delete <ID>`: Delete a quest.\n" +
+                        "`$inventory`: View inventory.\n" +
+                        "`$loot add <Item>`: Add an item.\n" +
+                        "`$loot use <Item>`: Remove/Use an item.\n" +
+                        "`$mergeitem <Old> | <New>`: Merge two items.\n" +
+                        "`$mergequest <Old> | <New>`: Merge two quests."
+                },
+                {
+                    name: "👤 Character Sheet (Active Campaign)",
+                    value:
+                        "`$iam <Name>`: Set your character name.\n" +
+                        "`$myclass <Class>`: Set your class.\n" +
+                        "`$myrace <Race>`: Set your race.\n" +
+                        "`$mydesc <Text>`: Add details.\n" +
+                        "`$whoami [Name]`: View character sheet (yours or others).\n" +
+                        "`$party`: View all characters.\n" +
+                        "`$story <CharName>`: Generate character biography.\n" +
+                        "`$clearchara`: Reset your sheet."
+                },
+                {
+                    name: "⚙️ Configuration & Status",
+                    value:
+                        "`$setcmd`: Set this channel for commands.\n" +
+                        "`$setsummary`: Set this channel for summaries.\n" +
+                        "`$status`: Show processing queue status.\n" +
+                        "`$metrics`: Show live session metrics."
+                },
+                {
+                    name: "🔧 Advanced Commands",
+                    value:
+                        "**NPC Alias (for RAG)**\n" +
+                        "`$npc alias <Name> add <Alias>`: Add alias.\n" +
+                        "`$npc alias <Name> remove <Alias>`: Remove alias.\n\n" +
+                        "**Timeline**\n" +
+                        "`$timeline delete <ID>`: Delete historical event.\n\n" +
+                        "**Travels**\n" +
+                        "`$travels fixcurrent <R> | <L>`: Fix current position.\n" +
+                        "`$travels delete <ID>`: Delete history entry.\n\n" +
+                        "**Other**\n" +
+                        "`$tones`: List narrative tones for `$narrate`.\n" +
+                        "`$autoupdate on/off`: Toggle auto-update PC biographies.\n" +
+                        "`$reprocess <ID>`: Regenerate memory/data (no re-transcription)."
+                },
+                {
+                    name: "🧪 Test & Debug",
+                    value:
+                        "`$teststream <URL>`: Simulate a session via direct audio link.\n" +
+                        "`$cleantest`: Remove all test sessions from DB."
+                },
+                {
+                    name: "💡 Command Aliases",
+                    value: "Many commands have Italian aliases: `$location`/`$luogo`, `$atlas`/`$atlante`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, `$bestiary`/`$bestiario`, `$mergeitem`/`$unisciitem`, `$mergequest`/`$unisciquest`, etc."
+                }
+            )
+            .setFooter({ text: "Per la versione italiana usa $aiuto" });
+        return await message.reply({ embeds: [helpEmbed] });
+    }
+
+    // --- COMANDI CONFIGURAZIONE CANALI ---
+    if (command === 'setcmd') {
+        if (!message.member?.permissions.has('ManageChannels')) {
+            return await message.reply("⛔ Non hai il permesso di configurare il bot.");
+        }
+        setGuildConfig(message.guild.id, 'cmd_channel_id', message.channelId);
+        return await message.reply(`✅ Canale Comandi impostato su <#${message.channelId}>.`);
+    }
+
+    if (command === 'setsummary') {
+        if (!message.member?.permissions.has('ManageChannels')) {
+            return await message.reply("⛔ Non hai il permesso di configurare il bot.");
+        }
+        setGuildConfig(message.guild.id, 'summary_channel_id', message.channelId);
+        return await message.reply(`✅ Canale Riassunti impostato su <#${message.channelId}>.`);
+    }
+
+    // --- COMANDO LISTEN (INIZIO SESSIONE) ---
+    if (command === 'listen' || command === 'ascolta' || command === 'testascolta') {
+        const isTestMode = command === 'testascolta';
+
+        if (isTestMode) {
+            const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
+            if (setupCamp) activeCampaign = setupCamp;
+            else return;
+        }
+
+        const member = message.member;
+
+        // --- CHECK ANNO CAMPAGNA ---
+        if (activeCampaign!.current_year === undefined || activeCampaign!.current_year === null) {
+            return await message.reply(
+                `🛑 **Configurazione Temporale Mancante!**\n` +
+                `Prima di iniziare la prima sessione, devi stabilire l'Anno 0 e la data attuale.\n\n` +
+                `1. Usa \`$anno0 <Descrizione>\` per definire l'evento cardine (es. "La Caduta dell'Impero").\n` +
+                `2. Usa \`$data <Anno>\` per impostare l'anno corrente (es. 100).`
+            );
+        }
+        // ---------------------------
+
+        // --- NUOVO BLOCCO GESTIONE LUOGO ---
+        const locationArg = args.join(' ');
+        const sessionId = uuidv4();
+
+        if (locationArg) {
+            let newMacro = null;
+            let newMicro = null;
+
+            if (locationArg.includes('|')) {
+                const parts = locationArg.split('|').map(s => s.trim());
+                newMacro = parts[0];
+                newMicro = parts[1];
+            } else {
+                newMicro = locationArg.trim();
+            }
+
+            updateLocation(activeCampaign!.id, newMacro, newMicro, sessionId);
+            await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
+        } else {
+            const currentLoc = getCampaignLocation(message.guild.id);
+            if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
+                await message.reply(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`$ascolta Macro | Micro\`)`);
+            } else {
+                await message.reply(`⚠️ **Luogo Sconosciuto.**\nConsiglio: scrivi \`$ascolta <Città> | <Luogo>\` per aiutare il Bardo a capire meglio i nomi e l'atmosfera.`);
+            }
+        }
+        // -----------------------------------
+
+        if (member?.voice.channel) {
+            const voiceChannel = member.voice.channel;
+
+            // 1. FILTRO BOT
+            const humanMembers = voiceChannel.members.filter(m => !m.user.bot);
+            const botMembers = voiceChannel.members.filter(m => m.user.bot);
+
+            // 2. AUTO-ASSEGNAZIONE NOMI IN TEST MODE
+            if (isTestMode) {
+                const fantasyNames = [
+                    'Thorin', 'Elara', 'Gandor', 'Lyria', 'Draven', 'Aria',
+                    'Kael', 'Mira', 'Ragnar', 'Freya', 'Aldric', 'Seraphina'
+                ];
+
+                let nameIndex = 0;
+                humanMembers.forEach(m => {
+                    const profile = getUserProfile(m.id, activeCampaign!.id);
+                    if (!profile.character_name) {
+                        const autoName = fantasyNames[nameIndex % fantasyNames.length];
+                        updateUserCharacter(m.id, activeCampaign!.id, 'character_name', autoName);
+                        nameIndex++;
+                    }
+                });
+
+                await message.reply(`🧪 **Modalità Test**: Nomi automatici assegnati a ${nameIndex} avventurieri.`);
+            }
+
+            // 3. CHECK NOMI OBBLIGATORI (Solo in modalità normale)
+            if (!isTestMode) {
+                const missingNames: string[] = [];
+                humanMembers.forEach(m => {
+                    const profile = getUserProfile(m.id, activeCampaign!.id);
+                    if (!profile.character_name) {
+                        missingNames.push(m.displayName);
+                    }
+                });
+
+                if (missingNames.length > 0) {
+                    return await message.reply(
+                        `🛑 **ALT!** Non posso iniziare la cronaca per **${activeCampaign!.name}**.\n` +
+                        `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
+                        missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
+                    );
+                }
+            }
+
+            if (botMembers.size > 0) {
+                const botNames = botMembers.map(b => b.displayName).join(', ');
+                await (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
+            }
+
+            guildSessions.set(message.guild.id, sessionId);
+            createSession(sessionId, message.guild.id, activeCampaign!.id);
+            monitor.startSession(sessionId);
+
+            await audioQueue.pause();
+            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
+
+            await connectToChannel(voiceChannel, sessionId);
+            await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+            checkAutoLeave(voiceChannel);
+        } else {
+            await message.reply("Devi essere in un canale vocale per evocare il Bardo!");
+        }
+    }
+
+    // --- COMANDO STOPLISTENING (FINE SESSIONE) ---
+    if (command === 'stoplistening' || command === 'termina') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) {
+            await disconnect(message.guild.id);
+            await message.reply("Nessuna sessione attiva tracciata, ma mi sono disconnesso.");
+            return;
+        }
+
+        // 1. Disconnessione e chiusura file
+        await disconnect(message.guild.id);
+        guildSessions.delete(message.guild.id);
+
+        await message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
+
+        // 2. Ripresa coda
+        await audioQueue.resume();
+        console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
+
+        // 3. Monitoraggio
+        await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
+    }
+
+    // --- NUOVO: !pausa / !riprendi ---
+    if (command === 'pausa' || command === 'pause') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("Nessuna sessione attiva.");
+
+        if (isRecordingPaused(message.guild.id)) {
+            return await message.reply("La registrazione è già in pausa.");
+        }
+
+        pauseRecording(message.guild.id);
+        await message.reply("⏸️ **Registrazione in Pausa**. Il Bardo si riposa.");
+    }
+
+    if (command === 'riprendi' || command === 'resume') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("Nessuna sessione attiva.");
+
+        if (!isRecordingPaused(message.guild.id)) {
+            return await message.reply("La registrazione è già attiva.");
+        }
+
+        resumeRecording(message.guild.id);
+        await message.reply("▶️ **Registrazione Ripresa**. Il Bardo torna ad ascoltare.");
+    }
+
+    // --- NUOVO: !nota <Testo> ---
+    if (command === 'nota' || command === 'note') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) return await message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `$ascolta`.");
+
+        const noteContent = args.join(' ');
+        if (!noteContent) return await message.reply("Uso: `$nota <Testo della nota>`");
+
+        addSessionNote(sessionId, message.author.id, noteContent, Date.now());
+        await message.reply("📝 Nota aggiunta al diario della sessione.");
+    }
+
+    // --- NUOVO: !luogo <Macro | Micro> ---
+    if (command === 'luogo' || command === 'location') {
+        const argsStr = args.join(' ');
+
+        if (!argsStr) {
+            // Getter
+            const loc = getCampaignLocation(message.guild.id);
+            if (!loc || (!loc.macro && !loc.micro)) {
+                return message.reply("🗺️ Non so dove siete! Usa `$luogo <Città> | <Luogo>` per impostarlo.");
+            }
+            return message.reply(`📍 **Posizione Attuale**\n🌍 Regione: **${loc.macro || "Sconosciuto"}**\n🏠 Luogo: **${loc.micro || "Generico"}**`);
+        } else {
+            // Setter
+            const current = getCampaignLocation(message.guild.id);
+            const sessionId = guildSessions.get(message.guild.id); // Recupera sessione attiva se cè
+
+            let newMacro = current?.macro || null;
+            let newMicro = null;
+
+            if (argsStr.includes('|')) {
+                // Sintassi esplicita: Macro | Micro
+                const parts = argsStr.split('|').map(s => s.trim());
+                newMacro = parts[0];
+                newMicro = parts[1];
+            } else {
+                // Sintassi semplice: assume sia un cambio di Micro-luogo (stanza/edificio)
+                newMicro = argsStr.trim();
+            }
+
+            updateLocation(activeCampaign!.id, newMacro, newMicro, sessionId);
+
+            return message.reply(`📍 **Aggiornamento Manuale**\nImpostato su: ${newMacro || '-'} | ${newMicro || '-'}`);
+        }
+    }
+
+    // --- NUOVO: !viaggi (Cronologia) ---
+    // Uso: $viaggi -> Mostra cronologia
+    // Uso: $viaggi <ID sessione> -> Mostra viaggi di una sessione specifica
+    // Uso: $viaggi list -> Mostra cronologia con ID
+    // Uso: $viaggi fix <ID> | <NuovaMacro> | <NuovaMicro> -> Correggi voce
+    // Uso: $viaggi fixcurrent <NuovaMacro> | <NuovaMicro> -> Correggi posizione corrente
+    if (command === 'viaggi' || command === 'travels') {
+        const argsStr = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $viaggi <session_id> ---
+        if (argsStr && isSessionId(argsStr)) {
+            const sessionId = extractSessionId(argsStr);
+            const travelLog = getSessionTravelLog(sessionId);
+
+            if (travelLog.length === 0) {
+                return message.reply(`📜 Nessun viaggio registrato per la sessione \`${sessionId}\`.`);
+            }
+
+            let msg = `**📜 Viaggi della Sessione \`${sessionId}\`:**\n`;
+            travelLog.forEach((h: any) => {
+                const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                msg += `\`${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+            });
+
+            return message.reply(msg);
+        }
+
+        // --- SOTTOCOMANDO: list (con ID per edit) ---
+        if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
+            const history = getLocationHistoryWithIds(activeCampaign!.id);
+            if (history.length === 0) return message.reply("Il diario di viaggio è vuoto.");
+
+            let msg = "**📜 Diario di Viaggio (con ID per correzione):**\n";
+            history.forEach((h: any, idx: number) => {
+                const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                msg += `\`#${h.id}\` \`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+            });
+            msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.\n💡 Usa \`$viaggi delete #ID\` per eliminare.`;
+
+            return message.reply(msg);
+        }
+
+        // --- SOTTOCOMANDO: fix (correggi voce) ---
+        if (argsStr.toLowerCase().startsWith('fix ') && !argsStr.toLowerCase().startsWith('fixcurrent')) {
+            const fixArgs = argsStr.substring(4).trim();
+            const parts = fixArgs.split('|').map(s => s.trim());
+
+            if (parts.length !== 3) {
+                return message.reply(
+                    '**Uso: `$viaggi fix`**\n' +
+                    '`$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>`\n' +
+                    '💡 Usa `$viaggi list` per vedere gli ID delle voci.'
+                );
+            }
+
+            const idStr = parts[0].replace('#', '').trim();
+            const entryId = parseInt(idStr);
+            const [, newMacro, newMicro] = parts;
+
+            if (isNaN(entryId)) {
+                return message.reply('❌ ID non valido. Usa `$viaggi list` per vedere gli ID.');
+            }
+
+            const success = fixLocationHistoryEntry(entryId, newMacro, newMicro);
+            if (success) {
+                return message.reply(`✅ **Voce #${entryId} corretta!**\n📍 ${newMacro} - ${newMicro}`);
+            } else {
+                return message.reply(`❌ Voce #${entryId} non trovata.`);
+            }
+        }
+
+        // --- SOTTOCOMANDO: delete (cancella voce) ---
+        if (argsStr.toLowerCase().startsWith('delete ') || argsStr.toLowerCase().startsWith('del ') || argsStr.toLowerCase().startsWith('remove ')) {
+            const idStr = argsStr.split(' ')[1].replace('#', '').trim();
+            const entryId = parseInt(idStr);
+
+            if (isNaN(entryId)) {
+                return message.reply('❌ ID non valido. Usa `$viaggi list` per vedere gli ID.');
+            }
+
+            const success = deleteLocationHistoryEntry(entryId);
+            if (success) {
+                return message.reply(`🗑️ Voce #${entryId} eliminata dalla cronologia viaggi.`);
+            } else {
+                return message.reply(`❌ Voce #${entryId} non trovata.`);
+            }
+        }
+
+        // --- SOTTOCOMANDO: fixcurrent (correggi posizione corrente) ---
+        if (argsStr.toLowerCase().startsWith('fixcurrent ') || argsStr.toLowerCase().startsWith('correggi ')) {
+            const fixArgs = argsStr.substring(argsStr.indexOf(' ') + 1).trim();
+            const parts = fixArgs.split('|').map(s => s.trim());
+
+            if (parts.length !== 2) {
+                return message.reply(
+                    '**Uso: `$viaggi fixcurrent`**\n' +
+                    '`$viaggi fixcurrent <NuovaRegione> | <NuovoLuogo>`\n' +
+                    'Corregge la posizione corrente della campagna.'
+                );
+            }
+
+            const [newMacro, newMicro] = parts;
+            fixCurrentLocation(activeCampaign!.id, newMacro, newMicro);
+            return message.reply(`✅ **Posizione corrente aggiornata!**\n📍 ${newMacro} - ${newMicro}`);
+        }
+
+        // --- DEFAULT: Mostra cronologia semplice ---
+        const history = getLocationHistory(message.guild.id);
+        if (history.length === 0) return message.reply("Il diario di viaggio è vuoto.");
+
+        let msg = "**📜 Diario di Viaggio (Ultimi spostamenti):**\n";
+        history.forEach((h: any) => {
+            const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            msg += `\`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+        });
+        msg += `\n💡 Usa \`$viaggi list\` per vedere gli ID e correggere voci.`;
+
+        return message.reply(msg);
+    }
+
+    // --- COMANDO: $atlante (Gestione Luoghi) ---
+    // Uso: $atlante -> Mostra luogo corrente o lista
+    // Uso: $atlante <session_id> -> Mostra luoghi visitati in una sessione
+    // Uso: $atlante list -> Lista tutti i luoghi
+    // Uso: $atlante <Macro> | <Micro> -> Vedi scheda luogo
+    // Uso: $atlante <Macro> | <Micro> | <Descrizione> -> Aggiorna con smart merge
+    // Uso: $atlante <Macro> | <Micro> | <Descrizione> | force -> Sovrascrittura diretta
+    // Uso: $atlante delete <Macro> | <Micro> -> Elimina luogo
+    if (command === 'atlante' || command === 'memoria' || command === 'atlas') {
+        const argsStr = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $atlante <session_id> ---
+        if (argsStr && isSessionId(argsStr)) {
+            const sessionId = extractSessionId(argsStr);
+            const travelLog = getSessionTravelLog(sessionId);
+
+            if (travelLog.length === 0) {
+                return message.reply(`📖 Nessun luogo visitato nella sessione \`${sessionId}\`.`);
+            }
+
+            // Raggruppa luoghi unici
+            const uniqueLocations = new Map<string, { macro: string, micro: string, count: number }>();
+            travelLog.forEach((h: any) => {
+                const key = `${h.macro_location}|${h.micro_location}`;
+                if (uniqueLocations.has(key)) {
+                    uniqueLocations.get(key)!.count++;
+                } else {
+                    uniqueLocations.set(key, { macro: h.macro_location, micro: h.micro_location, count: 1 });
+                }
+            });
+
+            let msg = `**📖 Luoghi Visitati nella Sessione \`${sessionId}\`:**\n`;
+            uniqueLocations.forEach((loc) => {
+                const entry = getAtlasEntry(activeCampaign!.id, loc.macro, loc.micro);
+                const hasDesc = entry ? '📝' : '❔';
+                msg += `${hasDesc} 🌍 **${loc.macro}** - 🏠 ${loc.micro}`;
+                if (loc.count > 1) msg += ` *(${loc.count}x)*`;
+                msg += '\n';
+            });
+            msg += `\n💡 Usa \`$atlante <Regione> | <Luogo>\` per vedere i dettagli.`;
+
+            return message.reply(msg);
+        }
+
+        // --- SENZA ARGOMENTI: Mostra luogo corrente ---
+        if (!argsStr) {
+            const loc = getCampaignLocation(message.guild.id);
+            if (!loc || !loc.macro || !loc.micro) {
+                // Se non c'è posizione corrente, mostra lista
+                const entries = listAtlasEntries(activeCampaign!.id);
+                if (entries.length === 0) return message.reply("📖 L'Atlante è vuoto. Usa `$atlante <Regione> | <Luogo> | <Descrizione>` per aggiungere voci.");
+
+                const list = entries.slice(0, 10).map((e: any) =>
+                    `🗺️ **${e.macro_location}** - *${e.micro_location}*`
+                ).join('\n');
+                return message.reply(`**📖 Atlante (Luoghi Recenti)**\n${list}\n\n💡 Usa \`$atlante <Regione> | <Luogo>\` per dettagli.`);
+            }
+
+            const lore = getAtlasEntry(activeCampaign!.id, loc.macro, loc.micro);
+            if (lore) {
+                return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n_${lore}_`);
+            } else {
+                return message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*\n💡 Usa \`$atlante ${loc.macro} | ${loc.micro} | <descrizione>\` per aggiungerne una.`);
+            }
+        }
+
+        // --- SOTTOCOMANDO: list ---
+        if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
+            const entries = listAtlasEntries(activeCampaign!.id);
+            if (entries.length === 0) return message.reply("📖 L'Atlante è vuoto.");
+
+            const list = entries.map((e: any) => {
+                const descPreview = e.description ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '') : '*nessuna descrizione*';
+                return `🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
+            }).join('\n');
+            return message.reply(`**📖 Atlante Completo**\n${list}`);
+        }
+
+        // --- SOTTOCOMANDO: sync ---
+        if (argsStr.toLowerCase().startsWith('sync')) {
+            const syncArgs = argsStr.substring(4).trim();
+
+            // $atlante sync all - Sincronizza tutti i luoghi dirty
+            if (!syncArgs || syncArgs.toLowerCase() === 'all') {
+                const dirtyCount = getDirtyAtlasEntries(activeCampaign!.id).length;
+                if (dirtyCount === 0) {
+                    return message.reply('📍 Nessun luogo in attesa di sincronizzazione RAG.');
+                }
+
+                const loadingMsg = await message.reply(`🔄 Sincronizzazione RAG di **${dirtyCount}** luoghi in corso...`);
+                const synced = await syncAllDirtyAtlas(activeCampaign!.id);
+                await loadingMsg.edit(`✅ Sincronizzati **${synced}** luoghi nel RAG.`);
+                return;
+            }
+
+            // $atlante sync <Macro> | <Micro> - Sincronizza un luogo specifico
+            const parts = syncArgs.split('|').map(s => s.trim());
+            if (parts.length === 2) {
+                const [macro, micro] = parts;
+                const loadingMsg = await message.reply(`🔄 Sincronizzazione RAG per **${macro} - ${micro}**...`);
+                const result = await syncAtlasEntryIfNeeded(activeCampaign!.id, macro, micro, true);
+                if (result) {
+                    await loadingMsg.edit(`✅ **${macro} - ${micro}** sincronizzato nel RAG.`);
+                } else {
+                    await loadingMsg.edit(`❌ Luogo **${macro} - ${micro}** non trovato.`);
+                }
+                return;
+            }
+
+            return message.reply(
+                '**Uso: `$atlante sync`**\n' +
+                '`$atlante sync all` - Sincronizza tutti i luoghi dirty\n' +
+                '`$atlante sync <Regione> | <Luogo>` - Sincronizza un luogo specifico'
+            );
+        }
+
+        // --- SOTTOCOMANDO: rename/move ---
+        if (argsStr.toLowerCase().startsWith('rename ') || argsStr.toLowerCase().startsWith('move ') || argsStr.toLowerCase().startsWith('rinomina ')) {
+            const renameArgs = argsStr.substring(argsStr.indexOf(' ') + 1);
+            const parts = renameArgs.split('|').map(s => s.trim());
+
+            // Formato: $atlante rename <OldMacro> | <OldMicro> | <NewMacro> | <NewMicro> [| history]
+            if (parts.length < 4) {
+                return message.reply(
+                    '**Uso: `$atlante rename`**\n' +
+                    '`$atlante rename <VecchiaRegione> | <VecchioLuogo> | <NuovaRegione> | <NuovoLuogo>`\n' +
+                    '`$atlante rename <VR> | <VL> | <NR> | <NL> | history` - Aggiorna anche la cronologia viaggi'
+                );
+            }
+
+            const [oldMacro, oldMicro, newMacro, newMicro] = parts;
+            const updateHistory = parts[4]?.toLowerCase() === 'history' || parts[4]?.toLowerCase() === 'storia';
+
+            // Controlla se la destinazione esiste già
+            const existingTarget = getAtlasEntryFull(activeCampaign!.id, newMacro, newMicro);
+            const existingSource = getAtlasEntryFull(activeCampaign!.id, oldMacro, oldMicro);
+
+            if (!existingSource) {
+                return message.reply(`❌ Luogo di origine **${oldMacro} - ${oldMicro}** non trovato.`);
+            }
+
+            if (existingTarget) {
+                // SMART MERGE
+                const loadingMsg = await message.reply(`⚙️ **Smart Merge:** Il luogo di destinazione esiste già. Unisco le memorie...`);
+
+                const mergedDesc = await smartMergeBios(existingTarget.description || "", existingSource.description || "");
+
+                const success = mergeAtlasEntry(activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, mergedDesc);
+
+                if (success) {
+                    // Marca per sync RAG
+                    markAtlasDirty(activeCampaign!.id, newMacro, newMicro);
+
+                    await loadingMsg.edit(
+                        `✅ **Luoghi Uniti!**\n` +
+                        `📖 **${oldMacro} - ${oldMicro}** è stato integrato in **${newMacro} - ${newMicro}**\n` +
+                        `📜 Cronologia aggiornata. Sync RAG programmato.\n\n` +
+                        `**Nuova Descrizione:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`
+                    );
+                    return;
+                } else {
+                    return message.reply(`❌ Errore durante l'unione dei luoghi.`);
+                }
+            } else {
+                // RENAME STANDARD
+                const success = renameAtlasEntry(activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, updateHistory);
+
+                if (success) {
+                    let response = `✅ **Luogo rinominato!**\n` +
+                        `📖 **${oldMacro} - ${oldMicro}** → **${newMacro} - ${newMicro}**`;
+
+                    if (updateHistory) {
+                        response += `\n📜 Anche la cronologia viaggi è stata aggiornata.`;
+                    } else {
+                        response += `\n💡 Tip: Aggiungi \`| history\` per aggiornare anche la cronologia.`;
+                    }
+
+                    // Marca per sync RAG
+                    markAtlasDirty(activeCampaign!.id, newMacro, newMicro);
+                    response += `\n📌 Sync RAG programmato.`;
+
+                    return message.reply(response);
+                } else {
+                    return message.reply(`❌ Impossibile rinominare.`);
+                }
+            }
+        }
+
+        // --- SOTTOCOMANDO: delete ---
+        if (argsStr.toLowerCase().startsWith('delete ') || argsStr.toLowerCase().startsWith('elimina ')) {
+            const deleteArgs = argsStr.substring(argsStr.indexOf(' ') + 1);
+            const parts = deleteArgs.split('|').map(s => s.trim());
+
+            if (parts.length !== 2) {
+                return message.reply('Uso: `$atlante delete <Regione> | <Luogo>`');
+            }
+
+            const [macro, micro] = parts;
+            const success = deleteAtlasEntry(activeCampaign!.id, macro, micro);
+
+            if (success) {
+                return message.reply(`🗑️ Voce **${macro} - ${micro}** eliminata dall'Atlante.`);
+            } else {
+                return message.reply(`❌ Luogo **${macro} - ${micro}** non trovato nell'Atlante.`);
+            }
+        }
+
+        // --- PARSING ARGOMENTI CON PIPE ---
+        const parts = argsStr.split('|').map(s => s.trim());
+
+        // --- VISUALIZZA LUOGO SPECIFICO: $atlante <Macro> | <Micro> ---
+        if (parts.length === 2) {
+            const [macro, micro] = parts;
+            const entry = getAtlasEntryFull(activeCampaign!.id, macro, micro);
+
+            if (entry) {
+                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
+                return message.reply(
+                    `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
+                    `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
+                    `${entry.description || '*Nessuna descrizione*'}`
+                );
+            } else {
+                return message.reply(
+                    `📖 **${macro} - ${micro}** non è ancora nell'Atlante.\n` +
+                    `💡 Usa \`$atlante ${macro} | ${micro} | <descrizione>\` per aggiungerlo.`
+                );
+            }
+        }
+
+        // --- AGGIORNA LUOGO: $atlante <Macro> | <Micro> | <Descrizione> [| force] ---
+        if (parts.length >= 3) {
+            const [macro, micro, newDesc] = parts;
+            const forceFlag = parts[3]?.toLowerCase();
+            const isForceMode = forceFlag === 'force' || forceFlag === '--force' || forceFlag === '!';
+
+            const existing = getAtlasEntryFull(activeCampaign!.id, macro, micro);
+
+            if (isForceMode) {
+                // 🔥 FORCE MODE: Sovrascrittura diretta
+                const loadingMsg = await message.reply(`🔥 **FORCE MODE** per **${macro} - ${micro}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
+
+                updateAtlasEntry(activeCampaign!.id, macro, micro, newDesc);
+                markAtlasDirty(activeCampaign!.id, macro, micro); // 🆕 Marca per sync RAG
+
+                await loadingMsg.edit(
+                    `🔥 **Sovrascrittura completata!**\n` +
+                    `📖 **${macro} - ${micro}**\n` +
+                    `📌 Sync RAG programmato.\n\n` +
+                    `${newDesc.substring(0, 500)}${newDesc.length > 500 ? '...' : ''}`
+                );
+                return;
+
+            } else {
+                // 🧠 STANDARD MODE: Smart Merge
+                if (existing && existing.description) {
+                    const loadingMsg = await message.reply(`⚙️ Merge intelligente per **${macro} - ${micro}**...`);
+
+                    // Usa smartMergeBios per unire le descrizioni
+                    const mergedDesc = await smartMergeBios(existing.description, newDesc);
+
+                    updateAtlasEntry(activeCampaign!.id, macro, micro, mergedDesc);
+                    markAtlasDirty(activeCampaign!.id, macro, micro); // 🆕 Marca per sync RAG
+
+                    await loadingMsg.edit(
+                        `✅ **Atlante Aggiornato** per **${macro} - ${micro}**\n` +
+                        `📌 Nuovi dettagli integrati. Sync RAG programmato.\n` +
+                        `💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n` +
+                        `📖 **Descrizione Unificata:**\n${mergedDesc.substring(0, 600)}${mergedDesc.length > 600 ? '...' : ''}`
+                    );
+                    return;
+
+                } else {
+                    // Prima voce per questo luogo - inserimento diretto
+                    updateAtlasEntry(activeCampaign!.id, macro, micro, newDesc);
+                    markAtlasDirty(activeCampaign!.id, macro, micro); // 🆕 Marca per sync RAG
+                    return message.reply(
+                        `📖 **Nuovo Luogo Aggiunto all'Atlante!**\n` +
+                        `🗺️ **${macro} - ${micro}**\n` +
+                        `📌 Sync RAG programmato.\n\n` +
+                        `${newDesc.substring(0, 500)}${newDesc.length > 500 ? '...' : ''}`
+                    );
+                }
+            }
+        }
+
+        // --- FALLBACK: Help ---
+        return message.reply(
+            `**📖 Uso del comando $atlante:**\n` +
+            `\`$atlante\` - Mostra luogo corrente o lista\n` +
+            `\`$atlante list\` - Lista tutti i luoghi\n` +
+            `\`$atlante sync [all|<R>|<L>]\` - Sincronizza RAG\n` +
+            `\`$atlante rename <VR> | <VL> | <NR> | <NL> [| history]\` - Rinomina\n` +
+            `\`$atlante <R> | <L>\` - Vedi descrizione\n` +
+            `\`$atlante <R> | <L> | <Testo> [| force]\` - Aggiorna\n` +
+            `\`$atlante delete <R> | <L>\` - Elimina voce`
+        );
+    }
+
+    // --- COMANDO: $npc (Visualizza o Modifica) ---
+    // Uso: $npc -> Lista ultimi NPC
+    // Uso: $npc <session_id> -> NPC incontrati in una sessione specifica
+    // Uso: $npc Mario -> Vedi scheda di Mario
+    // Uso: $npc Mario | È un bravo idraulico -> Aggiorna descrizione
+    // Uso: $npc merge Vecchio | Nuovo -> Unisce due NPC
+    // Uso: $npc delete Nome -> Elimina NPC
+    // Uso: $npc update Nome | Campo | Valore -> Aggiorna campo specifico
+    // Uso: $npc regen Nome -> Rigenera note usando la cronologia
+    if (command === 'npc' || command === 'dossier') {
+        const argsStr = args.join(' ');
+
+        if (!argsStr) {
+            // LISTA con ID numerici
+            const npcs = listNpcs(activeCampaign!.id);
+            if (npcs.length === 0) return message.reply("L'archivio NPC è vuoto.");
+
+            const list = npcs.map((n: any, i: number) => `\`${i + 1}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
+            return message.reply(`**📂 Dossier NPC Recenti**\n${list}\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`);
+        }
+
+        // --- SELEZIONE PER ID NUMERICO: $npc 1, $npc #2 ---
+        const numericMatch = argsStr.match(/^#?(\d+)$/);
+        if (numericMatch) {
+            const idx = parseInt(numericMatch[1]) - 1; // 1-based to 0-based
+            const npcs = listNpcs(activeCampaign!.id);
+
+            if (idx < 0 || idx >= npcs.length) {
+                return message.reply(`❌ ID non valido. Usa un numero da 1 a ${npcs.length}.`);
+            }
+
+            const npc = npcs[idx];
+            const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+            let response = `${statusIcon} **${npc.name}**\n`;
+            response += `🎭 **Ruolo:** ${npc.role || 'Sconosciuto'}\n`;
+            response += `📊 **Stato:** ${npc.status}\n`;
+            response += `📜 **Note:**\n> ${npc.description || '_Nessuna nota_'}`;
+
+            // Cronologia eventi (ultimi 5)
+            const history = getNpcHistory(activeCampaign!.id, npc.name).slice(-5);
+            if (history.length > 0) {
+                response += `\n\n📖 **Cronologia Recente:**\n`;
+                history.forEach((h: any) => {
+                    const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
+                    response += `${typeIcon} ${h.description}\n`;
+                });
+            }
+
+            return message.reply(response);
+        }
+
+        // --- SESSIONE SPECIFICA: $npc <session_id> ---
+        if (isSessionId(argsStr)) {
+            const sessionId = extractSessionId(argsStr);
+            const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
+
+            if (encounteredNPCs.length === 0) {
+                return message.reply(`👥 Nessun NPC incontrato nella sessione \`${sessionId}\`.`);
+            }
+
+            let msg = `**👥 NPC della Sessione \`${sessionId}\`:**\n\n`;
+            encounteredNPCs.forEach((npc: any) => {
+                const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+                msg += `${statusIcon} **${npc.name}** (${npc.role || '?'}) [${npc.status}]\n`;
+                if (npc.description) {
+                    const preview = npc.description.substring(0, 100) + (npc.description.length > 100 ? '...' : '');
+                    msg += `   └ _${preview}_\n`;
+                }
+            });
+            msg += `\n💡 Usa \`$npc <Nome>\` per vedere la scheda completa.`;
+
+            return message.reply(msg);
+        }
+
+        // NUOVO SOTTOCOMANDO: add / create
+        if (argsStr.toLowerCase().startsWith('add ') || argsStr.toLowerCase().startsWith('create ') || argsStr.toLowerCase().startsWith('crea ')) {
+            const content = argsStr.substring(argsStr.indexOf(' ') + 1); // Rimuove il comando
+            const parts = content.split('|').map(s => s.trim());
+
+            if (parts.length < 3) {
+                return message.reply('Uso: `$npc add <Nome> | <Ruolo> | <Descrizione>`');
+            }
+
+            const [name, role, description] = parts;
+
+            const existing = getNpcEntry(activeCampaign!.id, name);
+            if (existing) {
+                return message.reply(`⚠️ L'NPC **${name}** esiste già nel dossier. Usa \`$npc update\` per modificarlo.`);
+            }
+
+            updateNpcEntry(activeCampaign!.id, name, description, role, 'ALIVE');
+            return message.reply(`✅ **Nuovo NPC Creato!**\n👤 **${name}**\n🎭 Ruolo: ${role}\n📜 ${description}`);
+        }
+
+        // Sottocomandi avanzati
+        if (argsStr.toLowerCase().startsWith('merge ')) {
+            const parts = argsStr.substring(6).split('|').map(s => s.trim());
+            if (parts.length !== 2) return message.reply("Uso: `$npc merge <Vecchio Nome> | <Nuovo Nome>`");
+
+            const sourceName = parts[0];
+            const targetName = parts[1];
+
+            const sourceNpc = getNpcEntry(activeCampaign!.id, sourceName);
+            const targetNpc = getNpcEntry(activeCampaign!.id, targetName);
+
+            if (!sourceNpc) {
+                return message.reply(`❌ Impossibile unire: NPC "${sourceName}" non trovato.`);
+            }
+
+            if (targetNpc) {
+                // MERGE REALE CON AI
+                await message.reply(`⏳ **Smart Merge:** Unione intelligente di "${sourceName}" in "${targetName}"...`);
+
+                const mergedDesc = await smartMergeBios(targetNpc.description || "", sourceNpc.description || "");
+
+                // Aggiorna Target
+                db.prepare(`UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
+                    .run(mergedDesc, targetNpc.id);
+
+                // Aggiorna History (sposta eventi dal vecchio al nuovo)
+                db.prepare(`UPDATE npc_history SET npc_name = ? WHERE campaign_id = ? AND lower(npc_name) = lower(?)`)
+                    .run(targetName, activeCampaign!.id, sourceName);
+
+                // Elimina Source
+                db.prepare(`DELETE FROM npc_dossier WHERE id = ?`).run(sourceNpc.id);
+
+                return message.reply(`✅ **Unito!**\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
+            } else {
+                // RINOMINA SEMPLICE (Target non esiste)
+                const success = renameNpcEntry(activeCampaign!.id, sourceName, targetName);
+                if (success) return message.reply(`✅ NPC rinominato: **${sourceName}** è ora **${targetName}**.`);
+                else return message.reply(`❌ Errore durante la rinomina.`);
+            }
+        }
+
+        if (argsStr.toLowerCase().startsWith('delete ')) {
+            const name = argsStr.substring(7).trim();
+            const success = deleteNpcEntry(activeCampaign!.id, name);
+            if (success) return message.reply(`🗑️ NPC **${name}** eliminato dal dossier.`);
+            else return message.reply(`❌ NPC "${name}" non trovato.`);
+        }
+
+        // 🆕 NUOVO: $npc alias <Nome> | add/remove | <Alias>
+        if (argsStr.toLowerCase().startsWith('alias ')) {
+            const parts = argsStr.substring(6).split('|').map(s => s.trim());
+
+            if (parts.length < 2) {
+                // Mostra alias esistenti
+                const npc = getNpcEntry(activeCampaign!.id, parts[0]);
+                if (!npc) return message.reply(`❌ NPC **${parts[0]}** non trovato.`);
+
+                const aliases = npc.aliases?.split(',').filter(a => a.trim()) || [];
+                if (aliases.length === 0) {
+                    return message.reply(
+                        `📇 **Alias per ${npc.name}:** Nessuno\n\n` +
+                        `**Comandi:**\n` +
+                        `\`$npc alias ${npc.name} | add | <Alias>\` - Aggiungi alias\n` +
+                        `\`$npc alias ${npc.name} | remove | <Alias>\` - Rimuovi alias`
+                    );
+                }
+
+                return message.reply(
+                    `📇 **Alias per ${npc.name}:**\n` +
+                    aliases.map(a => `• ${a.trim()}`).join('\n') +
+                    `\n\n💡 Gli alias permettono di cercare l'NPC nel RAG con soprannomi o titoli.`
+                );
+            }
+
+            const [npcName, action, alias] = parts;
+            const npc = getNpcEntry(activeCampaign!.id, npcName);
+            if (!npc) return message.reply(`❌ NPC **${npcName}** non trovato.`);
+
+            if (action.toLowerCase() === 'add') {
+                if (!alias) return message.reply('❌ Specifica l\'alias da aggiungere: `$npc alias <Nome> | add | <Alias>`');
+
+                const success = addNpcAlias(activeCampaign!.id, npc.name, alias);
+                if (success) {
+                    return message.reply(`✅ Alias **"${alias}"** aggiunto a **${npc.name}**.\n💡 Ora puoi cercare "${alias}" e troverà frammenti relativi a ${npc.name}.`);
+                } else {
+                    return message.reply(`⚠️ Alias **"${alias}"** già presente per **${npc.name}**.`);
+                }
+            }
+
+            if (action.toLowerCase() === 'remove' || action.toLowerCase() === 'del') {
+                if (!alias) return message.reply('❌ Specifica l\'alias da rimuovere: `$npc alias <Nome> | remove | <Alias>`');
+
+                const success = removeNpcAlias(activeCampaign!.id, npc.name, alias);
+                if (success) {
+                    return message.reply(`✅ Alias **"${alias}"** rimosso da **${npc.name}**.`);
+                } else {
+                    return message.reply(`❌ Alias **"${alias}"** non trovato per **${npc.name}**.`);
+                }
+            }
+
+            return message.reply('❌ Azione non valida. Usa `add` o `remove`.');
+        }
+
+        if (argsStr.toLowerCase().startsWith('update')) {
+            const parts = argsStr.substring(7).split('|').map(s => s.trim());
+
+            // Accetta 3 o 4 parametri (4° = force flag opzionale)
+            if (parts.length < 3 || parts.length > 4) {
+                return message.reply('Uso: `$npc update <Nome> | <Campo> | <Valore> [| force]`\nCampi validi: `name`, `role`, `status`, `description`\n💡 Aggiungi `| force` per sovrascrittura diretta (solo description)');
+            }
+
+            const [name, field, value] = parts;
+            const forceFlag = parts[3]?.toLowerCase();
+            const isForceMode = forceFlag === 'force' || forceFlag === '--force' || forceFlag === '!';
+
+            const npc = getNpcEntry(activeCampaign!.id, name);
+            if (!npc) {
+                return message.reply(`❌ NPC **${name}** non trovato.`);
+            }
+
+            // === LOGICA SPECIALE PER DESCRIPTION ===
+            if (field === 'description' || field === 'desc') {
+
+                if (isForceMode) {
+                    // 🔥 FORCE MODE: Sovrascrittura diretta senza merge
+                    const loadingMsg = await message.reply(`🔥 **FORCE MODE** attivato per **${name}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
+
+                    // Overwrite diretto
+                    db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                        .run(value, npc.id);
+
+                    // Marca per sync RAG (anche in force mode!)
+                    markNpcDirty(activeCampaign!.id, npc.name);
+
+                    await loadingMsg.edit(`🔥 **Sovrascrittura completata!**\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${value.substring(0, 500)}${value.length > 500 ? '...' : ''}`);
+                    return;
+
+                } else {
+                    // 🧠 STANDARD MODE: Smart Merge
+                    const loadingMsg = await message.reply(`⚙️ Merge intelligente descrizione per **${name}**...`);
+
+                    const mergedDesc = await smartMergeBios(npc.description || '', value);
+
+                    db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                        .run(mergedDesc, npc.id);
+
+                    // Marca per sync RAG
+                    markNpcDirty(activeCampaign!.id, npc.name);
+
+                    await loadingMsg.edit(`✅ Descrizione aggiornata!\n📌 Sync RAG programmato.\n💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n📜 **Nuova Bio:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`);
+                    return;
+                }
+            }
+
+            // === LOGICA NORMALE PER GLI ALTRI CAMPI ===
+            const updates: any = {};
+            if (field === 'name') {
+                updates.name = value;
+            } else if (field === 'role') {
+                updates.role = value;
+            } else if (field === 'status') {
+                updates.status = value;
+            } else {
+                return message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`, `description`');
+            }
+
+            const success = updateNpcFields(activeCampaign!.id, name, updates);
+
+            if (success) {
+                // Se cambiamo il nome, migriamo il RAG
+                if (updates.name) {
+                    migrateKnowledgeFragments(activeCampaign!.id, name, updates.name);
+                    markNpcDirty(activeCampaign!.id, updates.name);
+                    return message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
+                }
+                return message.reply(`✅ NPC **${name}** aggiornato: ${field} = ${value}`);
+            } else {
+                return message.reply(`❌ Errore durante l'aggiornamento.`);
+            }
+        }
+
+        if (argsStr.toLowerCase().startsWith('regen')) {
+            const name = argsStr.substring(6).trim();
+            const npc = getNpcEntry(activeCampaign!.id, name);
+            if (!npc) return message.reply(`❌ NPC **${name}** non trovato.`);
+
+            const loadingMsg = await message.reply(`⚙️ Rigenerazione Note: Analisi cronologia per **${name}**...`);
+
+            // ✅ MODIFICATO: Usa syncNpcDossierIfNeeded con force=true
+            const newDesc = await syncNpcDossierIfNeeded(
+                activeCampaign!.id,
+                npc.name,
+                true // Force sync
+            );
+
+            if (newDesc) {
+                await loadingMsg.edit(`✅ Note Aggiornate e Sincronizzate con RAG!\n\n📜 **Nuova Bio:**\n${newDesc.substring(0, 800)}${newDesc.length > 800 ? '...' : ''}`);
+            } else {
+                await loadingMsg.edit(`❌ Errore durante la rigenerazione.`);
+            }
+            return;
+        }
+
+        // 🆕 NUOVO COMANDO: !npc sync (Sync manuale RAG)
+        if (argsStr.toLowerCase().startsWith('sync')) {
+            const name = argsStr.substring(5).trim();
+
+            if (!name || name === 'all') {
+                // Sync batch di tutti gli NPC dirty
+                const loadingMsg = await message.reply('⚙️ Sincronizzazione batch NPC in corso...');
+                const count = await syncAllDirtyNpcs(activeCampaign!.id);
+
+                if (count > 0) {
+                    await loadingMsg.edit(`✅ Sincronizzati **${count} NPC** con RAG.`);
+                } else {
+                    await loadingMsg.edit('✨ Tutti gli NPC sono già sincronizzati!');
+                }
+            } else {
+                // Sync singolo NPC
+                const npc = getNpcEntry(activeCampaign!.id, name);
+                if (!npc) return message.reply(`❌ NPC **${name}** non trovato.`);
+
+                const loadingMsg = await message.reply(`⚙️ Sincronizzazione RAG per **${name}**...`);
+                await syncNpcDossierIfNeeded(activeCampaign!.id, name, true);
+                await loadingMsg.edit(`✅ **${name}** sincronizzato con RAG.`);
+            }
+            return;
+        }
+
+        if (argsStr.includes('|')) {
+            // SETTER: $npc Nome | Descrizione
+            const [name, desc] = argsStr.split('|').map(s => s.trim());
+            updateNpcEntry(activeCampaign!.id, name, desc);
+            return message.reply(`👤 Scheda di **${name}** aggiornata.`);
+        } else {
+            // GETTER: $npc Nome
+            const npc = getNpcEntry(activeCampaign!.id, argsStr);
+            if (!npc) return message.reply("NPC non trovato.");
+
+            const embed = new EmbedBuilder()
+                .setTitle(`👤 Dossier: ${npc.name}`)
+                .setColor(npc.status === 'DEAD' ? "#FF0000" : "#00FF00")
+                .addFields(
+                    { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
+                    { name: "Stato", value: npc.status || "Vivo", inline: true },
+                    { name: "Note", value: npc.description || "Nessuna nota." }
+                )
+                .setFooter({ text: `Ultimo avvistamento: ${npc.last_updated}` });
+
+            return message.reply({ embeds: [embed] });
+        }
+    }
+
+    // --- NUOVO: $presenze (Debug) ---
+    // Uso: $presenze -> NPC della sessione corrente
+    // Uso: $presenze <session_id> -> NPC di una sessione specifica
+    if (command === 'presenze') {
+        const argsStr = args.join(' ').trim();
+
+        // Determina la sessione target
+        let targetSessionId: string | undefined;
+        let sessionLabel: string;
+
+        if (argsStr && isSessionId(argsStr)) {
+            targetSessionId = extractSessionId(argsStr);
+            sessionLabel = `sessione \`${targetSessionId}\``;
+        } else {
+            targetSessionId = guildSessions.get(message.guild.id);
+            sessionLabel = 'questa sessione';
+            if (!targetSessionId) return await message.reply("⚠️ Nessuna sessione attiva. Specifica un ID: `$presenze session_xxxxx`");
+        }
+
+        // Recupera NPC con dettagli dal dossier
+        const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
+
+        if (encounteredNPCs.length === 0) {
+            return message.reply(`👥 **NPC Incontrati in ${sessionLabel}:** Nessuno rilevato.`);
+        }
+
+        let msg = `👥 **NPC Incontrati in ${sessionLabel}:**\n`;
+        encounteredNPCs.forEach((npc: any) => {
+            const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+            msg += `${statusIcon} **${npc.name}** (${npc.role || '?'}) [${npc.status}]\n`;
+        });
+
+        return message.reply(msg);
+    }
+
+    // --- NUOVO: $quest ---
+    // Uso: $quest -> Mostra quest attive
+    // Uso: $quest <session_id> -> Mostra quest aggiunte in una sessione
+    if (command === 'quest' || command === 'obiettivi') {
+        const arg = args.join(' ');
+        const firstArg = args[0];
+
+        // --- SESSIONE SPECIFICA: $quest <session_id> [all] ---
+        if (firstArg && isSessionId(firstArg)) {
+            const sessionId = extractSessionId(firstArg);
+            const showAll = args.includes('all') || args.includes('-a');
+            const sessionQuests = getSessionQuests(sessionId);
+
+            if (sessionQuests.length === 0) {
+                return message.reply(
+                    `🗺️ Nessuna quest aggiunta nella sessione \`${sessionId}\`.\n` +
+                    `*Nota: Solo le quest aggiunte dopo l'aggiornamento vengono tracciate per sessione.*`
+                );
+            }
+
+            // Filtra quest completate o con testo "COMPLETATA" nel titolo (se non richiesto all)
+            const filteredQuests = showAll ? sessionQuests : sessionQuests.filter((q: any) => {
+                const isCompletedStatus = q.status === 'COMPLETED';
+                const title = q.title.toUpperCase();
+                const isCompletedText = title.includes('(COMPLETATA') || title.includes('(PARZIALMENTE COMPLETATA');
+                return !isCompletedStatus && !isCompletedText;
+            });
+
+            if (filteredQuests.length === 0) {
+                return message.reply(`🗺️ Nessuna quest **attiva** trovata per la sessione \`${sessionId}\` (su ${sessionQuests.length} registrate).\n💡 Usa \`$quest ${sessionId} all\` per vederle tutte.`);
+            }
+
+            const list = filteredQuests.map((q: any) => {
+                const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '🔹';
+                return `${statusIcon} **${q.title}** [${q.status}]`;
+            }).join('\n');
+
+            const header = showAll ? `Quest della Sessione \`${sessionId}\`` : `Quest Attive della Sessione \`${sessionId}\``;
+            return message.reply(`**🗺️ ${header}:**\n\n${list}`);
+        }
+
+        // Sottocomandi manuali: $quest add Titolo / $quest done Titolo
+        if (arg.toLowerCase().startsWith('add ')) {
+            const title = arg.substring(4);
+            const currentSession = guildSessions.get(message.guild.id);
+            addQuest(activeCampaign!.id, title, currentSession);
+            return message.reply(`🗺️ Quest aggiunta: **${title}**`);
+        }
+        if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
+            const search = arg.split(' ').slice(1).join(' '); // Rimuove 'done'
+
+            // 🆕 Supporto per ID numerico
+            const questId = parseInt(search);
+            if (!isNaN(questId)) {
+                const success = updateQuestStatusById(questId, 'COMPLETED');
+                if (success) return message.reply(`✅ Quest #${questId} completata!`);
+                else return message.reply(`❌ Quest #${questId} non trovata.`);
+            }
+
+            updateQuestStatus(activeCampaign!.id, search, 'COMPLETED');
+            return message.reply(`✅ Quest aggiornata come completata (ricerca: "${search}")`);
+        }
+
+        // 🆕 Sottocomando: $quest delete <ID>
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('del ') || arg.toLowerCase().startsWith('remove ') || arg.toLowerCase().startsWith('rm ')) {
+            const idStr = arg.split(' ')[1];
+            const questId = parseInt(idStr);
+
+            if (isNaN(questId)) return message.reply("Uso: `$quest delete <ID>` (L'ID deve essere un numero)");
+
+            const success = deleteQuest(questId);
+            if (success) {
+                return message.reply(`🗑️ Quest #${questId} eliminata definitivamente.`);
+            } else {
+                return message.reply(`❌ Quest #${questId} non trovata.`);
+            }
+        }
+
+        // Visualizzazione
+        const quests = getOpenQuests(activeCampaign!.id);
+        if (quests.length === 0) return message.reply("Nessuna quest attiva al momento.");
+
+        // 🆕 Visualizzazione con ID
+        const list = quests.map((q: any) => `\`#${q.id}\` 🔹 **${q.title}**`).join('\n');
+        return message.reply(`**🗺️ Quest Attive (${activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$quest done <ID>\` per completare o \`$quest delete <ID>\` per eliminare.`);
+    }
+
+    // --- NUOVO: $inventario ---
+    // Uso: $inventario -> Mostra inventario completo
+    // Uso: $inventario <session_id> -> Mostra oggetti acquisiti in una sessione
+    if (command === 'inventario' || command === 'loot' || command === 'bag' || command === 'inventory') {
+        const arg = args.join(' ');
+
+        // --- SESSIONE SPECIFICA: $inventario <session_id> ---
+        if (arg && isSessionId(arg)) {
+            const sessionId = extractSessionId(arg);
+            const sessionItems = getSessionInventory(sessionId);
+
+            if (sessionItems.length === 0) {
+                return message.reply(
+                    `💰 Nessun oggetto acquisito nella sessione \`${sessionId}\`.\n` +
+                    `*Nota: Solo gli oggetti aggiunti dopo l'aggiornamento vengono tracciati per sessione.*`
+                );
+            }
+
+            const list = sessionItems.map((i: any) => `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}`).join('\n');
+            return message.reply(`**💰 Loot della Sessione \`${sessionId}\`:**\n\n${list}`);
+        }
+
+        // Sottocomandi manuali: $loot add Pozione / $loot use Pozione
+        if (arg.toLowerCase().startsWith('add ')) {
+            const item = arg.substring(4);
+            const currentSession = guildSessions.get(message.guild.id);
+            addLoot(activeCampaign!.id, item, 1, currentSession);
+            return message.reply(`💰 Aggiunto: **${item}**`);
+        }
+        if (arg.toLowerCase().startsWith('use ') || arg.toLowerCase().startsWith('usa ') || arg.toLowerCase().startsWith('remove ')) {
+            const item = arg.split(' ').slice(1).join(' ');
+            const removed = removeLoot(activeCampaign!.id, item, 1);
+            if (removed) return message.reply(`📉 Rimosso/Usato: **${item}**`);
+            else return message.reply(`⚠️ Oggetto "${item}" non trovato nell'inventario.`);
+        }
+
+        // Visualizzazione
+        const items = getInventory(activeCampaign!.id);
+        if (items.length === 0) return message.reply("Lo zaino è vuoto.");
+
+        const list = items.map((i: any) => `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}`).join('\n');
+        return message.reply(`**💰 Inventario di Gruppo (${activeCampaign?.name})**\n\n${list}`);
+    }
+
+    // --- NUOVO: $bestiario ---
+    // Uso: $bestiario -> Mostra tutti i mostri incontrati
+    // Uso: $bestiario <nome> -> Dettagli di un mostro
+    // Uso: $bestiario merge <vecchio> | <nuovo> -> Unisce due mostri
+    if (command === 'bestiario' || command === 'bestiary' || command === 'mostri' || command === 'monsters') {
+        const arg = args.join(' ');
+
+        // Sottocomando: $bestiario merge <vecchio> | <nuovo>
+        if (arg.toLowerCase().startsWith('merge ')) {
+            const parts = arg.substring(6).split('|').map(s => s.trim());
+            if (parts.length !== 2) {
+                return message.reply("Uso: `$bestiario merge <nome vecchio> | <nome nuovo>`");
+            }
+            const [oldName, newName] = parts;
+            const success = mergeMonsters(activeCampaign!.id, oldName, newName);
+            if (success) {
+                return message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);
+            } else {
+                return message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nel bestiario.`);
+            }
+        }
+
+        // Dettagli di un mostro specifico
+        if (arg && !arg.includes('|')) {
+            const monster = listAllMonsters(activeCampaign!.id).find((m: any) =>
+                m.name.toLowerCase().includes(arg.toLowerCase())
+            );
+            if (!monster) {
+                return message.reply(`❌ Mostro "${arg}" non trovato nel bestiario.`);
+            }
+
+            let details = `**👹 ${monster.name}**\n`;
+            details += `**Status:** ${monster.status}\n`;
+            if (monster.count) details += `**Numero:** ${monster.count}\n`;
+            if (monster.description) details += `\n**Descrizione:** ${monster.description}\n`;
+
+            const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
+            const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
+            const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
+
+            if (abilities.length > 0) details += `\n⚔️ **Abilità:** ${abilities.join(', ')}\n`;
+            if (weaknesses.length > 0) details += `🎯 **Debolezze:** ${weaknesses.join(', ')}\n`;
+            if (resistances.length > 0) details += `🛡️ **Resistenze:** ${resistances.join(', ')}\n`;
+            if (monster.notes) details += `\n📝 **Note:** ${monster.notes}\n`;
+
+            return message.reply(details);
+        }
+
+        // Visualizzazione lista
+        const monsters = listAllMonsters(activeCampaign!.id);
+        if (monsters.length === 0) return message.reply("👹 Nessun mostro incontrato in questa campagna.");
+
+        // Raggruppa per status
+        const defeated = monsters.filter((m: any) => m.status === 'DEFEATED');
+        const alive = monsters.filter((m: any) => m.status === 'ALIVE');
+        const fled = monsters.filter((m: any) => m.status === 'FLED');
+
+        let response = `**👹 Bestiario (${activeCampaign?.name})**\n\n`;
+
+        if (alive.length > 0) {
+            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+        }
+        if (defeated.length > 0) {
+            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+        }
+        if (fled.length > 0) {
+            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+        }
+
+        response += `💡 Usa \`$bestiario <nome>\` per dettagli o \`$bestiario merge <v> | <n>\` per unire duplicati.`;
+        return message.reply(response);
+    }
+
+    // --- NUOVO: $unisciitem ---
+    // Uso: $unisciitem <vecchio> | <nuovo> -> Unisce due oggetti nell'inventario
+    if (command === 'unisciitem' || command === 'mergeitems' || command === 'mergeitem') {
+        const arg = args.join(' ');
+        const parts = arg.split('|').map(s => s.trim());
+
+        if (parts.length !== 2) {
+            return message.reply("Uso: `$unisciitem <nome vecchio> | <nome nuovo>`\nEsempio: `$unisciitem Pozione Cura | Pozione di cura`");
+        }
+
+        const [oldName, newName] = parts;
+        const success = mergeInventoryItems(activeCampaign!.id, oldName, newName);
+        if (success) {
+            return message.reply(`✅ **Oggetti uniti!**\n💰 **${oldName}** è stato integrato in **${newName}**\nLe quantità sono state sommate.`);
+        } else {
+            return message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nell'inventario.`);
+        }
+    }
+
+    // --- NUOVO: $unisciquest ---
+    // Uso: $unisciquest <vecchio> | <nuovo> -> Unisce due quest
+    if (command === 'unisciquest' || command === 'mergequest' || command === 'mergequests') {
+        const arg = args.join(' ');
+        const parts = arg.split('|').map(s => s.trim());
+
+        if (parts.length !== 2) {
+            return message.reply("Uso: `$unisciquest <titolo vecchio> | <titolo nuovo>`\nEsempio: `$unisciquest Trova l'artefatto | Trovare l'artefatto antico`");
+        }
+
+        const [oldTitle, newTitle] = parts;
+        const success = mergeQuests(activeCampaign!.id, oldTitle, newTitle);
+        if (success) {
+            return message.reply(`✅ **Quest unite!**\n🗺️ **${oldTitle}** è stata integrata in **${newTitle}**`);
+        } else {
+            return message.reply(`❌ Impossibile unire. Verifica che "${oldTitle}" esista tra le quest.`);
+        }
+    }
+
+    // --- NUOVO: !stato ---
+    if (command === 'stato' || command === 'status') {
+        const audioCounts = await audioQueue.getJobCounts();
+        const correctionCounts = await correctionQueue.getJobCounts();
+
+        const embed = new EmbedBuilder()
+            .setTitle("⚙️ Stato del Sistema")
+            .setColor("#2ECC71")
+            .addFields(
+                { name: "🎙️ Coda Audio", value: `In attesa: ${audioCounts.waiting}\nAttivi: ${audioCounts.active}\nCompletati: ${audioCounts.completed}\nFalliti: ${audioCounts.failed}`, inline: true },
+                { name: "🧠 Coda Correzione", value: `In attesa: ${correctionCounts.waiting}\nAttivi: ${correctionCounts.active}\nCompletati: ${correctionCounts.completed}\nFalliti: ${correctionCounts.failed}`, inline: true }
+            )
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !metriche ---
+    if (command === 'metrics' || command === 'metriche') {
+        // Recupera la sessione attiva dal monitor
+        // Nota: monitor.currentSession è privato, ma possiamo esporre un getter o usare un trucco
+        // Per ora usiamo un cast a any per accedere alla proprietà privata (solo per questo comando di debug)
+        const m = (monitor as any).currentSession as SessionMetrics | null;
+
+        if (!m) {
+            return await message.reply("⚠️ Nessuna sessione attiva monitorata al momento.");
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`📊 Metriche Live: Sessione ${m.sessionId.substring(0, 8)}...`)
+            .setColor("#3498DB")
+            .addFields(
+                { name: "🎙️ File Processati", value: `${m.totalFiles}`, inline: true },
+                { name: "⚡ Whisper Speed", value: `${(m.whisperMetrics?.avgProcessingRatio || 0).toFixed(2)}x`, inline: true },
+                { name: "⏳ Coda (Avg Wait)", value: `${((m.queueMetrics?.avgWaitTimeMs || 0) / 1000).toFixed(1)}s`, inline: true },
+                { name: "💻 CPU (Last)", value: `${m.resourceUsage.cpuSamples.slice(-1)[0] || 0}%`, inline: true },
+                { name: "🧠 RAM (Last)", value: `${m.resourceUsage.ramSamplesMB.slice(-1)[0] || 0} MB`, inline: true },
+                { name: "💾 DB Growth", value: `${((m.dbEndSizeBytes || 0) - (m.dbStartSizeBytes || 0) / (1024 * 1024)).toFixed(2)} MB`, inline: true }
+            )
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !setsession <numero> ---
+    if (command === 'setsession' || command === 'impostasessione') {
+        const sessionId = guildSessions.get(message.guild.id);
+        if (!sessionId) {
+            return await message.reply("⚠️ Nessuna sessione attiva. Avvia prima una sessione con `$ascolta`.");
+        }
+
+        const sessionNum = parseInt(args[0]);
+        if (isNaN(sessionNum) || sessionNum <= 0) {
+            return await message.reply("Uso: `$impostasessione <numero>` (es. `$impostasessione 5`)");
+        }
+
+        setSessionNumber(sessionId, sessionNum);
+        await message.reply(`✅ Numero sessione impostato a **${sessionNum}**. Sarà usato per il prossimo riassunto.`);
+    }
+
+    // --- NUOVO: !setsessionid <id_sessione> <numero> ---
+    if (command === 'setsessionid' || command === 'impostasessioneid') {
+        const targetSessionId = args[0];
+        const sessionNum = parseInt(args[1]);
+
+        if (!targetSessionId || isNaN(sessionNum)) {
+            return await message.reply("Uso: `$impostasessioneid <ID_SESSIONE> <NUMERO>`");
+        }
+
+        setSessionNumber(targetSessionId, sessionNum);
+        await message.reply(`✅ Numero sessione per \`${targetSessionId}\` impostato a **${sessionNum}**.`);
+    }
+
+    // --- NUOVO: !reset <id_sessione> ---
+    if (command === 'reset') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) {
+            return await message.reply("Uso: `$reset <ID_SESSIONE>` - Forza la rielaborazione completa.");
+        }
+
+        await message.reply(`🔄 **Reset Sessione ${targetSessionId}** avviato...\n1. Pulizia coda...`);
+
+        const removed = await removeSessionJobs(targetSessionId);
+        const filesToProcess = resetSessionData(targetSessionId);
+
+        if (filesToProcess.length === 0) {
+            return await message.reply(`⚠️ Nessun file trovato per la sessione ${targetSessionId}.`);
+        }
+
+        await message.reply(`2. Database resettato (${filesToProcess.length} file trovati).\n3. Ripristino file e reinserimento in coda...`);
+
+        console.log(`[Monitor] 🔄 Avvio monitoring per sessione reset: ${targetSessionId}`);
+        monitor.startSession(targetSessionId);
+
+
+        let restoredCount = 0;
+
+        for (const job of filesToProcess) {
+            if (!fs.existsSync(job.filepath)) {
+                const success = await downloadFromOracle(job.filename, job.filepath, targetSessionId);
+                if (success) restoredCount++;
+            }
+
+            try {
+                const uploaded = await uploadToOracle(job.filepath, job.filename, targetSessionId);
+                if (uploaded) {
+                    updateRecordingStatus(job.filename, 'SECURED');
+                }
+            } catch (err) {
+                console.error(`[Custode] Fallimento upload durante reset per ${job.filename}:`, err);
+            }
+
+            await audioQueue.add('transcribe-job', {
+                sessionId: job.session_id,
+                fileName: job.filename,
+                filePath: job.filepath,
+                userId: job.user_id
+            }, {
+                jobId: job.filename,
+                attempts: 5,
+                backoff: { type: 'exponential', delay: 2000 },
+                removeOnComplete: true,
+                removeOnFail: false
+            });
+        }
+
+        await audioQueue.resume();
+
+        let statusMsg = `✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda.`;
+        if (restoredCount > 0) {
+            statusMsg += `\n📦 ${restoredCount} file mancanti sono stati ripristinati dal Cloud.`;
+        }
+
+        await message.reply(statusMsg);
+        await waitForCompletionAndSummarize(targetSessionId, message.channel as TextChannel);
+    }
+
+    // --- $scaricatrascrizioni <ID> [raw|cleaned|summary|all] ---
+    // 🆕 SEMPLIFICATO: 2 file base (raw + cleaned), summary opzionale
+    if (command === 'scaricatrascrizioni' || command === 'downloadtxt') {
+        const targetSessionId = args[0];
+        const type = args[1]?.toLowerCase() || 'all'; // raw, cleaned, summary, all
+
+        if (!targetSessionId) {
+            return await message.reply("Uso: `$scaricatrascrizioni <ID> [raw|cleaned|summary|all]`");
+        }
+
+        const loadingMsg = await message.reply(`🔍 Ricerca trascrizioni per sessione \`${targetSessionId}\`...`);
+
+        // 1. Tenta di ottenere URL dal Cloud
+        const cleanedKey = `transcripts/${targetSessionId}/transcript_cleaned.txt`;
+        const rawKey = `transcripts/${targetSessionId}/transcript_raw.txt`;
+        const summaryKey = `transcripts/${targetSessionId}/summary_narrative.txt`;
+
+        let cleanedUrl = await getPresignedUrl(cleanedKey, undefined, 604800); // 7 giorni
+        let rawUrl = await getPresignedUrl(rawKey, undefined, 604800);
+        let summaryUrl = await getPresignedUrl(summaryKey, undefined, 604800);
+
+        // 2. Se mancano i file base, rigenera
+        if (!cleanedUrl || !rawUrl) {
+            await loadingMsg.edit(`⚙️ Archivi Cloud non trovati. Generazione e upload in corso...`);
+
+            try {
+                const campaignId = getSessionCampaignId(targetSessionId);
+                if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
+
+                await archiveSessionTranscripts(targetSessionId, campaignId);
+
+                cleanedUrl = await getPresignedUrl(cleanedKey, undefined, 604800);
+                rawUrl = await getPresignedUrl(rawKey, undefined, 604800);
+                summaryUrl = await getPresignedUrl(summaryKey, undefined, 604800);
+
+            } catch (e: any) {
+                console.error(`Errore rigenerazione trascrizioni:`, e);
+                return await loadingMsg.edit(`❌ Errore durante la generazione: ${e.message}`);
+            }
+        }
+
+        // 3. Risposta con Embed
+        const embed = new EmbedBuilder()
+            .setTitle(`📜 Trascrizioni Sessione ${targetSessionId}`)
+            .setColor("#2ECC71")
+            .setDescription("Link per scaricare le trascrizioni (validi per 7 giorni).")
+            .addFields(
+                { name: "✨ Pulita (Regex)", value: cleanedUrl ? `[Download](${cleanedUrl})` : "Non disponibile", inline: true },
+                { name: "🎙️ Raw (Whisper)", value: rawUrl ? `[Download](${rawUrl})` : "Non disponibile", inline: true },
+                { name: "📖 Riassunto", value: summaryUrl ? `[Download](${summaryUrl})` : "Non generato", inline: true }
+            )
+            .setFooter({ text: "File ospitati su Oracle Cloud Object Storage" });
+
+        await loadingMsg.delete();
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- MODIFICATO: !racconta <id_sessione> [tono] ---
+    if (command === 'racconta' || command === 'narrate' || command === 'summarize') {
+        const targetSessionId = args[0];
+        const requestedTone = args[1]?.toUpperCase() as ToneKey;
+
+        if (!targetSessionId) {
+            // Mostra sessioni della campagna attiva
+            const sessions = getAvailableSessions(message.guild.id, activeCampaign?.id);
+            if (sessions.length === 0) return await message.reply("Nessuna sessione trovata per questa campagna.");
+            const list = sessions.map(s => `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)`).join('\n\n');
+            const embed = new EmbedBuilder().setTitle(`📜 Sessioni: ${activeCampaign?.name}`).setDescription(list);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        if (requestedTone && !TONES[requestedTone]) {
+            return await message.reply(`Tono non valido. Toni: ${Object.keys(TONES).join(', ')}`);
+        }
+
+        const channel = message.channel as TextChannel;
+        await channel.send(`📜 Il Bardo sta consultando gli archivi per la sessione \`${targetSessionId}\`...`);
+
+        // 🆕 AVVIO MONITORAGGIO TEMPORANEO (se non attivo)
+        let monitorStartedByUs = false;
+        if (!monitor.isSessionActive()) {
+            monitor.startSession(targetSessionId);
+            monitorStartedByUs = true;
+        }
+
+        const startProcessing = Date.now();
+
+        // FASE 1: PREPARAZIONE TESTO PULITO
+        let cleanText: string | undefined;
+        try {
+            await channel.send("📚 Il Bardo sta preparando il testo...");
+            cleanText = prepareCleanText(targetSessionId);
+
+            if (cleanText) {
+                console.log(`[Prep] ✅ Testo pulito: ${cleanText.length} caratteri`);
+            }
+        } catch (prepErr: any) {
+            console.error(`⚠️ Errore preparazione ${targetSessionId}:`, prepErr);
+            // Non blocchiamo il riassunto
+        }
+
+        // FASE 2: RIASSUNTO
+        try {
+            await channel.send("✍️ Inizio stesura del racconto...");
+            let result = await generateSummary(targetSessionId, requestedTone || 'DM', cleanText);
+
+            // 🆕 FASE 2.1: PRE-RECONCILIATION (Normalizzazione Nomi)
+            if (activeCampaign) {
+                result = await normalizeSummaryNames(activeCampaign.id, result);
+            }
+
+            // FASE 2.5: INGESTIONE RAG (con dati dall'Analista)
+            try {
+                await ingestSessionComplete(targetSessionId, result);
+                console.log(`[RAG] ✅ Ingestione completata`);
+            } catch (ingestErr: any) {
+                console.error(`⚠️ Errore ingestione RAG:`, ingestErr);
+            }
+
+            // SALVATAGGIO TITOLO
+            updateSessionTitle(targetSessionId, result.title);
+
+            // ============================================
+            // GESTIONE EVENTI/LOOT/QUEST CON VALIDAZIONE
+            // ============================================
+
+            if (result && activeCampaign) {
+                const currentSessionId = targetSessionId;
+                const currentCampaignId = activeCampaign.id;
+
+                // 🆕 PREPARAZIONE BATCH VALIDATION
+                const batchInput: any = {};
+
+                if (result.character_growth && result.character_growth.length > 0) {
+                    batchInput.character_events = result.character_growth;
+                }
+
+                if (result.npc_events && result.npc_events.length > 0) {
+                    batchInput.npc_events = result.npc_events;
+                }
+
+                if (result.world_events && result.world_events.length > 0) {
+                    batchInput.world_events = result.world_events;
+                }
+
+                if (result.loot && result.loot.length > 0) {
+                    batchInput.loot = result.loot;
+                }
+
+                if (result.quests && result.quests.length > 0) {
+                    batchInput.quests = result.quests;
+                }
+
+                // Esegui validazione batch se c'è qualcosa da validare
+                let validated: any = null;
+
+                if (Object.keys(batchInput).length > 0) {
+                    console.log('[Validator] 🛡️ Validazione batch in corso...');
+                    validated = await validateBatch(currentCampaignId, batchInput);
+
+                    // Log statistiche
+                    const totalInput =
+                        (batchInput.npc_events?.length || 0) +
+                        (batchInput.character_events?.length || 0) +
+                        (batchInput.world_events?.length || 0) +
+                        (batchInput.loot?.length || 0) +
+                        (batchInput.quests?.length || 0);
+
+                    const totalKept =
+                        (validated.npc_events.keep.length) +
+                        (validated.character_events.keep.length) +
+                        (validated.world_events.keep.length) +
+                        (validated.loot.keep.length) +
+                        (validated.quests.keep.length);
+
+                    const totalSkipped = totalInput - totalKept;
+                    const filterRate = totalInput > 0 ? Math.round((totalSkipped / totalInput) * 100) : 0;
+
+                    console.log(`[Validator] ✅ Validazione completata:`);
+                    console.log(`  - Accettati: ${totalKept}/${totalInput}`);
+                    console.log(`  - Filtrati: ${totalSkipped} (${filterRate}%)`);
+
+                    if (validated.npc_events.skip.length > 0) {
+                        console.log(`  - Eventi NPC scartati: ${validated.npc_events.skip.slice(0, 3).join('; ')}${validated.npc_events.skip.length > 3 ? '...' : ''}`);
+                    }
+                }
+
+                // --- GESTIONE EVENTI PG ---
+                if (validated?.character_events.keep && validated.character_events.keep.length > 0) {
+                    for (const evt of validated.character_events.keep) {
+                        addCharacterEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                        console.log(`[Storia PG] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
+
+                        // ✅ Marca PG come dirty per sync lazy (Sistema Armonico)
+                        markCharacterDirtyByName(currentCampaignId, evt.name);
+
+                        // RAG (invariato)
+                        ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                            .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
+                    }
+                }
+
+                // --- GESTIONE EVENTI NPC ---
+                if (validated?.npc_events.keep && validated.npc_events.keep.length > 0) {
+                    for (const evt of validated.npc_events.keep) {
+                        addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                        console.log(`[Storia NPC] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
+
+                        // ✅ Marca NPC come dirty per sync lazy
+                        markNpcDirty(currentCampaignId, evt.name);
+
+                        // RAG
+                        ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                            .catch(err => console.error(`[RAG] Errore NPC ${evt.name}:`, err));
+                    }
+                }
+
+                // --- GESTIONE EVENTI MONDO ---
+                if (validated?.world_events.keep && validated.world_events.keep.length > 0) {
+                    for (const evt of validated.world_events.keep) {
+                        addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
+                        console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
+
+                        // RAG
+                        ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
+                            .catch(err => console.error('[RAG] Errore Mondo:', err));
+                    }
+                }
+
+                // --- GESTIONE LOOT (con RICONCILIAZIONE) ---
+                if (validated?.loot.keep && validated.loot.keep.length > 0) {
+                    // Pre-deduplica batch
+                    const dedupedItems = await deduplicateItemBatch(validated.loot.keep);
+
+                    for (const item of dedupedItems) {
+                        // Riconcilia con inventario esistente
+                        const reconciled = await reconcileItemName(currentCampaignId, item);
+                        const finalName = reconciled ? reconciled.canonicalName : item;
+                        if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
+
+                        addLoot(currentCampaignId, finalName, 1);
+                        console.log(`[Tesoriere] 💰 Aggiunto: ${finalName}`);
+
+                        // ✅ Embedding selettivo: solo se NON è valuta semplice
+                        const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
+
+                        if (!isSimpleCurrency) {
+                            try {
+                                await ingestLootEvent(currentCampaignId, currentSessionId, finalName);
+                            } catch (err: any) {
+                                console.error(`[RAG] Errore indicizzazione ${finalName}:`, err.message);
+                            }
+                        }
+                    }
+                }
+
+                // --- RIMOZIONE LOOT ---
+                if (result.loot_removed && result.loot_removed.length > 0) {
+                    result.loot_removed.forEach((item: string) => {
+                        removeLoot(currentCampaignId, item);
+                        console.log(`[Tesoriere] 🗑️ Rimosso: ${item}`);
+                    });
+                }
+
+                // --- GESTIONE QUEST ---
+                if (validated?.quests.keep && validated.quests.keep.length > 0) {
+                    for (const quest of validated.quests.keep) {
+                        addQuest(currentCampaignId, quest);
+                        console.log(`[Notaio] 🎯 Quest aggiunta: ${quest}`);
+                    }
+                }
+
+                // ============================================
+                // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
+                // ============================================
+
+                // --- GESTIONE NPC DOSSIER (con dedup batch + riconciliazione DB) ---
+                if (result.npc_dossier_updates && result.npc_dossier_updates.length > 0) {
+                    console.log(`[Biografo] 📝 Processamento ${result.npc_dossier_updates.length} NPC...`);
+
+                    // STEP 1: Deduplica DENTRO il batch (es. "Leosin Erantar" + "Leosin Erentar" → 1 solo)
+                    const validNpcs = result.npc_dossier_updates.filter((n: any) => n.name && n.description);
+                    const dedupedBatch = await deduplicateNpcBatch(validNpcs);
+
+                    // STEP 2: Riconcilia contro il DB esistente
+                    for (const npc of dedupedBatch) {
+                        const reconciled = await reconcileNpcName(currentCampaignId, npc.name, npc.description);
+
+                        if (reconciled) {
+                            console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
+                            const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
+                            updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status, currentSessionId);
+                            markNpcDirty(currentCampaignId, reconciled.canonicalName);
+                        } else {
+                            updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status, currentSessionId);
+                            markNpcDirty(currentCampaignId, npc.name);
+                        }
+                    }
+                }
+
+                // --- 🆕 TRAVEL SEQUENCE (GPS - Traccia spostamenti cronologici) ---
+                if (result.travel_sequence && result.travel_sequence.length > 0) {
+                    console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
+                    for (const step of result.travel_sequence) {
+                        if (step.macro && step.micro) {
+                            // Riconciliazione Fuzzy + AI per evitare duplicati (es. "Cancello" vs "Cancelli")
+                            const reconciled = await reconcileLocationName(currentCampaignId, step.macro, step.micro);
+
+                            if (reconciled) {
+                                console.log(`[GPS] 🔄 Riconciliato: "${step.macro} - ${step.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                            } else {
+                                updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                            }
+
+                            console.log(`[GPS] → ${step.macro} - ${step.micro}${step.reason ? ` (${step.reason})` : ''}`);
+                            await new Promise(r => setTimeout(r, 100)); // Delay per timestamp univoci
+                        }
+                    }
+                } else if (result.location_updates && result.location_updates.length > 0) {
+                    // Fallback: usa primo location_update come posizione finale
+                    const fallbackLoc = result.location_updates[0];
+                    if (fallbackLoc.macro && fallbackLoc.micro) {
+                        // Riconciliazione anche per il fallback
+                        const reconciled = await reconcileLocationName(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro);
+
+                        if (reconciled) {
+                            console.log(`[GPS] 🔄 Fallback Riconciliato: "${fallbackLoc.macro} - ${fallbackLoc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                            updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                        } else {
+                            updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                        }
+                        console.log(`[GPS] 📍 Fallback posizione: ${fallbackLoc.macro} - ${fallbackLoc.micro}`);
+                    }
+                }
+
+                // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi con RICONCILIAZIONE) ---
+                if (result.location_updates && result.location_updates.length > 0) {
+                    console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
+
+                    // 1. Pre-deduplica batch (rimuove duplicati interni)
+                    const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
+
+                    // 2. Per ogni location, riconcilia con l'atlante esistente
+                    for (const loc of dedupedLocations) {
+                        if (loc.macro && loc.micro && loc.description) {
+                            // Cerca se esiste già un luogo simile
+                            const reconciled = await reconcileLocationName(
+                                currentCampaignId,
+                                loc.macro,
+                                loc.micro,
+                                loc.description
+                            );
+
+                            if (reconciled) {
+                                // Usa il nome canonico esistente
+                                console.log(`[Cartografo] 🔄 Riconciliato: "${loc.macro} - ${loc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                updateAtlasEntry(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, currentSessionId);
+                                markAtlasDirty(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
+                            } else {
+                                // Nuovo luogo
+                                updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
+                                markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                            }
+                        }
+                    }
+                }
+
+                // --- GESTIONE BESTIARIO (MOSTRI con RICONCILIAZIONE) ---
+                if (result.monsters && result.monsters.length > 0) {
+                    console.log(`[Bestiario] 👹 Registrazione ${result.monsters.length} creature...`);
+
+                    // 1. Pre-deduplica batch
+                    const dedupedMonsters = await deduplicateMonsterBatch(result.monsters);
+
+                    // 2. Riconcilia con bestiario esistente
+                    for (const monster of dedupedMonsters) {
+                        if (monster.name) {
+                            const reconciled = await reconcileMonsterName(currentCampaignId, monster.name, monster.description);
+
+                            const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                            if (reconciled) {
+                                console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
+                            }
+
+                            upsertMonster(
+                                currentCampaignId,
+                                finalName,
+                                monster.status || 'ALIVE',
+                                monster.count,
+                                currentSessionId,
+                                {
+                                    description: monster.description,
+                                    abilities: monster.abilities,
+                                    weaknesses: monster.weaknesses,
+                                    resistances: monster.resistances
+                                }
+                            );
+                        }
+                    }
+                }
+
+                // --- GESTIONE NPC INCONTRATI (per tabella "NPC Incontrati") ---
+                if (result.present_npcs && result.present_npcs.length > 0) {
+                    updateSessionPresentNPCs(currentSessionId, result.present_npcs);
+                }
+
+                // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
+                // Condizione espansa per includere metadati unificati (npc_dossier_updates, location_updates)
+                const hasValidatedEvents = validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0);
+                const hasNewMetadata = (result.npc_dossier_updates?.length || 0) > 0 || (result.location_updates?.length || 0) > 0;
+
+                if (hasValidatedEvents || hasNewMetadata) {
+                    console.log('[Sync] 📊 Controllo NPC, PG e Atlante da sincronizzare...');
+                    try {
+                        // Sync NPC (include sia npc_events che npc_dossier_updates)
+                        const syncedNpcCount = await syncAllDirtyNpcs(currentCampaignId);
+                        if (syncedNpcCount > 0) {
+                            console.log(`[Sync] ✅ Sincronizzati ${syncedNpcCount} NPC con RAG.`);
+                        }
+
+                        // Sync PG (Sistema Armonico)
+                        const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
+                        if (charSyncResult.synced > 0) {
+                            console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
+
+                            // Notifica nel canale (opzionale)
+                            if (channel && charSyncResult.names.length > 0) {
+                                channel.send(`📜 **Schede Aggiornate Automaticamente**\n${charSyncResult.names.map(n => `• ${n}`).join('\n')}`).catch(() => { });
+                            }
+                        }
+
+                        // 🆕 Sync Atlas (location_updates)
+                        if (result.location_updates?.length) {
+                            const syncedAtlasCount = await syncAllDirtyAtlas(currentCampaignId);
+                            if (syncedAtlasCount > 0) {
+                                console.log(`[Sync] ✅ Sincronizzati ${syncedAtlasCount} luoghi con RAG.`);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('[Sync] ⚠️ Errore batch sync:', e);
+                    }
+                }
+            }
+
+            // 🆕 Recupera NPC incontrati
+            const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
+
+            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+
+            // Invia email DM con mostri
+            const currentCampaignId = getSessionCampaignId(targetSessionId) || activeCampaign?.id;
+            if (currentCampaignId) {
+                await sendSessionRecap(targetSessionId, currentCampaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
+            }
+
+            // 🆕 REPORT TECNICO CON COSTI
+            if (monitorStartedByUs) {
+                const metrics = await monitor.endSession();
+                if (metrics) {
+                    await processSessionReport(metrics);
+                }
+            } else {
+                // Se il monitor era già attivo (sessione live), non lo chiudiamo.
+                // Possiamo opzionalmente loggare che i costi sono confluiti nella sessione attiva.
+                console.log(`[Racconta] Costi confluiti nella sessione attiva monitorata.`);
+            }
+
+        } catch (err) {
+            console.error(`❌ Errore racconta ${targetSessionId}:`, err);
+            await channel.send(`⚠️ Errore durante la generazione del riassunto.`);
+
+            // Se errore, e avevamo aperto il monitor, chiudiamolo comunque per pulizia
+            if (monitorStartedByUs) {
+                await monitor.endSession();
+            }
+        }
+    }
+
+    // --- NUOVO: !modificatitolo <ID> <Titolo> ---
+    if (command === 'modificatitolo' || command === 'edittitle') {
+        const targetSessionId = args[0];
+        const newTitle = args.slice(1).join(' ');
+
+        if (!targetSessionId || !newTitle) {
+            return await message.reply("Uso: `$modificatitolo <ID_SESSIONE> <Nuovo Titolo>`");
+        }
+
+        updateSessionTitle(targetSessionId, newTitle);
+        await message.reply(`✅ Titolo aggiornato per la sessione \`${targetSessionId}\`: **${newTitle}**`);
+    }
+
+    // --- NUOVO: !chiedialbardo <Domanda> ---
+    if (command === 'chiedialbardo' || command === 'ask') {
+        const question = args.join(' ');
+        if (!question) return await message.reply("Uso: `$chiedialbardo <Domanda>`");
+
+        // Fix per TS2339: Controllo se il canale supporta sendTyping
+        if ('sendTyping' in message.channel) {
+            await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
+        }
+
+        try {
+            // ✅ NUOVO: Sync lazy prima di query RAG
+            // Estrai nomi NPC dalla domanda
+            const allNpcs = listNpcs(activeCampaign!.id, 1000);
+            const mentionedNpcs = allNpcs.filter(npc =>
+                question.toLowerCase().includes(npc.name.toLowerCase())
+            );
+
+            for (const npc of mentionedNpcs) {
+                await syncNpcDossierIfNeeded(activeCampaign!.id, npc.name, false);
+            }
+
+            // GESTIONE MEMORIA PERSISTENTE
+            const history = getChatHistory(message.channelId, 6); // Recupera ultimi 6 messaggi (3 scambi)
+            const answer = await askBard(activeCampaign!.id, question, history);
+
+            // Salva nel DB
+            addChatMessage(message.channelId, 'user', question);
+            addChatMessage(message.channelId, 'assistant', answer);
+
+            await message.reply(answer);
+        } catch (err) {
+            console.error("Errore chiedialbardo:", err);
+            await message.reply("Il Bardo ha un vuoto di memoria...");
+        }
+    }
+
+    // --- NUOVO: !wiki <Termine> ---
+    if (command === 'wiki' || command === 'lore') {
+        const term = args.join(' ');
+        if (!term) return await message.reply("Uso: `$wiki <Termine>`");
+
+        // Fix per TS2339: Controllo se il canale supporta sendTyping
+        if ('sendTyping' in message.channel) {
+            await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
+        }
+
+        try {
+            // Usa searchKnowledge ma restituisce i risultati raw
+            const { searchKnowledge } = require('./bard'); // Import dinamico per evitare cicli se necessario, o usa import statico
+            const fragments = await searchKnowledge(activeCampaign!.id, term, 3);
+
+            if (fragments.length === 0) {
+                return await message.reply("Non ho trovato nulla negli archivi su questo argomento.");
+            }
+
+            // Limite embed Discord: 4096 caratteri per description
+            const MAX_DESC_LENGTH = 4000; // Buffer di sicurezza
+            const MAX_FRAGMENT_LENGTH = 1200; // Max per singolo frammento
+
+            // Tronca ogni frammento se troppo lungo
+            const truncatedFragments = fragments.map((f: string) => {
+                if (f.length > MAX_FRAGMENT_LENGTH) {
+                    return f.substring(0, MAX_FRAGMENT_LENGTH) + '... [troncato]';
+                }
+                return f;
+            });
+
+            // Costruisci descrizione con controllo lunghezza
+            let description = '';
+            for (let i = 0; i < truncatedFragments.length; i++) {
+                const fragmentText = `**Frammento ${i + 1}:**\n${truncatedFragments[i]}`;
+                const separator = i > 0 ? '\n\n' : '';
+
+                if ((description + separator + fragmentText).length > MAX_DESC_LENGTH) {
+                    description += '\n\n*...altri frammenti omessi per limite Discord*';
+                    break;
+                }
+                description += separator + fragmentText;
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle(`📚 Archivi: ${term}`)
+                .setColor("#F1C40F")
+                .setDescription(description || 'Nessun contenuto disponibile.');
+
+            await message.reply({ embeds: [embed] });
+        } catch (err) {
+            console.error("Errore wiki:", err);
+            await message.reply("Errore durante la consultazione degli archivi.");
+        }
+    }
+
+    // --- MODIFICATO: $storia (PG o NPC) ---
+    if (command === 'storia' || command === 'story') {
+        const campaignId = activeCampaign!.id;
+        const firstArg = args[0]?.toLowerCase();
+
+        // --- Sottocomando: $storia sync [NomePG] ---
+        if (firstArg === 'sync') {
+            const targetName = args.slice(1).join(' ');
+
+            if (!targetName) {
+                // Sync tutti i PG dirty
+                const loadingMsg = await message.reply(`⚙️ **Sincronizzazione Schede PG**\nControllo aggiornamenti in corso...`);
+                try {
+                    const result = await syncAllDirtyCharacters(campaignId);
+                    if (result.synced === 0) {
+                        await loadingMsg.edit(`✅ **Schede PG Sincronizzate**\nNessun aggiornamento necessario.`);
+                    } else {
+                        await loadingMsg.edit(
+                            `✅ **Schede PG Aggiornate!**\n` +
+                            `Sincronizzati **${result.synced}** personaggi:\n` +
+                            result.names.map(n => `• ${n}`).join('\n')
+                        );
+                    }
+                } catch (e: any) {
+                    await loadingMsg.edit(`❌ Errore sync: ${e.message}`);
+                }
+                return;
+            }
+
+            // Sync specifico PG
+            const targetPG = db.prepare('SELECT user_id, character_name FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
+            if (!targetPG) {
+                return await message.reply(`❌ Non trovo un PG chiamato "**${targetName}**".`);
+            }
+
+            const loadingMsg = await message.reply(`⚙️ Aggiornamento scheda di **${targetPG.character_name}**...`);
+            try {
+                const result = await syncCharacterIfNeeded(campaignId, targetPG.user_id, true); // force=true
+                if (result) {
+                    await loadingMsg.edit(`✅ **${targetPG.character_name}** aggiornato!\n\n${result.substring(0, 1800)}...`);
+                } else {
+                    await loadingMsg.edit(`ℹ️ **${targetPG.character_name}** non necessita di aggiornamenti.`);
+                }
+            } catch (e: any) {
+                await loadingMsg.edit(`❌ Errore: ${e.message}`);
+            }
+            return;
+        }
+
+        // --- Uso standard: $storia <Nome> ---
+        const targetName = args.join(' ');
+        if (!targetName) {
+            return await message.reply(
+                "Uso: `$storia <Nome>` (Cerca sia tra i PG che tra gli NPC)\n\n" +
+                "**Sottocomandi:**\n" +
+                "`$storia sync` - Aggiorna tutte le schede PG con eventi recenti\n" +
+                "`$storia sync <NomePG>` - Aggiorna scheda di un PG specifico"
+            );
+        }
+
+        // Fix per TS2339: Controllo se il canale supporta sendTyping
+        if ('sendTyping' in message.channel) {
+            await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
+        }
+
+        // 1. Cerca tra i PG (Personaggi Giocanti)
+        // Nota: Assumiamo di avere una funzione veloce o usiamo db.prepare
+        const targetPG = db.prepare('SELECT race, class FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
+
+        if (targetPG) {
+            await message.reply(`📖 **Saga dell'Eroe: ${targetName}**\nIl Bardo sta scrivendo...`);
+            const bio = await generateCharacterBiography(campaignId, targetName, targetPG.class || "Eroe", targetPG.race || "Ignoto");
+            const chunks = bio.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) await (message.channel as TextChannel).send(chunk);
+            return;
+        }
+
+        // 2. Se non è un PG, cerca tra gli NPC (Dossier)
+        const targetNPC = getNpcEntry(campaignId, targetName);
+
+        if (targetNPC) {
+            await message.reply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
+            const bio = await generateNpcBiography(campaignId, targetNPC.name, targetNPC.role || "Sconosciuto", targetNPC.description || "Nessuna nota precedente.");
+            const chunks = bio.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) await (message.channel as TextChannel).send(chunk);
+            return;
+        }
+
+        // 3. Nessun risultato
+        await message.reply(`❌ Non ho trovato nessun PG o NPC chiamato "**${targetName}**" negli archivi di questa campagna.`);
+    }
+
+    // --- NUOVO: $anno0 <Descrizione> ---
+    if (command === 'anno0' || command === 'year0') {
+        const desc = args.join(' ');
+        if (!desc) return await message.reply("Uso: `$anno0 <Descrizione Evento Cardine>` (es. 'La Caduta dell'Impero')");
+
+        setCampaignYear(activeCampaign!.id, 0);
+        addWorldEvent(activeCampaign!.id, null, desc, 'GENERIC', 0);
+
+        return await message.reply(`📅 **Anno 0 Stabilito!**\nEvento: *${desc}*\nOra puoi usare \`$data <Anno>\` per impostare la data corrente.`);
+    }
+
+    // --- NUOVO: $data <Anno> ---
+    if (command === 'data' || command === 'date' || command === 'anno' || command === 'year') {
+        const yearStr = args[0];
+        if (!yearStr) {
+            const current = activeCampaign!.current_year;
+            const label = current === undefined ? "Non impostata" : (current === 0 ? "Anno 0" : (current > 0 ? `${current} D.E.` : `${Math.abs(current)} P.E.`));
+            return await message.reply(`📅 **Data Attuale:** ${label}`);
+        }
+
+        const year = parseInt(yearStr);
+        if (isNaN(year)) return await message.reply("Uso: `$data <Numero Anno>` (es. 100 o -50)");
+
+        setCampaignYear(activeCampaign!.id, year);
+        const label = year === 0 ? "Anno 0" : (year > 0 ? `${year} D.E.` : `${Math.abs(year)} P.E.`);
+
+        // --- NUOVO: Aggiorna anche l'anno corrente in memoria per le registrazioni attive ---
+        // Nota: activeCampaign è un riferimento locale, aggiorniamolo
+        activeCampaign!.current_year = year;
+
+        return await message.reply(`📅 Data campagna aggiornata a: **${label}**`);
+    }
+
+    // --- NUOVO: $autoaggiorna (on/off) - Toggle auto-update PG ---
+    if (command === 'autoaggiorna' || command === 'autoupdate') {
+        const subCmd = args[0]?.toLowerCase();
+
+        if (!subCmd) {
+            // Mostra stato attuale
+            const current = activeCampaign!.allow_auto_character_update ? 'ATTIVO' : 'DISATTIVO';
+            return await message.reply(
+                `⚙️ **Auto-Aggiornamento Schede PG**\n` +
+                `Stato attuale: **${current}**\n\n` +
+                `Uso:\n` +
+                `\`$autoaggiorna on\` - Attiva aggiornamento automatico bio PG\n` +
+                `\`$autoaggiorna off\` - Disattiva (i giocatori aggiorneranno manualmente)`
+            );
+        }
+
+        if (subCmd === 'on' || subCmd === 'attiva' || subCmd === '1') {
+            setCampaignAutoUpdate(activeCampaign!.id, true);
+            activeCampaign!.allow_auto_character_update = 1;
+            return await message.reply(
+                `✅ **Auto-Aggiornamento ATTIVATO**\n` +
+                `Le biografie dei PG verranno aggiornate automaticamente a fine sessione ` +
+                `con le conseguenze osservabili delle loro azioni.\n\n` +
+                `⚠️ **Nota:** Solo eventi narrativi verificabili. ` +
+                `Non verranno mai modificate personalità, motivazioni o scelte del giocatore.`
+            );
+        }
+
+        if (subCmd === 'off' || subCmd === 'disattiva' || subCmd === '0') {
+            setCampaignAutoUpdate(activeCampaign!.id, false);
+            activeCampaign!.allow_auto_character_update = 0;
+            return await message.reply(
+                `⛔ **Auto-Aggiornamento DISATTIVATO**\n` +
+                `Le schede PG non verranno modificate automaticamente.\n` +
+                `I giocatori dovranno usare \`$storia sync\` per aggiornare manualmente.`
+            );
+        }
+
+        return await message.reply("Uso: `$autoaggiorna on` o `$autoaggiorna off`");
+    }
+
+    // --- NUOVO: $timeline ---
+    if (command === 'timeline' || command === 'cronologia') {
+        const arg = args.join(' ');
+
+        // Sottocomando: $timeline add <Anno> | <Tipo> | <Descrizione>
+        if (arg.toLowerCase().startsWith('add ')) {
+            const parts = arg.substring(4).split('|').map(s => s.trim());
+            if (parts.length < 3) return await message.reply("Uso: `$timeline add <Anno> | <Tipo> | <Descrizione>`\nEs: `$timeline add -500 | WAR | Guerra Antica`");
+
+            const year = parseInt(parts[0]);
+            const type = parts[1].toUpperCase();
+            const desc = parts[2];
+
+            if (isNaN(year)) return await message.reply("L'anno deve essere un numero.");
+
+            addWorldEvent(activeCampaign!.id, null, desc, type, year);
+            return await message.reply(`📜 Evento storico aggiunto nell'anno **${year}**.`);
+        }
+
+        // Sottocomando: $timeline delete <ID>
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('remove ')) {
+            const idStr = arg.split(' ')[1];
+            const eventId = parseInt(idStr);
+
+            if (isNaN(eventId)) return await message.reply("Uso: `$timeline delete <ID>` (L'ID deve essere un numero)");
+
+            const success = deleteWorldEvent(eventId);
+            if (success) {
+                return await message.reply(`🗑️ Evento #${eventId} eliminato dalla cronologia.`);
+            } else {
+                return await message.reply(`❌ Evento #${eventId} non trovata.`);
+            }
+        }
+
+        // Visualizzazione
+        const events = getWorldTimeline(activeCampaign!.id);
+
+        if (events.length === 0) {
+            return await message.reply("📜 La cronologia mondiale è ancora bianca. Nessun grande evento registrato.");
+        }
+
+        // Costruiamo un messaggio formattato
+        let msg = `🌍 **Cronologia del Mondo: ${activeCampaign!.name}**\n\n`;
+
+        // Icone per tipo
+        const icons: Record<string, string> = {
+            'WAR': '⚔️',
+            'POLITICS': '👑',
+            'DISCOVERY': '💎',
+            'CALAMITY': '🌋',
+            'SUPERNATURAL': '🔮',
+            'GENERIC': '🔹'
+        };
+
+        events.forEach((e: any) => {
+            const icon = icons[e.event_type] || '🔹';
+            // Formattazione Anno
+            const yearLabel = e.year === 0 ? "**[Anno 0]**" : (e.year > 0 ? `**[${e.year} D.E.]**` : `**[${Math.abs(e.year)} P.E.]**`);
+
+            msg += `\`#${e.id}\` ${yearLabel} ${icon} ${e.description}\n`;
+        });
+
+        msg += `\n💡 Usa \`$timeline delete <ID>\` per eliminare un evento.`;
+
+        // Gestione lunghezza messaggio (split se necessario)
+        const chunks = msg.match(/[\s\S]{1,1900}/g) || [];
+        for (const chunk of chunks) {
+            await (message.channel as TextChannel).send(chunk);
+        }
+    }
+
+    // --- NUOVO: !ingest <session_id> ---
+    // NOTA: Per una reingestione completa con metadata, usa $riprocessa
+    // Questo comando fa un'ingestione veloce solo con testo pulito
+    if (command === 'ingest' || command === 'memorizza') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) return await message.reply("Uso: `$memorizza <ID_SESSIONE>`\nPer reingestione completa con metadati usa `$riprocessa`");
+
+        await message.reply(`🧠 **Ingestione Memoria** avviata per sessione \`${targetSessionId}\`...\nℹ️ Usa \`$riprocessa\` per reingestione completa con metadati.`);
+
+        try {
+            // Ingestione semplificata: prepara testo e genera summary per avere metadata
+            const cleanText = prepareCleanText(targetSessionId);
+            if (!cleanText) {
+                return await message.reply(`⚠️ Nessuna trascrizione trovata per la sessione.`);
+            }
+
+            // Genera summary veloce per ottenere metadata
+            const result = await generateSummary(targetSessionId, 'DM', cleanText);
+            await ingestSessionComplete(targetSessionId, result);
+
+            await message.reply(`✅ Memoria aggiornata per sessione \`${targetSessionId}\`. Ora puoi farmi domande su di essa.`);
+        } catch (e: any) {
+            console.error(e);
+            await message.reply(`❌ Errore durante l'ingestione: ${e.message}`);
+        }
+    }
+
+    // --- COMANDO DOWNLOAD SESSIONE ---
+    if (command === 'download' || command === 'scarica') {
+        const isActiveSession = guildSessions.has(message.guild.id);
+        const queueCounts = await audioQueue.getJobCounts();
+        const isProcessing = queueCounts.active > 0 || queueCounts.waiting > 0;
+
+        if (isActiveSession || isProcessing) {
+            return await message.reply(
+                `🛑 **Sistema sotto carico.**\n` +
+                `Non posso generare il download mentre:\n` +
+                `- Una sessione è attiva: ${isActiveSession ? 'SÌ' : 'NO'}\n` +
+                `- Ci sono file in elaborazione: ${isProcessing ? 'SÌ' : 'NO'} (${queueCounts.waiting} in coda)\n\n` +
+                `Attendi la fine della sessione e del riassunto.`
+            );
+        }
+
+        let targetSessionId = args[0];
+        let force = false;
+        let keep = false;
+
+        // Parse arguments
+        for (const arg of args) {
+            if (arg === 'force' || arg === '--force') force = true;
+            else if (arg === 'keep' || arg === '--keep') keep = true;
+            else if (!targetSessionId) targetSessionId = arg;
+        }
+
+        if (!targetSessionId) {
+            targetSessionId = guildSessions.get(message.guild.id) || "";
+        }
+
+        if (!targetSessionId) {
+            return await message.reply("⚠️ Specifica un ID sessione o avvia una sessione: `$scarica <ID>`");
+        }
+
+        // Check if already exists in cloud
+        const finalFileName = `session_${targetSessionId}_full.mp3`;
+        const cloudKey = `recordings/${targetSessionId}/${finalFileName}`;
+
+        // If not force, check if exists
+        if (!force) {
+            const existingUrl = await getPresignedUrl(cloudKey, undefined, 3600 * 24);
+            if (existingUrl) {
+                return await (message.channel as TextChannel).send(`✅ **Audio Sessione Già Disponibile**\nPuoi scaricarlo qui (link valido 24h):\n${existingUrl}\n\n💡 Usa \`$scarica ${targetSessionId} force\` per rigenerarlo.`);
+            }
+        }
+
+        await message.reply(`⏳ **Elaborazione Audio Completa** per sessione \`${targetSessionId}\`...\nPotrebbe volerci qualche minuto a seconda della durata. Ti avviserò qui.`);
+
+        try {
+            const filePath = await mixSessionAudio(targetSessionId, keep);
+            const stats = fs.statSync(filePath);
+            const sizeMB = stats.size / (1024 * 1024);
+
+            if (sizeMB < 25) {
+                await (message.channel as TextChannel).send({
+                    content: `✅ **Audio Sessione Pronto!** (${sizeMB.toFixed(2)} MB)`,
+                    files: [filePath]
+                });
+            } else {
+                const fileName = path.basename(filePath);
+                // Upload is handled inside mixSessionAudio now, but we double check or just get URL
+                // mixSessionAudio uploads to recordings/SESSION_ID/filename
+
+                const presignedUrl = await getPresignedUrl(cloudKey, undefined, 3600 * 24);
+
+                if (presignedUrl) {
+                    await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB).\nEssendo troppo grande per Discord, puoi scaricarlo qui (link valido 24h):\n${presignedUrl}`);
+                } else {
+                    await (message.channel as TextChannel).send(`✅ **Audio Generato** (${sizeMB.toFixed(2)} MB), ma non sono riuscito a generare il link di download.`);
+                }
+
+                // Cleanup local mixed file
+                try { fs.unlinkSync(filePath); } catch (e) { }
+            }
+
+        } catch (err: any) {
+            console.error(err);
+            await (message.channel as TextChannel).send(`❌ Errore durante la generazione dell'audio: ${err.message}`);
+        }
+    }
+
+    // --- NUOVO: !listasessioni ---
+    if (command === 'listasessioni' || command === 'listsessions') {
+        const sessions = getAvailableSessions(message.guild.id, activeCampaign?.id, 0); // 0 = No limit
+        if (sessions.length === 0) {
+            await message.reply("Nessuna sessione trovata negli archivi per questa campagna.");
+        } else {
+            const ITEMS_PER_PAGE = 5;
+            const totalPages = Math.ceil(sessions.length / ITEMS_PER_PAGE);
+            let currentPage = 0;
+
+            const generateEmbed = (page: number) => {
+                const start = page * ITEMS_PER_PAGE;
+                const end = start + ITEMS_PER_PAGE;
+                const currentSessions = sessions.slice(start, end);
+
+                const list = currentSessions.map(s => {
+                    const title = s.title ? `📜 **${s.title}**` : "";
+                    return `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)\n${title}`;
+                }).join('\n\n');
+
+                return new EmbedBuilder()
+                    .setTitle(`📜 Cronache: ${activeCampaign?.name}`)
+                    .setColor("#7289DA")
+                    .setDescription(list)
+                    .setFooter({ text: `Pagina ${page + 1} di ${totalPages}` });
+            };
+
+            const generateButtons = (page: number) => {
+                const row = new ActionRowBuilder<ButtonBuilder>();
+
+                row.addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('prev_page')
+                        .setLabel('⬅️ Precedente')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === 0),
+                    new ButtonBuilder()
+                        .setCustomId('next_page')
+                        .setLabel('Successivo ➡️')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === totalPages - 1)
+                );
+
+                return row;
+            };
+
+            const reply = await message.reply({
+                embeds: [generateEmbed(currentPage)],
+                components: totalPages > 1 ? [generateButtons(currentPage)] : []
+            });
+
+            if (totalPages > 1) {
+                const collector = reply.createMessageComponentCollector({
+                    componentType: ComponentType.Button,
+                    time: 60000
+                });
+
+                collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                    if (interaction.user.id !== message.author.id) {
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        return;
+                    }
+
+                    if (interaction.customId === 'prev_page') {
+                        currentPage--;
+                    } else if (interaction.customId === 'next_page') {
+                        currentPage++;
+                    }
+
+                    await interaction.update({
+                        embeds: [generateEmbed(currentPage)],
+                        components: [generateButtons(currentPage)]
+                    });
+                });
+
+                collector.on('end', () => {
+                    reply.edit({ components: [] }).catch(() => { });
+                });
+            }
+        }
+    }
+
+    // --- NUOVO: !toni ---
+    if (command === 'toni' || command === 'tones') {
+        const embed = new EmbedBuilder()
+            .setTitle("🎭 Toni Narrativi")
+            .setColor("#9B59B6")
+            .setDescription("Scegli come deve essere raccontata la tua storia:")
+            .addFields(Object.entries(TONES).map(([key, desc]) => ({ name: key, value: desc })));
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- MODIFICATO: !teststream <URL> ---
+    if (command === 'teststream') {
+        const setupCamp = await ensureTestEnvironment(message.guild.id, message.author.id, message);
+        if (setupCamp) activeCampaign = setupCamp;
+        else return;
+
+        const url = args[0];
+        if (!url) return await message.reply("Uso: `$teststream <URL>` (es. YouTube o link diretto mp3)");
+
+        const sessionId = `test-direct-${uuidv4().substring(0, 8)}`;
+
+        // Crea sessione di test
+        createSession(sessionId, message.guild.id, activeCampaign!.id);
+        monitor.startSession(sessionId);
+
+        // Assegna subito un numero di sessione progressivo
+        const lastNumber = db.prepare(`
+            SELECT MAX(CAST(session_number AS INTEGER)) as maxnum 
+            FROM sessions 
+            WHERE campaign_id = ? AND session_number IS NOT NULL
+        `).get(activeCampaign!.id) as { maxnum: number | null } | undefined;
+
+        const nextNumber = (lastNumber?.maxnum || 0) + 1;
+        setSessionNumber(sessionId, nextNumber);
+
+        await message.reply(`🧪 **Test Stream Avviato**\nID Sessione: \`${sessionId}\`\nAnalisi del link in corso...`);
+
+        const recordingsDir = path.join(__dirname, '..', 'recordings');
+        if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+
+        // Nome file temporaneo
+        const tempFileName = `${message.author.id}-${Date.now()}.mp3`;
+        const tempFilePath = path.join(recordingsDir, tempFileName);
+
+        try {
+            // RILEVAMENTO YOUTUBE (Regex base per domini YT)
+            const isYouTube = /^(https?:\/\/)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\/.+$/.test(url);
+
+            if (isYouTube) {
+                // --- LOGICA YOUTUBE (yt-dlp) ---
+                await (message.channel as TextChannel).send("🎥 Link YouTube rilevato. Avvio download con yt-dlp...");
+
+                // Cerchiamo i cookies nella root (come in player.js)
+                const cookiesPath = path.resolve(__dirname, '..', 'cookies.json');
+                let cookieArg = '';
+
+                if (fs.existsSync(cookiesPath)) {
+                    const stats = fs.statSync(cookiesPath);
+                    if (stats.isFile() && stats.size > 0) {
+                        cookieArg = ` --cookies "${cookiesPath}"`;
+                        console.log("[TestStream] Cookies trovati e utilizzati per il download.");
+                    }
+                }
+
+                // Costruzione comando: Estrae audio, converte in mp3, forza output sul file target
+                // Nota: Assicurati che 'yt-dlp' sia installato e nel PATH
+                const cmd = `yt-dlp -x --audio-format mp3 --output "${tempFilePath}"${cookieArg} "${url}"`;
+
+                // Esecuzione tramite promise manuale (senza aggiungere import 'util')
+                await new Promise<void>((resolve, reject) => {
+                    exec(cmd, (error, stdout, stderr) => {
+                        if (error) {
+                            console.error(`[yt-dlp error] ${stderr}`);
+                            reject(error);
+                        } else {
+                            console.log(`[yt-dlp output] ${stdout}`);
+                            resolve();
+                        }
+                    });
+                });
+
+                console.log(`[TestStream] Download YouTube completato: ${tempFilePath}`);
+
+            } else {
+                // --- LOGICA LINK DIRETTO (Vecchia logica con fix Content-Type) ---
+                await (message.channel as TextChannel).send("🔗 Link diretto rilevato. Scarico file...");
+
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`Errore HTTP: ${response.statusText}`);
+
+                // Controllo Content-Type per evitare di scaricare HTML
+                const contentType = response.headers.get('content-type');
+                if (contentType && !contentType.startsWith('audio/') && !contentType.includes('octet-stream')) {
+                    throw new Error(`Il link non è un file audio valido (Rilevato: ${contentType}). Usa un link diretto o YouTube.`);
+                }
+
+                if (!response.body) throw new Error("Nessun contenuto ricevuto");
+
+                await pipeline(response.body, fs.createWriteStream(tempFilePath));
+                console.log(`[TestStream] Download diretto completato: ${tempFilePath}`);
+            }
+
+            // --- PROCEDURA STANDARD (Uguale a prima) ---
+            // Registra nel DB come se fosse un file vocale
+            // 0. RECUPERA LUOGO CORRENTE (Simulato per teststream)
+            const loc = getCampaignLocation(message.guild.id);
+            const macro = loc?.macro || null;
+            const micro = loc?.micro || null;
+            const year = activeCampaign?.current_year ?? null;
+
+            addRecording(sessionId, tempFileName, tempFilePath, message.author.id, Date.now(), macro, micro, year);
+
+            // Upload su Oracle (simulato o reale)
+            try {
+                const uploaded = await uploadToOracle(tempFilePath, tempFileName, sessionId);
+                if (uploaded) {
+                    updateRecordingStatus(tempFileName, 'SECURED');
+                }
+            } catch (e) {
+                console.error("[TestStream] Errore upload:", e);
+            }
+
+            // Accoda per trascrizione
+            await audioQueue.add('transcribe-job', {
+                sessionId: sessionId,
+                fileName: tempFileName,
+                filePath: tempFilePath,
+                userId: message.author.id
+            }, {
+                jobId: tempFileName,
+                attempts: 3,
+                removeOnComplete: true
+            });
+
+            await message.reply(`✅ Audio scaricato e accodato. Attendi la trascrizione e il riassunto...`);
+
+            // Avvia monitoraggio per riassunto automatico
+            await waitForCompletionAndSummarize(sessionId, message.channel as TextChannel);
+
+        } catch (error: any) {
+            console.error(`[TestStream] Errore: ${error.message}`);
+            await message.reply(`❌ Errore durante il processo: ${error.message}`);
+            // Pulizia file parziale se esiste
+            if (fs.existsSync(tempFilePath)) {
+                try { fs.unlinkSync(tempFilePath); } catch (e) { }
+            }
+        }
+    }
+
+    // --- NUOVO: !cleantest ---
+    if (command === 'cleantest') {
+        if (!message.member?.permissions.has('Administrator')) return;
+
+        await message.reply("🧹 Pulizia sessioni di test (ID che iniziano con `test-`)...");
+
+        // 1. Trova sessioni di test
+        const testSessions = db.prepare("SELECT session_id FROM sessions WHERE session_id LIKE 'test-%'").all() as { session_id: string }[];
+
+        if (testSessions.length === 0) {
+            return await message.reply("✅ Nessuna sessione di test trovata.");
+        }
+
+        let deletedCount = 0;
+        for (const s of testSessions) {
+            // Rimuovi job dalla coda
+            await removeSessionJobs(s.session_id);
+
+            // Rimuovi file dal DB (recordings, knowledge, session)
+            db.prepare("DELETE FROM recordings WHERE session_id = ?").run(s.session_id);
+            db.prepare("DELETE FROM knowledge_fragments WHERE session_id = ?").run(s.session_id);
+            db.prepare("DELETE FROM sessions WHERE session_id = ?").run(s.session_id);
+
+            deletedCount++;
+        }
+
+        await message.reply(`✅ Eliminate **${deletedCount}** sessioni di test dal database.`);
+    }
+
+    // --- NUOVO: $rebuildcampaign (SOLO SVILUPPO) ---
+    if (command === 'rebuildcampaign' || command === 'ricostruiscicampagna') {
+        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
+        if (message.author.id !== DEVELOPER_ID) return;
+
+        const campaign = getActiveCampaign(message.guild.id);
+        if (!campaign) return await message.reply("⚠️ Nessuna campagna attiva da ricostruire.");
+
+        await message.reply(`⚠️ **ATTENZIONE**: Stai per ricostruire l'intera storia della campagna **${campaign.name}**.\n` +
+            `Verranno cancellati: Inventario, Quest, Storia PG/NPC, Timeline e Memoria RAG.\n` +
+            `Poi tutte le sessioni verranno riprocessate sequenzialmente.\n\n` +
+            `Scrivi \`CONFERMO\` entro 15 secondi per procedere.`);
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                const statusMsg = await message.reply(`🏗️ **Ricostruzione Campagna: ${campaign.name}** avviata...`);
+
+                // FASE 1: THE GREAT PURGE
+                await statusMsg.edit(`🏗️ **Fase 1: Tabula Rasa**\nCancellazione dati derivati...`);
+
+                const campaignId = campaign.id;
+                db.prepare('DELETE FROM inventory WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM quests WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM character_history WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM npc_history WHERE campaign_id = ?').run(campaignId);
+                db.prepare('DELETE FROM world_history WHERE campaign_id = ?').run(campaignId);
+                // Nota: knowledge_fragments viene pulito sessione per sessione dopo, ma potremmo pulirlo anche qui per sicurezza globale?
+                // Meglio farlo sessione per sessione come da richiesta "Deep Clean" nel loop.
+
+                await statusMsg.edit(`🏗️ **Fase 1: Tabula Rasa** ✅\nRecupero sessioni...`);
+
+                // FASE 2: FETCH SESSIONI
+                // Query complessa per ordinamento: Prima per numero (se esiste), poi per data
+                // CASE WHEN session_number IS NULL THEN 1 ELSE 0 END mette i NULL alla fine
+                const sessions = db.prepare(`
+                    SELECT s.session_id, s.session_number, MIN(r.timestamp) as start_time 
+                    FROM sessions s
+                    LEFT JOIN recordings r ON s.session_id = r.session_id
+                    WHERE s.campaign_id = ?
+                    GROUP BY s.session_id
+                    ORDER BY 
+                        CASE WHEN s.session_number IS NULL THEN 1 ELSE 0 END, 
+                        s.session_number ASC, 
+                        MIN(r.timestamp) ASC
+                `).all(campaignId) as { session_id: string, session_number: number | null }[];
+
+                if (sessions.length === 0) {
+                    return await statusMsg.edit(`⚠️ Nessuna sessione trovata per questa campagna.`);
+                }
+
+                await statusMsg.edit(`🏗️ Trovate **${sessions.length}** sessioni da riprocessare.\nInizio sequenza...`);
+
+                // FASE 3: SEQUENTIAL LOOP
+                for (let i = 0; i < sessions.length; i++) {
+                    const sess = sessions[i];
+                    const progressStr = `[${i + 1}/${sessions.length}] Sessione ${sess.session_number || '?'} (${sess.session_id})`;
+
+                    await statusMsg.edit(`🏗️ **Elaborazione in corso...**\n${progressStr}\n- Pulizia e Ripristino...`);
+                    console.log(`[Rebuild] Inizio ${progressStr}`);
+
+                    try {
+                        // a. Deep Clean
+                        await removeSessionJobs(sess.session_id);
+                        db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(sess.session_id);
+                        const filesToProcess = resetSessionData(sess.session_id);
+
+                        if (filesToProcess.length === 0) {
+                            console.log(`[Rebuild] Skip ${sess.session_id} (Nessun file)`);
+                            continue;
+                        }
+
+                        // b. Restore & Queue
+                        let restoredCount = 0;
+                        for (const job of filesToProcess) {
+                            if (!fs.existsSync(job.filepath)) {
+                                const success = await downloadFromOracle(job.filename, job.filepath, sess.session_id);
+                                if (success) restoredCount++;
+                            }
+
+                            // Ensure SECURED status if file exists
+                            if (fs.existsSync(job.filepath)) {
+                                updateRecordingStatus(job.filename, 'SECURED');
+                            }
+
+                            // Add to Queue
+                            await audioQueue.add('transcribe-job', {
+                                sessionId: job.session_id,
+                                fileName: job.filename,
+                                filePath: job.filepath,
+                                userId: job.user_id
+                            }, {
+                                jobId: job.filename,
+                                attempts: 5,
+                                backoff: { type: 'exponential', delay: 2000 },
+                                removeOnComplete: true,
+                                removeOnFail: false
+                            });
+                        }
+
+                        await statusMsg.edit(`🏗️ **Elaborazione in corso...**\n${progressStr}\n- File: ${filesToProcess.length} (Ripristinati: ${restoredCount})\n- In attesa trascrizione e riassunto...`);
+
+                        // Resume queue just in case
+                        await audioQueue.resume();
+
+                        // c. Blocking Wait
+                        // Passiamo message.channel per avere i log progressivi anche in chat se serve,
+                        // ma waitForCompletionAndSummarize manda già messaggi.
+                        // Per evitare spam eccessivo potremmo passare undefined, ma la richiesta dice "Log progress".
+                        // waitForCompletionAndSummarize manda il riassunto finale nel canale.
+                        await waitForCompletionAndSummarize(sess.session_id, message.channel as TextChannel);
+
+                    } catch (err: any) {
+                        console.error(`[Rebuild] ❌ Errore sessione ${sess.session_id}:`, err);
+                        await (message.channel as TextChannel).send(`❌ **Errore Critico** su sessione ${sess.session_id}: ${err.message}. Passo alla prossima.`);
+                    }
+                }
+
+                await statusMsg.edit(`✅ **Campagna Ricostruita Completamente.**\nTutte le ${sessions.length} sessioni sono state rigenerate.`);
+                await message.reply("Procedura terminata. Verifica la coerenza dei dati.");
+            }
+        } catch (e: any) {
+            console.error("Errore rebuildcampaign:", e);
+            await message.reply(`⌛ Tempo scaduto o errore: ${e.message}. Procedura annullata.`);
+        }
+    }
+
+    // --- NUOVO: !wipe (SOLO SVILUPPO) ---
+    if (command === 'wipe') {
+        if (message.author.id !== '310865403066712074') return;
+
+        const filter = (m: Message) => m.author.id === message.author.id;
+        await message.reply("⚠️ **ATTENZIONE**: Questa operazione cancellerà **TUTTO** (DB, Cloud, Code, File Locali). Sei sicuro? Scrivi `CONFERMO` entro 15 secondi.");
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                const statusMsg = await message.reply("🧹 **Ragnarok avviato...**");
+                try {
+                    await clearQueue();
+                    await statusMsg.edit("🧹 **Ragnarok in corso...**\n- Code svuotate ✅");
+                    const cloudCount = await wipeBucket();
+                    await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅`);
+                    wipeDatabase();
+                    await statusMsg.edit(`🧹 **Ragnarok in corso...**\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅`);
+                    wipeLocalFiles();
+                    await statusMsg.edit(`🔥 **Ragnarok completato.** Tutto è stato riportato al nulla.\n- Code svuotate ✅\n- Cloud svuotato (${cloudCount} oggetti rimossi) ✅\n- Database resettato ✅\n- File locali eliminati ✅`);
+                } catch (err: any) {
+                    console.error("❌ Errore durante il wipe:", err);
+                    await statusMsg.edit(`❌ Errore durante il Ragnarok: ${err.message}`);
+                }
+            }
+        } catch (e) {
+            await message.reply("⌛ Tempo scaduto. Il mondo è salvo.");
+        }
+    }
+
+    // --- NUOVO: $softwipe (PULIZIA MEMORIA E CODA) ---
+    if (command === 'softwipe') {
+        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
+        if (message.author.id !== DEVELOPER_ID) return;
+
+        await message.reply(`⚠️ **SOFT WIPE**: Stai per cancellare **TUTTA** la memoria derivata (RAG, Inventario, Quest, Storia) e svuotare la Coda.\n` +
+            `Campagne, Sessioni, PG e Registrazioni rimarranno intatti.\n` +
+            `Scrivi \`CONFERMO\` entro 15 secondi per procedere.`);
+
+        try {
+            const collected = await (message.channel as TextChannel).awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFERMO',
+                max: 1,
+                time: 15000,
+                errors: ['time']
+            });
+
+            if (collected.size > 0) {
+                const statusMsg = await message.reply("🧹 **Soft Wipe avviato...**");
+
+                // 1. Svuota Coda Redis
+                await clearQueue();
+                await statusMsg.edit("🧹 **Soft Wipe...**\n- Coda Redis svuotata ✅");
+
+                // 2. Cancella Tabelle Derivate (SQL)
+                // Non tocchiamo: campaigns, sessions, users, characters, recordings, locations, atlas, npcs
+                db.prepare('DELETE FROM knowledge_fragments').run();
+                db.prepare('DELETE FROM inventory').run();
+                db.prepare('DELETE FROM quests').run();
+                db.prepare('DELETE FROM character_history').run();
+                db.prepare('DELETE FROM npc_history').run();
+                db.prepare('DELETE FROM world_history').run();
+                db.prepare('DELETE FROM chat_history').run(); // Reset anche della chat col bardo
+
+                // 3. Reset stato registrazioni bloccate (ZOMBIE KILLER)
+                db.prepare("UPDATE recordings SET status = 'PENDING', error_log = NULL").run();
+
+                await statusMsg.edit(`✅ **Soft Wipe Completato.**\n` +
+                    `- Coda svuotata.\n` +
+                    `- Memoria RAG e Dati Derivati cancellati.\n` +
+                    `- TUTTI i file resettati a PENDING (Pronti per rielaborazione).\n` +
+                    `- Struttura (Campagne/Sessioni) preservata.\n\n` +
+                    `Ora puoi lanciare \`$reset <ID_SESSIONE>\` per rigenerare i dati.`);
+            }
+        } catch (e) {
+            await message.reply("⌛ Tempo scaduto. Operazione annullata.");
+        }
+    }
+
+    // --- NUOVO: $riprocessa <ID> (SOFT RESET) ---
+    if (command === 'riprocessa' || command === 'reprocess' || command === 'regenerate') {
+        const targetSessionId = args[0];
+        if (!targetSessionId) {
+            return await message.reply("Uso: `$riprocessa <ID_SESSIONE>` - Rigenera memoria e dati senza ritrascrivere.");
+        }
+
+        const channel = message.channel as TextChannel;
+        await channel.send(`🔄 **Riprocessamento Logico** avviato per sessione \`${targetSessionId}\`...\n1. Pulizia dati derivati (Loot, Quest, Storia, RAG)...`);
+
+        // 🆕 AVVIO MONITORAGGIO TEMPORANEO (se non attivo)
+        let monitorStartedByUs = false;
+        if (!monitor.isSessionActive()) {
+            monitor.startSession(targetSessionId);
+            monitorStartedByUs = true;
+        }
+
+        try {
+            const startProcessing = Date.now();
+
+            // 1. PULIZIA MIRATA DATI DERIVATI
+            const campaignId = getSessionCampaignId(targetSessionId);
+            if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
+
+            db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM inventory WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM quests WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM character_history WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(targetSessionId);
+            db.prepare('DELETE FROM world_history WHERE session_id = ?').run(targetSessionId);
+
+            // 🆕 PULIZIA MOSTRI (Bestiario)
+            db.prepare('DELETE FROM bestiary WHERE session_id = ?').run(targetSessionId);
+
+            // 🆕 PULIZIA NPC CREATI IN QUESTA SESSIONE
+            db.prepare('DELETE FROM npc_dossier WHERE first_session_id = ?').run(targetSessionId);
+
+            // 🆕 PULIZIA LUOGHI CREATI IN QUESTA SESSIONE
+            db.prepare('DELETE FROM location_atlas WHERE first_session_id = ?').run(targetSessionId);
+
+            await channel.send(`2. Preparazione testo e Analisi Eventi...`);
+
+            // 2. PREPARAZIONE TESTO PULITO
+            const cleanText = prepareCleanText(targetSessionId);
+
+            // 3. RIGENERAZIONE SUMMARY & DATI
+            let result = await generateSummary(targetSessionId, 'DM', cleanText);
+
+            // 🆕 FASE 3.1: PRE-RECONCILIATION (Normalizzazione Nomi)
+            result = await normalizeSummaryNames(campaignId, result);
+
+            // 3.5. INGESTIONE RAG (con dati dall'Analista)
+            await ingestSessionComplete(targetSessionId, result);
+            console.log(`[RAG] ✅ Ingestione completata`);
+            updateSessionTitle(targetSessionId, result.title);
+
+            // 4. VALIDAZIONE E SALVATAGGIO (Logica copiata da waitForCompletionAndSummarize)
+            const batchInput: any = {};
+            if (result.character_growth?.length) batchInput.character_events = result.character_growth;
+            if (result.npc_events?.length) batchInput.npc_events = result.npc_events;
+            if (result.world_events?.length) batchInput.world_events = result.world_events;
+            if (result.loot?.length) batchInput.loot = result.loot;
+            if (result.quests?.length) batchInput.quests = result.quests;
+
+            if (Object.keys(batchInput).length > 0) {
+                console.log('[Riprocessa] 🛡️ Validazione batch...');
+                const validated = await validateBatch(campaignId, batchInput);
+
+                // Salvataggio dati validati
+                if (validated.character_events.keep) {
+                    for (const evt of validated.character_events.keep) {
+                        addCharacterEvent(campaignId, evt.name, targetSessionId, evt.event, evt.type);
+                        markCharacterDirtyByName(campaignId, evt.name); // Sistema Armonico
+                        ingestBioEvent(campaignId, targetSessionId, evt.name, evt.event, evt.type).catch(console.error);
+                    }
+                }
+                if (validated.npc_events.keep) {
+                    for (const evt of validated.npc_events.keep) {
+                        addNpcEvent(campaignId, evt.name, targetSessionId, evt.event, evt.type);
+                        markNpcDirty(campaignId, evt.name);
+                        ingestBioEvent(campaignId, targetSessionId, evt.name, evt.event, evt.type).catch(console.error);
+                    }
+                }
+                if (validated.world_events.keep) {
+                    for (const evt of validated.world_events.keep) {
+                        addWorldEvent(campaignId, targetSessionId, evt.event, evt.type);
+                        ingestWorldEvent(campaignId, targetSessionId, evt.event, evt.type).catch(console.error);
+                    }
+                }
+                // LOOT (con RICONCILIAZIONE)
+                if (validated.loot.keep) {
+                    const dedupedItems = await deduplicateItemBatch(validated.loot.keep);
+                    for (const item of dedupedItems) {
+                        const reconciled = await reconcileItemName(campaignId, item);
+                        const finalName = reconciled ? reconciled.canonicalName : item;
+                        if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
+
+                        addLoot(campaignId, finalName, 1, targetSessionId);
+                        if (!/^[\d\s]+(mo|monete?)/i.test(finalName)) {
+                            ingestLootEvent(campaignId, targetSessionId, finalName).catch(console.error);
+                        }
+                    }
+                }
+                if (validated.quests.keep) {
+                    for (const quest of validated.quests.keep) {
+                        addQuest(campaignId, quest, targetSessionId);
+                    }
+                }
+            }
+
+            // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI (con dedup + riconciliazione)
+            if (result.npc_dossier_updates?.length) {
+                const validNpcs = result.npc_dossier_updates.filter((n: any) => n.name && n.description);
+                const dedupedBatch = await deduplicateNpcBatch(validNpcs);
+
+                for (const npc of dedupedBatch) {
+                    const reconciled = await reconcileNpcName(campaignId, npc.name, npc.description);
+                    if (reconciled) {
+                        console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
+                        const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
+                        updateNpcEntry(campaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status, targetSessionId);
+                        markNpcDirty(campaignId, reconciled.canonicalName);
+                    } else {
+                        updateNpcEntry(campaignId, npc.name, npc.description, npc.role, npc.status, targetSessionId);
+                        markNpcDirty(campaignId, npc.name);
+                    }
+                }
+            }
+            // 🆕 TRAVEL SEQUENCE (GPS)
+            if (result.travel_sequence?.length) {
+                console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
+                for (const step of result.travel_sequence) {
+                    if (step.macro && step.micro) {
+                        // Riconciliazione Fuzzy + AI
+                        const reconciled = await reconcileLocationName(campaignId, step.macro, step.micro);
+
+                        if (reconciled) {
+                            console.log(`[GPS] 🔄 Riconciliato: "${step.macro} - ${step.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                            updateLocation(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, targetSessionId);
+                        } else {
+                            updateLocation(campaignId, step.macro, step.micro, targetSessionId);
+                        }
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                }
+            } else if (result.location_updates?.length) {
+                // Fallback GPS
+                const fallbackLoc = result.location_updates[0];
+                if (fallbackLoc.macro && fallbackLoc.micro) {
+                    // Riconciliazione Fallback
+                    const reconciled = await reconcileLocationName(campaignId, fallbackLoc.macro, fallbackLoc.micro);
+
+                    if (reconciled) {
+                        console.log(`[GPS] 🔄 Fallback Riconciliato: "${fallbackLoc.macro} - ${fallbackLoc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                        updateLocation(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, targetSessionId);
+                    } else {
+                        updateLocation(campaignId, fallbackLoc.macro, fallbackLoc.micro, targetSessionId);
+                    }
+                }
+            }
+            // ATLANTE (Descrizioni con RICONCILIAZIONE)
+            if (result.location_updates?.length) {
+                // 1. Pre-deduplica batch
+                const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
+
+                // 2. Riconcilia con atlante esistente
+                for (const loc of dedupedLocations) {
+                    if (loc.macro && loc.micro && loc.description) {
+                        const reconciled = await reconcileLocationName(campaignId, loc.macro, loc.micro, loc.description);
+
+                        if (reconciled) {
+                            console.log(`[Cartografo] 🔄 Riconciliato: "${loc.macro} - ${loc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                            updateAtlasEntry(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, targetSessionId);
+                            markAtlasDirty(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
+                        } else {
+                            updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description, targetSessionId);
+                            markAtlasDirty(campaignId, loc.macro, loc.micro);
+                        }
+                    }
+                }
+            }
+            // BESTIARIO (con RICONCILIAZIONE)
+            if (result.monsters?.length) {
+                const dedupedMonsters = await deduplicateMonsterBatch(result.monsters);
+                for (const monster of dedupedMonsters) {
+                    if (monster.name) {
+                        const reconciled = await reconcileMonsterName(campaignId, monster.name, monster.description);
+                        const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                        if (reconciled) console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
+
+                        upsertMonster(campaignId, finalName, monster.status || 'ALIVE', monster.count, targetSessionId, {
+                            description: monster.description,
+                            abilities: monster.abilities,
+                            weaknesses: monster.weaknesses,
+                            resistances: monster.resistances
+                        });
+                    }
+                }
+            }
+
+            // --- GESTIONE NPC INCONTRATI (per tabella "NPC Incontrati") ---
+            if (result.present_npcs?.length) {
+                updateSessionPresentNPCs(targetSessionId, result.present_npcs);
+            }
+
+            // Sync NPC, PG e Atlante
+            syncAllDirtyNpcs(campaignId).catch(console.error);
+            syncAllDirtyCharacters(campaignId).catch(console.error);
+            syncAllDirtyAtlas(campaignId).catch(console.error);
+
+            // 5. PUBBLICAZIONE
+            const encounteredNPCs = getSessionEncounteredNPCs(targetSessionId);
+            await publishSummary(targetSessionId, result.log || [], channel, true, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+
+            // Email recap
+            await sendSessionRecap(targetSessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
+
+            // 🆕 REPORT TECNICO CON COSTI
+            if (monitorStartedByUs) {
+                const metrics = await monitor.endSession();
+                if (metrics) {
+                    await processSessionReport(metrics);
+                }
+            } else {
+                // Se il monitor era già attivo (sessione live), non lo chiudiamo.
+                // Possiamo opzionalmente loggare che i costi sono confluiti nella sessione attiva.
+                console.log(`[Riprocessa] Costi confluiti nella sessione attiva monitorata.`);
+            }
+
+            await channel.send(`✅ **Riprocessamento Completato!** Dati aggiornati.`);
+
+        } catch (err: any) {
+            console.error(`❌ Errore riprocessa ${targetSessionId}:`, err);
+            await channel.send(`❌ Errore critico: ${err.message}`);
+
+            // Se errore, e avevamo aperto il monitor, chiudiamolo comunque per pulizia
+            if (monitorStartedByUs) {
+                await monitor.endSession();
+            }
+        }
+    }
+
+    // --- NUOVO: !testmail (HIDDEN) ---
+    if (command === 'testmail') {
+        if (message.author.id !== '310865403066712074') return;
+
+        await message.reply("📧 Invio email di test in corso...");
+        const success = await sendTestEmail('gabligetta@gmail.com');
+
+        if (success) {
+            await message.reply("✅ Email inviata con successo! Controlla la casella di posta.");
+        } else {
+            await message.reply("❌ Errore durante l'invio. Controlla i log della console.");
+        }
+    }
+
+    // --- ALTRI COMANDI (IAM, MYCLASS, ETC) ---
+    if (command === 'iam' || command === 'sono') {
+        const val = args.join(' ');
+        if (val) {
+            if (val.toUpperCase() === 'DM' || val.toUpperCase() === 'DUNGEON MASTER') {
+                updateUserCharacter(message.author.id, activeCampaign!.id, 'character_name', 'DM');
+                updateUserCharacter(message.author.id, activeCampaign!.id, 'class', 'Dungeon Master');
+                updateUserCharacter(message.author.id, activeCampaign!.id, 'race', 'Narratore');
+                await message.reply(`🎲 **Saluti, Dungeon Master.** Il Bardo è ai tuoi ordini per la campagna **${activeCampaign!.name}**.`);
+            } else {
+                updateUserCharacter(message.author.id, activeCampaign!.id, 'character_name', val);
+                await message.reply(`⚔️ Nome aggiornato: **${val}** (Campagna: ${activeCampaign!.name})`);
+            }
+        } else await message.reply("Uso: `$sono Nome`");
+    }
+
+    if (command === 'myclass' || command === 'miaclasse') {
+        const val = args.join(' ');
+        if (val) {
+            updateUserCharacter(message.author.id, activeCampaign!.id, 'class', val);
+            await message.reply(`🛡️ Classe aggiornata: **${val}**`);
+        } else await message.reply("Uso: `$miaclasse Barbaro / Mago / Ladro...`");
+    }
+
+    if (command === 'myrace' || command === 'miarazza') {
+        const val = args.join(' ');
+        if (val) {
+            updateUserCharacter(message.author.id, activeCampaign!.id, 'race', val);
+            await message.reply(`🧬 Razza aggiornata: **${val}**`);
+        } else await message.reply("Uso: `$miarazza Umano / Elfo / Nano...`");
+    }
+
+    if (command === 'mydesc' || command === 'miadesc') {
+        const val = args.join(' ');
+        if (val) {
+            updateUserCharacter(message.author.id, activeCampaign!.id, 'description', val);
+            await message.reply(`📜 Descrizione aggiornata! Il Bardo prenderà nota.`);
+        } else await message.reply("Uso: `$miadesc Breve descrizione del carattere o aspetto`");
+    }
+
+    if (command === 'whoami' || command === 'chisono') {
+        const targetName = args.join(' ');
+        let targetUserId = message.author.id;
+        let targetUser = message.author;
+
+        if (targetName) {
+            const foundId = getCharacterUserId(activeCampaign!.id, targetName);
+            if (!foundId) {
+                return await message.reply(`❌ Non ho trovato nessun personaggio chiamato "**${targetName}**" nel party.`);
+            }
+            targetUserId = foundId;
+            try {
+                targetUser = await client.users.fetch(targetUserId);
+            } catch (e) {
+                // Fallback se l'utente non è fetchabile
+            }
+        }
+
+        const p = getUserProfile(targetUserId, activeCampaign!.id);
+
+        if (p.character_name) {
+            // Helper per troncare testo (Discord limit: 1024 char per field)
+            const truncate = (text: string, max: number = 1020) => {
+                if (!text || text.length === 0) return "Nessuna descrizione.";
+                return text.length > max ? text.slice(0, max - 3) + '...' : text;
+            };
+
+            const embed = new EmbedBuilder()
+                .setTitle(`👤 Profilo di ${p.character_name}`)
+                .setDescription(`Campagna: **${activeCampaign!.name}**`)
+                .setColor("#3498DB")
+                .addFields(
+                    { name: "⚔️ Nome", value: p.character_name || "Non impostato", inline: true },
+                    { name: "🛡️ Classe", value: p.class || "Sconosciuta", inline: true },
+                    { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
+                    { name: "📜 Biografia", value: truncate(p.description || "") }
+                );
+
+            if (targetUser && targetUser.id === targetUserId) {
+                embed.setThumbnail(targetUser.displayAvatarURL());
+            }
+
+            await message.reply({ embeds: [embed] });
+        } else {
+            if (targetName) {
+                await message.reply(`Il personaggio **${targetName}** esiste ma non ha un profilo completo.`);
+            } else {
+                await message.reply("Non ti conosco in questa campagna. Usa `$sono <Nome>` per iniziare la tua leggenda!");
+            }
+        }
+    }
+
+    // --- NUOVO: $bio reset ---
+    if (command === 'bio' || command === 'biografia') {
+        const campaignId = activeCampaign!.id;
+        const firstArg = args[0]?.toLowerCase();
+
+        if (firstArg === 'reset') {
+            const targetName = args.slice(1).join(' ');
+
+            if (!targetName) {
+                // Reset TUTTI i PG
+                const loadingMsg = await message.reply(`🔄 **Reset Biografie PG**\nRigenerazione da zero in corso...`);
+                try {
+                    const result = await resetAllCharacterBios(campaignId);
+                    if (result.reset === 0) {
+                        await loadingMsg.edit(`ℹ️ **Nessun PG da resettare.**`);
+                    } else {
+                        await loadingMsg.edit(
+                            `✅ **Biografie Rigenerate!**\n` +
+                            `Reset **${result.reset}** personaggi:\n` +
+                            result.names.map(n => `• ${n}`).join('\n')
+                        );
+                    }
+                } catch (e: any) {
+                    await loadingMsg.edit(`❌ Errore reset: ${e.message}`);
+                }
+                return;
+            }
+
+            // Reset specifico PG
+            const targetPG = db.prepare('SELECT user_id, character_name FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
+            if (!targetPG) {
+                return await message.reply(`❌ Non trovo un PG chiamato "**${targetName}**".`);
+            }
+
+            const loadingMsg = await message.reply(`🔄 Reset biografia di **${targetPG.character_name}**...`);
+            try {
+                const result = await resetAndRegenerateCharacterBio(campaignId, targetPG.user_id);
+                if (result !== null) {
+                    const preview = result.length > 1500 ? result.substring(0, 1500) + '...' : result;
+                    await loadingMsg.edit(`✅ **${targetPG.character_name}** rigenerato da zero!\n\n${preview}`);
+                } else {
+                    await loadingMsg.edit(`❌ Errore: PG non trovato.`);
+                }
+            } catch (e: any) {
+                await loadingMsg.edit(`❌ Errore: ${e.message}`);
+            }
+            return;
+        }
+
+        // Help
+        return await message.reply(
+            "**📜 Gestione Biografie PG**\n\n" +
+            "`$bio reset` - Rigenera da zero tutte le biografie\n" +
+            "`$bio reset <NomePG>` - Rigenera da zero la biografia di un PG\n\n" +
+            "*Le biografie vengono mostrate in `$chisono`/`$whoami`*"
+        );
+    }
+
+    // --- NUOVO: !party ---
+    if (command === 'party' || command === 'compagni') {
+        const characters = getCampaignCharacters(activeCampaign!.id);
+
+        if (characters.length === 0) {
+            return await message.reply("Nessun avventuriero registrato in questa campagna.");
+        }
+
+        const list = characters.map(c => {
+            const name = c.character_name || "Sconosciuto";
+            const details = [c.race, c.class].filter(Boolean).join(' - ');
+            return `**${name}**${details ? ` (${details})` : ''}`;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🛡️ Party: ${activeCampaign!.name}`)
+            .setColor("#9B59B6")
+            .setDescription(list);
+
+        await message.reply({ embeds: [embed] });
+    }
+
+    // --- NUOVO: !resetpg ---
+    if (command === 'resetpg' || command === 'clearchara') {
+        deleteUserCharacter(message.author.id, activeCampaign!.id);
+        await message.reply("🗑️ Scheda personaggio resettata. Ora sei un'anima errante.");
+    }
+});
+
+// --- FUNZIONE MONITORAGGIO CODA ---
+async function waitForCompletionAndSummarize(sessionId: string, channel?: TextChannel): Promise<void> {
+    return new Promise<void>(async (resolve, reject) => {
+        const CHECK_INTERVAL = 30000; // 5s
+        const MAX_WAIT_TIME = 86400000; // 1 ora max
+        const startTime = Date.now();
+
+        const checkCompletion = async () => {
+            try {
+                // Controlla timeout
+                if (Date.now() - startTime > MAX_WAIT_TIME) {
+                    console.error(`[Monitor] ⏱️ Timeout sessione ${sessionId} (1h superata)`);
+                    if (channel) {
+                        await channel.send(`⚠️ Timeout sessione \`${sessionId}\`. Elaborazione interrotta.`);
+                    }
+                    return reject(new Error('Timeout'));
+                }
+
+                // Controlla stato file
+                const recordings = getSessionRecordings(sessionId);
+                const pending = recordings.filter(r => ['PENDING', 'SECURED', 'QUEUED', 'PROCESSING', 'TRANSCRIBED'].includes(r.status));
+                const errors = recordings.filter(r => r.status === 'ERROR');
+
+                if (pending.length > 0) {
+                    console.log(`[Monitor] ⏳ Sessione ${sessionId}: ${pending.length} file in elaborazione...`);
+                    setTimeout(checkCompletion, CHECK_INTERVAL);
+                    return;
+                }
+
+                // Tutti completati o con errori
+                console.log(`[Monitor] ✅ Sessione ${sessionId}: Tutti i file processati.`);
+
+                // 🆕 INVIA SEGNALE UNLOAD AL PC REMOTO (BLOCCANTE)
+                // Mettiamo in pausa la coda per evitare che nuovi job partano mentre scarichiamo il modello
+                console.log(`[Monitor] ⏸️ Pausa coda audio per unload modello...`);
+                await audioQueue.pause();
+
+                try {
+                    await unloadTranscriptionModels();
+                } catch (e: any) {
+                    console.warn(`[Monitor] ⚠️ Errore durante unload modello: ${e.message}`);
+                } finally {
+                    console.log(`[Monitor] ▶️ Ripresa coda audio...`);
+                    await audioQueue.resume();
+                }
+
+                if (errors.length > 0) {
+                    console.warn(`[Monitor] ⚠️ ${errors.length} file con errori`);
+                }
+
+                // Genera riassunto
+                const campaignId = getSessionCampaignId(sessionId);
+                const activeCampaign = campaignId ? getCampaigns(channel?.guild.id || '').find(c => c.id === campaignId) : undefined;
+                if (!campaignId) {
+                    console.error(`[Monitor] ❌ Nessuna campagna per sessione ${sessionId}`);
+                    return reject(new Error('No campaign found'));
+                }
+
+                if (channel) {
+                    await channel.send(`📝 Trascrizione completata. Generazione riassunto...`);
+                }
+
+                try {
+                    // 🆕 Prepara testo pulito
+                    const cleanText = prepareCleanText(sessionId);
+                    if (!cleanText) throw new Error("Nessuna trascrizione disponibile");
+
+                    // Genera riassunto (con metadata per ingestione RAG)
+                    let result = await generateSummary(sessionId, 'DM', cleanText);
+
+                    // Ingestione RAG con metadata
+                    await ingestSessionComplete(sessionId, result);
+                    console.log(`[Monitor] 🧠 Memoria RAG aggiornata`);
+
+                    // 🆕 FASE 2.1: PRE-RECONCILIATION (Normalizzazione Nomi)
+                    if (activeCampaign) {
+                        result = await normalizeSummaryNames(activeCampaign.id, result);
+                    }
+
+                    // Salva titolo
+                    updateSessionTitle(sessionId, result.title);
+
+                    // ============================================
+                    // GESTIONE EVENTI/LOOT/QUEST CON VALIDAZIONE
+                    // ============================================
+
+                    if (result && activeCampaign) {
+                        const currentSessionId = sessionId;
+                        const currentCampaignId = activeCampaign.id;
+
+                        // 🆕 PREPARAZIONE BATCH VALIDATION
+                        const batchInput: any = {};
+
+                        if (result.character_growth && result.character_growth.length > 0) {
+                            batchInput.character_events = result.character_growth;
+                        }
+
+                        if (result.npc_events && result.npc_events.length > 0) {
+                            batchInput.npc_events = result.npc_events;
+                        }
+
+                        if (result.world_events && result.world_events.length > 0) {
+                            batchInput.world_events = result.world_events;
+                        }
+
+                        if (result.loot && result.loot.length > 0) {
+                            batchInput.loot = result.loot;
+                        }
+
+                        if (result.quests && result.quests.length > 0) {
+                            batchInput.quests = result.quests;
+                        }
+
+                        // Esegui validazione batch se c'è qualcosa da validare
+                        let validated: any = null;
+
+                        if (Object.keys(batchInput).length > 0) {
+                            console.log('[Validator] 🛡️ Validazione batch in corso...');
+                            validated = await validateBatch(currentCampaignId, batchInput);
+
+                            // Log statistiche
+                            const totalInput =
+                                (batchInput.npc_events?.length || 0) +
+                                (batchInput.character_events?.length || 0) +
+                                (batchInput.world_events?.length || 0) +
+                                (batchInput.loot?.length || 0) +
+                                (batchInput.quests?.length || 0);
+
+                            const totalKept =
+                                (validated.npc_events.keep.length) +
+                                (validated.character_events.keep.length) +
+                                (validated.world_events.keep.length) +
+                                (validated.loot.keep.length) +
+                                (validated.quests.keep.length);
+
+                            const totalSkipped = totalInput - totalKept;
+                            const filterRate = totalInput > 0 ? Math.round((totalSkipped / totalInput) * 100) : 0;
+
+                            console.log(`[Validator] ✅ Validazione completata:`);
+                            console.log(`  - Accettati: ${totalKept}/${totalInput}`);
+                            console.log(`  - Filtrati: ${totalSkipped} (${filterRate}%)`);
+
+                            if (validated.npc_events.skip.length > 0) {
+                                console.log(`  - Eventi NPC scartati: ${validated.npc_events.skip.slice(0, 3).join('; ')}${validated.npc_events.skip.length > 3 ? '...' : ''}`);
+                            }
+                        }
+
+                        // --- GESTIONE EVENTI PG ---
+                        if (validated?.character_events.keep && validated.character_events.keep.length > 0) {
+                            for (const evt of validated.character_events.keep) {
+                                addCharacterEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                                console.log(`[Storia PG] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
+
+                                // ✅ Marca PG come dirty per sync lazy (Sistema Armonico)
+                                markCharacterDirtyByName(currentCampaignId, evt.name);
+
+                                // RAG (invariato)
+                                ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                                    .catch(err => console.error(`[RAG] Errore PG ${evt.name}:`, err));
+                            }
+                        }
+
+                        // --- GESTIONE EVENTI NPC ---
+                        if (validated?.npc_events.keep && validated.npc_events.keep.length > 0) {
+                            for (const evt of validated.npc_events.keep) {
+                                addNpcEvent(currentCampaignId, evt.name, currentSessionId, evt.event, evt.type);
+                                console.log(`[Storia NPC] ✍️ ${evt.name}: ${evt.event.substring(0, 50)}...`);
+
+                                // ✅ Marca NPC come dirty per sync lazy
+                                markNpcDirty(currentCampaignId, evt.name);
+
+                                // RAG
+                                ingestBioEvent(currentCampaignId, currentSessionId, evt.name, evt.event, evt.type)
+                                    .catch(err => console.error(`[RAG] Errore NPC ${evt.name}:`, err));
+                            }
+                        }
+
+                        // --- GESTIONE EVENTI MONDO ---
+                        if (validated?.world_events.keep && validated.world_events.keep.length > 0) {
+                            for (const evt of validated.world_events.keep) {
+                                addWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type);
+                                console.log(`[Cronaca] 🌍 ${evt.event.substring(0, 60)}...`);
+
+                                // RAG
+                                ingestWorldEvent(currentCampaignId, currentSessionId, evt.event, evt.type)
+                                    .catch(err => console.error('[RAG] Errore Mondo:', err));
+                            }
+                        }
+
+                        // --- GESTIONE LOOT (con RICONCILIAZIONE) ---
+                        if (validated?.loot.keep && validated.loot.keep.length > 0) {
+                            const dedupedItems = await deduplicateItemBatch(validated.loot.keep);
+
+                            for (const item of dedupedItems) {
+                                const reconciled = await reconcileItemName(currentCampaignId, item);
+                                const finalName = reconciled ? reconciled.canonicalName : item;
+                                if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
+
+                                addLoot(currentCampaignId, finalName, 1);
+                                console.log(`[Tesoriere] 💰 Aggiunto: ${finalName}`);
+
+                                // ✅ Embedding selettivo: solo se NON è valuta semplice
+                                const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
+
+                                if (!isSimpleCurrency) {
+                                    try {
+                                        await ingestLootEvent(currentCampaignId, currentSessionId, finalName);
+                                    } catch (err: any) {
+                                        console.error(`[RAG] Errore indicizzazione ${finalName}:`, err.message);
+                                    }
+                                }
+                            }
+                        }
+
+                        // --- RIMOZIONE LOOT ---
+                        if (result.loot_removed && result.loot_removed.length > 0) {
+                            result.loot_removed.forEach((item: string) => {
+                                removeLoot(currentCampaignId, item);
+                                console.log(`[Tesoriere] 🗑️ Rimosso: ${item}`);
+                            });
+                        }
+
+                        // --- GESTIONE QUEST ---
+                        if (validated?.quests.keep && validated.quests.keep.length > 0) {
+                            for (const quest of validated.quests.keep) {
+                                addQuest(currentCampaignId, quest);
+                                console.log(`[Notaio] 🎯 Quest aggiunta: ${quest}`);
+                            }
+                        }
+
+                        // ============================================
+                        // 🆕 ARCHITETTURA UNIFICATA: METADATI ESTRATTI
+                        // ============================================
+
+                        // --- GESTIONE NPC DOSSIER (con dedup batch + riconciliazione DB) ---
+                        if (result.npc_dossier_updates && result.npc_dossier_updates.length > 0) {
+                            console.log(`[Biografo] 📝 Processamento ${result.npc_dossier_updates.length} NPC...`);
+
+                            const validNpcs = result.npc_dossier_updates.filter((n: any) => n.name && n.description);
+                            const dedupedBatch = await deduplicateNpcBatch(validNpcs);
+
+                            for (const npc of dedupedBatch) {
+                                const reconciled = await reconcileNpcName(currentCampaignId, npc.name, npc.description);
+                                if (reconciled) {
+                                    console.log(`[Biografo] 🔄 DB Merge: "${npc.name}" → "${reconciled.canonicalName}"`);
+                                    const mergedDesc = await smartMergeBios(reconciled.existingNpc.description || '', npc.description);
+                                    updateNpcEntry(currentCampaignId, reconciled.canonicalName, mergedDesc, npc.role || reconciled.existingNpc.role, npc.status || reconciled.existingNpc.status, currentSessionId);
+                                    markNpcDirty(currentCampaignId, reconciled.canonicalName);
+                                } else {
+                                    updateNpcEntry(currentCampaignId, npc.name, npc.description, npc.role, npc.status, currentSessionId);
+                                    markNpcDirty(currentCampaignId, npc.name);
+                                }
+                            }
+                        }
+
+                        // --- 🆕 TRAVEL SEQUENCE (GPS - Traccia spostamenti cronologici) ---
+                        if (result.travel_sequence && result.travel_sequence.length > 0) {
+                            console.log(`[GPS] 📍 Tracciamento ${result.travel_sequence.length} spostamenti...`);
+                            for (const step of result.travel_sequence) {
+                                if (step.macro && step.micro) {
+                                    // Riconciliazione Fuzzy + AI per evitare duplicati (es. "Cancello" vs "Cancelli")
+                                    const reconciled = await reconcileLocationName(currentCampaignId, step.macro, step.micro);
+
+                                    if (reconciled) {
+                                        console.log(`[GPS] 🔄 Riconciliato: "${step.macro} - ${step.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                        updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                                    } else {
+                                        updateLocation(currentCampaignId, step.macro, step.micro, currentSessionId);
+                                    }
+
+                                    console.log(`[GPS] → ${step.macro} - ${step.micro}${step.reason ? ` (${step.reason})` : ''}`);
+                                    await new Promise(r => setTimeout(r, 100)); // Delay per timestamp univoci
+                                }
+                            }
+                        } else if (result.location_updates && result.location_updates.length > 0) {
+                            // Fallback: usa primo location_update come posizione finale
+                            const fallbackLoc = result.location_updates[0];
+                            if (fallbackLoc.macro && fallbackLoc.micro) {
+                                // Riconciliazione anche per il fallback
+                                const reconciled = await reconcileLocationName(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro);
+
+                                if (reconciled) {
+                                    console.log(`[GPS] 🔄 Fallback Riconciliato: "${fallbackLoc.macro} - ${fallbackLoc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                    updateLocation(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, currentSessionId);
+                                } else {
+                                    updateLocation(currentCampaignId, fallbackLoc.macro, fallbackLoc.micro, currentSessionId);
+                                }
+                                console.log(`[GPS] 📍 Fallback posizione: ${fallbackLoc.macro} - ${fallbackLoc.micro}`);
+                            }
+                        }
+
+                        // --- GESTIONE LOCATIONS (ATLANTE - Descrizioni luoghi con RICONCILIAZIONE) ---
+                        if (result.location_updates && result.location_updates.length > 0) {
+                            console.log(`[Cartografo] 🗺️ Aggiornamento ${result.location_updates.length} descrizioni atlante...`);
+
+                            // 1. Pre-deduplica batch (rimuove duplicati interni)
+                            const dedupedLocations = await deduplicateLocationBatch(result.location_updates);
+
+                            // 2. Per ogni location, riconcilia con l'atlante esistente
+                            for (const loc of dedupedLocations) {
+                                if (loc.macro && loc.micro && loc.description) {
+                                    const reconciled = await reconcileLocationName(
+                                        currentCampaignId,
+                                        loc.macro,
+                                        loc.micro,
+                                        loc.description
+                                    );
+
+                                    if (reconciled) {
+                                        console.log(`[Cartografo] 🔄 Riconciliato: "${loc.macro} - ${loc.micro}" → "${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}"`);
+                                        updateAtlasEntry(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, currentSessionId);
+                                        markAtlasDirty(currentCampaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
+                                    } else {
+                                        updateAtlasEntry(currentCampaignId, loc.macro, loc.micro, loc.description, currentSessionId);
+                                        markAtlasDirty(currentCampaignId, loc.macro, loc.micro);
+                                    }
+                                }
+                            }
+                        }
+
+                        // --- GESTIONE BESTIARIO (MOSTRI con RICONCILIAZIONE) ---
+                        if (result.monsters && result.monsters.length > 0) {
+                            console.log(`[Bestiario] 👹 Registrazione ${result.monsters.length} creature...`);
+
+                            const dedupedMonsters = await deduplicateMonsterBatch(result.monsters);
+                            for (const monster of dedupedMonsters) {
+                                if (monster.name) {
+                                    const reconciled = await reconcileMonsterName(currentCampaignId, monster.name, monster.description);
+                                    const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                                    if (reconciled) console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
+
+                                    upsertMonster(
+                                        currentCampaignId,
+                                        finalName,
+                                        monster.status || 'ALIVE',
+                                        monster.count,
+                                        currentSessionId,
+                                        {
+                                            description: monster.description,
+                                            abilities: monster.abilities,
+                                            weaknesses: monster.weaknesses,
+                                            resistances: monster.resistances
+                                        }
+                                    );
+                                }
+                            }
+                        }
+
+                        // --- GESTIONE NPC INCONTRATI (per tabella "NPC Incontrati") ---
+                        if (result.present_npcs && result.present_npcs.length > 0) {
+                            updateSessionPresentNPCs(currentSessionId, result.present_npcs);
+                        }
+
+                        // 🆕 SYNC RAG A FINE SESSIONE (Batch automatico)
+                        // Condizione espansa per includere metadati unificati (npc_dossier_updates, location_updates)
+                        const hasValidatedEvents = validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0);
+                        const hasNewMetadata = (result.npc_dossier_updates?.length || 0) > 0 || (result.location_updates?.length || 0) > 0;
+
+                        if (hasValidatedEvents || hasNewMetadata) {
+                            console.log('[Sync] 📊 Controllo NPC, PG e Atlante da sincronizzare...');
+                            try {
+                                // Sync NPC (include sia npc_events che npc_dossier_updates)
+                                const syncedNpcCount = await syncAllDirtyNpcs(currentCampaignId);
+                                if (syncedNpcCount > 0) {
+                                    console.log(`[Sync] ✅ Sincronizzati ${syncedNpcCount} NPC con RAG.`);
+                                }
+
+                                // Sync PG (Sistema Armonico)
+                                const charSyncResult = await syncAllDirtyCharacters(currentCampaignId);
+                                if (charSyncResult.synced > 0) {
+                                    console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
+
+                                    // Notifica nel canale (opzionale)
+                                    if (channel && charSyncResult.names.length > 0) {
+                                        channel.send(`📜 **Schede Aggiornate Automaticamente**\n${charSyncResult.names.map(n => `• ${n}`).join('\n')}`).catch(() => { });
+                                    }
+                                }
+
+                                // 🆕 Sync Atlas (location_updates)
+                                if (result.location_updates?.length) {
+                                    const syncedAtlasCount = await syncAllDirtyAtlas(currentCampaignId);
+                                    if (syncedAtlasCount > 0) {
+                                        console.log(`[Sync] ✅ Sincronizzati ${syncedAtlasCount} luoghi con RAG.`);
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('[Sync] ⚠️ Errore batch sync:', e);
+                            }
+                        }
+                    }
+
+                    // 🆕 Recupera NPC incontrati
+                    const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
+
+                    // Pubblica in Discord
+                    if (channel) {
+                        await publishSummary(sessionId, result.log || [], channel, false, result.title, result.loot, result.quests, result.narrativeBrief, result.monsters, encounteredNPCs);
+                    }
+
+                    // Invia email DM
+                    await sendSessionRecap(sessionId, campaignId, result.log || [], result.loot, result.loot_removed, result.narrativeBrief, result.narrative, result.monsters);
+
+                    // 🆕 LOG DEBUG
+                    console.log('[Monitor] 📊 DEBUG: Inizio chiusura sessione e invio metriche...');
+
+                    // CHIUSURA SESSIONE E INVIO REPORT TECNICO
+                    const metrics = await monitor.endSession();
+
+                    console.log('[Monitor] 📊 DEBUG: monitor.endSession() completato', {
+                        hasMetrics: !!metrics,
+                        sessionId: metrics?.sessionId
+                    });
+
+                    if (metrics) {
+                        console.log('[Monitor] 📊 DEBUG: Invio report via processSessionReport()...');
+
+                        try {
+                            await processSessionReport(metrics);  // ← CAMBIATO DA .catch() ad await
+                            console.log('[Monitor] ✅ Report metriche inviato con successo');
+                        } catch (e: any) {
+                            console.error('[Monitor] ❌ ERRORE INVIO REPORT:', e.message);
+                            console.error('[Monitor] ❌ Stack:', e.stack);
+
+                            // Informa in chat (opzionale)
+                            if (channel) {
+                                await channel.send(`⚠️ Report tecnico fallito: ${e.message}`);
+                            }
+                        }
+                    } else {
+                        console.warn('[Monitor] ⚠️ DEBUG: metrics è null/undefined!');
+                    }
+
+                    // Se è una sessione di test, avvisiamo in chat
+                    if (sessionId.startsWith("test-") && channel) {
+                        await channel.send("✅ Report sessione di test inviato via email!");
+                    }
+
+                    console.log(`[Monitor] ✅ Sessione ${sessionId} completata!`);
+
+                    // 🆕 RISOLVI LA PROMISE
+                    resolve();
+
+                } catch (err: any) {
+                    console.error(`[Monitor] ❌ Errore generazione riassunto:`, err);
+                    if (channel) {
+                        await channel.send(`❌ Errore generazione riassunto: ${err.message}`);
+                    }
+                    reject(err);
+                }
+
+            } catch (err: any) {
+                console.error(`[Monitor] ❌ Errore check:`, err);
+                reject(err);
+            }
+        };
+
+        // Avvia il check
+        checkCompletion();
+    });
+}
+
+async function fetchSessionInfoFromHistory(channel: TextChannel, targetSessionId?: string): Promise<{ lastRealNumber: number, sessionNumber?: number }> {
+    let lastRealNumber = 0;
+    let foundSessionNumber: number | undefined;
+
+    try {
+        const messages = await channel.messages.fetch({ limit: 100 });
+        const sortedMessages = Array.from(messages.values()).sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+        for (const msg of sortedMessages) {
+            const sessionMatch = msg.content.match(/-SESSIONE\s+(\d+)/i);
+            const idMatch = msg.content.match(/\[ID: ([a-f0-9-]+)\]/i);
+            const isReplay = msg.content.includes("(REPLAY)");
+
+            if (sessionMatch) {
+                const num = parseInt(sessionMatch[1]);
+                if (!isNaN(num)) {
+                    if (!isReplay && lastRealNumber === 0) {
+                        lastRealNumber = num;
+                    }
+                    if (targetSessionId && idMatch && idMatch[1] === targetSessionId) {
+                        foundSessionNumber = num;
+                    }
+                    if (!targetSessionId && lastRealNumber !== 0) break;
+                    if (targetSessionId && lastRealNumber !== 0 && foundSessionNumber !== undefined) break;
+                }
+            }
+        }
+    } catch (e) {
+        console.error("❌ Errore durante il recupero della cronologia del canale:", e);
+    }
+
+    return { lastRealNumber, sessionNumber: foundSessionNumber };
+}
+
+async function publishSummary(sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>) {
+    const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
+    let targetChannel: TextChannel = defaultChannel;
+    let discordSummaryChannel: TextChannel | null = null;
+
+    if (summaryChannelId) {
+        try {
+            const ch = await client.channels.fetch(summaryChannelId);
+            if (ch && ch.isTextBased()) {
+                discordSummaryChannel = ch as TextChannel;
+                targetChannel = discordSummaryChannel;
+            }
+        } catch (e) {
+            console.error("❌ Impossibile recuperare il canale dei riassunti specifico:", e);
+        }
+    }
+
+    let sessionNum = getExplicitSessionNumber(sessionId);
+    if (sessionNum !== null) {
+        console.log(`[Publish] Sessione ${sessionId}: Usato numero manuale ${sessionNum}`);
+    }
+
+    if (sessionNum === null && discordSummaryChannel) {
+        const info = await fetchSessionInfoFromHistory(discordSummaryChannel, sessionId);
+        if (isReplay) {
+            if (info.sessionNumber) {
+                sessionNum = info.sessionNumber;
+                setSessionNumber(sessionId, sessionNum);
+            }
+        } else {
+            if (info.lastRealNumber > 0) {
+                sessionNum = info.lastRealNumber + 1;
+                setSessionNumber(sessionId, sessionNum);
+            }
+        }
+    }
+
+    if (sessionNum === null) {
+        sessionNum = 1;
+        setSessionNumber(sessionId, sessionNum);
+    }
+
+    const authorId = getSessionAuthor(sessionId);
+    const campaignId = getSessionCampaignId(sessionId);
+    const authorName = authorId && campaignId ? (getUserName(authorId, campaignId) || "Viandante") : "Viandante";
+    const sessionStartTime = getSessionStartTime(sessionId);
+    const sessionDate = new Date(sessionStartTime || Date.now());
+
+    const dateStr = sessionDate.toLocaleDateString('it-IT');
+    const dateShort = sessionDate.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    const timeStr = sessionDate.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
+    const replayTag = isReplay ? " (REPLAY)" : "";
+
+    // Header con nome campagna se disponibile
+    let header = `-SESSIONE ${sessionNum} - ${dateStr}${replayTag}\n[ID: ${sessionId}]`;
+    if (campaignId) {
+        const campaigns = getCampaigns(defaultChannel.guild.id);
+        const campaign = campaigns.find(c => c.id === campaignId);
+        if (campaign) {
+            header = `--- ${campaign.name.toUpperCase()} ---\n` + header;
+        }
+    }
+
+    await targetChannel.send(`\`\`\`diff\n${header}\n\`\`\``);
+
+    if (title) {
+        await targetChannel.send(`## 📜 ${title}`);
+    }
+
+    await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
+
+    // --- RACCONTO NARRATIVO BREVE (max 1900 char) ---
+    if (narrative && narrative.length > 10) {
+        await targetChannel.send(`### 📖 Racconto\n${narrative}`);
+        await targetChannel.send(`---`); // Separatore
+    }
+    // ---------------------------------
+
+    // --- RIASSUNTO EVENTI (LOG) ---
+    if (log && log.length > 0) {
+        const logText = log.map(entry => `• ${entry}`).join('\n');
+        // Chunk se troppo lungo
+        if (logText.length <= 1900) {
+            await targetChannel.send(`### 📝 Riassunto Eventi\n${logText}`);
+        } else {
+            await targetChannel.send(`### 📝 Riassunto Eventi`);
+            const chunks = logText.match(/[\s\S]{1,1900}/g) || [];
+            for (const chunk of chunks) {
+                await targetChannel.send(chunk);
+            }
+        }
+    }
+
+    // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---
+    // Mostriamo sempre il riepilogo tecnico
+    const embed = new EmbedBuilder()
+        .setColor("#F1C40F")
+        .setTitle("🎒 Riepilogo Tecnico");
+
+    // Helper per troncare testo (Discord limit: 1024 char per field)
+    const truncate = (text: string, max: number = 1020) => {
+        if (!text || text.length === 0) return "N/A";
+        return text.length > max ? text.slice(0, max - 3) + '...' : text;
+    };
+
+    const lootText = (loot && loot.length > 0) ? loot.map(i => `• ${i}`).join('\n') : "Nessun bottino recuperato";
+    embed.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText) });
+
+    const questText = (quests && quests.length > 0) ? quests.map(q => `• ${q}`).join('\n') : "Nessuna missione attiva";
+    embed.addFields({ name: "🗺️ Missioni (Quests)", value: truncate(questText) });
+
+    let monsterText = "Nessun mostro combattuto";
+    if (monsters && monsters.length > 0) {
+        monsterText = monsters.map(monster => {
+            const countText = monster.count ? ` (${monster.count})` : '';
+            const statusEmoji = monster.status === 'DEFEATED' ? '💀' :
+                monster.status === 'FLED' ? '🏃' :
+                    monster.status === 'ALIVE' ? '⚔️' : '❓';
+            return `${statusEmoji} **${monster.name}**${countText} - \`${monster.status}\``;
+        }).join('\n');
+    }
+    embed.addFields({ name: "🐉 Mostri Combattuti", value: truncate(monsterText) });
+
+    let npcText = "Nessun Npc incontrato";
+    if (encounteredNPCs && encounteredNPCs.length > 0) {
+        npcText = encounteredNPCs.map(npc => {
+            // Emoji in base allo status
+            const statusEmoji = npc.status === 'DEAD' ? '💀' :
+                npc.status === 'HOSTILE' ? '⚔️' :
+                    npc.status === 'FRIENDLY' ? '🤝' :
+                        npc.status === 'NEUTRAL' ? '🔷' : '✅';
+
+            // Ruolo (se presente)
+            const roleText = npc.role ? ` - *${npc.role}*` : '';
+
+            return `${statusEmoji} **${npc.name}**${roleText}`;
+        }).join('\n');
+    }
+    embed.addFields({ name: '👥 NPC Incontrati', value: truncate(npcText) });
+
+    await targetChannel.send({ embeds: [embed] });
+    // ------------------------------------
+
+    if (targetChannel.id !== defaultChannel.id) {
+        await defaultChannel.send(`✅ Riassunto della sessione \`${sessionId}\` inviato in <#${targetChannel.id}>`);
+    }
+
+    console.log(`📨 Riassunto inviato per sessione ${sessionId} nel canale ${targetChannel.name}!`);
+}
+
+
+async function recoverOrphanedFiles() {
+    const recordingsDir = path.join(__dirname, '..', 'recordings');
+    if (!fs.existsSync(recordingsDir)) return;
+
+    const files = fs.readdirSync(recordingsDir);
+    const mp3Files = files.filter(f => f.endsWith('.mp3'));
+
+    if (mp3Files.length === 0) return;
+
+    console.log(`🔍 Scansione file orfani in corso (${mp3Files.length} file trovati)...`);
+    let recoveredCount = 0;
+
+    for (const file of mp3Files) {
+        const filePath = path.join(recordingsDir, file);
+        const match = file.match(/^(.+)-(\d+)\.mp3$/);
+        if (!match) continue;
+
+        const userId = match[1];
+        const timestamp = parseInt(match[2]);
+
+        const existing = getRecording(file);
+        if (existing) continue;
+
+        if (Date.now() - timestamp < 300000) continue;
+
+        console.log(`🩹 Trovato file orfano: ${file}. Tento recupero...`);
+
+        let sessionId = findSessionByTimestamp(timestamp);
+
+        if (!sessionId) {
+            sessionId = `recovered-${uuidv4().substring(0, 8)}`;
+            console.log(`🆕 Nessuna sessione trovata per ${file}. Creo sessione di emergenza: ${sessionId}`);
+            // Nota: Le sessioni recuperate non avranno campagna associata, andranno gestite manualmente o assegnate a una campagna di default
+            // Per ora creiamo una sessione "orfana" nel DB se non esiste
+            createSession(sessionId, 'unknown', 0);
+        }
+
+        addRecording(sessionId, file, filePath, userId, timestamp);
+
+        try {
+            const uploaded = await uploadToOracle(filePath, file, sessionId);
+            if (uploaded) {
+                updateRecordingStatus(file, 'SECURED');
+            }
+        } catch (err) {
+            console.error(`[Recovery] Fallimento upload per ${file}:`, err);
+        }
+
+        await audioQueue.add('transcribe-job', {
+            sessionId,
+            fileName: file,
+            filePath,
+            userId
+        }, {
+            jobId: file,
+            attempts: 5,
+            backoff: { type: 'exponential', delay: 2000 },
+            removeOnComplete: true,
+            removeOnFail: false
+        });
+
+        recoveredCount++;
+    }
+
+    if (recoveredCount > 0) {
+        console.log(`✅ Recupero completato: ${recoveredCount} file orfani ripristinati.`);
+    }
+}
+
+client.on('voiceStateUpdate', (oldState, newState) => {
+    const guild = newState.guild || oldState.guild;
+    if (!guild) return;
+    const botMember = guild.members.cache.get(client.user!.id);
+    if (!botMember?.voice.channel) return;
+    checkAutoLeave(botMember.voice.channel);
+});
+
+function checkAutoLeave(channel: VoiceBasedChannel) {
+    const humans = channel.members.filter(member => !member.user.bot).size;
+    const guildId = channel.guild.id;
+
+    if (humans === 0) {
+        if (!autoLeaveTimers.has(guildId)) {
+            console.log(`👻 Canale vuoto in ${guildId}. Timer 60s...`);
+            const timer = setTimeout(async () => {
+                const sessionId = guildSessions.get(guildId);
+                if (sessionId) {
+                    await disconnect(guildId);
+                    guildSessions.delete(guildId);
+                    await audioQueue.resume();
+
+                    const commandChannelId = getCmdChannelId(guildId);
+                    if (commandChannelId) {
+                        const ch = await client.channels.fetch(commandChannelId) as TextChannel;
+                        if (ch) {
+                            await ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione sessione avviata...`);
+                            await waitForCompletionAndSummarize(sessionId, ch);
+                        }
+                    }
+                } else {
+                    await disconnect(guildId);
+                }
+                autoLeaveTimers.delete(guildId);
+            }, 60000);
+            autoLeaveTimers.set(guildId, timer);
+        }
+    } else {
+        const timer = autoLeaveTimers.get(guildId);
+        if (timer) {
+            clearTimeout(timer);
+            autoLeaveTimers.delete(guildId);
+        }
+    }
+}
+
+async function ensureTestEnvironment(guildId: string, userId: string, message: Message): Promise<Campaign | null> {
+    // 1. Campagna
+    let campaign = getActiveCampaign(guildId);
+    if (!campaign) {
+        const campaigns = getCampaigns(guildId);
+        const testCampaignName = 'Campagna di Test';
+        let testCampaign = campaigns.find(c => c.name === testCampaignName);
+
+        if (!testCampaign) {
+            createCampaign(guildId, testCampaignName);
+            testCampaign = getCampaigns(guildId).find(c => c.name === testCampaignName);
+            await message.reply(`🧪 Creata campagna automatica: **${testCampaignName}**`);
+        }
+
+        if (testCampaign) {
+            setActiveCampaign(guildId, testCampaign.id);
+            campaign = getActiveCampaign(guildId);
+            await message.reply(`📋 Campagna attiva impostata su: **${testCampaignName}**`);
+        }
+
+        if (!campaign) {
+            await message.reply(`❌ Errore critico: Impossibile creare o recuperare la campagna di test.`);
+            return null;
+        }
+    }
+
+    // 2. Anno
+    if (campaign.current_year === undefined || campaign.current_year === null) {
+        setCampaignYear(campaign.id, 1000);
+        campaign.current_year = 1000;
+        await message.reply(`📅 Anno impostato a 1000.`);
+    }
+
+    // 3. Luogo
+    const loc = getCampaignLocation(guildId);
+    if (!loc || !loc.macro || !loc.micro) {
+        updateLocation(campaign.id, 'Laboratorio', 'Stanza dei Test', 'SETUP');
+        await message.reply(`📍 Luogo impostato: **Laboratorio | Stanza dei Test**`);
+    }
+
+    // 4. Registra Developer come DM se è lui
+    const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID;
+    if (DEVELOPER_ID && userId === DEVELOPER_ID) {
+        const devProfile = getUserProfile(userId, campaign.id);
+        if (!devProfile.character_name || devProfile.character_name !== 'DM') {
+            updateUserCharacter(userId, campaign.id, 'character_name', 'DM');
+            updateUserCharacter(userId, campaign.id, 'class', 'Dungeon Master');
+            updateUserCharacter(userId, campaign.id, 'race', 'Narratore');
+            await message.reply(`🎲 **Saluti, Dungeon Master!** Il Bardo è ai tuoi ordini.`);
+        }
+    } else {
+        // 5. Personaggio per utenti normali
+        const profile = getUserProfile(userId, campaign.id);
+        if (!profile.character_name) {
+            updateUserCharacter(userId, campaign.id, 'character_name', 'Test Subject');
+            updateUserCharacter(userId, campaign.id, 'class', 'Tester');
+            updateUserCharacter(userId, campaign.id, 'race', 'Construct');
+            await message.reply(`🧪 Personaggio creato: **Test Subject** (Tester/Construct)`);
+        }
+    }
+
+    return campaign;
+}
+
+// 🆕 FUNZIONE PER PROCESSING SEQUENZIALE
+async function processOrphanedSessionsSequentially(sessionIds: string[]): Promise<void> {
+    for (let i = 0; i < sessionIds.length; i++) {
+        const sessionId = sessionIds[i];
+
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`📊 [${i + 1}/${sessionIds.length}] Inizio recupero sessione: ${sessionId}`);
+        console.log(`${'='.repeat(60)}\n`);
+
+        // 🆕 AVVIO MONITORAGGIO PER LA SESSIONE RECUPERATA
+        monitor.startSession(sessionId);
+
+        try {
+            // 1️⃣ PULIZIA CODA (rimuovi eventuali job vecchi)
+            await removeSessionJobs(sessionId);
+
+            // 2️⃣ RESET DB E RECUPERO FILE
+            const filesToProcess = resetUnfinishedRecordings(sessionId);
+
+            if (filesToProcess.length === 0) {
+                console.log(`⚠️ Nessun file da processare per ${sessionId}. Skip.`);
+                continue;
+            }
+
+            console.log(`📁 Trovati ${filesToProcess.length} file da processare.`);
+
+            // 3️⃣ ACCODA FILE UNO PER VOLTA
+            for (const job of filesToProcess) {
+                await audioQueue.add('transcribe-job', {
+                    sessionId: job.session_id,
+                    fileName: job.filename,
+                    filePath: job.filepath,
+                    userId: job.user_id
+                }, {
+                    jobId: job.filename,
+                    attempts: 5,
+                    backoff: { type: 'exponential', delay: 2000 },
+                    removeOnComplete: true,
+                    removeOnFail: false
+                });
+            }
+
+            console.log(`✅ ${filesToProcess.length} file accodati. Avvio processing...`);
+
+            // 4️⃣ RESUME CODA (se era in pausa)
+            await audioQueue.resume();
+
+            // 5️⃣ TROVA CANALE DISCORD
+            const session = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?').get(sessionId) as { guild_id: string } | undefined;
+
+            let channel: TextChannel | null = null;
+
+            if (session) {
+                const targetChannelId = getSummaryChannelId(session.guild_id) || getCmdChannelId(session.guild_id);
+
+                if (targetChannelId) {
+                    try {
+                        channel = await client.channels.fetch(targetChannelId) as TextChannel;
+                        await channel.send(`🔄 **Sessione Recuperata** [${i + 1}/${sessionIds.length}]: \`${sessionId}\`\nElaborazione in corso...`);
+                    } catch (err) {
+                        console.warn(`⚠️ Impossibile accedere al canale ${targetChannelId}`);
+                    }
+                }
+            }
+
+            // 6️⃣ ASPETTA COMPLETAMENTO (BLOCCANTE)
+            console.log(`⏳ Attendo completamento sessione ${sessionId}...`);
+
+            try {
+                await waitForCompletionAndSummarize(sessionId, channel || undefined);
+                console.log(`✅ Sessione ${sessionId} completata con successo!`);
+
+                // 🆕 CHIUSURA MONITORAGGIO E INVIO REPORT (SUCCESSO)
+                const metrics = await monitor.endSession();
+                if (metrics) {
+                    console.log('[Monitor] 📊 Invio report sessione recuperata...');
+                    await processSessionReport(metrics);
+                }
+
+            } catch (err: any) {
+                console.error(`❌ Errore durante elaborazione ${sessionId}:`, err.message);
+
+                // Assicuriamoci di chiudere la sessione di monitoraggio se qualcosa va storto
+                await monitor.endSession();
+
+                if (channel) {
+                    await channel.send(`⚠️ Errore durante elaborazione sessione \`${sessionId}\`. Usa \`$racconta ${sessionId}\` per riprovare.`).catch(() => { });
+                }
+            }
+
+            // 7️⃣ PAUSA TRA SESSIONI (opzionale, per sicurezza)
+            if (i < sessionIds.length - 1) {
+                console.log(`⏸️ Pausa 5s prima della prossima sessione...\n`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+
+        } catch (err: any) {
+            console.error(`❌ Errore critico sessione ${sessionId}:`, err.message);
+            // Continua con la prossima sessione
+        }
+    }
+
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`✅ Tutte le ${sessionIds.length} sessioni orfane sono state elaborate!`);
+    console.log(`${'='.repeat(60)}\n`);
+}
+
+client.once('ready', async () => {
+    console.log(`✅ Bot online: ${client.user?.tag}`);
+    await testRemoteConnection();
+    await checkStorageUsage(); // 🆕 Controllo spazio storage all'avvio
+
+    // Inizializza Identity Guard
+    initIdentityGuard();
+
+    // Avvia il worker PRIMA di processare le sessioni, altrimenti il processing sequenziale si blocca
+    startWorker();
+    // --- CHECK RAM DISK (/dev/shm) ---
+    // Esegue 'df -h /dev/shm' per confermare che Docker abbia allocato la memoria corretta
+    exec('df -h /dev/shm', (error, stdout, stderr) => {
+        if (error) {
+            console.warn(`⚠️ [System] Impossibile verificare /dev/shm: ${error.message}`);
+            return;
+        }
+        // Pulisce l'output per mostrarlo su una riga sola nei log
+        const lines = stdout.trim().split('\n');
+        const info = lines.length > 1 ? lines[1] : lines[0]; // Prende la seconda riga (dati)
+        console.log(`✅ [System] RAM Disk Check: ${info.replace(/\s+/g, ' ')}`);
+    });
+    // ----------------------------------
+    // 🆕 AVVIO MONITORAGGIO IDLE
+    monitor.startIdleMonitoring();
+
+    // 🆕 AVVIO MONITORAGGIO MEMORIA (Proattivo)
+    startMemoryMonitor();
+
+    await recoverOrphanedFiles();
+
+    console.log('🔍 Controllo lavori interrotti nel database...');
+    const orphanJobs = getUnprocessedRecordings();
+
+    if (orphanJobs.length > 0) {
+        const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
+        console.log(`📦 Trovati ${orphanJobs.length} file orfani in ${sessionIds.length} sessioni.`);
+
+        // 🆕 PROCESSING SEQUENZIALE
+        await processOrphanedSessionsSequentially(sessionIds);
+
+    } else {
+        console.log('✅ Nessun lavoro in sospeso trovato.');
+    }
+});
+
+(async () => {
+    await sodium.ready;
+    await client.login(process.env.DISCORD_BOT_TOKEN);
+})();

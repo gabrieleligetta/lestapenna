@@ -42,7 +42,7 @@ async function ensureTestEnvironment(guildId: string, authorId: string, message:
 
 export const debugCommand: Command = {
     name: 'debug',
-    aliases: ['teststream', 'cleantest'],
+    aliases: ['teststream', 'cleantest', 'testmail'],
     requiresCampaign: false,
 
     async execute(ctx: CommandContext): Promise<void> {
@@ -195,8 +195,31 @@ export const debugCommand: Command = {
 
         // --- $cleantest ---
         if (commandName === 'cleantest') {
-            // Implementation if needed
             await message.reply("🧹 Pulizia test non implementata in questo comando.");
+        }
+
+        // --- $testmail ---
+        if (commandName === 'testmail') {
+            const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
+            if (message.author.id !== DEVELOPER_ID) return;
+
+            await message.reply("📧 Invio email di test in corso...");
+            // Use import() to avoid circular dependency issues if reporter depends on db/config which debug might depend on?
+            // Actually debug.ts imports from '../../db'. reporter imports from '../../db'. Should be fine.
+            // But I need to import sendTestEmail from reporter/testing explicitly at top.
+            // For now, I'll dynamic import or I'll just add the import at top in next step.
+            // Wait, I can't add top import here. I should do it properly.
+            // I'll skip dynamic and assume I will fix imports in next step or use require?
+            // Standard import is better.
+            const { sendTestEmail } = await import('../../reporter/testing');
+
+            const success = await sendTestEmail('gabligetta@gmail.com');
+
+            if (success) {
+                await message.reply("✅ Email inviata con successo! Controlla la casella di posta.");
+            } else {
+                await message.reply("❌ Errore durante l'invio. Controlla i log della console.");
+            }
         }
     }
 };

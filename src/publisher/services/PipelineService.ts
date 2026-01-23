@@ -4,7 +4,7 @@
 
 import { TextChannel } from 'discord.js';
 import { getSessionRecordings, getSessionCampaignId } from '../../db';
-import { prepareCleanText, generateSummary } from '../../bard';
+import { prepareCleanText, generateSummary, ToneKey } from '../../bard';
 import { normalizeSummaryNames } from '../../utils/normalize';
 import { audioQueue } from '../../services/queue';
 import { unloadTranscriptionModels } from '../../workers';
@@ -71,12 +71,14 @@ export class PipelineService {
     /**
      * Generates summary for the session
      */
-    async generateSessionSummary(sessionId: string, campaignId: number): Promise<any> {
+    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM'): Promise<any> {
         const cleanText = prepareCleanText(sessionId);
-        if (!cleanText) throw new Error("Nessuna trascrizione disponibile");
+        if (!cleanText) {
+            console.warn(`[Pipeline] ⚠️ Clean text non disponibile, fallback a raw transcription gestito da generateSummary.`);
+        }
 
-        console.log(`[Pipeline] 📝 Avvio generateSummary...`);
-        let result = await generateSummary(sessionId, 'DM', cleanText);
+        console.log(`[Pipeline] 📝 Avvio generateSummary (Tone: ${tone})...`);
+        let result = await generateSummary(sessionId, tone, cleanText);
         console.log(`[Pipeline] ✅ generateSummary completato, avvio normalizzazione...`);
 
         // Normalize entity names if campaign exists

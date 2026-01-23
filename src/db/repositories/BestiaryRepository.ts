@@ -60,7 +60,7 @@ export const bestiaryRepository = {
                 $campaignId, $name, $status, $count, $sessionId, $timestamp,
                 $desc, $abil, $weak, $res, $notes, $sessionId
             )
-            ON CONFLICT(campaign_id, name, session_id) 
+            ON CONFLICT(campaign_id, name, session_id) WHERE session_id IS NOT NULL
             DO UPDATE SET 
                 status = $status,
                 count = COALESCE($count, count),

@@ -32,7 +32,9 @@ import {
     MAP_MODEL,
     MAP_PROVIDER,
     mapClient,
-    EMBEDDING_BATCH_SIZE
+    EMBEDDING_BATCH_SIZE,
+    MAX_CHUNK_SIZE,
+    CHUNK_OVERLAP
 } from './config';
 
 import {
@@ -63,8 +65,7 @@ import {
 } from './prompts';
 
 // Constants
-const MAX_CHUNK_SIZE = 45000;
-const CHUNK_OVERLAP = 2000;
+// Constants
 const MAP_CONCURRENCY = 3;
 
 /**

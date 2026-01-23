@@ -7,6 +7,8 @@ import { updateRecordingStatus } from '../db';
 import { scribaProcessor, unloadTranscriptionModels } from './scriba';
 import { correctionProcessor } from './correction';
 
+import { config } from '../config';
+
 export * from './scriba';
 export * from './correction';
 export * from './utils';
@@ -14,8 +16,8 @@ export * from './utils';
 export function startWorker() {
     const audioWorker = new Worker('audio-processing', scribaProcessor, {
         connection: {
-            host: process.env.REDIS_HOST || 'redis',
-            port: parseInt(process.env.REDIS_PORT || '6379')
+            host: config.redis.host,
+            port: config.redis.port
         },
         concurrency: 1,
         lockDuration: 27200000, // 2 ORE
@@ -25,8 +27,8 @@ export function startWorker() {
 
     const correctionWorker = new Worker('correction-processing', correctionProcessor, {
         connection: {
-            host: process.env.REDIS_HOST || 'redis',
-            port: parseInt(process.env.REDIS_PORT || '6379')
+            host: config.redis.host,
+            port: config.redis.port
         },
         concurrency: 2
     });

@@ -15,8 +15,10 @@ import {
     getSessionEncounteredNPCs
 } from '../db';
 import { fetchSessionInfoFromHistory, truncate } from './formatters';
+import { safeSend } from '../utils/discordHelper';
+import { config } from '../config';
 
-const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || process.env.DISCORD_SUMMARY_CHANNEL_ID;
+const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || config.discord.summaryChannelId;
 
 export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
@@ -90,26 +92,19 @@ export async function publishSummary(client: Client, sessionId: string, log: str
 
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
 
-    // --- RACCONTO NARRATIVO BREVE (max 1900 char) ---
+    // --- RACCONTO NARRATIVO BREVE ---
     if (narrative && narrative.length > 10) {
-        await targetChannel.send(`### 📖 Racconto\n${narrative}`);
+        await targetChannel.send(`### 📖 Racconto`);
+        await safeSend(targetChannel, narrative);
         await targetChannel.send(`---`); // Separatore
     }
     // ---------------------------------
 
     // --- RIASSUNTO EVENTI (LOG) ---
     if (log && log.length > 0) {
+        await targetChannel.send(`### 📝 Riassunto Eventi`);
         const logText = log.map(entry => `• ${entry}`).join('\n');
-        // Chunk se troppo lungo
-        if (logText.length <= 1900) {
-            await targetChannel.send(`### 📝 Riassunto Eventi\n${logText}`);
-        } else {
-            await targetChannel.send(`### 📝 Riassunto Eventi`);
-            const chunks = logText.match(/[\s\S]{1,1900}/g) || [];
-            for (const chunk of chunks) {
-                await targetChannel.send(chunk);
-            }
-        }
+        await safeSend(targetChannel, logText);
     }
 
     // --- VISUALIZZAZIONE LOOT & QUEST & MOSTRI & NPC ---

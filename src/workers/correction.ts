@@ -45,6 +45,7 @@ export const correctionProcessor = async (job: Job) => {
 
     } catch (e: any) {
         console.error(`[Correttore] ❌ Errore correzione ${fileName}: ${e.message}`);
+        updateRecordingStatus(fileName, 'ERROR', null, `Correction Failed: ${e.message}`);
         monitor.logJobFailed();
         throw e;
     }

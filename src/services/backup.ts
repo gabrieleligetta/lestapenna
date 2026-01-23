@@ -4,15 +4,13 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
+import { config } from '../config';
 
 let _s3Client: S3Client | null = null;
 
 export function getS3Client(): S3Client {
     if (!_s3Client) {
-        const region = (process.env.OCI_REGION || '').trim();
-        const endpoint = (process.env.OCI_ENDPOINT || '').trim();
-        const accessKeyId = (process.env.OCI_ACCESS_KEY_ID || '').trim();
-        const secretAccessKey = (process.env.OCI_SECRET_ACCESS_KEY || '').trim();
+        const { region, endpoint, accessKeyId, secretAccessKey } = config.oci;
 
         if (!region || !endpoint || !accessKeyId || !secretAccessKey) {
             console.error("[Custode] ⚠️ Variabili d'ambiente OCI mancanti o incomplete!");
@@ -33,7 +31,7 @@ export function getS3Client(): S3Client {
     return _s3Client;
 }
 
-export const getBucketName = () => (process.env.OCI_BUCKET_NAME || '').trim();
+export const getBucketName = () => config.oci.bucketName;
 
 /**
  * Utility per ottenere la chiave S3 preferita (nuova struttura con sessionId)
@@ -101,15 +99,15 @@ export async function uploadToOracle(filePath: string, fileName: string, session
 
         const fileContent = fs.readFileSync(filePath);
         const targetKey = customKey ? customKey : getPreferredKey(fileName, sessionId);
-        
+
         // Determiniamo il content type dall'estensione
         const extension = path.extname(fileName).toLowerCase();
-        const contentType = extension === '.ogg' ? 'audio/ogg' : 
-                          extension === '.mp3' ? 'audio/mpeg' : 
-                          extension === '.flac' ? 'audio/flac' :
-                          extension === '.json' ? 'application/json' :
-                          extension === '.txt' ? 'text/plain' :
-                          'audio/x-pcm';
+        const contentType = extension === '.ogg' ? 'audio/ogg' :
+            extension === '.mp3' ? 'audio/mpeg' :
+                extension === '.flac' ? 'audio/flac' :
+                    extension === '.json' ? 'application/json' :
+                        extension === '.txt' ? 'text/plain' :
+                            'audio/x-pcm';
 
         const command = new PutObjectCommand({
             Bucket: getBucketName(),
@@ -120,7 +118,7 @@ export async function uploadToOracle(filePath: string, fileName: string, session
 
         await getS3Client().send(command);
         console.log(`[Custode] ☁️ Backup completato su Oracle: ${targetKey}`);
-        
+
         return fileName;
     } catch (err) {
         console.error(`[Custode] ❌ Errore backup su Oracle per ${fileName}:`, err);
@@ -135,7 +133,7 @@ export async function uploadToOracle(filePath: string, fileName: string, session
 export async function deleteFromOracle(fileName: string, sessionId?: string): Promise<boolean> {
     try {
         const key = await findS3Key(fileName, sessionId);
-        
+
         // Se non trovato con findS3Key, proviamo comunque a cancellare la chiave target prevista
         // Questo gestisce il caso in cui findS3Key fallisca o vogliamo essere sicuri di pulire la destinazione
         const targetKey = key || getPreferredKey(fileName, sessionId);
@@ -144,7 +142,7 @@ export async function deleteFromOracle(fileName: string, sessionId?: string): Pr
             Bucket: getBucketName(),
             Key: targetKey
         }));
-        
+
         console.log(`[Custode] 🗑️ Eliminato da Oracle: ${targetKey}`);
         return true;
     } catch (err: any) {
@@ -172,9 +170,9 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
             Bucket: getBucketName(),
             Key: key,
         });
-        
+
         const response = await getS3Client().send(command);
-        
+
         if (response.Body) {
             // Assicuriamoci che la directory esista
             const dir = path.dirname(localPath);
@@ -184,7 +182,7 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
 
             const stream = response.Body as Readable;
             const fileStream = fs.createWriteStream(localPath);
-            
+
             return new Promise((resolve, reject) => {
                 stream.pipe(fileStream)
                     .on('error', (err) => {
@@ -213,8 +211,8 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
  * L'URL scade dopo il tempo specificato (default 1 ora).
  */
 export async function getPresignedUrl(
-    fileNameOrKey: string, 
-    sessionId?: string, 
+    fileNameOrKey: string,
+    sessionId?: string,
     expiresInSeconds: number = 3600
 ): Promise<string | null> {
     try {
@@ -238,7 +236,7 @@ export async function getPresignedUrl(
         } else {
             // Comportamento legacy
             key = await findS3Key(fileNameOrKey, sessionId);
-            
+
             if (!key) {
                 // Se non trovato, proviamo a costruire la chiave target (magari non esiste ancora ma vogliamo l'URL per upload?)
                 // No, getPresignedUrl per download (GetObject) richiede che l'oggetto esista o darà 404 al download.
@@ -270,10 +268,10 @@ export async function wipeBucket(): Promise<number> {
     const bucket = getBucketName();
     const client = getS3Client();
     let totalDeleted = 0;
-    
+
     // Prefissi espliciti da pulire per garantire che S3/Oracle li trovi
     // Aggiungiamo anche la root '' per sicurezza, ma iteriamo sui folder specifici
-    const prefixes = ['recordings/', 'logs/', 'transcripts/']; 
+    const prefixes = ['recordings/', 'logs/', 'transcripts/'];
 
     console.log(`[Custode] 🧹 Inizio svuotamento COMPLETO bucket: ${bucket}...`);
 
@@ -289,7 +287,7 @@ export async function wipeBucket(): Promise<number> {
             });
 
             const listResponse: ListObjectsV2CommandOutput = await client.send(listCommand);
-            
+
             if (!listResponse.Contents || listResponse.Contents.length === 0) {
                 break;
             }
@@ -314,7 +312,7 @@ export async function wipeBucket(): Promise<number> {
 
         } while (continuationToken);
     }
-    
+
     console.log(`[Custode] ✅ Eliminati ${totalDeleted} oggetti totali dal Cloud.`);
     return totalDeleted;
 }
@@ -326,7 +324,7 @@ export async function checkStorageUsage(): Promise<void> {
     try {
         const client = getS3Client();
         const bucketsResponse = await client.send(new ListBucketsCommand({}));
-        
+
         if (!bucketsResponse.Buckets || bucketsResponse.Buckets.length === 0) {
             console.log("[Oracle] ☁️ Nessun bucket trovato.");
             return;
@@ -339,7 +337,7 @@ export async function checkStorageUsage(): Promise<void> {
         for (const bucket of bucketsResponse.Buckets) {
             const bucketName = bucket.Name;
             if (!bucketName) continue;
-            
+
             bucketCount++;
             let bucketBytes = 0;
             let continuationToken: string | undefined = undefined;
@@ -349,15 +347,15 @@ export async function checkStorageUsage(): Promise<void> {
                     Bucket: bucketName,
                     ContinuationToken: continuationToken
                 });
-                
+
                 const response: ListObjectsV2CommandOutput = await client.send(listCmd);
-                
+
                 if (response.Contents) {
                     for (const obj of response.Contents) {
                         bucketBytes += obj.Size || 0;
                     }
                 }
-                
+
                 continuationToken = response.NextContinuationToken;
             } while (continuationToken);
 
@@ -369,7 +367,7 @@ export async function checkStorageUsage(): Promise<void> {
         const totalGB = totalBytes / (1024 * 1024 * 1024);
         const freeTierLimit = 10.0; // 10 GB Free Tier
         const percentUsed = (totalGB / freeTierLimit) * 100;
-        
+
         // Colore log in base alla percentuale
         let icon = '🟢';
         if (percentUsed > 75) icon = '🟡';
@@ -421,7 +419,7 @@ export async function deleteRawSessionFiles(sessionId: string): Promise<number> 
                             Bucket: bucket,
                             Key: batch[0].Key // DeleteObjectCommand cancella uno alla volta, usiamo loop o DeleteObjectsCommand
                         }));
-                        
+
                         // Nota: DeleteObjectCommand cancella un solo oggetto.
                         // Per cancellarne molti, dovremmo usare DeleteObjectsCommand.
                         // Ma il prompt chiedeva di usare le funzioni esistenti o simili.
@@ -430,7 +428,7 @@ export async function deleteRawSessionFiles(sessionId: string): Promise<number> 
                             Bucket: bucket,
                             Key: obj.Key
                         }))));
-                        
+
                         deletedCount += batch.length;
                     }
                 }

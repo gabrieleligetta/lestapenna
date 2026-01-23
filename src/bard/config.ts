@@ -3,36 +3,11 @@
  */
 
 import OpenAI from 'openai';
+import { config } from '../config';
 
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
-
-/**
- * Determina il provider per una fase specifica
- */
-export function getProvider(phaseEnvVar: string, fallbackEnvVar: string = 'AI_PROVIDER'): 'ollama' | 'openai' {
-    const phase = process.env[phaseEnvVar];
-    if (phase === 'ollama' || phase === 'openai') return phase;
-
-    const fallback = process.env[fallbackEnvVar];
-    if (fallback === 'ollama') return 'ollama';
-
-    return 'openai';
-}
-
-/**
- * Ottiene il modello corretto per una fase
- */
-export function getModel(
-    provider: 'ollama' | 'openai',
-    openAIModelEnv: string,
-    openAIFallback: string,
-    ollamaModel: string = process.env.OLLAMA_MODEL || 'llama3.2'
-): string {
-    if (provider === 'ollama') return ollamaModel;
-    return process.env[openAIModelEnv] || openAIFallback;
-}
 
 /**
  * Crea un client OpenAI (Ollama o Cloud)
@@ -40,49 +15,49 @@ export function getModel(
 export function createClient(provider: 'ollama' | 'openai'): OpenAI {
     if (provider === 'ollama') {
         return new OpenAI({
-            baseURL: process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1',
+            baseURL: config.ai.ollama.baseUrl,
             apiKey: 'ollama',
             timeout: 1800 * 1000,
         });
     }
 
     return new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY || 'dummy',
-        project: process.env.OPENAI_PROJECT_ID,
+        apiKey: config.ai.openAi.apiKey,
+        project: config.ai.openAi.projectId,
         timeout: 1800 * 1000,
     });
 }
 
 // ============================================
-// PROVIDER CONFIGURATION (Per-Phase)
+// PROVIDER CONFIGURATION (Granular)
 // ============================================
 
-export const TRANSCRIPTION_PROVIDER = getProvider('TRANSCRIPTION_PROVIDER', 'AI_PROVIDER');
-export const METADATA_PROVIDER = getProvider('METADATA_PROVIDER', 'AI_PROVIDER');
-export const MAP_PROVIDER = getProvider('MAP_PROVIDER', 'AI_PROVIDER');
-export const SUMMARY_PROVIDER = getProvider('SUMMARY_PROVIDER', 'AI_PROVIDER');
-export const ANALYST_PROVIDER = getProvider('ANALYST_PROVIDER', 'METADATA_PROVIDER');
-export const CHAT_PROVIDER = getProvider('CHAT_PROVIDER', 'AI_PROVIDER');
-export const EMBEDDING_PROVIDER = getProvider('EMBEDDING_PROVIDER', 'AI_PROVIDER');
-export const NARRATIVE_FILTER_PROVIDER = getProvider('NARRATIVE_FILTER_PROVIDER', 'AI_PROVIDER');
+export const TRANSCRIPTION_PROVIDER = config.ai.phases.transcription.provider;
+export const METADATA_PROVIDER = config.ai.phases.metadata.provider;
+export const MAP_PROVIDER = config.ai.phases.map.provider;
+export const SUMMARY_PROVIDER = config.ai.phases.summary.provider;
+export const ANALYST_PROVIDER = config.ai.phases.analyst.provider;
+export const CHAT_PROVIDER = config.ai.phases.chat.provider;
+export const EMBEDDING_PROVIDER = config.ai.embeddingProvider;
+export const NARRATIVE_FILTER_PROVIDER = config.ai.phases.narrativeFilter.provider;
 
 // ============================================
-// MODEL CONFIGURATION (Per-Phase)
+// MODEL CONFIGURATION (Granular)
 // ============================================
 
-export const TRANSCRIPTION_MODEL = getModel(TRANSCRIPTION_PROVIDER, 'OPEN_AI_MODEL_TRANSCRIPTION', 'gpt-5-nano');
-export const METADATA_MODEL = getModel(METADATA_PROVIDER, 'OPEN_AI_MODEL_METADATA', 'gpt-5-mini');
-export const MAP_MODEL = getModel(MAP_PROVIDER, 'OPEN_AI_MODEL_MAP', 'gpt-5-mini');
-export const SUMMARY_MODEL = getModel(SUMMARY_PROVIDER, 'OPEN_AI_MODEL_SUMMARY', 'gpt-5.2');
-export const ANALYST_MODEL = getModel(ANALYST_PROVIDER, 'OPEN_AI_MODEL_METADATA', 'gpt-5-mini');
-export const CHAT_MODEL = getModel(CHAT_PROVIDER, 'OPEN_AI_MODEL_CHAT', 'gpt-5-mini');
-export const NARRATIVE_FILTER_MODEL = getModel(NARRATIVE_FILTER_PROVIDER, 'OPEN_AI_MODEL_NARRATIVE_FILTER', 'gpt-5-mini');
+export const TRANSCRIPTION_MODEL = TRANSCRIPTION_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.transcription.model;
+export const METADATA_MODEL = METADATA_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.metadata.model;
+export const MAP_MODEL = MAP_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.map.model;
+export const SUMMARY_MODEL = SUMMARY_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.summary.model;
+export const ANALYST_MODEL = ANALYST_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.analyst.model;
+export const CHAT_MODEL = CHAT_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.chat.model;
+export const NARRATIVE_FILTER_MODEL = NARRATIVE_FILTER_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.narrativeFilter.model;
 
 export const EMBEDDING_MODEL_OPENAI = 'text-embedding-3-small';
 export const EMBEDDING_MODEL_OLLAMA = 'nomic-embed-text';
 
 // ============================================
-// CLIENT CONFIGURATION (Per-Phase)
+// CLIENT CONFIGURATION
 // ============================================
 
 export const transcriptionClient = createClient(TRANSCRIPTION_PROVIDER);
@@ -95,12 +70,12 @@ export const narrativeFilterClient = createClient(NARRATIVE_FILTER_PROVIDER);
 
 // --- CLIENT DEDICATI PER EMBEDDING (DOPPIO) ---
 export const openaiEmbedClient = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || 'dummy',
-    project: process.env.OPENAI_PROJECT_ID,
+    apiKey: config.ai.openAi.apiKey,
+    project: config.ai.openAi.projectId,
 });
 
 export const ollamaEmbedClient = new OpenAI({
-    baseURL: process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434/v1',
+    baseURL: config.ai.ollama.baseUrl,
     apiKey: 'ollama',
 });
 
@@ -111,7 +86,8 @@ export const ollamaEmbedClient = new OpenAI({
 export const TRANSCRIPTION_CONCURRENCY = TRANSCRIPTION_PROVIDER === 'ollama' ? 1 : 5;
 export const MAP_CONCURRENCY = MAP_PROVIDER === 'ollama' ? 1 : 5;
 export const EMBEDDING_BATCH_SIZE = EMBEDDING_PROVIDER === 'ollama' ? 1 : 5;
-export const NARRATIVE_BATCH_SIZE = parseInt(process.env.NARRATIVE_BATCH_SIZE || '30', 10);
+export const NARRATIVE_BATCH_SIZE = config.features.narrativeBatchSize;
+
 
 // ============================================
 // CHUNK SIZE (Dynamic based on MAP_PROVIDER)

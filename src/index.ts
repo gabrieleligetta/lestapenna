@@ -32,8 +32,10 @@ client.on('messageCreate', async (message) => {
     await dispatcher.dispatch(message);
 });
 
+import { config } from './config';
+
 // Start Bot
 (async () => {
     await sodium.ready;
-    await client.login(process.env.DISCORD_BOT_TOKEN);
+    await client.login(config.discord.token);
 })();

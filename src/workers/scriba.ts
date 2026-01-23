@@ -32,8 +32,10 @@ import { correctionQueue } from '../services/queue';
 import { filterWhisperHallucinations } from '../utils/filters/whisper';
 import { groupWordsIntoSentences } from './utils';
 
+import { config } from '../config';
+
 // --- CONFIGURAZIONE PC REMOTO ---
-const REMOTE_WHISPER_URL = process.env.REMOTE_WHISPER_URL?.replace(/\/$/, '');
+const REMOTE_WHISPER_URL = config.remoteWhisper.url;
 const REMOTE_TIMEOUT = 2700000; // 45 minuti
 
 // --- HELPER FUNCTIONS EXPORT ---
@@ -180,25 +182,24 @@ export const scribaProcessor = async (job: Job) => {
             try {
                 const segments = JSON.parse(currentRecording.transcription_text || '[]');
                 if (segments.length > 0) {
-                    if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION !== 'false') {
-                        await correctionQueue.add('correction-job', {
-                            sessionId,
-                            fileName,
-                            segments: segments,
-                            campaignId,
-                            userId
-                        }, {
-                            jobId: `correct-${fileName}-${Date.now()}`,
-                            attempts: 3,
-                            backoff: { type: 'exponential', delay: 2000 },
-                            removeOnComplete: true
-                        });
-                        console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
-                        monitor.logJobProcessed(waitTime, job.attemptsMade);
-                        return { status: 'recovered_to_correction' };
-                    } else {
-                        console.log(`[Scriba] ⚠️ Correzione disabilitata, ma file in limbo. Procedo con logica standard.`);
-                    }
+                    // ... (handled via multiple chunks)
+                    await correctionQueue.add('correction-job', {
+                        sessionId,
+                        fileName,
+                        segments: segments,
+                        campaignId,
+                        userId
+                    }, {
+                        jobId: `correct-${fileName}-${Date.now()}`,
+                        attempts: 3,
+                        backoff: { type: 'exponential', delay: 2000 },
+                        removeOnComplete: true
+                    });
+                    console.log(`[Scriba] ♻️  Recupero riuscito: ${fileName} ri-accodato per correzione.`);
+                    monitor.logJobProcessed(waitTime, job.attemptsMade);
+                    return { status: 'recovered_to_correction' };
+                } else {
+                    console.log(`[Scriba] ⚠️ Correzione disabilitata, ma file in limbo. Procedo con logica standard.`);
                 }
             } catch (e) {
                 console.error(`[Scriba] ❌ Errore recupero JSON per ${fileName}, procedo con ritrascrizione.`);
@@ -298,7 +299,7 @@ export const scribaProcessor = async (job: Job) => {
             const wordLevelJson = JSON.stringify(filteredWords);
             saveRawTranscription(fileName, wordLevelJson);
 
-            if (process.env.ENABLE_AI_TRANSCRIPTION_CORRECTION === 'false') {
+            if (!config.features.enableAiCorrection) {
                 console.log(`[Scriba] ⏩ Correzione AI disabilitata. Salvo direttamente come PROCESSED.`);
 
                 let finalMacro = null;

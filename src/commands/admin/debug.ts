@@ -20,6 +20,7 @@ import { monitor } from '../../monitor';
 import { audioQueue } from '../../services/queue';
 import { uploadToOracle } from '../../services/backup';
 import { waitForCompletionAndSummarize } from '../../publisher';
+import { safeSend } from '../../utils/discordHelper';
 
 // Helper for test environment (copied/adapted from index.ts)
 async function ensureTestEnvironment(guildId: string, authorId: string, message: Message) {
@@ -102,7 +103,7 @@ export const debugCommand: Command = {
                 const isYouTube = /^(https?:\/\/)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\/.+$/.test(url);
 
                 if (isYouTube) {
-                    await (message.channel as TextChannel).send("🎥 Link YouTube rilevato. Avvio download con yt-dlp...");
+                    await safeSend(message.channel as TextChannel, "🎥 Link YouTube rilevato. Avvio download con yt-dlp...");
 
                     const cookiesPath = path.resolve(__dirname, '..', '..', '..', 'cookies.json');
                     let cookieArg = '';
@@ -132,7 +133,7 @@ export const debugCommand: Command = {
                     console.log(`[TestStream] Download YouTube completato: ${tempFilePath}`);
 
                 } else {
-                    await (message.channel as TextChannel).send("🔗 Link diretto rilevato. Scarico file...");
+                    await safeSend(message.channel as TextChannel, "🔗 Link diretto rilevato. Scarico file...");
 
                     const response = await fetch(url);
                     if (!response.ok) throw new Error(`Errore HTTP: ${response.statusText}`);

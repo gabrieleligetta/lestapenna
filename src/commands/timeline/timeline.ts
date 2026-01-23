@@ -5,6 +5,7 @@
 import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { addWorldEvent, deleteWorldEvent, getWorldTimeline } from '../../db';
+import { safeSend } from '../../utils/discordHelper';
 
 export const timelineCommand: Command = {
     name: 'timeline',
@@ -83,9 +84,6 @@ export const timelineCommand: Command = {
         msg += `\n💡 Usa \`$timeline delete <ID>\` per eliminare un evento.`;
 
         // Handle message length (split if necessary)
-        const chunks = msg.match(/[\s\S]{1,1900}/g) || [];
-        for (const chunk of chunks) {
-            await (ctx.message.channel as TextChannel).send(chunk);
-        }
+        await safeSend(ctx.message.channel as TextChannel, msg);
     }
 };

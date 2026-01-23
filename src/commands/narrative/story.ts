@@ -7,6 +7,7 @@ import {
     generateCharacterBiography,
     generateNpcBiography
 } from '../../bard';
+import { safeSend } from '../../utils/discordHelper';
 
 export const storyCommand: Command = {
     name: 'story',
@@ -90,8 +91,7 @@ export const storyCommand: Command = {
             if (targetPG) {
                 await message.reply(`📖 **Saga dell'Eroe: ${targetName}**\nIl Bardo sta scrivendo...`);
                 const bio = await generateCharacterBiography(campaignId, targetName, targetPG.class || "Eroe", targetPG.race || "Ignoto");
-                const chunks = bio.match(/[\s\S]{1,1900}/g) || [];
-                for (const chunk of chunks) await (message.channel as TextChannel).send(chunk);
+                await safeSend(message.channel as TextChannel, bio);
                 return;
             }
 
@@ -101,8 +101,7 @@ export const storyCommand: Command = {
             if (targetNPC) {
                 await message.reply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);
                 const bio = await generateNpcBiography(campaignId, targetNPC.name, targetNPC.role || "Sconosciuto", targetNPC.description || "Nessuna nota precedente.");
-                const chunks = bio.match(/[\s\S]{1,1900}/g) || [];
-                for (const chunk of chunks) await (message.channel as TextChannel).send(chunk);
+                await safeSend(message.channel as TextChannel, bio);
                 return;
             }
 

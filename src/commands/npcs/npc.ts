@@ -25,6 +25,7 @@ import {
     syncAllDirtyNpcs
 } from '../../bard';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
+import { safeReply } from '../../utils/discordHelper';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -43,7 +44,7 @@ export const npcCommand: Command = {
             }
 
             const list = npcs.map((n: any, i: number) => `\`${i + 1}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
-            await ctx.message.reply(`**📂 Dossier NPC Recenti**\n${list}\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`);
+            await safeReply(ctx.message, `**📂 Dossier NPC Recenti**\n${list}\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`);
             return;
         }
 
@@ -74,7 +75,7 @@ export const npcCommand: Command = {
                 });
             }
 
-            await ctx.message.reply(response);
+            await safeReply(ctx.message, response);
             return;
         }
 
@@ -99,7 +100,7 @@ export const npcCommand: Command = {
             });
             msg += `\n💡 Usa \`$npc <Nome>\` per vedere la scheda completa.`;
 
-            await ctx.message.reply(msg);
+            await safeReply(ctx.message, msg);
             return;
         }
 
@@ -337,7 +338,8 @@ export const npcCommand: Command = {
             );
 
             if (newDesc) {
-                await loadingMsg.edit(`✅ Note Aggiornate e Sincronizzate con RAG!\n\n📜 **Nuova Bio:**\n${newDesc.substring(0, 800)}${newDesc.length > 800 ? '...' : ''}`);
+                await loadingMsg.delete().catch(() => { });
+                await safeReply(ctx.message, `✅ Note Aggiornate e Sincronizzate con RAG!\n\n📜 **Nuova Bio:**\n${newDesc}`);
             } else {
                 await loadingMsg.edit(`❌ Errore durante la rigenerazione.`);
             }

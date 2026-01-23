@@ -19,6 +19,7 @@ jobs:
           # Passiamo il secret ENV_FILE come variabile d'ambiente allo script
           envs: ENV_FILE
           script: |
+            set -e
             # Definisci le variabili
             DIR=~/lestapenna
             REPO_URL=https://github.com/gabrieleligetta/lestapenna.git
@@ -38,6 +39,10 @@ jobs:
             # 3. Scarica gli ultimi aggiornamenti forzando l'allineamento con origin/main
             git fetch origin
             git reset --hard origin/main
+            
+            # 3.1 Pulizia forzata di file obsoleti che potrebbero causare errori di build se non rimossi da git reset
+            # (succede se ci sono problemi di permessi durante il reset)
+            rm -f src/janitor.ts src/streamingMixer.ts src/backupService.ts
             
             # 4. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
             echo "${{ secrets.ENV_FILE }}" > .env

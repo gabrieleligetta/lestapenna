@@ -19,20 +19,20 @@ export function startJanitor() {
 async function runJanitorCycle() {
     const client = getS3Client(); // Assumiamo che getS3Client sia esportata o accessibile, altrimenti importala
     const bucket = getBucketName();
-    
+
     // 1. Lista tutte le cartelle sessione in recordings/
     // S3 non ha cartelle reali, quindi listiamo con delimitatore '/'
     // Ma recordings/sessionId/file è la struttura.
     // Possiamo listare tutto recordings/ e raggruppare per sessione, o iterare sui prefissi se S3 lo supporta bene.
     // Per semplicità e robustezza, scansioniamo tutto recordings/ e identifichiamo i master file.
-    
+
     try {
         let continuationToken: string | undefined = undefined;
         const sessionsToCheck = new Set<string>();
 
         // Step 1: Trova tutte le sessioni che hanno un file Master
         console.log(`[Janitor] 🔍 Scansione bucket per trovare sessioni masterizzate...`);
-        
+
         do {
             const listCmd: ListObjectsV2Command = new ListObjectsV2Command({
                 Bucket: bucket,
@@ -49,7 +49,7 @@ async function runJanitorCycle() {
                         const parts = obj.Key.split('/');
                         if (parts.length >= 3) {
                             const sessionId = parts[1];
-                            
+
                             // Check età del file Master
                             const lastModified = obj.LastModified;
                             if (lastModified) {
@@ -78,15 +78,4 @@ async function runJanitorCycle() {
     }
 }
 
-// Hack per importare getS3Client se non esportato direttamente da backupService
-// In backupService.ts dovresti esportare getS3Client o implementare una funzione helper lì.
-// Per ora assumiamo che deleteRawSessionFiles usi il suo client interno.
-// Ma per listare i master file qui, ci serve il client.
-// SOLUZIONE: Aggiungi "export { getS3Client, getBucketName }" in backupService.ts se non c'è.
-// Ho modificato backupService.ts nel prompt precedente per esportare deleteRawSessionFiles, 
-// ma non getS3Client. 
-// CORREZIONE AL VOLO: Importiamo S3Client e creiamone uno locale se necessario, 
-// oppure (meglio) modifichiamo backupService per esportare i getter.
-// Visto che non posso modificare backupService di nuovo in questo turno senza un'altra call,
-// userò una logica "best effort" importando quello che posso.
-// Se getS3Client non è esportato, userò le variabili d'ambiente per ricrearlo qui.
+// Note: getS3Client e getBucketName sono esportati da backup.ts

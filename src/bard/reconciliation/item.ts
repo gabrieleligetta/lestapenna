@@ -5,24 +5,13 @@
 import { listAllInventory } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { AI_CONFIRM_SAME_ITEM_PROMPT } from '../prompts';
 
 /**
  * Chiede all'AI se due oggetti sono lo stesso item.
  */
 async function aiConfirmSameItem(item1: string, item2: string, context: string = ""): Promise<boolean> {
-    const prompt = `Sei un esperto di D&D e oggetti fantasy. Rispondi SOLO con "SI" o "NO".
-
-Domanda: "${item1}" e "${item2}" sono lo STESSO oggetto?
-
-Considera che:
-- Potrebbero essere abbreviazioni (es. "Pozione di cura" = "Pozione Cura")
-- Potrebbero essere varianti (es. "100 monete d'oro" ≈ "100 mo")
-- NON unire oggetti diversi (es. "Spada +1" ≠ "Spada +2")
-- NON unire categorie diverse (es. "Pozione di cura" ≠ "Pozione di forza")
-
-${context ? `Contesto: ${context}` : ''}
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_ITEM_PROMPT(item1, item2, context);
 
     try {
         const response = await metadataClient.chat.completions.create({

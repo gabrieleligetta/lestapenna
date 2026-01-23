@@ -5,24 +5,13 @@
 import { listAllMonsters } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { AI_CONFIRM_SAME_MONSTER_PROMPT } from '../prompts';
 
 /**
  * Chiede all'AI se due mostri sono lo stesso tipo.
  */
 async function aiConfirmSameMonster(name1: string, name2: string, context: string = ""): Promise<boolean> {
-    const prompt = `Sei un esperto di D&D e creature fantasy. Rispondi SOLO con "SI" o "NO".
-
-Domanda: "${name1}" e "${name2}" sono lo STESSO tipo di mostro/creatura?
-
-Considera che:
-- I nomi potrebbero essere singolari/plurali (es. "Goblin" = "Goblins")
-- Potrebbero essere varianti ortografiche (es. "Orco" = "Orchi")
-- Potrebbero essere nomi parziali (es. "Scheletro" ≈ "Scheletro Guerriero")
-- NON unire creature diverse (es. "Goblin" ≠ "Hobgoblin")
-
-${context ? `Contesto: ${context}` : ''}
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_MONSTER_PROMPT(name1, name2, context);
 
     try {
         const response = await metadataClient.chat.completions.create({

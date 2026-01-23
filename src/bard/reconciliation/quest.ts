@@ -5,23 +5,13 @@
 import { listAllQuests } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { AI_CONFIRM_SAME_QUEST_PROMPT } from '../prompts';
 
 /**
  * Chiede all'AI se due quest sono la stessa missione.
  */
 async function aiConfirmSameQuest(title1: string, title2: string, context: string = ""): Promise<boolean> {
-    const prompt = `Sei un esperto di D&D e missioni. Rispondi SOLO con "SI" o "NO".
-
-Domanda: "${title1}" e "${title2}" sono la STESSA missione/quest?
-
-Considera che:
-- I titoli potrebbero essere varianti (es. "Salvare il villaggio" = "Salvare il Villaggio")
-- Potrebbero essere abbreviati (es. "Trova l'artefatto" ≈ "Trovare l'artefatto antico")
-- NON unire missioni diverse (es. "Salvare Alice" ≠ "Salvare Bob")
-
-${context ? `Contesto: ${context}` : ''}
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_QUEST_PROMPT(title1, title2, context);
 
     try {
         const response = await metadataClient.chat.completions.create({

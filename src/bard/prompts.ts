@@ -1,14 +1,19 @@
 /**
- * Bard Prompts - Centralized prompt storage to ensure parity with legacy behavior.
- * extracted from old_reference/bard.ts and aligned with new structured loot requirements.
+ * Bard Prompts - Centralized Prompt Definitions
+ * Estatti e consolidati da old_reference/bard.ts
  */
 
-import { ValidationBatchInput } from './types';
-import { ToneKey, TONES } from './types';
+export const TONES = {
+    EPICO: "Sei un cantastorie epico. Usa un linguaggio epico, solenne, enfatizza l'eroismo e il destino.",
+    DIVERTENTE: "Sei un bardo ubriaco e sarcastico. Prendi in giro i fallimenti dei personaggi.",
+    OSCURO: "Sei un cronista di un mondo Lovecraftiano. Tono cupo e disperato.",
+    CONCISO: "Sei un segretario efficiente. solo fatti narrazione in terza persona.",
+    DM: "Sei un assistente per il Dungeon Master. Punti salienti, loot e NPC."
+};
 
-// ============================================
-// FASE 1: MAP & CONTEXT
-// ============================================
+export type ToneKey = keyof typeof TONES;
+
+// --- MAP PHASE ---
 
 export const MAP_PROMPT = `Sei un analista di D&D.
     \${castContext}
@@ -22,16 +27,18 @@ export const MAP_PROMPT = `Sei un analista di D&D.
     
     Sii conciso. Se per una categoria non ci sono dati, scrivi "Nessuno".`;
 
-export const CONTEXT_IDENTIFICATION_PROMPT = (snapshot: any, analysisText: string) => `Sei l'Archivista della campagna D&D "\${snapshot.campaignName || 'Sconosciuta'}".
+// --- RAG QUERY GENERATION ---
+
+export const CONTEXT_IDENTIFICATION_PROMPT = (snapshot: any, analysisText: string) => `Sei l'Archivista della campagna D&D "${snapshot.campaignName || 'Sconosciuta'}".
 
 **CONTESTO SNAPSHOT CORRENTE:**
-- Sessione: #\${snapshot.sessionNumber || '?'}
-- Luogo: \${snapshot.location?.macro || 'Sconosciuto'} - \${snapshot.location?.micro || 'Sconosciuto'}
-- NPC Presenti: \${snapshot.presentNpcs?.join(', ') || 'Nessuno'}
-- Quest Attive: \${snapshot.quests?.slice(0, 3).join(', ') || snapshot.quest_context || 'Nessuna'}
+- Sessione: #${snapshot.sessionNumber || '?'}
+- Luogo: ${snapshot.location?.macro || 'Sconosciuto'} - ${snapshot.location?.micro || 'Sconosciuto'}
+- NPC Presenti: ${snapshot.presentNpcs?.join(', ') || 'Nessuno'}
+- Quest Attive: ${snapshot.quests?.slice(0, 3).join(', ') || snapshot.quest_context || 'Nessuna'}
 
 **TRASCRIZIONE CONDENSATA (Eventi Chiave):**
-\${analysisText}
+${analysisText}
 
 **COMPITO:**
 Analizza la trascrizione e genera 3-5 query di ricerca specifiche per recuperare informazioni rilevanti dal database vettoriale (RAG).
@@ -51,15 +58,13 @@ Analizza la trascrizione e genera 3-5 query di ricerca specifiche per recuperare
 **OUTPUT:**
 Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 
-// ============================================
-// FASE 2: ANALISTA (Con Loot Strutturato)
-// ============================================
+// --- ANALYZER ---
 
 export const ANALYST_PROMPT = (castContext: string, memoryContext: string, narrativeText: string) => `Sei un ANALISTA DATI esperto di D&D. Il tuo UNICO compito è ESTRARRE DATI STRUTTURATI.
 NON scrivere narrativa. NON riassumere. SOLO estrai e cataloga.
 
-\${castContext}
-\${memoryContext}
+${castContext}
+${memoryContext}
 
 **ISTRUZIONI RIGOROSE**:
 1. Leggi ATTENTAMENTE il testo
@@ -70,8 +75,20 @@ NON scrivere narrativa. NON riassumere. SOLO estrai e cataloga.
 
 **OUTPUT JSON RICHIESTO**:
 {
-    "loot": [{"name": "Nome oggetto", "quantity": 1, "description": "Descrizione opzionale"}],
-    "loot_removed": [{"name": "Nome oggetto perso", "quantity": 1, "description": "Descrizione opzionale"}],
+    "loot": [
+        {
+            "name": "Nome oggetto",
+            "quantity": 1,
+            "description": "Descrizione opzionale fisica/magica"
+        }
+    ],
+    "loot_removed": [
+        {
+            "name": "Nome oggetto",
+            "quantity": 1,
+            "description": "Motivo rimozione o utilizzo"
+        }
+    ],
     "quests": ["Lista missioni ACCETTATE/COMPLETATE/AGGIORNATE in questa sessione"],
     "monsters": [
         {
@@ -117,26 +134,24 @@ NON scrivere narrativa. NON riassumere. SOLO estrai e cataloga.
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dei luoghi FISICAMENTE visitati (dall'inizio alla fine, l'ultimo è la posizione finale). location_updates = descrizioni per l'Atlante (solo luoghi con descrizione significativa)
 
 **TESTO DA ANALIZZARE**:
-\${narrativeText.substring(0, 80000)}
+${narrativeText.substring(0, 80000)}
 
 Rispondi SOLO con JSON valido.`;
 
-// ============================================
-// FASE 3: SCRITTORE (NARRATIVA)
-// ============================================
+// --- WRITER ---
 
 export const WRITER_DM_PROMPT = (castContext: string, memoryContext: string, analystJson: string) => `Sei uno SCRITTORE FANTASY esperto di D&D. Il tuo UNICO compito è SCRIVERE.
 I dati strutturati (loot, quest, mostri, NPC) sono già stati estratti da un analista.
 Tu devi concentrarti SOLO sulla NARRAZIONE EPICA.
 
 CONTESTO PERSONAGGI:
-\${castContext}
+${castContext}
 
 MEMORIA DEL MONDO (per riferimento, NON inventare eventi):
-\${memoryContext}
+${memoryContext}
 
 DATI ESTRATTI DALL'ANALISTA (Usa questi fatti come ossatura della narrazione):
-\${analystJson}
+${analystJson}
 
 **IL TUO COMPITO**: Scrivi un racconto epico e coinvolgente della sessione.
 Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei personaggi.
@@ -170,15 +185,14 @@ Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei
 - NON estrarre loot/quest/mostri (fatto dall'Analista)
 - NON inventare eventi non presenti nel testo
 - Rispondi SOLO in ITALIANO
-- Il "log" è tecnico e conciso, il "narrative" è epico e dettagliato
-`;
+- Il "log" è tecnico e conciso, il "narrative" è epico e dettagliato`;
 
-export const WRITER_BARDO_PROMPT = (tone: ToneKey, castContext: string, memoryContext: string, analystJson: string) => `Sei un Bardo. \${TONES[tone] || TONES.EPICO}
-\${castContext}
-\${memoryContext}
+export const WRITER_BARDO_PROMPT = (tone: ToneKey, castContext: string, memoryContext: string, analystJson: string) => `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
+${castContext}
+${memoryContext}
 
 DATI ESTRATTI DALL'ANALISTA (Usa questi fatti come ossatura della narrazione):
-\${analystJson}
+${analystJson}
 
 **IL TUO COMPITO**: Scrivi un racconto della sessione nel tono richiesto.
 I dati strutturati (loot, quest, mostri, NPC, luoghi) sono già stati estratti da un analista separato.
@@ -213,93 +227,315 @@ ISTRUZIONI DI STILE:
 - NON inventare eventi non presenti nel testo
 - Rispondi SOLO con JSON valido in ITALIANO`;
 
-// ============================================
-// VALIDAZIONE BATCH
-// ============================================
+// --- BIOGRAPHIES ---
 
-export const VALIDATION_PROMPT = (context: any, input: ValidationBatchInput) => {
-    let prompt = \`Valida questi dati di una sessione D&D in BATCH.
+export const CHARACTER_BIO_PROMPT = (charName: string, charRace: string, charClass: string, eventsText: string) => `Sei un biografo fantasy epico.
+    Scrivi la "Storia finora" del personaggio ${charName} (${charRace} ${charClass}).
+    
+    Usa la seguente cronologia di eventi significativi raccolti durante le sessioni:
+    ${eventsText}
+    
+    ISTRUZIONI:
+    1. Unisci gli eventi in un racconto fluido e coinvolgente.
+    2. Evidenzia l'evoluzione psicologica del personaggio (es. come i traumi lo hanno cambiato).
+    3. Non fare un elenco puntato, scrivi in prosa.
+    4. Usa un tono solenne e introspettivo.
+    5. Concludi con una frase sullo stato attuale del personaggio.`;
+
+export const UPDATE_CHARACTER_BIO_PROMPT = (charName: string, currentDesc: string, historyText: string) => `Sei il Biografo Personale del personaggio giocante **${charName}**.
+
+**BIOGRAFIA ATTUALE (Contiene già eventi precedenti integrati):**
+${currentDesc || 'Nessuna descrizione iniziale.'}
+
+**NUOVI EVENTI DA INTEGRARE (Non ancora nella biografia sopra):**
+${historyText}
+
+**REGOLE CRITICHE:**
+1. **NON DUPLICARE**: Gli eventi nella "Biografia Attuale" sono GIÀ integrati. Aggiungi SOLO i "Nuovi Eventi".
+2. **Rispetta l'Agency del Giocatore**: NON cambiare tratti di personalità.
+3. **Aggiungi Solo Conseguenze Osservabili**: Cicatrici, oggetti iconici, titoli, relazioni chiave.
+4. **Preserva il Testo Esistente**: Modifica minimamente, aggiungi max 1-2 frasi per i nuovi eventi.
+5. **Formato**: Terza persona, stile enciclopedia fantasy, max 800 caratteri totali.
+
+Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spiegazioni).`;
+
+export const NPC_BIO_PROMPT = (npcName: string, role: string, staticDesc: string, historyText: string) => `Sei un biografo fantasy.
+    Scrivi la storia dell'NPC: **${npcName}**.
+    
+    RUOLO ATTUALE: ${role}
+    DESCRIZIONE GENERALE: ${staticDesc}
+    
+    CRONOLOGIA EVENTI (Apparsi nelle sessioni):
+    ${historyText}
+    
+    ISTRUZIONI:
+    1. Unisci la descrizione generale con gli eventi cronologici per creare un profilo completo.
+    2. Se ci sono eventi storici, usali per spiegare come è arrivato alla situazione attuale.
+    3. Se non ci sono eventi storici, basati sulla descrizione generale espandendola leggermente.
+    4. Usa un tono descrittivo, come una voce di enciclopedia o un dossier segreto.`;
+
+export const REGENERATE_NPC_NOTES_PROMPT = (npcName: string, role: string, staticDesc: string, historyText: string, complexityLevel: string) => `Sei il Biografo Ufficiale di una campagna D&D.
+    Devi aggiornare il Dossier per l'NPC: **${npcName}**.
+    
+    RUOLO: ${role}
+    DESCRIZIONE PRECEDENTE (Usa questa SOLO per aspetto fisico e personalità): 
+    "${staticDesc}"
+    
+    CRONOLOGIA COMPLETA DEGLI EVENTI (Usa questa come fonte di verità per la storia):
+    ${historyText}
+    
+    OBIETTIVO:
+    Scrivi una biografia aggiornata che integri coerentemente i nuovi eventi.
+    
+    ISTRUZIONI DI SCRITTURA:
+    1. **Lunghezza Adattiva:** La lunghezza del testo DEVE essere proporzionale alla quantità di eventi nella cronologia. 
+       - Se ci sono pochi eventi, sii breve.
+       - Se ci sono molti eventi, scrivi una storia ricca e dettagliata. NON RIASSUMERE ECCESSIVAMENTE.
+    2. **Struttura:**
+       - Inizia con l'aspetto fisico e la personalità (presi dalla Descrizione Precedente).
+       - Prosegui con la narrazione delle sue gesta in ordine cronologico (prese dalla Cronologia).
+       - Concludi con la sua situazione attuale.
+    3. **Preservazione:** Non inventare fatti non presenti, ma collegali in modo logico.
+    4. **Stile:** ${complexityLevel === "DETTAGLIATO" ? "Epico, narrativo e approfondito." : "Diretto e informativo."}
+    
+    Restituisci SOLO il testo della nuova biografia.`;
+
+// --- RECONCILIATION ---
+
+export const SMART_MERGE_PROMPT = (bio1: string, bio2: string) => `Sei un archivista di D&D.
+    Devi aggiornare la scheda biografica di un NPC unendo le informazioni vecchie con quelle nuove appena scoperte.
+    
+    DESCRIZIONE ESISTENTE:
+    "${bio1}"
+    
+    NUOVE INFORMAZIONI (da integrare):
+    "${bio2}"
+    
+    COMPITO:
+    Riscrivi una SINGOLA descrizione coerente in italiano che:
+    1. Integri i fatti nuovi nel testo esistente.
+    2. Elimini le ripetizioni (es. se entrambi dicono "è ferito", dillo una volta sola).
+    3. Mantenga lo stile conciso da dossier.
+    4. Aggiorni lo stato fisico se le nuove info sono più recenti.
+    
+    Restituisci SOLO il testo della nuova descrizione, niente altro.`;
+
+export const AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT = (newName: string, newDescription: string, candidateName: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
+
+Domanda: Il nuovo NPC "${newName}" è in realtà l'NPC esistente "${candidateName}" (errore di trascrizione o soprannome)?
+
+CONFRONTO DATI:
+- NUOVO (${newName}): "${newDescription}"
+- ESISTENTE (${candidateName}): "${candidateDescription}"
+${ragContextText}
+
+CRITERI DI GIUDIZIO:
+1. **Fonetica:** Se suonano simili (Siri/Ciri), è un forte indizio.
+2. **Contesto (RAG):** Se la "Memoria Storica" di ${candidateName} descrive fatti identici a quelli del nuovo NPC, SONO la stessa persona.
+3. **Logica:** Se uno è "Ostaggio dei banditi" e l'altro è "Prigioniera dei briganti", SONO la stessa persona.
+
+Rispondi SOLO: SI oppure NO`;
+
+export const AI_CONFIRM_SAME_PERSON_PROMPT = (name1: string, name2: string, context: string) => `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${name1}" e "${name2}" sono la STESSA persona/NPC?
+
+Considera che:
+- I nomi potrebbero essere pronunce errate o parziali (es. "Leo Sin" = "Leosin")
+- Potrebbero essere soprannomi (es. "Rantar" potrebbe essere il cognome di "Leosin Erantar")
+- Le trascrizioni audio spesso dividono i nomi (es. "Leosin Erantar" → "Leo Sin" + "Rantar")
+
+${context ? `Contesto aggiuntivo: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+export const AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT = (newMacro: string, newMicro: string, newDescription: string, candidateMacro: string, candidateMicro: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D&D e ambientazioni fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: Il nuovo luogo "${newMacro} - ${newMicro}" è in realtà il luogo esistente "${candidateMacro} - ${candidateMicro}"?
+
+CONFRONTO DATI:
+- NUOVO: "${newDescription}"
+- ESISTENTE: "${candidateDescription}"
+${ragContextText}
+
+CRITERI DI GIUDIZIO:
+1. **Fonetica:** Se i nomi suonano simili o sono traduzioni/sinonimi (es. "Torre Nera" vs "Torre Oscura").
+2. **Contesto (RAG):** Se la "Memoria Storica" descrive eventi accaduti nel luogo candidato che coincidono con la descrizione del nuovo luogo.
+3. **Gerarchia:** Se uno è chiaramente un sotto-luogo dell'altro ma usato come nome principale.
+
+Rispondi SOLO: SI oppure NO`;
+
+export const AI_CONFIRM_SAME_LOCATION_PROMPT = (loc1Macro: string, loc1Micro: string, loc2Macro: string, loc2Micro: string, context: string) => `Sei un esperto di D&D e ambientazioni fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${loc1Macro} - ${loc1Micro}" e "${loc2Macro} - ${loc2Micro}" sono lo STESSO luogo?
+
+Considera che:
+- I nomi potrebbero essere trascrizioni errate o parziali (es. "Palazzo centrale" = "Palazzo Centrale")
+- Potrebbero essere descrizioni diverse dello stesso posto (es. "Sala del trono" = "Sala Trono")
+- I luoghi macro potrebbero avere varianti (es. "Dominio di Ogma" = "Regno di Ogma")
+- I micro-luoghi potrebbero essere sottoinsiemi (es. "Cancelli d'Ingresso" ≈ "Cancelli del dominio")
+
+${context ? `Contesto aggiuntivo: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+export const AI_CONFIRM_SAME_MONSTER_PROMPT = (name1: string, name2: string, context: string) => `Sei un esperto di D&D e creature fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${name1}" e "${name2}" sono lo STESSO tipo di mostro/creatura?
+
+Considera che:
+- I nomi potrebbero essere singolari/plurali (es. "Goblin" = "Goblins")
+- Potrebbero essere varianti ortografiche (es. "Orco" = "Orchi")
+- Potrebbero essere nomi parziali (es. "Scheletro" ≈ "Scheletro Guerriero")
+- NON unire creature diverse (es. "Goblin" ≠ "Hobgoblin")
+
+${context ? `Contesto: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+export const AI_CONFIRM_SAME_ITEM_PROMPT = (item1: string, item2: string, context: string) => `Sei un esperto di D&D e oggetti fantasy. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${item1}" e "${item2}" sono lo STESSO oggetto?
+
+Considera che:
+- Potrebbero essere abbreviazioni (es. "Pozione di cura" = "Pozione Cura")
+- Potrebbero essere varianti (es. "100 monete d'oro" ≈ "100 mo")
+- NON unire oggetti diversi (es. "Spada +1" ≠ "Spada +2")
+- NON unire categorie diverse (es. "Pozione di cura" ≠ "Pozione di forza")
+
+${context ? `Contesto: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+export const AI_CONFIRM_SAME_QUEST_PROMPT = (title1: string, title2: string, context: string) => `Sei un esperto di D&D e missioni. Rispondi SOLO con "SI" o "NO".
+
+Domanda: "${title1}" e "${title2}" sono la STESSA missione/quest?
+
+Considera che:
+- I titoli potrebbero essere varianti (es. "Salvare il villaggio" = "Salvare il Villaggio")
+- Potrebbero essere abbreviati (es. "Trova l'artefatto" ≈ "Trovare l'artefatto antico")
+- NON unire missioni diverse (es. "Salvare Alice" ≠ "Salvare Bob")
+
+${context ? `Contesto: ${context}` : ''}
+
+Rispondi SOLO: SI oppure NO`;
+
+// --- RAG SEARCH ---
+
+export const RAG_QUERY_GENERATION_PROMPT = (recentHistory: string, userQuestion: string) => `Sei un esperto di ricerca per un database D&D.
+    
+    CONTESTO CHAT RECENTE:
+    ${recentHistory}
+    
+    ULTIMA DOMANDA UTENTE:
+    "${userQuestion}"
+    
+    Il tuo compito è generare 1-3 query di ricerca specifiche per trovare la risposta nel database vettoriale (RAG).
+    
+    REGOLE:
+    1. Risolvi i riferimenti (es. "Lui" -> "Leosin", "Quel posto" -> "Locanda del Drago").
+    2. Usa parole chiave specifiche (Nomi, Luoghi, Oggetti).
+    3. Se la domanda è generica ("Riassumi tutto"), crea query sui fatti recenti.
+    
+    Output: JSON array di stringhe. Es: ["Dialoghi Leosin Erantar", "Storia della Torre"]`;
+
+export const BARD_ATMOSPHERE_PROMPT = (atmosphere: string, socialContext: string, contextText: string) => `${atmosphere}
+    Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni.
+    
+    ${socialContext}
+    ${contextText}
+    
+    REGOLAMENTO RIGIDO:
+    1. La cronologia serve SOLO per il contesto.
+    2. NON ripetere mai le risposte già date.
+    3. Rispondi in modo diretto.
+    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
+
+// --- VALIDATION ---
+
+export const VALIDATION_PROMPT = (context: any, input: any) => {
+    let prompt = `Valida questi dati di una sessione D&D in BATCH.
 
 **CONTESTO:**
-\`;
+`;
 
     // Aggiungi contesto NPC
     if (context.npcHistories && Object.keys(context.npcHistories).length > 0) {
-        prompt += "\\n**Storia Recente NPC:**\\n";
+        prompt += "\n**Storia Recente NPC:**\n";
         for (const [name, history] of Object.entries(context.npcHistories)) {
-            prompt += \`- \${name}: \${history}\\n\`;
+            prompt += `- ${name}: ${history}\n`;
         }
     }
 
     // Aggiungi contesto PG
     if (context.charHistories && Object.keys(context.charHistories).length > 0) {
-        prompt += "\\n**Storia Recente PG:**\\n";
+        prompt += "\n**Storia Recente PG:**\n";
         for (const [name, history] of Object.entries(context.charHistories)) {
-            prompt += \`- \${name}: \${history}\\n\`;
+            prompt += `- ${name}: ${history}\n`;
         }
     }
 
     // Aggiungi quest attive
     if (context.existingQuests && context.existingQuests.length > 0) {
-        prompt += \`\\n**Quest Attive (DA NON DUPLICARE):**\\n\${context.existingQuests.map((q: string) => \`- \${q}\`).join('\\n')}\\n\`;
+        prompt += `\n**Quest Attive (DA NON DUPLICARE):**\n${context.existingQuests.map((q: string) => `- ${q}`).join('\n')}\n`;
     }
 
-    prompt += "\\n**DATI DA VALIDARE:**\\n\\n";
+    prompt += "\n**DATI DA VALIDARE:**\n\n";
 
     // Eventi NPC
     if (input.npc_events && input.npc_events.length > 0) {
-        prompt += \`**Eventi NPC (\${input.npc_events.length}):**\\n\`;
+        prompt += `**Eventi NPC (${input.npc_events.length}):**\n`;
         input.npc_events.forEach((e: any, i: number) => {
-            prompt += \`\${i + 1}. \${e.name}: [\${e.type}] \${e.event}\\n\`;
+            prompt += `${i + 1}. ${e.name}: [${e.type}] ${e.event}\n`;
         });
-        prompt += "\\n";
+        prompt += "\n";
     }
 
     // Eventi PG
     if (input.character_events && input.character_events.length > 0) {
-        prompt += \`**Eventi PG (\${input.character_events.length}):**\\n\`;
+        prompt += `**Eventi PG (${input.character_events.length}):**\n`;
         input.character_events.forEach((e: any, i: number) => {
-            prompt += \`\${i + 1}. \${e.name}: [\${e.type}] \${e.event}\\n\`;
+            prompt += `${i + 1}. ${e.name}: [${e.type}] ${e.event}\n`;
         });
-        prompt += "\\n";
+        prompt += "\n";
     }
 
     // Eventi Mondo
     if (input.world_events && input.world_events.length > 0) {
-        prompt += \`**Eventi Mondo (\${input.world_events.length}):**\\n\`;
+        prompt += `**Eventi Mondo (${input.world_events.length}):**\n`;
         input.world_events.forEach((e: any, i: number) => {
-            prompt += \`\${i + 1}. [\${e.type}] \${e.event}\\n\`;
+            prompt += `${i + 1}. [${e.type}] ${e.event}\n`;
         });
-        prompt += "\\n";
+        prompt += "\n";
     }
 
     // Loot
     if (input.loot && input.loot.length > 0) {
-        prompt += \`**Loot (\${input.loot.length}):**\\n\`;
-        input.loot.forEach((item: any, i: number) => prompt += \`\${i + 1}. \${item}\\n\`);
-        prompt += "\\n";
+        prompt += `**Loot (${input.loot.length}):**\n`;
+        input.loot.forEach((item: string, i: number) => prompt += `${i + 1}. ${item}\n`);
+        prompt += "\n";
     }
 
     // Quest
     if (input.quests && input.quests.length > 0) {
-        prompt += \`**Quest (\${input.quests.length}):**\\n\`;
-        input.quests.forEach((q: any, i: number) => prompt += \`\${i + 1}. \${q}\\n\`);
-        prompt += "\\n";
+        prompt += `**Quest (${input.quests.length}):**\n`;
+        input.quests.forEach((q: string, i: number) => prompt += `${i + 1}. ${q}\n`);
+        prompt += "\n";
     }
 
     // Atlante
     if (input.atlas_update) {
         const a = input.atlas_update;
-        prompt += \`**Aggiornamento Atlante:**\\n\`;
-        prompt += \`- Luogo: \${a.macro} - \${a.micro}\\n\`;
+        prompt += `**Aggiornamento Atlante:**\n`;
+        prompt += `- Luogo: ${a.macro} - ${a.micro}\n`;
         if (a.existingDesc) {
             const truncDesc = a.existingDesc.length > 200 ? a.existingDesc.substring(0, 200) + '...' : a.existingDesc;
-            prompt += \`- Descrizione Esistente: \${truncDesc}\\n\`;
+            prompt += `- Descrizione Esistente: ${truncDesc}\n`;
         }
-        prompt += \`- Nuova Descrizione: \${a.description}\\n\\n\`;
+        prompt += `- Nuova Descrizione: ${a.description}\n\n`;
     }
 
-    prompt += \`
+    prompt += `
 **REGOLE DI VALIDAZIONE:**
 
 **Eventi (NPC/PG/World):**
@@ -354,174 +590,7 @@ export const VALIDATION_PROMPT = (context: any, input: ValidationBatchInput) => 
   }
 }
 
-Rispondi SOLO con il JSON, niente altro.\`;
+Rispondi SOLO con il JSON, niente altro.`;
 
     return prompt;
-}
-
-// ============================================
-// CLEAN & CORRECTION
-// ============================================
-
-export const TRANSCRIPTION_CORRECTION_PROMPT = (batch: any[]) => {
-    const cleanText = (text: string) => text; // Helper placeholder, logic is in main file usually but prompt text is here
-     return \`Correggi ortografia e punteggiatura in italiano.
-- Rimuovi riempitivi (ehm, uhm).
-- SE UNA RIGA CONTIENE SOLO "A tutti", "Autore dei", O FRASI SENZA SENSO: Scrivi "..." (tre puntini).
-- NON aggiungere commenti.
-- IMPORTANTE: Restituisci ESATTAMENTE \${batch.length} righe, una per riga.
-- NON unire né dividere frasi.
-
-TESTO DA CORREGGERE (\${batch.length} righe):
-\${batch.map((s, i) => \`\${i + 1}. \${s.text}\`).join('\\n')}\`;
 };
-
-// ============================================
-// CHAT / RAG SYSTEM
-// ============================================
-
-export const RAG_QUERY_GENERATION_PROMPT = (recentHistory: string, userQuestion: string) => `Sei un esperto di ricerca per un database D & D.
-    
-    CONTESTO CHAT RECENTE:
-\${ recentHistory }
-    
-    ULTIMA DOMANDA UTENTE:
-"\${userQuestion}"
-    
-    Il tuo compito è generare 1 - 3 query di ricerca specifiche per trovare la risposta nel database vettoriale(RAG).
-
-    REGOLE:
-1. Risolvi i riferimenti(es. "Lui" -> "Leosin", "Quel posto" -> "Locanda del Drago").
-    2. Usa parole chiave specifiche(Nomi, Luoghi, Oggetti).
-    3. Se la domanda è generica("Riassumi tutto"), crea query sui fatti recenti.
-
-    Output: JSON array di stringhe.Es: ["Dialoghi Leosin Erantar", "Storia della Torre"]`;
-
-export const BARD_ATMOSPHERE_PROMPT = (baseAtmosphere: string, socialContext: string, contextText: string) => `\${ baseAtmosphere }
-    Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni.
-
-\${ socialContext }
-\${ contextText }
-    
-    REGOLAMENTO RIGIDO:
-1. La cronologia serve SOLO per il contesto.
-    2. NON ripetere mai le risposte già date.
-    3. Rispondi in modo diretto.
-    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
-
-// ============================================
-// BIOGRAFIE & DOSSIER
-// ============================================
-
-export const CHARACTER_BIO_PROMPT = (charName: string, charRace: string, charClass: string, eventsText: string) => `Sei un biografo fantasy epico.
-    Scrivi la "Storia finora" del personaggio \${ charName } (\${ charRace } \${ charClass }).
-    
-    Usa la seguente cronologia di eventi significativi raccolti durante le sessioni:
-\${ eventsText }
-
-ISTRUZIONI:
-1. Unisci gli eventi in un racconto fluido e coinvolgente.
-    2. Evidenzia l'evoluzione psicologica del personaggio (es. come i traumi lo hanno cambiato).
-3. Non fare un elenco puntato, scrivi in prosa.
-    4. Usa un tono solenne e introspettivo.
-    5. Concludi con una frase sullo stato attuale del personaggio.`;
-
-export const NPC_BIO_PROMPT = (npcName: string, role: string, staticDesc: string, historyText: string) => `Sei un biografo fantasy.
-    Scrivi la storia dell'NPC: **\${npcName}**.
-    
-    RUOLO ATTUALE: \${ role }
-    DESCRIZIONE GENERALE: \${ staticDesc }
-    
-    CRONOLOGIA EVENTI(Apparsi nelle sessioni):
-\${ historyText }
-
-ISTRUZIONI:
-1. Unisci la descrizione generale con gli eventi cronologici per creare un profilo completo.
-    2. Se ci sono eventi storici, usali per spiegare come è arrivato alla situazione attuale.
-    3. Se non ci sono eventi storici, basati sulla descrizione generale espandendola leggermente.
-    4. Usa un tono descrittivo, come una voce di enciclopedia o un dossier segreto.`;
-
-export const REGENERATE_NPC_NOTES_PROMPT = (npcName: string, role: string, staticDesc: string, historyText: string, complexityLevel: string) => `Sei il Biografo Ufficiale di una campagna D & D.
-    Devi aggiornare il Dossier per l'NPC: **\${npcName}**.
-
-RUOLO: \${ role }
-    DESCRIZIONE PRECEDENTE(Usa questa SOLO per aspetto fisico e personalità):
-"\${staticDesc}"
-    
-    CRONOLOGIA COMPLETA DEGLI EVENTI(Usa questa come fonte di verità per la storia):
-\${ historyText }
-
-OBIETTIVO:
-    Scrivi una biografia aggiornata che integri coerentemente i nuovi eventi.
-    
-    ISTRUZIONI DI SCRITTURA:
-1. ** Lunghezza Adattiva:** La lunghezza del testo DEVE essere proporzionale alla quantità di eventi nella cronologia. 
-       - Se ci sono pochi eventi, sii breve.
-       - Se ci sono molti eventi, scrivi una storia ricca e dettagliata.NON RIASSUMERE ECCESSIVAMENTE.
-    2. ** Struttura:**
-    - Inizia con l'aspetto fisico e la personalità (presi dalla Descrizione Precedente).
-        - Prosegui con la narrazione delle sue gesta in ordine cronologico(prese dalla Cronologia).
-       - Concludi con la sua situazione attuale.
-    3. ** Preservazione:** Non inventare fatti non presenti, ma collegali in modo logico.
-    4. ** Stile:** \${ complexityLevel === "DETTAGLIATO" ? "Epico, narrativo e approfondito." : "Diretto e informativo." }
-    
-    Restituisci SOLO il testo della nuova biografia.`;
-
-export const RESOLVE_IDENTITY_PROMPT = (newName: string, newDesc: string, candidates: string) => `Analizza se il NUOVO NPC è un duplicato di uno ESISTENTE.
-    NUOVO: "\${newName}" - \${ newDesc }
-ESISTENTI:
-\${ candidates }
-    
-    Rispondi JSON: { "match": "NomeEsattoEsistente" | null, "confidence": 0.0 - 1.0 } `;
-
-export const SMART_MERGE_PROMPT = (existingBio: string, newInfo: string) => `Sei un archivista di D & D.
-    Devi aggiornare la scheda biografica di un NPC unendo le informazioni vecchie con quelle nuove appena scoperte.
-    
-    DESCRIZIONE ESISTENTE:
-"\${existingBio}"
-    
-    NUOVE INFORMAZIONI(da integrare):
-"\${newInfo}"
-
-COMPITO:
-    Riscrivi una SINGOLA descrizione coerente in italiano che:
-1. Integri i fatti nuovi nel testo esistente.
-    2. Elimini le ripetizioni(es.se entrambi dicono "è ferito", dillo una volta sola).
-    3. Mantenga lo stile conciso da dossier.
-    4. Aggiorni lo stato fisico se le nuove info sono più recenti.
-    
-    Restituisci SOLO il testo della nuova descrizione, niente altro.`;
-
-// ============================================
-// RECONCILIATION
-// ============================================
-
-export const AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT = (newName: string, newDescription: string, candidateName: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D & D.Rispondi SOLO con "SI" o "NO".
-
-    Domanda: Il nuovo NPC "\${newName}" è in realtà l'NPC esistente "\${candidateName}" (errore di trascrizione o soprannome)?
-
-CONFRONTO DATI:
-- NUOVO(\${ newName }): "\${newDescription}"
-    - ESISTENTE(\${ candidateName }): "\${candidateDescription}"
-\${ ragContextText }
-
-CRITERI DI GIUDIZIO:
-1. ** Fonetica:** Se suonano simili(Siri / Ciri), è un forte indizio.
-2. ** Contesto(RAG):** Se la "Memoria Storica" di \${ candidateName } descrive fatti identici a quelli del nuovo NPC, SONO la stessa persona.
-3. ** Logica:** Se uno è "Ostaggio dei banditi" e l'altro è "Prigioniera dei briganti", SONO la stessa persona.
-
-Rispondi SOLO: SI oppure NO`;
-
-export const AI_CONFIRM_SAME_PERSON_PROMPT = (name1: string, name2: string, context: string) => `Sei un esperto di D & D.Rispondi SOLO con "SI" o "NO".
-
-    Domanda: "\${name1}" e "\${name2}" sono la STESSA persona / NPC ?
-
-        Considera che:
-- I nomi potrebbero essere pronunce errate o parziali(es. "Leo Sin" = "Leosin")
-    - Potrebbero essere soprannomi(es. "Rantar" potrebbe essere il cognome di "Leosin Erantar")
-        - Le trascrizioni audio spesso dividono i nomi(es. "Leosin Erantar" → "Leo Sin" + "Rantar")
-
-\${
-    context ?\`Contesto aggiuntivo: \${context}\` : ''}
-
-Rispondi SOLO: SI oppure NO`;

@@ -6,6 +6,7 @@ import { listAllAtlasEntries } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring } from '../helpers';
 import { searchKnowledge } from '../rag';
+import { AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT, AI_CONFIRM_SAME_LOCATION_PROMPT } from '../prompts';
 
 /**
  * Normalizza i nomi location rimuovendo prefissi duplicati.
@@ -72,16 +73,7 @@ async function aiConfirmSameLocationExtended(
         ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
         : "";
 
-    const prompt = `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
-
-Domanda: Il luogo "${newMacro} - ${newMicro}" è in realtà "${candidateMacro} - ${candidateMicro}" (errore trascrizione o nome alternativo)?
-
-CONFRONTO DATI:
-- NUOVO: "${newDescription}"
-- ESISTENTE: "${candidateDescription}"
-${ragContextText}
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT(newMacro, newMicro, newDescription, candidateMacro, candidateMicro, candidateDescription, ragContextText);
 
     try {
         const response = await metadataClient.chat.completions.create({
@@ -105,13 +97,7 @@ export async function aiConfirmSameLocation(
     loc2: { macro: string; micro: string },
     context: string = ""
 ): Promise<boolean> {
-    const prompt = `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
-
-Domanda: "${loc1.macro} - ${loc1.micro}" e "${loc2.macro} - ${loc2.micro}" sono lo STESSO luogo?
-
-${context ? `Contesto: ${context}` : ''}
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_LOCATION_PROMPT(loc1.macro, loc1.micro, loc2.macro, loc2.micro, context);
 
     try {
         const response = await metadataClient.chat.completions.create({

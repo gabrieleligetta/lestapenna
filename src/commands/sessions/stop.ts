@@ -1,8 +1,8 @@
 import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { disconnect } from '../../voicerecorder';
-import { audioQueue } from '../../queue';
-import { waitForCompletionAndSummarize } from '../../utils/publish';
+import { disconnect } from '../../services/recorder';
+import { audioQueue } from '../../services/queue';
+import { waitForCompletionAndSummarize } from '../../publisher';
 // @ts-ignore
 import { guildSessions } from '../../index'; // Accessing global state
 

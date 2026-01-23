@@ -9,8 +9,8 @@ import {
     createSession
 } from '../../db';
 import { monitor } from '../../monitor';
-import { audioQueue } from '../../queue';
-import { connectToChannel } from '../../voicerecorder';
+import { audioQueue } from '../../services/queue';
+import { connectToChannel } from '../../services/recorder';
 import { v4 as uuidv4 } from 'uuid';
 // @ts-ignore
 import { guildSessions, checkAutoLeave } from '../../index'; // Accessing global state/functions from index for now. TODO: refactor to state module or separate utils.

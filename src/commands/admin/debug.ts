@@ -17,9 +17,9 @@ import {
     setActiveCampaign
 } from '../../db';
 import { monitor } from '../../monitor';
-import { audioQueue } from '../../queue';
-import { uploadToOracle } from '../../backupService';
-import { waitForCompletionAndSummarize } from '../../utils/publish';
+import { audioQueue } from '../../services/queue';
+import { uploadToOracle } from '../../services/backup';
+import { waitForCompletionAndSummarize } from '../../publisher';
 
 // Helper for test environment (copied/adapted from index.ts)
 async function ensureTestEnvironment(guildId: string, authorId: string, message: Message) {

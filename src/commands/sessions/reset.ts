@@ -1,8 +1,8 @@
 import { Command, CommandContext } from '../types';
 import { resetSessionData, updateRecordingStatus } from '../../db';
-import { audioQueue, removeSessionJobs } from '../../queue';
+import { audioQueue, removeSessionJobs } from '../../services/queue';
 import { monitor } from '../../monitor';
-import { downloadFromOracle, uploadToOracle } from '../../backupService';
+import { downloadFromOracle, uploadToOracle } from '../../services/backup';
 import * as fs from 'fs';
 
 export const resetCommand: Command = {

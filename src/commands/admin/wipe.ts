@@ -1,9 +1,9 @@
 import { TextChannel, Message } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { clearQueue } from '../../queue';
-import { wipeLocalFiles } from '../../voicerecorder';
+import { clearQueue } from '../../services/queue';
+import { wipeLocalFiles } from '../../services/recorder';
 // @ts-ignore
-import { wipeBucket } from '../../backupService';
+import { wipeBucket } from '../../services/backup';
 import { wipeDatabase, db } from '../../db';
 
 export const wipeCommand: Command = {

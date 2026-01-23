@@ -1,8 +1,8 @@
 import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { getPresignedUrl } from '../../backupService';
-import { mixSessionAudio } from '../../sessionMixer';
-import { audioQueue } from '../../queue';
+import { getPresignedUrl } from '../../services/backup';
+import { mixSessionAudio } from '../../services/sessionMixer';
+import { audioQueue } from '../../services/queue';
 import * as fs from 'fs';
 import * as path from 'path';
 // @ts-ignore

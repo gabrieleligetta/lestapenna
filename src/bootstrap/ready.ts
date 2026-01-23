@@ -4,17 +4,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { monitor, startMemoryMonitor } from '../monitor';
-import { startWorker } from '../worker';
+import { startWorker } from '../workers';
 import {
     checkStorageUsage,
     // uploadToOracle // used in recoverOrphanedFiles
-} from '../backupService'; // Assumed
-import { uploadToOracle } from '../backupService';
+} from '../services/backup';
+import { uploadToOracle } from '../services/backup';
 import {
     testRemoteConnection,
     processSessionReport
 } from '../reporter';
-import { initIdentityGuard } from '../identityGuard';
+import { initIdentityGuard } from '../utils/identity';
 import {
     getUnprocessedRecordings,
     // removeSessionJobs,
@@ -27,12 +27,11 @@ import {
     getRecording,
     findSessionByTimestamp
 } from '../db';
-import { audioQueue, removeSessionJobs } from '../queue';
-import { waitForCompletionAndSummarize } from '../utils/publish'; // Logic moved to utils/publish? Or I need to copy function.
+import { audioQueue, removeSessionJobs } from '../services/queue';
 // If waitForCompletionAndSummarize logic was different in index.ts, I should use the one from utils/publish if compatible.
 // index.ts used waitForCompletionAndSummarize(sessionId, channel).
 // utils/publish likely exports publishSummary, not waitFor...
-import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../utils/publish';
+import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../publisher';
 
 // Note: recoverOrphanedFiles and processOrphanedSessionsSequentially were local. Moving here.
 

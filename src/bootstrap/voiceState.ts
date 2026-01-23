@@ -1,10 +1,10 @@
 import { Client, VoiceBasedChannel, TextChannel } from 'discord.js';
 import { guildSessions, autoLeaveTimers } from '../state/sessionState';
 // import { checkAutoLeave } from './voiceState'; // Recursion? No, defining local helper or export.
-import { audioQueue } from '../queue';
-import { disconnect } from '../voicerecorder';
+import { audioQueue } from '../services/queue';
+import { disconnect } from '../services/recorder';
 import { getGuildConfig } from '../db';
-import { waitForCompletionAndSummarize } from '../utils/publish'; // Assuming publish has it or I move logic here
+import { waitForCompletionAndSummarize } from '../publisher'; // Assuming publish has it or I move logic here
 
 export function registerVoiceStateHandler(client: Client) {
     client.on('voiceStateUpdate', (oldState, newState) => {

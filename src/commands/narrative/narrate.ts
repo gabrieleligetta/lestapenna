@@ -47,7 +47,7 @@ import {
 import { monitor } from '../../monitor';
 import { processSessionReport, sendSessionRecap } from '../../reporter';
 import { normalizeSummaryNames } from '../../utils/normalize';
-import { publishSummary } from '../../utils/publish';
+import { publishSummary } from '../../publisher';
 
 export const narrateCommand: Command = {
     name: 'narrate',

@@ -1,6 +1,6 @@
 import { EmbedBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { audioQueue, correctionQueue } from '../../queue';
+import { audioQueue, correctionQueue } from '../../services/queue';
 
 export const statusCommand: Command = {
     name: 'status',

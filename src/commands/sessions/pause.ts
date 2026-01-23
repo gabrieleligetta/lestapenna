@@ -1,5 +1,5 @@
 import { Command, CommandContext } from '../types';
-import { isRecordingPaused, pauseRecording, resumeRecording } from '../../voicerecorder';
+import { isRecordingPaused, pauseRecording, resumeRecording } from '../../services/recorder';
 // @ts-ignore
 import { guildSessions } from '../../index';
 

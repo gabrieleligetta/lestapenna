@@ -24,6 +24,33 @@ export function normalizeStringList(list: any[]): string[] {
 }
 
 /**
+ * Normalizza una lista mista in una lista di oggetti loot strutturati.
+ * Gestisce sia stringhe che oggetti, convertendo le stringhe in {name: string}.
+ */
+export function normalizeLootList(list: any[]): Array<{ name: string; quantity?: number; description?: string }> {
+    if (!Array.isArray(list)) return [];
+
+    const result: Array<{ name: string; quantity?: number; description?: string }> = [];
+
+    for (const item of list) {
+        if (typeof item === 'string' && item.trim().length > 0) {
+            result.push({ name: item.trim(), quantity: 1 });
+        } else if (typeof item === 'object' && item !== null) {
+            const name = item.name || item.nome || item.item || '';
+            if (name && name.trim().length > 0) {
+                result.push({
+                    name: name.trim(),
+                    quantity: typeof item.quantity === 'number' ? item.quantity : 1,
+                    description: item.description || item.desc || undefined
+                });
+            }
+        }
+    }
+
+    return result;
+}
+
+/**
  * Parsing JSON sicuro che non crasha
  */
 export function safeJsonParse(jsonString: string): any | null {

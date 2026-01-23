@@ -16,8 +16,8 @@ export async function sendSessionRecap(
     sessionId: string,
     campaignId: number,
     log: string[],
-    loot?: string[],
-    lootRemoved?: string[],
+    loot?: Array<{ name: string; quantity?: number; description?: string }>,
+    lootRemoved?: Array<{ name: string; quantity?: number; description?: string }>,
     narrativeBrief?: string,
     fullNarrative?: string,
     monsters?: Array<{ name: string; status: string; count?: string }>

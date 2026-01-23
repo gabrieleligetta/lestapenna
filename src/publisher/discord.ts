@@ -20,7 +20,7 @@ import { config } from '../config';
 
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || config.discord.summaryChannelId;
 
-export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: string[], quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>) {
+export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: Array<{ name: string; quantity?: number; description?: string }>, quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -113,7 +113,10 @@ export async function publishSummary(client: Client, sessionId: string, log: str
         .setColor("#F1C40F")
         .setTitle("🎒 Riepilogo Tecnico");
 
-    const lootText = (loot && loot.length > 0) ? loot.map(i => `• ${i}`).join('\n') : "Nessun bottino recuperato";
+    const lootText = (loot && loot.length > 0) ? loot.map(i => {
+        const qtyStr = i.quantity && i.quantity > 1 ? ` (x${i.quantity})` : '';
+        return `• ${i.name}${qtyStr}`;
+    }).join('\n') : "Nessun bottino recuperato";
     embed.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText) });
 
     const questText = (quests && quests.length > 0) ? quests.map(q => `• ${q}`).join('\n') : "Nessuna missione attiva";

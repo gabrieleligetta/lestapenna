@@ -166,43 +166,34 @@ export class IngestionService {
 
         // Loot (with reconciliation)
         if (validated.loot?.keep && validated.loot.keep.length > 0) {
-            const dedupedLoot = await deduplicateItemBatch(validated.loot.keep.map((item: { name: string; quantity?: number; description?: string }) => item.name));
-            for (const itemName of dedupedLoot) {
-                const originalItem = validated.loot.keep.find((item: { name: string; quantity?: number; description?: string }) => item.name === itemName);
+            const dedupedLoot = await deduplicateItemBatch(validated.loot.keep);
+            for (const item of dedupedLoot) {
+                const reconciled = await reconcileItemName(campaignId, item);
+                const finalName = reconciled ? reconciled.canonicalName : item.name;
+                if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
-                // Signature: (campaignId: number, newItem: string)
-                const reconciled = await reconcileItemName(campaignId, itemName);
-                const finalName = reconciled ? reconciled.canonicalName : itemName;
-                if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${itemName}" → "${finalName}"`);
-
-                // Signature: (campaignId: number, itemName: string, qty: number = 1, sessionId?: string)
-                addLoot(campaignId, finalName, originalItem?.quantity || 1, sessionId);
+                addLoot(campaignId, finalName, item.quantity || 1, sessionId, item.description);
 
                 // Skip simple currency from RAG
                 const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
                 if (!isSimpleCurrency) {
-                    // Signature: (campaignId: number, sessionId: string, itemDescription: string)
-                    const itemDesc = originalItem?.description
-                        ? `${finalName} (x${originalItem.quantity || 1}): ${originalItem.description}`
-                        : `${finalName} (x${originalItem.quantity || 1})`;
-                    await ingestLootEvent(campaignId, sessionId, itemDesc);
+                    await ingestLootEvent(campaignId, sessionId, {
+                        ...item,
+                        name: finalName
+                    });
                 }
             }
         }
 
         // Lost loot
         if (validated.loot_removed?.keep && validated.loot_removed.keep.length > 0) {
-            const dedupedLostLoot = await deduplicateItemBatch(validated.loot_removed.keep.map((item: { name: string; quantity?: number; description?: string }) => item.name));
-            for (const itemName of dedupedLostLoot) {
-                const originalItem = validated.loot_removed.keep.find((item: { name: string; quantity?: number; description?: string }) => item.name === itemName);
+            const dedupedLostLoot = await deduplicateItemBatch(validated.loot_removed.keep);
+            for (const item of dedupedLostLoot) {
+                const reconciled = await reconcileItemName(campaignId, item);
+                const finalName = reconciled ? reconciled.canonicalName : item.name;
+                if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
-                // Signature: (campaignId: number, newItem: string)
-                const reconciled = await reconcileItemName(campaignId, itemName);
-                const finalName = reconciled ? reconciled.canonicalName : itemName;
-                if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${itemName}" → "${finalName}"`);
-
-                // Signature: (campaignId: number, itemName: string, qty: number = 1)
-                removeLoot(campaignId, finalName, originalItem?.quantity || 1);
+                removeLoot(campaignId, finalName, item.quantity || 1);
             }
         }
 

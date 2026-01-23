@@ -22,6 +22,7 @@ import {
     CHAT_PROVIDER
 } from '../config';
 import { cosineSimilarity, withRetry } from '../helpers';
+import { RAG_QUERY_GENERATION_PROMPT, BARD_ATMOSPHERE_PROMPT } from '../prompts';
 import { monitor } from '../../monitor';
 
 /**
@@ -161,22 +162,7 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
 export async function generateSearchQueries(campaignId: number, userQuestion: string, history: any[]): Promise<string[]> {
     const recentHistory = history.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
 
-    const prompt = `Sei un esperto di ricerca per un database D&D.
-    
-    CONTESTO CHAT RECENTE:
-    ${recentHistory}
-    
-    ULTIMA DOMANDA UTENTE:
-    "${userQuestion}"
-    
-    Il tuo compito è generare 1-3 query di ricerca specifiche per trovare la risposta nel database vettoriale (RAG).
-    
-    REGOLE:
-    1. Risolvi i riferimenti (es. "Lui" -> "Leosin", "Quel posto" -> "Locanda del Drago").
-    2. Usa parole chiave specifiche (Nomi, Luoghi, Oggetti).
-    3. Se la domanda è generica ("Riassumi tutto"), crea query sui fatti recenti.
-    
-    Output: JSON array di stringhe. Es: ["Dialoghi Leosin Erantar", "Storia della Torre"]`;
+    const prompt = RAG_QUERY_GENERATION_PROMPT(recentHistory, userQuestion);
 
     const startAI = Date.now();
     try {
@@ -251,17 +237,7 @@ export async function askBard(campaignId: number, question: string, history: { r
         socialContext += "Usa queste informazioni, ma dai priorità ai fatti nelle trascrizioni.\n";
     }
 
-    const systemPrompt = `${atmosphere}
-    Il tuo compito è rispondere SOLO all'ULTIMA domanda posta dal giocatore, usando le trascrizioni.
-    
-    ${socialContext}
-    ${contextText}
-    
-    REGOLAMENTO RIGIDO:
-    1. La cronologia serve SOLO per il contesto.
-    2. NON ripetere mai le risposte già date.
-    3. Rispondi in modo diretto.
-    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
+    const systemPrompt = BARD_ATMOSPHERE_PROMPT(atmosphere, socialContext, contextText);
 
     const messages: any[] = [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: question }];
 

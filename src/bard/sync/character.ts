@@ -67,7 +67,7 @@ Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spieg
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('summary', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
 
         const newDesc = response.choices[0].message.content?.trim() || currentDesc;
         console.log(`[Character] Biografia aggiornata per ${charName} (+${newEvents.length} eventi, ${latency}ms)`);
@@ -76,7 +76,7 @@ Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spieg
 
     } catch (e) {
         console.error(`[Character] Errore rigenerazione ${charName}:`, e);
-        monitor.logAIRequestWithCost('summary', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return currentDesc;
     }
 }

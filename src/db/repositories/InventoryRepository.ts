@@ -2,20 +2,21 @@ import { db } from '../client';
 import { InventoryItem } from '../types';
 
 export const inventoryRepository = {
-    addLoot: (campaignId: number, itemName: string, qty: number = 1, sessionId?: string) => {
+    addLoot: (campaignId: number, itemName: string, qty: number = 1, sessionId?: string, description?: string) => {
         // Normalizing name
         const cleanName = itemName.trim();
 
         // Check if exists
-        const existing = db.prepare('SELECT id, quantity FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)')
-            .get(campaignId, cleanName) as { id: number, quantity: number } | undefined;
+        const existing = db.prepare('SELECT id, quantity, description FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)')
+            .get(campaignId, cleanName) as { id: number, quantity: number, description: string | null } | undefined;
 
         if (existing) {
-            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ? WHERE id = ?')
-                .run(qty, Date.now(), existing.id);
+            const finalDesc = description ? (existing.description ? existing.description + '\n' + description : description) : existing.description;
+            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ?, description = ? WHERE id = ?')
+                .run(qty, Date.now(), finalDesc, existing.id);
         } else {
-            db.prepare('INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id) VALUES (?, ?, ?, ?, ?, ?)')
-                .run(campaignId, cleanName, qty, Date.now(), Date.now(), sessionId || null);
+            db.prepare('INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description) VALUES (?, ?, ?, ?, ?, ?, ?)')
+                .run(campaignId, cleanName, qty, Date.now(), Date.now(), sessionId || null, description || null);
         }
     },
 

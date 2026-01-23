@@ -117,8 +117,9 @@ export class SystemMonitor {
             }
         }
 
+        const timestamp = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const prefix = isIdle ? '[Idle]' : '[Health]';
-        console.log(`${prefix} 🖥️ SYS: CPU Load ${loadAvg} | 🧠 RAM: ${usedMemGB}/${totalMemGB} GB (${memPercent}%) | 💿 Disk: ${diskUsedPct}%`);
+        console.log(`[${timestamp}] ${prefix} 🖥️ SYS: CPU Load ${loadAvg} | 🧠 RAM: ${usedMemGB}/${totalMemGB} GB (${memPercent}%) | 💿 Disk: ${diskUsedPct}%`);
 
         if (freeMem < 2 * 1024 * 1024 * 1024) {
             console.warn(`[⚠️ ALARM] RAM IN ESURIMENTO! Liberi solo ${(freeMem / 1024 / 1024).toFixed(0)} MB`);
@@ -316,7 +317,8 @@ export class SystemMonitor {
         this.currentSession.costMetrics.totalCostUSD += cost;
         this.currentSession.costMetrics.byProvider[provider] += cost;
 
-        console.log(`[Monitor] 💰 ${phase} (${model}): $${cost.toFixed(4)} USD`);
+        const timestamp = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        console.log(`[${timestamp}] [Monitor] 💰 ${phase} (${model}): $${cost.toFixed(4)} USD`);
     }
 
     getCostSummaryByPhase(): Record<string, number> {

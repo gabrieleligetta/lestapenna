@@ -41,8 +41,8 @@ export interface SummaryResponse {
     summary: string;
     title: string;
     tokens: number;
-    loot?: string[];
-    loot_removed?: string[];
+    loot?: Array<{ name: string; quantity?: number; description?: string }>;
+    loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
     quests?: string[];
     narrative?: string;
     narrativeBrief?: string;

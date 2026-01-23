@@ -75,11 +75,14 @@ export class PipelineService {
         const cleanText = prepareCleanText(sessionId);
         if (!cleanText) throw new Error("Nessuna trascrizione disponibile");
 
+        console.log(`[Pipeline] 📝 Avvio generateSummary...`);
         let result = await generateSummary(sessionId, 'DM', cleanText);
+        console.log(`[Pipeline] ✅ generateSummary completato, avvio normalizzazione...`);
 
         // Normalize entity names if campaign exists
         if (campaignId) {
             result = await normalizeSummaryNames(campaignId, result);
+            console.log(`[Pipeline] ✅ Normalizzazione completata.`);
         }
 
         return result;

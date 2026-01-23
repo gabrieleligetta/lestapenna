@@ -127,9 +127,16 @@ export async function ingestWorldEvent(
 export async function ingestLootEvent(
     campaignId: number,
     sessionId: string,
-    itemDescription: string
+    item: string | { name: string; quantity?: number; description?: string }
 ) {
-    const content = `[BOTTINO] ${itemDescription}`;
+    let content: string;
+    if (typeof item === 'string') {
+        content = `[BOTTINO] ${item}`;
+    } else {
+        content = `[BOTTINO] ${item.name}`;
+        if (item.quantity && item.quantity > 1) content += ` (x${item.quantity})`;
+        if (item.description) content += `: ${item.description}`;
+    }
     await ingestGenericEvent(campaignId, sessionId, content, [], 'LOOT');
 }
 

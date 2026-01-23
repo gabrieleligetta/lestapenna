@@ -6,6 +6,11 @@ import { listNpcs } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring } from '../helpers';
 import { searchKnowledge } from '../rag';
+import {
+    AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT,
+    AI_CONFIRM_SAME_PERSON_PROMPT,
+    SMART_MERGE_PROMPT
+} from '../prompts';
 
 /**
  * Versione POTENZIATA: Chiede all'AI se due nomi sono la stessa persona usando RAG + Fonetica
@@ -29,21 +34,7 @@ async function aiConfirmSamePersonExtended(
         ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
         : "";
 
-    const prompt = `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
-
-Domanda: Il nuovo NPC "${newName}" è in realtà l'NPC esistente "${candidateName}" (errore di trascrizione o soprannome)?
-
-CONFRONTO DATI:
-- NUOVO (${newName}): "${newDescription}"
-- ESISTENTE (${candidateName}): "${candidateDescription}"
-${ragContextText}
-
-CRITERI DI GIUDIZIO:
-1. **Fonetica:** Se suonano simili (Siri/Ciri), è un forte indizio.
-2. **Contesto (RAG):** Se la "Memoria Storica" di ${candidateName} descrive fatti identici a quelli del nuovo NPC, SONO la stessa persona.
-3. **Logica:** Se uno è "Ostaggio dei banditi" e l'altro è "Prigioniera dei briganti", SONO la stessa persona.
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT(newName, newDescription, candidateName, candidateDescription, ragContextText);
 
     try {
         const response = await metadataClient.chat.completions.create({
@@ -63,18 +54,7 @@ Rispondi SOLO: SI oppure NO`;
  * Chiede all'AI se due nomi si riferiscono alla stessa persona.
  */
 export async function aiConfirmSamePerson(name1: string, name2: string, context: string = ""): Promise<boolean> {
-    const prompt = `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
-
-Domanda: "${name1}" e "${name2}" sono la STESSA persona/NPC?
-
-Considera che:
-- I nomi potrebbero essere pronunce errate o parziali (es. "Leo Sin" = "Leosin")
-- Potrebbero essere soprannomi (es. "Rantar" potrebbe essere il cognome di "Leosin Erantar")
-- Le trascrizioni audio spesso dividono i nomi (es. "Leosin Erantar" → "Leo Sin" + "Rantar")
-
-${context ? `Contesto aggiuntivo: ${context}` : ''}
-
-Rispondi SOLO: SI oppure NO`;
+    const prompt = AI_CONFIRM_SAME_PERSON_PROMPT(name1, name2, context);
 
     try {
         const response = await metadataClient.chat.completions.create({
@@ -222,11 +202,7 @@ export async function smartMergeBios(bio1: string, bio2: string): Promise<string
     if (!bio2) return bio1;
     if (bio1 === bio2) return bio1;
 
-    const prompt = `Sei un archivista. Fondi queste due descrizioni dello STESSO personaggio in una unica coerente.
-Evita ripetizioni. Mantieni tutti i fatti.
-Descrizione 1: ${bio1}
-Descrizione 2: ${bio2}
-Risultato conciso (max 150 parole):`;
+    const prompt = SMART_MERGE_PROMPT(bio1, bio2);
 
     try {
         const response = await metadataClient.chat.completions.create({

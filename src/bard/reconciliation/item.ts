@@ -43,29 +43,30 @@ Rispondi SOLO: SI oppure NO`;
  */
 export async function reconcileItemName(
     campaignId: number,
-    newItem: string
+    item: string | { name: string; quantity?: number; description?: string }
 ): Promise<{ canonicalName: string; existingItem: any } | null> {
+    const itemName = typeof item === 'string' ? item : item.name;
     const existingItems = listAllInventory(campaignId);
     if (existingItems.length === 0) return null;
 
-    const newItemLower = newItem.toLowerCase().trim();
+    const newItemLower = itemName.toLowerCase().trim();
 
     const exactMatch = existingItems.find((i: any) => i.item_name.toLowerCase() === newItemLower);
     if (exactMatch) return null;
 
     const candidates: Array<{ item: any; similarity: number; reason: string }> = [];
 
-    for (const item of existingItems) {
-        const existingName = item.item_name;
-        const similarity = levenshteinSimilarity(newItem, existingName);
+    for (const existingItem of existingItems) {
+        const existingName = existingItem.item_name;
+        const similarity = levenshteinSimilarity(itemName, existingName);
 
         if (similarity >= 0.65) {
-            candidates.push({ item, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
+            candidates.push({ item: existingItem, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
             continue;
         }
 
-        if (containsSubstring(newItem, existingName)) {
-            candidates.push({ item, similarity: 0.75, reason: 'substring_match' });
+        if (containsSubstring(itemName, existingName)) {
+            candidates.push({ item: existingItem, similarity: 0.75, reason: 'substring_match' });
         }
     }
 
@@ -74,15 +75,15 @@ export async function reconcileItemName(
     candidates.sort((a, b) => b.similarity - a.similarity);
 
     for (const candidate of candidates.slice(0, 3)) {
-        console.log(`[Item Reconcile] 🔍 "${newItem}" simile a "${candidate.item.item_name}" (${candidate.reason}). Chiedo conferma AI...`);
+        console.log(`[Item Reconcile] 🔍 "${itemName}" simile a "${candidate.item.item_name}" (${candidate.reason}). Chiedo conferma AI...`);
 
-        const isSame = await aiConfirmSameItem(newItem, candidate.item.item_name);
+        const isSame = await aiConfirmSameItem(itemName, candidate.item.item_name);
 
         if (isSame) {
-            console.log(`[Item Reconcile] ✅ CONFERMATO: "${newItem}" = "${candidate.item.item_name}"`);
+            console.log(`[Item Reconcile] ✅ CONFERMATO: "${itemName}" = "${candidate.item.item_name}"`);
             return { canonicalName: candidate.item.item_name, existingItem: candidate.item };
         } else {
-            console.log(`[Item Reconcile] ❌ "${newItem}" ≠ "${candidate.item.item_name}"`);
+            console.log(`[Item Reconcile] ❌ "${itemName}" ≠ "${candidate.item.item_name}"`);
         }
     }
 
@@ -90,35 +91,42 @@ export async function reconcileItemName(
 }
 
 /**
- * Pre-deduplica un batch di loot.
+ * Pre-deduplica un batch di loot (formato oggetto strutturato).
  */
 export async function deduplicateItemBatch(
-    items: string[]
-): Promise<string[]> {
+    items: Array<{ name: string; quantity?: number; description?: string }>
+): Promise<Array<{ name: string; quantity?: number; description?: string }>> {
     if (items.length <= 1) return items;
 
-    const result: string[] = [];
+    const result: Array<{ name: string; quantity?: number; description?: string }> = [];
     const processed = new Set<number>();
 
     for (let i = 0; i < items.length; i++) {
         if (processed.has(i)) continue;
 
-        let merged = items[i];
+        let merged = { ...items[i] };
         processed.add(i);
 
         for (let j = i + 1; j < items.length; j++) {
             if (processed.has(j)) continue;
 
-            const similarity = levenshteinSimilarity(merged, items[j]);
-            const hasSubstring = containsSubstring(merged, items[j]);
+            const similarity = levenshteinSimilarity(merged.name, items[j].name);
+            const hasSubstring = containsSubstring(merged.name, items[j].name);
 
             if (similarity > 0.7 || hasSubstring) {
-                const isSame = await aiConfirmSameItem(merged, items[j]);
+                const isSame = await aiConfirmSameItem(merged.name, items[j].name);
 
                 if (isSame) {
-                    console.log(`[Item Batch Dedup] 🔄 "${items[j]}" → "${merged}"`);
-                    if (items[j].length > merged.length) {
-                        merged = items[j];
+                    console.log(`[Item Batch Dedup] 🔄 "${items[j].name}" → "${merged.name}"`);
+                    // Usa il nome più lungo
+                    if (items[j].name.length > merged.name.length) {
+                        merged.name = items[j].name;
+                    }
+                    // Somma le quantità
+                    merged.quantity = (merged.quantity || 1) + (items[j].quantity || 1);
+                    // Unisci descrizioni se presenti
+                    if (items[j].description && !merged.description) {
+                        merged.description = items[j].description;
                     }
                     processed.add(j);
                 }

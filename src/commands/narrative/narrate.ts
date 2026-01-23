@@ -239,10 +239,10 @@ export const narrateCommand: Command = {
                     for (const item of dedupedItems) {
                         // Riconcilia con inventario esistente
                         const reconciled = await reconcileItemName(currentCampaignId, item);
-                        const finalName = reconciled ? reconciled.canonicalName : item;
-                        if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item}" → "${finalName}"`);
+                        const finalName = reconciled ? reconciled.canonicalName : item.name;
+                        if (reconciled) console.log(`[Tesoriere] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
-                        addLoot(currentCampaignId, finalName, 1);
+                        addLoot(currentCampaignId, finalName, item.quantity || 1, currentSessionId, item.description);
                         console.log(`[Tesoriere] 💰 Aggiunto: ${finalName}`);
 
                         // ✅ Embedding selettivo: solo se NON è valuta semplice
@@ -250,7 +250,11 @@ export const narrateCommand: Command = {
 
                         if (!isSimpleCurrency) {
                             try {
-                                await ingestLootEvent(currentCampaignId, currentSessionId, finalName);
+                                // Passiamo l'oggetto aggiornato col nome finale per il RAG
+                                await ingestLootEvent(currentCampaignId, currentSessionId, {
+                                    ...item,
+                                    name: finalName
+                                });
                             } catch (err: any) {
                                 console.error(`[RAG] Errore indicizzazione ${finalName}:`, err.message);
                             }
@@ -260,9 +264,9 @@ export const narrateCommand: Command = {
 
                 // --- RIMOZIONE LOOT ---
                 if (result.loot_removed && result.loot_removed.length > 0) {
-                    result.loot_removed.forEach((item: string) => {
-                        removeLoot(currentCampaignId, item);
-                        console.log(`[Tesoriere] 🗑️ Rimosso: ${item}`);
+                    result.loot_removed.forEach((item) => {
+                        removeLoot(currentCampaignId, item.name);
+                        console.log(`[Tesoriere] 🗑️ Rimosso: ${item.name}`);
                     });
                 }
 

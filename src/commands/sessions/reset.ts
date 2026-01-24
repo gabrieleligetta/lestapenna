@@ -3,6 +3,7 @@ import { resetSessionData, updateRecordingStatus } from '../../db';
 import { audioQueue, removeSessionJobs } from '../../services/queue';
 import { monitor } from '../../monitor';
 import { downloadFromOracle, uploadToOracle } from '../../services/backup';
+import { purgeSessionData } from '../../services/janitor';
 import * as fs from 'fs';
 
 export const resetCommand: Command = {
@@ -21,13 +22,10 @@ export const resetCommand: Command = {
 
         await message.reply(`🔄 **Reset Sessione ${targetSessionId}** avviato...\n1. Pulizia coda...`);
 
-        const removed = await removeSessionJobs(targetSessionId); // Helper that removes jobs from Bull queue? 
-        // Logic in index.ts called removeSessionJobs(targetSessionId) which returned removed job IDs?
-        // But index.ts line 2082: const removed = await removeSessionJobs(targetSessionId);
-        // I need to check if removeSessionJobs is in DB or queue utils.
-        // Index imports it from somewhere. grep check: it wasn't in db list in Step 251.
-        // I'll assume it's in queue/index.ts or local?
-        // Wait, grep did NOT find removeSessionJobs in Step 251 (only resetSessionData).
+        const removed = await removeSessionJobs(targetSessionId);
+
+        // 1.5 Purge Derived Data (DB + RAG + Clean Bio State)
+        purgeSessionData(targetSessionId);
 
         const filesToProcess = resetSessionData(targetSessionId);
 

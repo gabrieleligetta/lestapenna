@@ -61,13 +61,6 @@ export const recordingRepository = {
             WHERE session_id = ?
         `).run(sessionId);
 
-        db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(sessionId);
-        db.prepare('DELETE FROM location_history WHERE session_id = ?').run(sessionId);
-        db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(sessionId);
-        db.prepare('DELETE FROM world_history WHERE session_id = ?').run(sessionId);
-        db.prepare('DELETE FROM quests WHERE session_id = ?').run(sessionId);
-        db.prepare('DELETE FROM inventory WHERE session_id = ?').run(sessionId);
-
         return recordingRepository.getSessionRecordings(sessionId);
     },
 

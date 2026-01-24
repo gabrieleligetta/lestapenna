@@ -5,6 +5,7 @@ import { monitor } from '../../monitor';
 import { PipelineService } from '../../publisher/services/PipelineService';
 import { IngestionService } from '../../publisher/services/IngestionService';
 import { NotificationService } from '../../publisher/services/NotificationService';
+import { purgeSessionData } from '../../services/janitor';
 
 export const reprocessCommand: Command = {
     name: 'reprocess',
@@ -35,19 +36,11 @@ export const reprocessCommand: Command = {
         const notificationService = new NotificationService();
 
         try {
-            // 1. PULIZIA MIRATA DATI DERIVATI
+            // 0. CLEANUP (DB + RAG + Sync State)
             const campaignId = getSessionCampaignId(targetSessionId);
             if (!campaignId) throw new Error("Campagna non trovata per questa sessione.");
 
-            db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM inventory WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM quests WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM character_history WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM world_history WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM bestiary WHERE session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM npc_dossier WHERE first_session_id = ?').run(targetSessionId);
-            db.prepare('DELETE FROM location_atlas WHERE first_session_id = ?').run(targetSessionId);
+            purgeSessionData(targetSessionId);
 
             await channel.send(`2. Preparazione testo e Analisi Eventi...`);
 

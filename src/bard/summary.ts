@@ -511,7 +511,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         // Accumulatore dati (Analista + Scrittore)
         let aggregatedData: any = {
             title: "",
-            narrativeBrief: "", // Brief generato dall'AI (max 1800 char)
+            narrativeBriefs: [] as string[], // Array di brief per ogni atto
             loot: [],
             loot_removed: [],
             quests: [],
@@ -637,9 +637,13 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             // Titolo (Prendi il primo valido)
             if (!aggregatedData.title && parsed.title) aggregatedData.title = parsed.title;
 
-            // NarrativeBrief (Prendi l'ultimo valido - per sessioni multi-part sarà il brief finale)
+            // NarrativeBrief (Accumula per ogni atto)
             if (parsed.narrativeBrief && parsed.narrativeBrief.length > 10) {
-                aggregatedData.narrativeBrief = parsed.narrativeBrief;
+                aggregatedData.narrativeBriefs.push(parsed.narrativeBrief);
+            } else if (partialNarrative && partialNarrative.length > 10) {
+                // Fallback: usa i primi 1800 char del narrative parziale
+                const fallbackBrief = partialNarrative.substring(0, 1800) + (partialNarrative.length > 1800 ? "..." : "");
+                aggregatedData.narrativeBriefs.push(fallbackBrief);
             }
 
         } // FINE LOOP EPISODICO
@@ -652,7 +656,16 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             title: aggregatedData.title || `Sessione del ${new Date().toLocaleDateString()}`,
             tokens: accumulatedTokens,
             narrative: finalNarrative || "Errore generazione.",
-            narrativeBrief: aggregatedData.narrativeBrief || (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")),
+            // Array di brief per ogni atto (per Discord multi-messaggio)
+            narrativeBriefs: aggregatedData.narrativeBriefs.length > 0
+                ? aggregatedData.narrativeBriefs
+                : [finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")],
+            // Brief concatenato (per mail body - compatibilità)
+            narrativeBrief: aggregatedData.narrativeBriefs.length > 0
+                ? aggregatedData.narrativeBriefs.map((b: string, i: number) =>
+                    aggregatedData.narrativeBriefs.length > 1 ? `**Atto ${i + 1}**\n${b}` : b
+                  ).join('\n\n---\n\n')
+                : (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")),
             log: aggregatedData.log,
             character_growth: aggregatedData.character_growth,
             npc_events: aggregatedData.npc_events,

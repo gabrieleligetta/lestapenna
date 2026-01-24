@@ -31,7 +31,8 @@ export class NotificationService {
             summary.quests,
             summary.narrativeBrief,
             summary.monsters,
-            encounteredNPCs
+            encounteredNPCs,
+            summary.narrativeBriefs // Array di brief per ogni atto
         );
     }
 

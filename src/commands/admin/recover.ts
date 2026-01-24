@@ -1,5 +1,5 @@
 import { Message, TextChannel } from 'discord.js';
-import { Command } from '../../types';
+import { Command, CommandContext } from '../types';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 import { resetUnfinishedRecordings } from '../../db';
 import { audioQueue, removeSessionJobs } from '../../services/queue';
@@ -9,10 +9,14 @@ import { processSessionReport } from '../../reporter';
 
 export const recoverCommand: Command = {
     name: 'recover',
-    description: 'Ripristina manualmente una sessione interrotta',
     aliases: ['resume', 'ripristina'],
-    adminOnly: true,
-    async execute(message: Message, args: string[]) {
+    requiresCampaign: false,
+    async execute(ctx: CommandContext) {
+        const { message, args } = ctx;
+
+        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
+        if (message.author.id !== DEVELOPER_ID) return;
+
         const sessionId = args[0];
         if (!sessionId) {
             await message.reply('❌ Specifica un ID sessione.');
@@ -70,7 +74,7 @@ export const recoverCommand: Command = {
                             removeOnFail: false
                         });
                     }
-                    await message.channel.send(`📁 Ri-accodati ${filesToProcess.length} file audio.`);
+                    await (message.channel as TextChannel).send(`📁 Ri-accodati ${filesToProcess.length} file audio.`);
 
                     monitor.startSession(sessionId);
                     await waitForCompletionAndSummarizeUtil(message.client, sessionId, message.channel as TextChannel);

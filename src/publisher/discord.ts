@@ -18,7 +18,7 @@ import { config } from '../config';
 
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || config.discord.summaryChannelId;
 
-export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: Array<{ name: string; quantity?: number; description?: string }>, quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>) {
+export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: Array<{ name: string; quantity?: number; description?: string }>, quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>, narrativeBriefs?: string[]) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -94,10 +94,20 @@ export async function publishSummary(client: Client, sessionId: string, log: str
 
     await targetChannel.send(`**${authorName}** — ${dateShort}, ${timeStr}`);
 
-    // --- RACCONTO NARRATIVO BREVE ---
-    if (narrative && narrative.length > 10) {
-        await targetChannel.send(`### 📖 Racconto`);
-        await safeSend(targetChannel, narrative);
+    // --- RACCONTO NARRATIVO BREVE (uno per atto se multi-part) ---
+    const briefs = narrativeBriefs && narrativeBriefs.length > 0 ? narrativeBriefs : (narrative ? [narrative] : []);
+
+    if (briefs.length > 0) {
+        const isMultiAct = briefs.length > 1;
+
+        for (let i = 0; i < briefs.length; i++) {
+            const brief = briefs[i];
+            if (brief && brief.length > 10) {
+                const actLabel = isMultiAct ? ` — Atto ${i + 1}` : '';
+                await targetChannel.send(`### 📖 Racconto${actLabel}`);
+                await safeSend(targetChannel, brief);
+            }
+        }
         await targetChannel.send(`---`); // Separatore
     }
     // ---------------------------------

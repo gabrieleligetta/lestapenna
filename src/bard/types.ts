@@ -46,6 +46,7 @@ export interface SummaryResponse {
     quests?: string[];
     narrative?: string;
     narrativeBrief?: string;
+    narrativeBriefs?: string[]; // Array di brief per ogni atto (per Discord multi-messaggio)
     log?: string[];
     character_growth?: Array<{
         name: string;

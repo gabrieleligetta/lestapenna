@@ -12,6 +12,7 @@ import { monitor } from '../../monitor';
 import { audioQueue } from '../../services/queue';
 import { connectToChannel } from '../../services/recorder';
 import { v4 as uuidv4 } from 'uuid';
+import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 // @ts-ignore
 import { guildSessions, checkAutoLeave } from '../../index'; // Accessing global state/functions from index for now. TODO: refactor to state module or separate utils.
 
@@ -115,6 +116,10 @@ export const listenCommand: Command = {
 
         guildSessions.set(message.guild!.id, sessionId);
         createSession(sessionId, message.guild!.id, activeCampaign!.id);
+
+        // 📍 Set session phase to RECORDING
+        sessionPhaseManager.setPhase(sessionId, 'RECORDING');
+
         monitor.startSession(sessionId);
 
         await audioQueue.pause();

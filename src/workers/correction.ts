@@ -10,11 +10,15 @@ import {
 } from '../db';
 import { correctTranscription } from '../bard';
 import { monitor } from '../monitor';
+import { sessionPhaseManager } from '../services/SessionPhaseManager';
 
 export const correctionProcessor = async (job: Job) => {
     const { sessionId, fileName, segments, campaignId, userId } = job.data;
     const startJob = Date.now();
     const waitTime = startJob - job.timestamp;
+
+    // Set session phase to CORRECTING
+    sessionPhaseManager.setPhase(sessionId, 'CORRECTING');
 
     try {
         const aiResult = await correctTranscription(segments, campaignId);

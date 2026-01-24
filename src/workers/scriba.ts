@@ -31,6 +31,7 @@ import { monitor } from '../monitor';
 import { correctionQueue } from '../services/queue';
 import { filterWhisperHallucinations } from '../utils/filters/whisper';
 import { groupWordsIntoSentences } from './utils';
+import { sessionPhaseManager } from '../services/SessionPhaseManager';
 
 import { config } from '../config';
 
@@ -209,6 +210,12 @@ export const scribaProcessor = async (job: Job) => {
 
     console.log(`[Scriba] 🗣️  Inizio trascrizione: ${fileName}`);
     updateRecordingStatus(fileName, 'PROCESSING');
+
+    // Set session phase to TRANSCRIBING (only if not already further along)
+    const currentPhase = sessionPhaseManager.getPhase(sessionId);
+    if (!currentPhase || currentPhase.phase === 'RECORDING' || currentPhase.phase === 'IDLE') {
+        sessionPhaseManager.setPhase(sessionId, 'TRANSCRIBING');
+    }
 
     try {
         if (!fs.existsSync(filePath)) {

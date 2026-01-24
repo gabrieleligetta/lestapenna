@@ -25,6 +25,7 @@ import {
     createCampaign,
     getUnprocessedRecordings,
     resetUnfinishedRecordings,
+    getAvailableSessions,
     db,
     getGuildConfig
 } from '../db';
@@ -34,6 +35,7 @@ import { audioQueue, removeSessionJobs } from '../services/queue';
 // index.ts used waitForCompletionAndSummarize(sessionId, channel).
 // utils/publish likely exports publishSummary, not waitFor...
 import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../publisher';
+import { sessionPhaseManager, SessionPhase } from '../services/SessionPhaseManager';
 
 // Note: recoverOrphanedFiles and processOrphanedSessionsSequentially were local. Moving here.
 
@@ -42,6 +44,9 @@ export function registerReadyHandler(client: Client) {
         console.log(`✅ Bot online: ${client.user?.tag}`);
         await testRemoteConnection();
         await checkStorageUsage();
+
+        // 📊 Print last 5 sessions table
+        printRecentSessions();
 
         initIdentityGuard();
 
@@ -63,6 +68,9 @@ export function registerReadyHandler(client: Client) {
         monitor.startIdleMonitoring();
         startMemoryMonitor();
 
+        // 🆕 PHASE-BASED RECOVERY: Check for sessions interrupted by crash
+        await recoverIncompleteSessions(client);
+
         const recoveredSessionIds = await recoverOrphanedFiles();
 
         console.log('🔍 Controllo lavori interrotti nel database...');
@@ -80,6 +88,158 @@ export function registerReadyHandler(client: Client) {
         }
     });
 }
+
+/**
+ * 📊 Print last 5 sessions table at startup
+ */
+function printRecentSessions(): void {
+    try {
+        const sessions = getAvailableSessions(undefined, undefined, 5);
+
+        if (sessions.length === 0) {
+            console.log('\n📋 Nessuna sessione registrata nel database.\n');
+            return;
+        }
+
+        console.log('\n┌───────────────────────────────────────────────────────────────────────────────────────────────┐');
+        console.log('│                                          📜 ULTIME 5 SESSIONI                                               │');
+        console.log('├──────┬────────────────────────────────────┬───────────────────┬─────────────────┬─────────────────┤');
+        console.log('│  #   │ Session ID                         │ Data/Ora          │ Campagna        │ Stato           │');
+        console.log('├──────┼────────────────────────────────────┼───────────────────┼─────────────────┼─────────────────┤');
+
+        // Reverse so most recent is at bottom
+        const reversed = [...sessions].reverse();
+        for (const s of reversed) {
+            const num = s.session_number ? String(s.session_number).padStart(4, ' ') : '  - ';
+            const id = s.session_id.substring(0, 34).padEnd(34, ' ');
+            const dateTime = s.start_time
+                ? new Date(s.start_time).toLocaleString('it-IT', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'Europe/Rome'
+                })
+                : '       -       ';
+            const campaign = (s.campaign_name || '-').substring(0, 15).padEnd(15, ' ');
+
+            // Get processing phase (for old sessions without phase tracking, infer DONE if they have processed recordings)
+            const phaseInfo = sessionPhaseManager.getPhase(s.session_id);
+            let phase = phaseInfo?.phase || null;
+
+            // Sessions returned by getAvailableSessions have PROCESSED recordings, so if phase is IDLE or null, they're actually DONE
+            if (!phase || phase === 'IDLE') {
+                phase = 'DONE';
+            }
+            const phaseDisplay = phase.substring(0, 15).padEnd(15, ' ');
+
+            console.log(`│ ${num} │ ${id} │ ${dateTime.padEnd(17, ' ')} │ ${campaign} │ ${phaseDisplay} │`);
+        }
+
+        console.log('└──────┴────────────────────────────────────┴───────────────────┴─────────────────┴─────────────────┘\n');
+    } catch (e) {
+        console.warn('[Startup] ⚠️ Impossibile caricare sessioni recenti:', e);
+    }
+}
+
+/**
+ * 🆕 Phase-based recovery for sessions interrupted mid-processing
+ */
+async function recoverIncompleteSessions(client: Client): Promise<void> {
+    console.log('🔍 Controllo sessioni interrotte per fase di processing...');
+
+    const incompleteSessions = sessionPhaseManager.getIncompleteSessions();
+
+    if (incompleteSessions.length === 0) {
+        console.log('✅ Nessuna sessione interrotta trovata.');
+        return;
+    }
+
+    console.log(`⚠️ Trovate ${incompleteSessions.length} sessioni interrotte:`);
+
+    for (const session of incompleteSessions) {
+        const { sessionId, phase, guildId } = session;
+        const recoveryPhase = sessionPhaseManager.getRecoveryStartPhase(phase);
+
+        console.log(`[Recovery] 🔄 Sessione ${sessionId} interrotta in fase: ${phase}`);
+
+        if (!recoveryPhase) {
+            console.log(`[Recovery] ⏩ Fase ${phase} non recuperabile, skip.`);
+            continue;
+        }
+
+        // Get target channel for notifications
+        let channel: TextChannel | null = null;
+        if (guildId) {
+            const targetChannelId = getGuildConfig(guildId, 'summary_channel_id') || getGuildConfig(guildId, 'cmd_channel_id');
+            if (targetChannelId) {
+                try {
+                    channel = await client.channels.fetch(targetChannelId) as TextChannel;
+                    await channel.send(`🔄 **Sessione Recuperata** (Crash Recovery): \`${sessionId}\`\nFase interrotta: \`${phase}\` → Riprendo da: \`${recoveryPhase}\``);
+                } catch (err) {
+                    console.warn(`⚠️ Impossibile accedere al canale ${targetChannelId}`);
+                }
+            }
+        }
+
+        try {
+            if (recoveryPhase === 'TRANSCRIBING') {
+                // Transcription was incomplete - reset recordings and re-queue
+                console.log(`[Recovery] 📝 Reset recordings e ri-trascrizione per ${sessionId}...`);
+                await removeSessionJobs(sessionId);
+                const filesToProcess = resetUnfinishedRecordings(sessionId);
+
+                if (filesToProcess.length === 0) {
+                    console.log(`[Recovery] ⚠️ Nessun file da riprocessare per ${sessionId}, tentando summary...`);
+                    // Maybe transcription finished but phase wasn't updated - try summary
+                    monitor.startSession(sessionId);
+                    await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
+                    await monitor.endSession();
+                } else {
+                    console.log(`[Recovery] 📁 Ri-accodamento ${filesToProcess.length} file per trascrizione...`);
+                    for (const job of filesToProcess) {
+                        await audioQueue.add('transcribe-job', {
+                            sessionId: job.session_id,
+                            fileName: job.filename,
+                            filePath: job.filepath,
+                            userId: job.user_id
+                        }, {
+                            jobId: job.filename,
+                            attempts: 5,
+                            backoff: { type: 'exponential', delay: 2000 },
+                            removeOnComplete: true,
+                            removeOnFail: false
+                        });
+                    }
+
+                    // Start monitoring and wait for completion
+                    monitor.startSession(sessionId);
+                    await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
+                    const metrics = await monitor.endSession();
+                    if (metrics) await processSessionReport(metrics);
+                }
+
+            } else if (recoveryPhase === 'SUMMARIZING') {
+                // Transcripts are complete - just regenerate summary
+                console.log(`[Recovery] 📝 Trascrizioni OK, rigenero solo il summary per ${sessionId}...`);
+                monitor.startSession(sessionId);
+                await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
+                const metrics = await monitor.endSession();
+                if (metrics) await processSessionReport(metrics);
+            }
+
+            console.log(`[Recovery] ✅ Sessione ${sessionId} recuperata con successo!`);
+
+        } catch (err: any) {
+            console.error(`[Recovery] ❌ Errore recupero sessione ${sessionId}:`, err.message);
+            if (channel) {
+                await channel.send(`⚠️ Errore durante recupero sessione \`${sessionId}\`: ${err.message}`).catch(() => { });
+            }
+        }
+    }
+}
+
 
 async function recoverOrphanedFiles(): Promise<string[]> {
     const recordingsDir = path.join(__dirname, '..', '..', 'recordings'); // Adjusted path: src/bootstrap -> ../../recordings

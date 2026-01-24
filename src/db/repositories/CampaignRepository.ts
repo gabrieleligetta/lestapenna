@@ -127,5 +127,31 @@ export const campaignRepository = {
             quest_context: questContext,
             location_context: locContext
         };
+    },
+
+    /**
+     * Gets the next session number for a campaign (intelligent auto-increment)
+     * Uses MAX of: last_session_number from campaigns, or highest session_number from sessions table
+     */
+    getNextSessionNumber: (campaignId: number): number => {
+        // Get last_session_number from campaigns table
+        const campaignRow = db.prepare('SELECT last_session_number FROM campaigns WHERE id = ?').get(campaignId) as { last_session_number: number } | undefined;
+        const fromCampaign = campaignRow?.last_session_number || 0;
+
+        // Get MAX session_number from sessions for this campaign
+        const sessionRow = db.prepare('SELECT MAX(session_number) as max_num FROM sessions WHERE campaign_id = ?').get(campaignId) as { max_num: number } | undefined;
+        const fromSessions = sessionRow?.max_num || 0;
+
+        // Use the highest value + 1
+        const nextNumber = Math.max(fromCampaign, fromSessions) + 1;
+        console.log(`[SessionCounter] 📊 Campagna ${campaignId}: next=${nextNumber} (fromCampaign=${fromCampaign}, fromSessions=${fromSessions})`);
+        return nextNumber;
+    },
+
+    /**
+     * Updates the last_session_number for a campaign
+     */
+    updateLastSessionNumber: (campaignId: number, sessionNumber: number): void => {
+        db.prepare('UPDATE campaigns SET last_session_number = ? WHERE id = ?').run(sessionNumber, campaignId);
     }
 };

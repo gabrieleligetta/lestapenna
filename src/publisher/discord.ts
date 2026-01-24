@@ -1,7 +1,3 @@
-/**
- * Publisher - Discord Logic
- */
-
 import { TextChannel, EmbedBuilder, Client } from 'discord.js';
 import {
     getExplicitSessionNumber,
@@ -12,7 +8,9 @@ import {
     getSessionStartTime,
     getCampaigns,
     getGuildConfig,
-    getSessionEncounteredNPCs
+    getSessionEncounteredNPCs,
+    getNextSessionNumber,
+    updateLastSessionNumber
 } from '../db';
 import { fetchSessionInfoFromHistory, truncate } from './formatters';
 import { safeSend } from '../utils/discordHelper';
@@ -37,29 +35,33 @@ export async function publishSummary(client: Client, sessionId: string, log: str
         }
     }
 
+    // 1. Check for manually set session number
     let sessionNum = getExplicitSessionNumber(sessionId);
     if (sessionNum !== null) {
         console.log(`[Publish] Sessione ${sessionId}: Usato numero manuale ${sessionNum}`);
     }
 
-    if (sessionNum === null && discordSummaryChannel) {
+    // 2. If replay, try to find original number from history
+    if (sessionNum === null && isReplay && discordSummaryChannel) {
         const info = await fetchSessionInfoFromHistory(discordSummaryChannel, sessionId);
-        if (isReplay) {
-            if (info.sessionNumber) {
-                sessionNum = info.sessionNumber;
-                setSessionNumber(sessionId, sessionNum);
-            }
-        } else {
-            if (info.lastRealNumber > 0) {
-                sessionNum = info.lastRealNumber + 1;
-                setSessionNumber(sessionId, sessionNum);
-            }
+        if (info.sessionNumber) {
+            sessionNum = info.sessionNumber;
+            setSessionNumber(sessionId, sessionNum);
         }
     }
 
+    // 3. If still null, use intelligent auto-increment from DB
     if (sessionNum === null) {
-        sessionNum = 1;
-        setSessionNumber(sessionId, sessionNum);
+        const campaignId = getSessionCampaignId(sessionId);
+        if (campaignId) {
+            sessionNum = getNextSessionNumber(campaignId);
+            setSessionNumber(sessionId, sessionNum);
+            updateLastSessionNumber(campaignId, sessionNum);
+            console.log(`[Publish] Sessione ${sessionId}: Auto-assegnato numero ${sessionNum} per campagna ${campaignId}`);
+        } else {
+            sessionNum = 1;
+            setSessionNumber(sessionId, sessionNum);
+        }
     }
 
     const authorId = getSessionAuthor(sessionId);

@@ -22,6 +22,7 @@ import { publishSummary } from './discord';
 import { PipelineService } from './services/PipelineService';
 import { IngestionService } from './services/IngestionService';
 import { NotificationService } from './services/NotificationService';
+import { sessionPhaseManager } from '../services/SessionPhaseManager';
 
 export async function waitForCompletionAndSummarize(client: Client, sessionId: string, channel?: TextChannel): Promise<void> {
     const CHECK_INTERVAL = 10000; // 10s check
@@ -80,13 +81,16 @@ export async function waitForCompletionAndSummarize(client: Client, sessionId: s
         }
 
         try {
-            // Generate summary via PipelineService
+            // 📍 PHASE: SUMMARIZING
+            sessionPhaseManager.setPhase(sessionId, 'SUMMARIZING');
             const result = await pipelineService.generateSessionSummary(sessionId, campaignId);
 
-            // Ingest to RAG and process batch events via IngestionService
+            // 📍 PHASE: INGESTING (RAG base ingestion)
+            sessionPhaseManager.setPhase(sessionId, 'INGESTING');
             await ingestionService.ingestSummary(sessionId, result);
             ingestionService.updateSessionTitle(sessionId, result.title);
 
+            // processBatchEvents handles VALIDATING and SYNCING phases internally
             if (activeCampaign) {
                 await ingestionService.processBatchEvents(campaignId, sessionId, result, channel);
             }
@@ -94,7 +98,8 @@ export async function waitForCompletionAndSummarize(client: Client, sessionId: s
             // Get encountered NPCs for publishing
             const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
 
-            // Publish to Discord via NotificationService
+            // 📍 PHASE: PUBLISHING
+            sessionPhaseManager.setPhase(sessionId, 'PUBLISHING');
             if (channel) {
                 await notificationService.publishToDiscord(
                     client,
@@ -115,11 +120,14 @@ export async function waitForCompletionAndSummarize(client: Client, sessionId: s
                 await channel.send("✅ Report sessione di test inviato via email!");
             }
 
+            // 📍 PHASE: DONE
+            sessionPhaseManager.setPhase(sessionId, 'DONE');
             console.log(`[Monitor] ✅ Sessione ${sessionId} conclusa con successo.`);
             return; // Success exit
 
         } catch (err: any) {
             console.error(`[Monitor] ❌ Errore fase finale riassunto:`, err);
+            sessionPhaseManager.markFailed(sessionId, err.message);
             if (channel) {
                 await channel.send(`❌ Errore generazione riassunto: ${err.message}`);
             }

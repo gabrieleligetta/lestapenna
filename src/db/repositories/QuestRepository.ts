@@ -36,6 +36,12 @@ const cleanQuestTitle = (title: string): string => {
 
 export const questRepository = {
     addQuest: (campaignId: number, title: string, sessionId?: string) => {
+        // 0. Guard against undefined/null title
+        if (!title) {
+            console.warn(`[Quest] ⚠️ Tentativo di aggiungere quest senza titolo. Ignoro.`);
+            return;
+        }
+
         // 1. Pulisci il titolo
         const cleanedTitle = cleanQuestTitle(title);
 

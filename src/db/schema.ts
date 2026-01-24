@@ -18,8 +18,14 @@ export const initDatabase = () => {
         current_macro_location TEXT,
         current_micro_location TEXT,
         current_year INTEGER,
-        allow_auto_character_update INTEGER DEFAULT 0
+        allow_auto_character_update INTEGER DEFAULT 0,
+        last_session_number INTEGER DEFAULT 0
     )`);
+
+    // Migrazione: aggiungi colonna se non esiste
+    try {
+        db.exec(`ALTER TABLE campaigns ADD COLUMN last_session_number INTEGER DEFAULT 0`);
+    } catch (e) { /* colonna già esistente */ }
 
     // --- TABELLA PERSONAGGI ---
     db.exec(`CREATE TABLE IF NOT EXISTS characters (
@@ -103,6 +109,8 @@ export const initDatabase = () => {
         campaign_id INTEGER,
         session_number INTEGER,
         title TEXT,
+        processing_phase TEXT DEFAULT 'IDLE',
+        phase_started_at INTEGER,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     )`);
 
@@ -301,7 +309,12 @@ export const initDatabase = () => {
         "ALTER TABLE bestiary ADD COLUMN first_session_id TEXT",
         // 🆕 INVENTARIO ESTESO
         "ALTER TABLE inventory ADD COLUMN description TEXT",
-        "ALTER TABLE inventory ADD COLUMN notes TEXT"
+        "ALTER TABLE inventory ADD COLUMN notes TEXT",
+        // 🆕 SESSION PHASE TRACKING (Crash Recovery)
+        "ALTER TABLE sessions ADD COLUMN processing_phase TEXT DEFAULT 'IDLE'",
+        "ALTER TABLE sessions ADD COLUMN phase_started_at INTEGER",
+        // 🆕 PERSISTENT SESSION COUNTER PER CAMPAIGN
+        "ALTER TABLE campaigns ADD COLUMN last_session_number INTEGER DEFAULT 0"
     ];
 
     for (const m of migrations) {

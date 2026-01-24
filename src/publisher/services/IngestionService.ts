@@ -3,6 +3,7 @@
  */
 
 import { TextChannel } from 'discord.js';
+import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 import {
     updateSessionTitle,
     addCharacterEvent,
@@ -75,6 +76,9 @@ export class IngestionService {
         if (result.loot?.length) batchInput.loot = result.loot;
         if (result.quests?.length) batchInput.quests = result.quests;
 
+        // 📍 PHASE: VALIDATING
+        sessionPhaseManager.setPhase(sessionId, 'VALIDATING');
+
         // Execute batch validation
         let validated: any = null;
         if (Object.keys(batchInput).length > 0) {
@@ -126,6 +130,9 @@ export class IngestionService {
         if (result.present_npcs?.length) {
             updateSessionPresentNPCs(sessionId, result.present_npcs);
         }
+
+        // 📍 PHASE: SYNCING
+        sessionPhaseManager.setPhase(sessionId, 'SYNCING');
 
         // Sync dirty entities to RAG
         await this.syncDirtyEntities(campaignId, validated, result, channel);

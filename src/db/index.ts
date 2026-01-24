@@ -55,6 +55,8 @@ export const getCampaignLocationById = campaignRepository.getCampaignLocationByI
 export const getCampaignById = campaignRepository.getCampaignById;
 export const deleteCampaign = campaignRepository.deleteCampaign;
 export const getCampaignSnapshot = campaignRepository.getCampaignSnapshot;
+export const getNextSessionNumber = campaignRepository.getNextSessionNumber;
+export const updateLastSessionNumber = campaignRepository.updateLastSessionNumber;
 
 // Location
 export const updateLocation = locationRepository.updateLocation;

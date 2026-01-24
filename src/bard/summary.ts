@@ -16,7 +16,14 @@ import {
     getNpcEntry, // for regenerateNpcNotes
     updateNpcEntry, // ??
     getCharacterHistory, // for generateCharacterBio
-    getNpcHistory
+    getNpcHistory,
+    // Add repositories for hydration
+    inventoryRepository,
+    questRepository,
+    bestiaryRepository,
+    npcRepository,
+    locationRepository,
+    worldRepository
 } from '../db';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -407,7 +414,7 @@ export function prepareCleanText(sessionId: string): string | undefined {
 /**
  * GENERATE SUMMARY (Main Function)
  */
-export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string): Promise<SummaryResponse> {
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string, options: { skipAnalysis?: boolean } = {}): Promise<SummaryResponse> {
     const startAI = Date.now();
     try {
         console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
@@ -535,9 +542,60 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             console.log(`[Bardo] 🎬 Elaborazione Atto ${actNumber}/${parts.length}...`);
 
             // --- STEP A: ANALISTA (Per questa parte) ---
-            // Nota: Passiamo memoryContext globale e il contesto della parte
-            const partHeader = isMultiPart ? `PARTE ${actNumber} DI ${parts.length}` : undefined;
-            const partialAnalystData = await extractStructuredData(sessionId, currentPart, castContext, memoryContext, partHeader);
+            let partialAnalystData: AnalystOutput = {
+                loot: [], loot_removed: [], quests: [], monsters: [],
+                npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: []
+            };
+
+            if (!options.skipAnalysis) {
+                // Nota: Passiamo memoryContext globale e il contesto della parte
+                const partHeader = isMultiPart ? `PARTE ${actNumber} DI ${parts.length}` : undefined;
+                partialAnalystData = await extractStructuredData(sessionId, currentPart, castContext, memoryContext, partHeader);
+            } else if (i === 0) {
+                // HYDRATION (Only on first pass to avoid duplication if we were to loop, though hydration should be global)
+                console.log(`[Bardo] ⏩ Skipping Analysis. Hydrating from DB for session ${sessionId}...`);
+
+                // Hydrate Loot
+                const dbLoot = inventoryRepository.getSessionInventory(sessionId);
+                partialAnalystData.loot = dbLoot.map((l: any) => ({
+                    name: l.item_name,
+                    quantity: l.quantity,
+                    description: l.description
+                }));
+
+                // Hydrate Quests
+                const dbQuests = questRepository.getSessionQuests(sessionId);
+                partialAnalystData.quests = dbQuests.map((q: any) => q.title);
+
+                // Hydrate Monsters
+                const dbMonsters = bestiaryRepository.getSessionMonsters(sessionId);
+                partialAnalystData.monsters = dbMonsters.map((m: any) => ({
+                    name: m.name,
+                    status: m.status,
+                    count: m.count,
+                    description: m.description,
+                    abilities: safeJsonParse(m.abilities) || [],
+                    weaknesses: safeJsonParse(m.weaknesses) || [],
+                    resistances: safeJsonParse(m.resistances) || []
+                }));
+
+                // Hydrate NPCs
+                const dbNpcs = npcRepository.getSessionEncounteredNPCs(sessionId);
+                partialAnalystData.present_npcs = dbNpcs.map((n: any) => n.name);
+                // Note: npc_dossier_updates is slightly different than encountered, it tracks CHANGES. 
+                // We might not be able to fully reconstruct "updates" vs "state", but for narrative context, present_npcs is key.
+
+                // Hydrate Location/Travel
+                const travelLog = locationRepository.getSessionTravelLog(sessionId);
+                partialAnalystData.travel_sequence = travelLog.map((t: any) => ({
+                    macro: t.macro_location,
+                    micro: t.micro_location,
+                    reason: "Recorded in log"
+                }));
+
+                // If we have travel log, we can infer location updates roughly or leave empty as they are for atlas
+                // partialAnalystData.location_updates = ... 
+            }
 
             // Merge Dati Analista
             if (partialAnalystData.loot) aggregatedData.loot.push(...partialAnalystData.loot);
@@ -576,7 +634,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             saveDebugFile(sessionId, `writer_prompt_act${actNumber}.txt`, reducePrompt);
 
             const startAI = Date.now();
-            const options: any = {
+            const summaryOptions: any = {
                 model: SUMMARY_MODEL,
                 messages: [
                     { role: "system", content: "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido." },
@@ -585,14 +643,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             };
 
             if (SUMMARY_PROVIDER === 'openai') {
-                options.response_format = { type: "json_object" };
-                options.max_completion_tokens = 16000;
+                summaryOptions.response_format = { type: "json_object" };
+                summaryOptions.max_completion_tokens = 16000;
             } else if (SUMMARY_PROVIDER === 'ollama') {
-                options.format = 'json';
-                options.options = { num_ctx: 8192 };
+                summaryOptions.format = 'json';
+                summaryOptions.options = { num_ctx: 8192 };
             }
 
-            const response = await withRetry(() => summaryClient.chat.completions.create(options));
+            const response = await withRetry(() => summaryClient.chat.completions.create(summaryOptions));
             const latency = Date.now() - startAI;
             const inputTokens = response.usage?.prompt_tokens || 0;
             const outputTokens = response.usage?.completion_tokens || 0;
@@ -664,7 +722,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             narrativeBrief: aggregatedData.narrativeBriefs.length > 0
                 ? aggregatedData.narrativeBriefs.map((b: string, i: number) =>
                     aggregatedData.narrativeBriefs.length > 1 ? `**Atto ${i + 1}**\n${b}` : b
-                  ).join('\n\n---\n\n')
+                ).join('\n\n---\n\n')
                 : (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")),
             log: aggregatedData.log,
             character_growth: aggregatedData.character_growth,

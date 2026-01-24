@@ -14,6 +14,7 @@ import { PipelineService } from '../../publisher/services/PipelineService';
 import { IngestionService } from '../../publisher/services/IngestionService';
 import { NotificationService } from '../../publisher/services/NotificationService';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
+import { purgeSessionData } from '../../services/janitor';
 
 export const narrateCommand: Command = {
     name: 'narrate',
@@ -88,18 +89,33 @@ export const narrateCommand: Command = {
             await channel.send("📚 Il Bardo sta preparando il testo...");
             await channel.send("✍️ Inizio stesura del racconto...");
 
-            // 1. Generate Summary (Pipeline)
-            const result = await pipelineService.generateSessionSummary(targetSessionId, activeCampaign!.id, requestedTone || 'DM');
+            // 1. Prepare Flags
+            // Logic:
+            // - If forceReindex: Clean everything first, then run Full Analysis
+            // - If NOT forceReindex (and already processed): Skip Analysis, Hydrate from DB
+            // - If new session: Full Analysis (default)
+
+            const skipAnalysis = !shouldIngest;
+
+            if (forceReindex) {
+                await channel.send("🧹 Pulizia dati sessione precedenti (Reindex)...");
+                purgeSessionData(targetSessionId);
+            }
+
+            // 2. Generate Summary (Pipeline)
+            const result = await pipelineService.generateSessionSummary(
+                targetSessionId,
+                activeCampaign!.id,
+                requestedTone || 'DM',
+                { skipAnalysis }
+            );
 
             if (shouldIngest) {
-                // 2. Ingest to RAG & DB
-                if (forceReindex) {
-                    ingestionService.clearSessionData(targetSessionId);
-                }
+                // 3. Ingest to RAG & DB
                 await ingestionService.ingestSummary(targetSessionId, result);
                 ingestionService.updateSessionTitle(targetSessionId, result.title);
 
-                // 3. Process Batch Events
+                // 4. Process Batch Events
                 if (activeCampaign) {
                     await ingestionService.processBatchEvents(activeCampaign.id, targetSessionId, result, channel);
                 }
@@ -107,7 +123,7 @@ export const narrateCommand: Command = {
                 // Update phase to DONE if we ingested
                 sessionPhaseManager.setPhase(targetSessionId, 'DONE');
             } else {
-                console.log(`[Racconta] Saltata indicizzazione per ${targetSessionId} (già DONE)`);
+                console.log(`[Racconta] Saltata indicizzazione per ${targetSessionId}.`);
             }
 
             // 4. Publish to Discord (Sempre, è lo scopo del comando)

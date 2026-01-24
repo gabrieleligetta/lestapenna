@@ -71,14 +71,14 @@ export class PipelineService {
     /**
      * Generates summary for the session
      */
-    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM'): Promise<any> {
+    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM', options: { skipAnalysis?: boolean } = {}): Promise<any> {
         const cleanText = prepareCleanText(sessionId);
         if (!cleanText) {
             console.warn(`[Pipeline] ⚠️ Clean text non disponibile, fallback a raw transcription gestito da generateSummary.`);
         }
 
-        console.log(`[Pipeline] 📝 Avvio generateSummary (Tone: ${tone})...`);
-        let result = await generateSummary(sessionId, tone, cleanText);
+        console.log(`[Pipeline] 📝 Avvio generateSummary (Tone: ${tone}, Options: ${JSON.stringify(options)})...`);
+        let result = await generateSummary(sessionId, tone, cleanText, options);
         console.log(`[Pipeline] ✅ generateSummary completato, avvio normalizzazione...`);
 
         // Normalize entity names if campaign exists

@@ -18,6 +18,20 @@ export * from './utils';
 export { initDatabase };
 
 // Import repositories
+export { configRepository } from './repositories/ConfigRepository';
+export { campaignRepository } from './repositories/CampaignRepository';
+export { locationRepository } from './repositories/LocationRepository';
+export { npcRepository } from './repositories/NpcRepository';
+export { bestiaryRepository } from './repositories/BestiaryRepository';
+export { questRepository } from './repositories/QuestRepository';
+export { inventoryRepository } from './repositories/InventoryRepository';
+export { characterRepository } from './repositories/CharacterRepository';
+export { sessionRepository } from './repositories/SessionRepository';
+export { recordingRepository } from './repositories/RecordingRepository';
+export { knowledgeRepository } from './repositories/KnowledgeRepository';
+export { chatRepository } from './repositories/ChatRepository';
+export { pendingMergeRepository } from './repositories/PendingMergeRepository';
+export { worldRepository } from './repositories/WorldRepository';
 import { configRepository } from './repositories/ConfigRepository';
 import { campaignRepository } from './repositories/CampaignRepository';
 import { locationRepository } from './repositories/LocationRepository';

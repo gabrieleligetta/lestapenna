@@ -71,6 +71,61 @@ function getCompletedSessions(): SessionInfo[] {
     `).all() as SessionInfo[];
 }
 
+interface ValidationResult {
+    valid: boolean;
+    sessions: SessionInfo[];
+    issues: { session_id: string; title: string | null; reason: string }[];
+}
+
+/**
+ * Pre-flight check: validates all sessions have required data before any deletion
+ */
+function validateRebuildReadiness(): ValidationResult {
+    const sessions = getCompletedSessions();
+    const issues: { session_id: string; title: string | null; reason: string }[] = [];
+
+    for (const session of sessions) {
+        // Check 1: campaign_id must exist
+        if (!session.campaign_id) {
+            issues.push({
+                session_id: session.session_id,
+                title: session.title,
+                reason: 'Nessuna campagna associata'
+            });
+            continue;
+        }
+
+        // Check 2: must have at least one transcription with text
+        const transcriptCount = db.prepare(`
+            SELECT COUNT(*) as cnt FROM recordings
+            WHERE session_id = ?
+            AND status = 'PROCESSED'
+            AND transcription_text IS NOT NULL
+            AND LENGTH(transcription_text) > 10
+        `).get(session.session_id) as { cnt: number };
+
+        // Check 3: or at least one note
+        const noteCount = db.prepare(`
+            SELECT COUNT(*) as cnt FROM session_notes
+            WHERE session_id = ?
+        `).get(session.session_id) as { cnt: number };
+
+        if (transcriptCount.cnt === 0 && noteCount.cnt === 0) {
+            issues.push({
+                session_id: session.session_id,
+                title: session.title,
+                reason: 'Nessuna trascrizione o nota disponibile'
+            });
+        }
+    }
+
+    return {
+        valid: issues.length === 0,
+        sessions,
+        issues
+    };
+}
+
 /**
  * Soft reset: preserves NPC and location names, clears descriptions
  */
@@ -222,17 +277,49 @@ Il processo:
         monitor.startSession(rebuildSessionId);
         console.log(`[Rebuild] 📊 Monitor avviato per sessione ${rebuildSessionId}`);
 
-        const statusMsg = await channel.send("🔄 **REBUILD AVVIATO**\n\nFase 1/3: Preparazione...");
+        const statusMsg = await channel.send("🔄 **REBUILD AVVIATO**\n\n⏳ Fase 0/3: Validazione pre-flight...");
 
         try {
-            // Phase 1: Soft reset anagrafiche
+            // Phase 0: PRE-FLIGHT VALIDATION (before any deletion!)
+            const validation = validateRebuildReadiness();
+
+            if (!validation.valid) {
+                await monitor.endSession(); // Clean up monitor
+
+                let errorMsg = `❌ **REBUILD ANNULLATO - Validazione fallita**\n\n` +
+                    `Trovate **${validation.issues.length}** sessioni senza dati sufficienti:\n\n`;
+
+                for (const issue of validation.issues.slice(0, 10)) {
+                    const label = issue.title || issue.session_id.slice(0, 8);
+                    errorMsg += `• **${label}**: ${issue.reason}\n`;
+                }
+
+                if (validation.issues.length > 10) {
+                    errorMsg += `\n... e altre ${validation.issues.length - 10} sessioni con problemi`;
+                }
+
+                errorMsg += `\n\n⚠️ **Nessun dato è stato cancellato.**\n` +
+                    `Correggi i problemi sopra prima di riprovare.`;
+
+                await statusMsg.edit(errorMsg);
+                return;
+            }
+
+            await statusMsg.edit(
+                `🔄 **REBUILD IN CORSO**\n\n` +
+                `✅ Fase 0/3: Validazione OK (${validation.sessions.length} sessioni pronte)\n\n` +
+                `⏳ Fase 1/3: Reset anagrafiche...`
+            );
+
+            // Phase 1: Soft reset anagrafiche (NOW safe to proceed)
             const resetStats = softResetAnagrafiche();
             await statusMsg.edit(
                 `🔄 **REBUILD IN CORSO**\n\n` +
-                `✅ Fase 1/3: Anagrafiche resettate\n` +
+                `✅ Fase 0/4: Validazione OK\n` +
+                `✅ Fase 1/4: Anagrafiche resettate\n` +
                 `   - ${resetStats.npcs} NPC (nomi preservati)\n` +
                 `   - ${resetStats.locations} luoghi (nomi preservati)\n\n` +
-                `⏳ Fase 2/3: Pulizia dati storici...`
+                `⏳ Fase 2/4: Pulizia dati storici...`
             );
 
             // Phase 2: Purge all derived data
@@ -241,13 +328,14 @@ Il processo:
 
             await statusMsg.edit(
                 `🔄 **REBUILD IN CORSO**\n\n` +
-                `✅ Fase 1/3: Anagrafiche resettate\n` +
-                `✅ Fase 2/3: Dati storici cancellati (${totalPurged} record)\n` +
+                `✅ Fase 0/4: Validazione OK\n` +
+                `✅ Fase 1/4: Anagrafiche resettate\n` +
+                `✅ Fase 2/4: Dati storici cancellati (${totalPurged} record)\n` +
                 `   - Eventi NPC: ${purgeStats.npc_history}\n` +
                 `   - Eventi Mondo: ${purgeStats.world_history}\n` +
                 `   - Eventi PG: ${purgeStats.character_history}\n` +
                 `   - RAG: ${purgeStats.knowledge_fragments}\n\n` +
-                `⏳ Fase 3/3: Rigenerazione sessioni...`
+                `⏳ Fase 3/4: Rigenerazione sessioni...`
             );
 
             // Phase 3: Regenerate all sessions
@@ -270,7 +358,7 @@ Il processo:
                         `🔄 **REBUILD IN CORSO**\n\n` +
                         `✅ Fase 1/3: Anagrafiche resettate\n` +
                         `✅ Fase 2/3: Dati storici cancellati\n` +
-                        `⏳ Fase 3/3: ${progress} Processando **${sessionLabel}**...\n\n` +
+                        `⏳ Fase 3/4: ${progress} Processando **${sessionLabel}**...\n\n` +
                         `Completate: ${successCount} | Errori: ${errorCount}`
                     );
                 }

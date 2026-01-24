@@ -17,7 +17,8 @@ import {
     getSessionEncounteredNPCs,
     addNpcAlias,
     removeNpcAlias,
-    db
+    db,
+    addNpcEvent // 🆕
 } from '../../db';
 import {
     smartMergeBios,
@@ -270,24 +271,27 @@ export const npcCommand: Command = {
                 if (isForceMode) {
                     const loadingMsg = await ctx.message.reply(`🔥 **FORCE MODE** attivato per **${name}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
 
-                    db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
-                        .run(value, npc.id);
+                    // Force Mode: Add event AND maybe a special marker?
+                    // Actually, "Force" in the new paradigm means "Add event and regen immediately".
+                    // But if we want to "Replace completely", we might need a "snapshot" event that says "This is the new truth".
 
-                    markNpcDirty(ctx.activeCampaign!.id, npc.name);
+                    const eventDesc = `[AGGIORNAMENTO FORZATO] ${value}`;
+                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL_UPDATE', eventDesc, 'FORCE_UPDATE');
 
-                    await loadingMsg.edit(`🔥 **Sovrascrittura completata!**\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${value.substring(0, 500)}${value.length > 500 ? '...' : ''}`);
+                    const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
+
+                    await loadingMsg.edit(`🔥 **Sovrascrittura completata!**\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${newDesc ? newDesc.substring(0, 500) : ''}${newDesc && newDesc.length > 500 ? '...' : ''}`);
                     return;
                 } else {
-                    const loadingMsg = await ctx.message.reply(`⚙️ Merge intelligente descrizione per **${name}**...`);
+                    const loadingMsg = await ctx.message.reply(`⚙️ Aggiungo nota al dossier di **${name}**...`);
 
-                    const mergedDesc = await smartMergeBios(npc.description || '', value);
+                    const eventDesc = `[NOTA DM] ${value}`;
+                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL_UPDATE', eventDesc, 'DM_NOTE');
 
-                    db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
-                        .run(mergedDesc, npc.id);
+                    // Trigger regen
+                    const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
 
-                    markNpcDirty(ctx.activeCampaign!.id, npc.name);
-
-                    await loadingMsg.edit(`✅ Descrizione aggiornata!\n📌 Sync RAG programmato.\n💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n📜 **Nuova Bio:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`);
+                    await loadingMsg.edit(`✅ Dossier aggiornato!\n📌 Sync RAG programmato.\n💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n📜 **Nuova Bio:**\n${newDesc ? newDesc.substring(0, 500) : ''}${newDesc && newDesc.length > 500 ? '...' : ''}`);
                     return;
                 }
             }

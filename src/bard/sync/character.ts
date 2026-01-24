@@ -16,6 +16,7 @@ import {
 } from '../config';
 import { monitor } from '../../monitor';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
  * Rigenera la descrizione di un personaggio giocante basandosi su NUOVI eventi.
@@ -25,60 +26,12 @@ export async function regenerateCharacterDescription(
     currentDesc: string,
     newEvents: Array<{ description: string, event_type: string }>
 ): Promise<string> {
-    if (newEvents.length === 0) {
-        console.log(`[Character] Nessun nuovo evento per ${charName}, mantengo descrizione attuale.`);
-        return currentDesc;
-    }
 
-    const historyText = newEvents
-        .slice(-10)
-        .map(h => `[${h.event_type}] ${h.description}`)
-        .join('\n');
-
-    const prompt = `Sei il Biografo Personale del personaggio giocante **${charName}**.
-
-**BIOGRAFIA ATTUALE (Contiene già eventi precedenti integrati):**
-${currentDesc || 'Nessuna descrizione iniziale.'}
-
-**NUOVI EVENTI DA INTEGRARE (Non ancora nella biografia sopra):**
-${historyText}
-
-**REGOLE CRITICHE:**
-1. **NON DUPLICARE**: Gli eventi nella "Biografia Attuale" sono GIÀ integrati. Aggiungi SOLO i "Nuovi Eventi".
-2. **Rispetta l'Agency del Giocatore**: NON cambiare tratti di personalità.
-3. **Aggiungi Solo Conseguenze Osservabili**: Cicatrici, oggetti iconici, titoli, relazioni chiave.
-4. **Preserva il Testo Esistente**: Modifica minimamente, aggiungi max 1-2 frasi per i nuovi eventi.
-5. **Formato**: Terza persona, stile enciclopedia fantasy, max 800 caratteri totali.
-
-Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spiegazioni).`;
-
-
-    const startAI = Date.now();
-    try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
-            messages: [
-                { role: "system", content: "Sei un biografo esperto. Integra SOLO i nuovi eventi senza duplicare quelli già presenti. Max 800 caratteri." },
-                { role: "user", content: prompt }
-            ],
-            max_completion_tokens: 300
-        });
-
-        const latency = Date.now() - startAI;
-        const inputTokens = response.usage?.prompt_tokens || 0;
-        const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
-
-        const newDesc = response.choices[0].message.content?.trim() || currentDesc;
-        console.log(`[Character] Biografia aggiornata per ${charName} (+${newEvents.length} eventi, ${latency}ms)`);
-
-        return newDesc;
-
-    } catch (e) {
-        console.error(`[Character] Errore rigenerazione ${charName}:`, e);
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return currentDesc;
-    }
+    // Use unified service
+    return generateBio('CHARACTER', {
+        name: charName,
+        currentDesc: currentDesc
+    }, newEvents);
 }
 
 /**

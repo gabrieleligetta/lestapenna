@@ -17,6 +17,70 @@ export const recoverCommand: Command = {
         const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
         if (message.author.id !== DEVELOPER_ID) return;
 
+        const subCommand = args[0];
+
+        // --- SUBCOMMAND: REGENERATE ALL (TIME TRAVEL) ---
+        if (subCommand === 'regenerate-all') {
+            const campaignId = ctx.activeCampaign?.id;
+            if (!campaignId) {
+                await message.reply("❌ Nessuna campagna attiva. Impossibile rigenerare.");
+                return;
+            }
+
+            const confirmMsg = await message.reply("⏳ **TIME TRAVEL: Rigenerazione Globale Avviata...**\nSto rianalizzando l'intera storia della campagna per riscrivere le biografie.");
+
+            // 1. Characters (Full Reset & Rewrite from History)
+            const { resetAllCharacterBios } = await import('../../bard/sync/character');
+            const charResult = await resetAllCharacterBios(campaignId);
+            await confirmMsg.edit(`⏳ **TIME TRAVEL**\n✅ Personaggi: ${charResult.reset} rigenerati.`);
+
+            // 2. NPCs (Sync Force = Merge History)
+            const { syncAllDirtyNpcs, syncNpcDossierIfNeeded } = await import('../../bard/sync/npc'); // syncAllDirty checks dirty only. We want ALL.
+            const { listNpcs } = await import('../../db');
+
+            const allNpcs = listNpcs(campaignId);
+            let npcsCount = 0;
+
+            // Chunk processing to avoid rate limits? process in batches?
+            // For now simple loop with slight delay if needed, but bio gen is separate calls.
+            await confirmMsg.edit(`⏳ **TIME TRAVEL**\n✅ Personaggi: ${charResult.reset} rigenerati.\n⚙️ NPC: 0/${allNpcs.length}...`);
+
+            for (const npc of allNpcs) {
+                await syncNpcDossierIfNeeded(campaignId, npc.name, true);
+                npcsCount++;
+                if (npcsCount % 5 === 0) {
+                    await confirmMsg.edit(`⏳ **TIME TRAVEL**\n✅ Personaggi: ${charResult.reset} rigenerati.\n⚙️ NPC: ${npcsCount}/${allNpcs.length}...`);
+                }
+            }
+
+            // 3. Atlas (Sync Force = Merge History)
+            const { listAllAtlasEntries } = await import('../../db');
+            const { syncAtlasEntryIfNeeded } = await import('../../bard/sync/atlas');
+
+            const allAtlas = listAllAtlasEntries(campaignId);
+            let atlasCount = 0;
+
+            await confirmMsg.edit(`⏳ **TIME TRAVEL**\n✅ Personaggi: ${charResult.reset}\n✅ NPC: ${npcsCount}\n⚙️ Atlante: 0/${allAtlas.length}...`);
+
+            for (const loc of allAtlas) {
+                await syncAtlasEntryIfNeeded(campaignId, loc.macro_location, loc.micro_location, true);
+                atlasCount++;
+                if (atlasCount % 5 === 0) {
+                    await confirmMsg.edit(`⏳ **TIME TRAVEL**\n✅ Personaggi: ${charResult.reset}\n✅ NPC: ${npcsCount}\n⚙️ Atlante: ${atlasCount}/${allAtlas.length}...`);
+                }
+            }
+
+            await confirmMsg.edit(
+                `✨ **RIGENERAZIONE COMPLETATA** ✨\n\n` +
+                `👤 **Personaggi**: ${charResult.reset} riscritti.\n` +
+                `🎭 **NPC**: ${npcsCount} aggiornati.\n` +
+                `🌍 **Atlante**: ${atlasCount} luoghi riconsolidati.\n\n` +
+                `La storia è stata riscritta.`
+            );
+            return;
+        }
+
+        // --- OLD RECOVER LOGIC (Session ID) ---
         const sessionId = args[0];
         if (!sessionId) {
             await message.reply('❌ Specifica un ID sessione.');

@@ -57,7 +57,8 @@ import {
 
 import {
     SummaryResponse,
-    ToneKey
+    ToneKey,
+    AnalystOutput
 } from './types';
 
 import { searchKnowledge, ingestSessionComplete } from './rag'; // ingestSessionComplete handles RAG ingestion
@@ -73,6 +74,8 @@ import {
     NPC_BIO_PROMPT,
     CHARACTER_BIO_PROMPT
 } from './prompts';
+
+import { generateBio } from './bio'; // 🆕 Unified Generator
 
 // Constants
 // Constants
@@ -278,16 +281,7 @@ async function identifyRelevantContext(
     }
 }
 
-interface AnalystOutput {
-    loot: Array<{ name: string; quantity?: number; description?: string }>;
-    loot_removed: Array<{ name: string; quantity?: number; description?: string }>;
-    quests: string[];
-    monsters: Array<{ name: string; status: string; count?: string; description?: string; abilities?: string[]; weaknesses?: string[]; resistances?: string[] }>;
-    npc_dossier_updates: Array<{ name: string; description: string; role?: string; status?: 'ALIVE' | 'DEAD' | 'MISSING' }>;
-    location_updates: Array<{ macro: string; micro: string; description: string }>;
-    travel_sequence: Array<{ macro: string; micro: string; reason?: string }>;
-    present_npcs: string[];
-}
+
 
 export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string, partContext?: string): Promise<AnalystOutput> {
     console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)${partContext ? ` [${partContext}]` : ''}...`);
@@ -376,13 +370,21 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
             npc_dossier_updates: normalizedNpcUpdates,
             location_updates: normalizedLocationUpdates,
             travel_sequence: normalizedTravelSequence,
-            present_npcs: normalizeStringList(parsed?.present_npcs)
+            present_npcs: normalizeStringList(parsed?.present_npcs),
+            log: normalizeStringList(parsed?.log),
+            character_growth: Array.isArray(parsed?.character_growth) ? parsed.character_growth : [],
+            npc_events: Array.isArray(parsed?.npc_events) ? parsed.npc_events : [],
+            world_events: Array.isArray(parsed?.world_events) ? parsed.world_events : []
         };
 
     } catch (e: any) {
         console.error('[Analista] ❌ Errore estrazione dati:', e.message);
         monitor.logAIRequestWithCost('analyst', ANALYST_PROVIDER, ANALYST_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return { loot: [], loot_removed: [], quests: [], monsters: [], npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [] };
+        return {
+            loot: [], loot_removed: [], quests: [], monsters: [],
+            npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
+            log: [], character_growth: [], npc_events: [], world_events: []
+        };
     }
 }
 
@@ -544,7 +546,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             // --- STEP A: ANALISTA (Per questa parte) ---
             let partialAnalystData: AnalystOutput = {
                 loot: [], loot_removed: [], quests: [], monsters: [],
-                npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: []
+                npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
+                log: [], character_growth: [], npc_events: [], world_events: []
             };
 
             if (!options.skipAnalysis) {
@@ -605,7 +608,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             if (partialAnalystData.npc_dossier_updates) aggregatedData.npc_dossier_updates.push(...partialAnalystData.npc_dossier_updates);
             if (partialAnalystData.location_updates) aggregatedData.location_updates.push(...partialAnalystData.location_updates);
             if (partialAnalystData.travel_sequence) aggregatedData.travel_sequence.push(...partialAnalystData.travel_sequence);
+            if (partialAnalystData.travel_sequence) aggregatedData.travel_sequence.push(...partialAnalystData.travel_sequence);
             if (partialAnalystData.present_npcs) aggregatedData.present_npcs.push(...partialAnalystData.present_npcs);
+            if (partialAnalystData.log) aggregatedData.log.push(...partialAnalystData.log);
+            if (partialAnalystData.character_growth) aggregatedData.character_growth.push(...partialAnalystData.character_growth);
+            if (partialAnalystData.npc_events) aggregatedData.npc_events.push(...partialAnalystData.npc_events);
+            if (partialAnalystData.world_events) aggregatedData.world_events.push(...partialAnalystData.world_events);
 
             // --- STEP B: SCRITTORE (Per questa parte) ---
             console.log(`[Bardo] ✍️ STEP 2: Scrittore - Atto ${actNumber} (${tone})...`);
@@ -687,10 +695,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             finalNarrative += partialNarrative;
 
             // Merge dati dallo scrittore
-            if (parsed.character_growth) aggregatedData.character_growth.push(...parsed.character_growth);
-            if (parsed.npc_events) aggregatedData.npc_events.push(...parsed.npc_events);
-            if (parsed.world_events) aggregatedData.world_events.push(...parsed.world_events);
-            if (parsed.log) aggregatedData.log.push(...parsed.log);
+            // NOTE: character_growth, npc_events, world_events, log are now handled by Analyst
+            // if (parsed.character_growth) aggregatedData.character_growth.push(...parsed.character_growth);
+            // if (parsed.npc_events) aggregatedData.npc_events.push(...parsed.npc_events);
+            // if (parsed.world_events) aggregatedData.world_events.push(...parsed.world_events);
+            // if (parsed.log) aggregatedData.log.push(...parsed.log);
 
             // Titolo (Prendi il primo valido)
             if (!aggregatedData.title && parsed.title) aggregatedData.title = parsed.title;
@@ -748,84 +757,38 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 /**
  * Regenerate NPC Notes/Biography
  */
+/**
+ * Regenerate NPC Notes/Biography
+ * DEPRECATED: Use BioGenerator directly. Keeping for backward compat.
+ */
 export async function regenerateNpcNotes(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
     const history = getNpcHistory(campaignId, npcName);
-    const historyText = history.length > 0 ? history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n') : "Nessun evento storico specifico registrato.";
-    const complexityLevel = history.length > 5 ? "DETTAGLIATO" : "CONCISO";
-
-    const prompt = REGENERATE_NPC_NOTES_PROMPT(npcName, role, staticDesc, historyText, complexityLevel);
-
-    const startAI = Date.now();
-    try {
-        const response = await metadataClient.chat.completions.create({
-            model: SUMMARY_MODEL, // Use SUMMARY_MODEL for better generation
-            messages: [{ role: "user", content: prompt }]
-        });
-        const latency = Date.now() - startAI;
-        const inputTokens = response.usage?.prompt_tokens || 0;
-        const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
-
-        return response.choices[0].message.content || staticDesc;
-    } catch (e) {
-        console.error(`[NpcNotes] Errore rigenerazione ${npcName}:`, e);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return staticDesc;
-    }
+    return generateBio('NPC', { name: npcName, role, currentDesc: staticDesc }, history);
 }
 
 /**
  * Generate NPC Biography (Initial)
  */
+/**
+ * Generate NPC Biography (Initial)
+ * DEPRECATED: Use BioGenerator.
+ */
 export async function generateNpcBiography(campaignId: number, npcName: string, role: string, staticDesc: string): Promise<string> {
     const history = getNpcHistory(campaignId, npcName);
-    const historyText = history.length > 0 ? history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n') : "Nessun evento storico registrato.";
-    const prompt = NPC_BIO_PROMPT(npcName, role, staticDesc, historyText);
-
-    const startAI = Date.now();
-    try {
-        const response = await summaryClient.chat.completions.create({
-            model: SUMMARY_MODEL,
-            messages: [{ role: "user", content: prompt }]
-        });
-        const latency = Date.now() - startAI;
-        const inputTokens = response.usage?.prompt_tokens || 0;
-        const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
-
-        return response.choices[0].message.content || staticDesc;
-    } catch (e) {
-        console.error(`[NpcBio] Errore generazione bio ${npcName}:`, e);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return staticDesc;
-    }
+    return generateBio('NPC', { name: npcName, role, currentDesc: staticDesc }, history);
 }
 
 /**
  * Generate Character Biography (Initial)
  */
+/**
+ * Generate Character Biography
+ * DEPRECATED: Use BioGenerator.
+ */
 export async function generateCharacterBiography(campaignId: number, charName: string, charClass: string, charRace: string): Promise<string> {
     const history = getCharacterHistory(campaignId, charName);
-    if (history.length === 0) return `Non c'è ancora abbastanza storia scritta su ${charName}.`;
-
-    const eventsText = history.map((h: any) => `[${h.event_type}] ${h.description}`).join('\n');
-    const prompt = CHARACTER_BIO_PROMPT(charName, charRace, charClass, eventsText);
-
-    const startAI = Date.now();
-    try {
-        const response = await summaryClient.chat.completions.create({
-            model: SUMMARY_MODEL,
-            messages: [{ role: "user", content: prompt }]
-        });
-        const latency = Date.now() - startAI;
-        const inputTokens = response.usage?.prompt_tokens || 0;
-        const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
-
-        return response.choices[0].message.content || "";
-    } catch (e) {
-        console.error(`[CharBio] Errore generazione ${charName}:`, e);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
-        return "";
-    }
+    // Notare: BioGenerator per CHARACTER usa prompt conservativo (Agency).
+    // Se vogliamo "una storia epica" per il comando $story, forse dovremmo usare un parametro diverso?
+    // Ma l'unificazione dice "conservativo per PC".
+    return generateBio('CHARACTER', { name: charName, currentDesc: "", class: charClass, race: charRace }, history);
 }

@@ -177,8 +177,23 @@ export const initDatabase = () => {
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         first_session_id TEXT, -- 🆕 Tracciamento origine
+        last_updated_session_id TEXT, -- 🆕 Tracciamento ultima modifica
         UNIQUE(campaign_id, macro_location, micro_location)
     )`);
+
+    // --- TABELLA STORIA ATLANTE ---
+    db.exec(`CREATE TABLE IF NOT EXISTS atlas_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        macro_location TEXT,
+        micro_location TEXT,
+        description TEXT NOT NULL,
+        event_type TEXT, -- 'OBSERVATION', 'EVENT', 'MANUAL_UPDATE'
+        session_id TEXT,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_atlas_history_loc ON atlas_history (campaign_id, macro_location, micro_location)`);
 
     // --- TABELLA DOSSIER NPC ---
     db.exec(`CREATE TABLE IF NOT EXISTS npc_dossier (
@@ -317,7 +332,10 @@ export const initDatabase = () => {
         "ALTER TABLE campaigns ADD COLUMN last_session_number INTEGER DEFAULT 0",
         // 🆕 TRACCIAMENTO ULTIMA SESSIONE CHE HA MODIFICATO (per purge pulito)
         "ALTER TABLE npc_dossier ADD COLUMN last_updated_session_id TEXT",
-        "ALTER TABLE location_atlas ADD COLUMN last_updated_session_id TEXT"
+        "ALTER TABLE location_atlas ADD COLUMN last_updated_session_id TEXT",
+        // 🆕 UNIFIED BIO FLOW: Storia per Atlante
+        "CREATE TABLE IF NOT EXISTS atlas_history (id INTEGER PRIMARY KEY AUTOINCREMENT, campaign_id INTEGER NOT NULL, macro_location TEXT, micro_location TEXT, description TEXT NOT NULL, event_type TEXT, session_id TEXT, timestamp INTEGER, FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE)",
+        "CREATE INDEX IF NOT EXISTS idx_atlas_history_loc ON atlas_history (campaign_id, macro_location, micro_location)"
     ];
 
     for (const m of migrations) {

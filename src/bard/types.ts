@@ -150,4 +150,20 @@ export interface AnalystOutput {
     location_updates: Array<{ macro: string; micro: string; description: string }>;
     travel_sequence: Array<{ macro: string; micro: string; reason?: string }>;
     present_npcs: string[];
+    // Moved from Writer
+    log: string[];
+    character_growth: Array<{
+        name: string;
+        event: string;
+        type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
+    }>;
+    npc_events: Array<{
+        name: string;
+        event: string;
+        type: 'REVELATION' | 'BETRAYAL' | 'DEATH' | 'ALLIANCE' | 'STATUS_CHANGE' | 'GENERIC';
+    }>;
+    world_events: Array<{
+        event: string;
+        type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
+    }>;
 }

@@ -14,7 +14,8 @@ import {
     mergeAtlasEntry,
     markAtlasDirty,
     getDirtyAtlasEntries,
-    getSessionTravelLog
+    getSessionTravelLog,
+    addAtlasEvent // 🆕
 } from '../../db';
 import {
     smartMergeBios,
@@ -275,52 +276,43 @@ export const atlasCommand: Command = {
 
             const existing = getAtlasEntryFull(ctx.activeCampaign!.id, macro, micro);
 
-            if (isForceMode) {
-                // FORCE MODE: Direct overwrite
-                const loadingMsg = await ctx.message.reply(`🔥 **FORCE MODE** per **${macro} - ${micro}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
+            // 1. Registra l'evento nella storia (Unica fonte di verità)
+            const eventType = isForceMode ? 'FORCE_UPDATE' : 'MANUAL_UPDATE';
 
-                updateAtlasEntry(ctx.activeCampaign!.id, macro, micro, newDesc);
-                markAtlasDirty(ctx.activeCampaign!.id, macro, micro);
+            // SE è la prima volta che lo creiamo, forse vogliamo un evento "DISCOVERY"?
+            // O manual update va bene.
 
+            addAtlasEvent(
+                ctx.activeCampaign!.id,
+                macro,
+                micro,
+                null, // No session ID link for manual command usually, or could use current pending context? keeping null for clean history logging for now
+                newDesc,
+                eventType
+            );
+
+            // 2. Trigghera rigenerazione immediata (Sync)
+            const loadingMsg = await ctx.message.reply(`⚙️ Recepito! Aggiorno la descrizione di **${macro} - ${micro}**...`);
+
+            // Usa il sync che ora userà la storia (dobbiamo aggiornarlo nel prossimo step)
+            // Per ora syncAtlasEntryIfNeeded usa ancora la vecchia logica lazy?
+            // No, SYNC deve diventare "Regenerate from History".
+
+            // Poiché stiamo migrando, dobbiamo assicurarci che syncAtlasEntryIfNeeded faccia il lavoro sporco.
+            // Seleziona force=true per rigenerare subito.
+            const updatedDesc = await syncAtlasEntryIfNeeded(ctx.activeCampaign!.id, macro, micro, true);
+
+            if (updatedDesc) {
                 await loadingMsg.edit(
-                    `🔥 **Sovrascrittura completata!**\n` +
+                    `✅ **Atlante Aggiornato!**\n` +
                     `📖 **${macro} - ${micro}**\n` +
-                    `📌 Sync RAG programmato.\n\n` +
-                    `${newDesc.substring(0, 500)}${newDesc.length > 500 ? '...' : ''}`
+                    `📜 Nota registrata nella storia.\n\n` +
+                    `${updatedDesc.substring(0, 600)}${updatedDesc.length > 600 ? '...' : ''}`
                 );
-                return;
-
             } else {
-                // STANDARD MODE: Smart Merge
-                if (existing && existing.description) {
-                    const loadingMsg = await ctx.message.reply(`⚙️ Merge intelligente per **${macro} - ${micro}**...`);
-
-                    const mergedDesc = await smartMergeBios(existing.description, newDesc);
-
-                    updateAtlasEntry(ctx.activeCampaign!.id, macro, micro, mergedDesc);
-                    markAtlasDirty(ctx.activeCampaign!.id, macro, micro);
-
-                    await loadingMsg.edit(
-                        `✅ **Atlante Aggiornato** per **${macro} - ${micro}**\n` +
-                        `📌 Nuovi dettagli integrati. Sync RAG programmato.\n` +
-                        `💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n` +
-                        `📖 **Descrizione Unificata:**\n${mergedDesc.substring(0, 600)}${mergedDesc.length > 600 ? '...' : ''}`
-                    );
-                    return;
-
-                } else {
-                    // First entry for this location - direct insert
-                    updateAtlasEntry(ctx.activeCampaign!.id, macro, micro, newDesc);
-                    markAtlasDirty(ctx.activeCampaign!.id, macro, micro);
-                    await ctx.message.reply(
-                        `📖 **Nuovo Luogo Aggiunto all'Atlante!**\n` +
-                        `🗺️ **${macro} - ${micro}**\n` +
-                        `📌 Sync RAG programmato.\n\n` +
-                        `${newDesc.substring(0, 500)}${newDesc.length > 500 ? '...' : ''}`
-                    );
-                    return;
-                }
+                await loadingMsg.edit(`❌ Errore durante l'aggiornamento.`);
             }
+            return;
         }
 
         // --- FALLBACK: Help ---

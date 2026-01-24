@@ -2,9 +2,9 @@
  * Bard Sync - NPC synchronization functions
  */
 
-import { getNpcEntry, updateNpcEntry, clearNpcDirtyFlag, getDirtyNpcs, deleteNpcRagSummary } from '../../db';
-import { regenerateNpcNotes } from '../summary';
+import { getNpcEntry, updateNpcEntry, clearNpcDirtyFlag, getDirtyNpcs, deleteNpcRagSummary, getNpcHistory } from '../../db';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
  * Sincronizza NPC Dossier (LAZY - solo se necessario)
@@ -26,12 +26,15 @@ export async function syncNpcDossierIfNeeded(
 
     console.log(`[Sync] Avvio sync per ${npcName}...`);
 
-    const newBio = await regenerateNpcNotes(
-        campaignId,
-        npcName,
-        npc.role || 'Sconosciuto',
-        npc.description || ''
-    );
+    // 1. Fetch History
+    const history = getNpcHistory(campaignId, npcName);
+
+    // 2. Generate Bio using unified service
+    const newBio = await generateBio('NPC', {
+        name: npcName,
+        role: npc.role || 'Sconosciuto',
+        currentDesc: npc.description || ''
+    }, history);
 
     updateNpcEntry(campaignId, npcName, newBio, npc.role || undefined);
     deleteNpcRagSummary(campaignId, npcName);

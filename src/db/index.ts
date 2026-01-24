@@ -91,6 +91,8 @@ export const getDirtyAtlasEntries = locationRepository.getDirtyAtlasEntries;
 export const clearAtlasDirtyFlag = locationRepository.clearAtlasDirtyFlag;
 export const markAtlasDirty = locationRepository.markAtlasDirty;
 export const getSessionTravelLog = locationRepository.getSessionTravelLog;
+export const addAtlasEvent = locationRepository.addAtlasEvent;
+export const getAtlasHistory = locationRepository.getAtlasHistory;
 
 // NPC
 // NPC

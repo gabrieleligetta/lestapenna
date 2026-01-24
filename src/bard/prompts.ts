@@ -123,7 +123,28 @@ ${memoryContext}
             "reason": "Motivo spostamento (opzionale)"
         }
     ],
-    "present_npcs": ["Lista TUTTI i nomi NPC menzionati nel testo"]
+    "present_npcs": ["Lista TUTTI i nomi NPC menzionati nel testo"],
+    "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM, log azioni principali)"],
+    "character_growth": [
+        {
+            "name": "Nome PG", 
+            "event": "Evento significativo per il personaggio", 
+            "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"
+        }
+    ],
+    "npc_events": [
+        {
+            "name": "Nome NPC", 
+            "event": "Evento chiave che coinvolge questo NPC (es. cambiato fazione, morto, rivelato segreto)", 
+            "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"
+        }
+    ],
+    "world_events": [
+        {
+            "event": "Evento che cambia il mondo di gioco (es. scoppiata guerra, cataclisma)", 
+            "type": "POLITICS|WAR|DISASTER|DISCOVERY"
+        }
+    ]
 }
 
 **REGOLE CRITICHE**:
@@ -132,6 +153,9 @@ ${memoryContext}
 - Per le quest: Solo se c'è una chiara accettazione/completamento/aggiornamento
 - Per i mostri: Solo creature ostili combattute, non NPC civili. **ESTRAI DETTAGLI**: se i PG scoprono abilità, debolezze o resistenze durante il combattimento, REGISTRALE (es. "il drago sputa fuoco" → abilities: ["soffio di fuoco"])
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dei luoghi FISICAMENTE visitati (dall'inizio alla fine, l'ultimo è la posizione finale). location_updates = descrizioni per l'Atlante (solo luoghi con descrizione significativa)
+- **LOG**: Deve essere una sequenza di fatti oggettivi.
+- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG.
+- **NPC EVENTS**: Includi eventi che cambiano lo status quo degli NPC.
 
 **TESTO DA ANALIZZARE**:
 ${narrativeText.substring(0, 320000)}
@@ -157,20 +181,9 @@ ${analystJson}
 Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei personaggi.
 
 **OUTPUT JSON** (SOLO questi campi):
-{
-  "title": "Titolo evocativo e memorabile per la sessione",
-  "narrative": "Il racconto COMPLETO della sessione. Scrivi in prosa romanzesca, terza persona, passato. Includi dialoghi (con «»), descrizioni atmosferiche, emozioni dei personaggi. DEVE essere LUNGO e DETTAGLIATO - almeno 3000-5000 caratteri.",
-  "narrativeBrief": "MASSIMO 1800 caratteri. Mini-racconto autonomo che cattura l'essenza della sessione. Per Discord/email.",
-  "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM)"],
-  "character_growth": [
-    {"name": "Nome PG", "event": "Evento significativo per il personaggio", "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"}
-  ],
-  "npc_events": [
-    {"name": "Nome NPC", "event": "Evento chiave che coinvolge questo NPC", "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"}
-  ],
-  "world_events": [
-    {"event": "Evento che cambia il mondo di gioco", "type": "POLITICS|WAR|DISASTER|DISCOVERY"}
-  ]
+    "title": "Titolo evocativo e memorabile per la sessione",
+    "narrative": "Il racconto COMPLETO della sessione. Scrivi in prosa romanzesca, terza persona, passato. Includi dialoghi (con «»), descrizioni atmosferiche, emozioni dei personaggi. DEVE essere LUNGO e DETTAGLIATO - almeno 3000-5000 caratteri.",
+    "narrativeBrief": "MASSIMO 1800 caratteri. Mini-racconto autonomo che cattura l'essenza della sessione. Per Discord/email."
 }
 
 **STILE NARRATIVO**:
@@ -185,7 +198,7 @@ Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei
 - NON estrarre loot/quest/mostri (fatto dall'Analista)
 - NON inventare eventi non presenti nel testo
 - Rispondi SOLO in ITALIANO
-- Il "log" è tecnico e conciso, il "narrative" è epico e dettagliato`;
+- Il "narrative" è epico e dettagliato`;
 
 export const WRITER_BARDO_PROMPT = (tone: ToneKey, castContext: string, memoryContext: string, analystJson: string) => `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
 ${castContext}
@@ -206,20 +219,9 @@ ISTRUZIONI DI STILE:
 - **GLOSSARIO**: Se devi citare NPC o Luoghi, usa i nomi esatti presenti nella MEMORIA DEL MONDO.
 
 **OUTPUT JSON** (SOLO questi campi narrativi):
-{
-  "title": "Titolo evocativo per la sessione",
-  "narrative": "Il testo narrativo COMPLETO della sessione. Scrivi in prosa avvincente, terza persona, tempo passato. Includi dialoghi (con «»), atmosfera, emozioni. NESSUN LIMITE di lunghezza - sii dettagliato!",
-  "narrativeBrief": "Mini-racconto autonomo per Discord/email. MASSIMO 1800 caratteri.",
-  "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM)"],
-  "character_growth": [
-    {"name": "Nome PG", "event": "Evento significativo", "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"}
-  ],
-  "npc_events": [
-    {"name": "Nome NPC", "event": "Evento chiave", "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"}
-  ],
-  "world_events": [
-    {"event": "Evento che cambia il mondo", "type": "POLITICS|WAR|DISASTER|DISCOVERY"}
-  ]
+    "title": "Titolo evocativo per la sessione",
+    "narrative": "Il testo narrativo COMPLETO della sessione. Scrivi in prosa avvincente, terza persona, tempo passato. Includi dialoghi (con «»), atmosfera, emozioni. NESSUN LIMITE di lunghezza - sii dettagliato!",
+    "narrativeBrief": "Mini-racconto autonomo per Discord/email. MASSIMO 1800 caratteri."
 }
 
 **REGOLE**:

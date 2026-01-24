@@ -2,8 +2,9 @@
  * Bard Sync - Atlas synchronization functions
  */
 
-import { getAtlasEntryFull, clearAtlasDirtyFlag, getDirtyAtlasEntries, deleteAtlasRagSummary } from '../../db';
+import { getAtlasEntryFull, clearAtlasDirtyFlag, getDirtyAtlasEntries, deleteAtlasRagSummary, getAtlasHistory, updateAtlasEntry } from '../../db';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
  * Sincronizza una voce Atlas nel RAG (LAZY - solo se necessario)
@@ -16,41 +17,66 @@ export async function syncAtlasEntryIfNeeded(
 ): Promise<string | null> {
 
     const entry = getAtlasEntryFull(campaignId, macro, micro);
-    if (!entry) return null;
+    const needsSync = entry ? (entry as any).rag_sync_needed === 1 : false;
 
-    const needsSync = (entry as any).rag_sync_needed === 1;
-    if (!force && !needsSync) {
-        console.log(`[Sync Atlas] ${macro} - ${micro} gia sincronizzato, skip.`);
-        return entry.description;
-    }
+    // Se non esiste, non possiamo syncare nulla (o dovremmo crearlo?)
+    // Per ora assumiamo che entry esista o che stiamo facendo force update.
+    // Ma se viene chiamato da atlasCommand, entry potrebbe esistere.
 
-    console.log(`[Sync Atlas] Avvio sync per ${macro} - ${micro}...`);
+    // Force: rigenera descrizione dalla storia
+    if (force || needsSync) {
+        console.log(`[Sync Atlas] 🔄 Rigenerazione Bio per ${macro} - ${micro}...`);
 
-    deleteAtlasRagSummary(campaignId, macro, micro);
+        // 1. Fetch History
+        const history = getAtlasHistory(campaignId, macro, micro);
 
-    if (entry.description && entry.description.length > 50) {
-        const locationKey = `${macro}|${micro}`;
-        const ragContent = `[[SCHEDA LUOGO UFFICIALE: ${macro} - ${micro}]]
+        // 2. Generate Bio
+        const newDesc = await generateBio('LOCATION', {
+            name: `${macro} - ${micro}`,
+            macro: macro,
+            micro: micro,
+            currentDesc: entry?.description || "" // Use existing desc as base or fallback
+        }, history);
+
+        // 3. Update DB
+        // Nota: updateAtlasEntry aggiorna e setta rag_sync_needed=1, ma qui stiamo facendo il sync.
+        // Quindi dobbiamo aggiornare la descrizione E poi resettare il flag, O aggiornare senza flag.
+        // updateAtlasEntry setta flag=1. 
+        // Possiamo usare una funzione DB diretta o accettare che sia dirty per il RAG ingest successivo?
+        // Il flusso originale faceva: ingest RAG -> clear flag.
+        // Qui stiamo aggiornando la SOURCE (description) prima di ingest.
+
+        // Update Description
+        updateAtlasEntry(campaignId, macro, micro, newDesc);
+
+        // Ingest RAG (ora che la descrizione è aggiornata)
+        deleteAtlasRagSummary(campaignId, macro, micro);
+
+        if (newDesc && newDesc.length > 50) {
+            const locationKey = `${macro}|${micro}`;
+            const ragContent = `[[SCHEDA LUOGO UFFICIALE: ${macro} - ${micro}]]
 MACRO REGIONE: ${macro}
 LUOGO SPECIFICO: ${micro}
-DESCRIZIONE COMPLETA: ${entry.description}
+DESCRIZIONE COMPLETA: ${newDesc}
 CHIAVE: ${locationKey}
 
 (Questa scheda ufficiale del luogo ha priorita su informazioni frammentarie precedenti)`;
 
-        await ingestGenericEvent(
-            campaignId,
-            'ATLAS_UPDATE',
-            ragContent,
-            [],
-            'ATLAS'
-        );
+            await ingestGenericEvent(
+                campaignId,
+                'ATLAS_UPDATE',
+                ragContent,
+                [],
+                'ATLAS'
+            );
+        }
+
+        clearAtlasDirtyFlag(campaignId, macro, micro);
+        console.log(`[Sync Atlas] ✅ ${macro} - ${micro} rigenerato e sincronizzato.`);
+        return newDesc;
     }
 
-    clearAtlasDirtyFlag(campaignId, macro, micro);
-
-    console.log(`[Sync Atlas] ${macro} - ${micro} sincronizzato.`);
-    return entry.description;
+    return entry?.description || null;
 }
 
 /**

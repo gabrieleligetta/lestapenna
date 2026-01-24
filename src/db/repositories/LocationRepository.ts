@@ -255,5 +255,24 @@ export const locationRepository = {
             WHERE session_id = ?
             ORDER BY timestamp ASC
         `).all(sessionId) as { macro_location: string; micro_location: string; timestamp: number }[];
+    },
+
+    // 🆕 UNIFIED BIO FLOW
+    addAtlasEvent: (campaignId: number, macro: string, micro: string, sessionId: string | null, description: string, type: string) => {
+        db.prepare(`
+            INSERT INTO atlas_history (campaign_id, macro_location, micro_location, session_id, description, event_type, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, macro, micro, sessionId, description, type, Date.now());
+    },
+
+    getAtlasHistory: (campaignId: number, macro: string, micro: string): { description: string, event_type: string, session_id: string }[] => {
+        return db.prepare(`
+            SELECT description, event_type, session_id 
+            FROM atlas_history 
+            WHERE campaign_id = ? 
+            AND lower(macro_location) = lower(?) 
+            AND lower(micro_location) = lower(?)
+            ORDER BY timestamp ASC
+        `).all(campaignId, macro, micro) as { description: string, event_type: string, session_id: string }[];
     }
 };

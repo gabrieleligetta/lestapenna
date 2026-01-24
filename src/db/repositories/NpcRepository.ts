@@ -6,16 +6,17 @@ export const npcRepository = {
         // Sanitize
         const safeDesc = (typeof description === 'object') ? JSON.stringify(description) : String(description);
 
-        // Upsert
+        // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, rag_sync_needed)
-            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, 1)
-            ON CONFLICT(campaign_id, name) 
-            DO UPDATE SET 
-                description = $description, 
-                role = COALESCE($role, role), 
+            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed)
+            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1)
+            ON CONFLICT(campaign_id, name)
+            DO UPDATE SET
+                description = $description,
+                role = COALESCE($role, role),
                 status = COALESCE($status, status),
                 last_updated = CURRENT_TIMESTAMP,
+                last_updated_session_id = $sessionId,
                 rag_sync_needed = 1
         `).run({
             campaignId,

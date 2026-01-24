@@ -4,6 +4,7 @@ import { CommandDispatcher } from './index';
 import { wipeCommand } from './admin/wipe';
 import { reprocessCommand } from './admin/reprocess';
 import { debugCommand } from './admin/debug';
+import { rebuildCommand } from './admin/rebuild';
 
 // Campaigns
 import { createCampaignCommand } from './campaigns/create';
@@ -72,6 +73,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(wipeCommand);
     dispatcher.register(reprocessCommand);
     dispatcher.register(debugCommand);
+    dispatcher.register(rebuildCommand);
 
     // Campaigns
     dispatcher.register(createCampaignCommand);

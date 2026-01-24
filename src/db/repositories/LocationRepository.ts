@@ -61,11 +61,12 @@ export const locationRepository = {
         // Sanitize
         const safeDesc = (typeof newDescription === 'object') ? JSON.stringify(newDescription) : String(newDescription);
 
+        // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, rag_sync_needed)
-            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, 1)
-            ON CONFLICT(campaign_id, macro_location, micro_location) 
-            DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP, rag_sync_needed = 1
+            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed)
+            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1)
+            ON CONFLICT(campaign_id, macro_location, micro_location)
+            DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP, last_updated_session_id = $sessionId, rag_sync_needed = 1
         `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null });
 
         console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);

@@ -314,7 +314,10 @@ export const initDatabase = () => {
         "ALTER TABLE sessions ADD COLUMN processing_phase TEXT DEFAULT 'IDLE'",
         "ALTER TABLE sessions ADD COLUMN phase_started_at INTEGER",
         // 🆕 PERSISTENT SESSION COUNTER PER CAMPAIGN
-        "ALTER TABLE campaigns ADD COLUMN last_session_number INTEGER DEFAULT 0"
+        "ALTER TABLE campaigns ADD COLUMN last_session_number INTEGER DEFAULT 0",
+        // 🆕 TRACCIAMENTO ULTIMA SESSIONE CHE HA MODIFICATO (per purge pulito)
+        "ALTER TABLE npc_dossier ADD COLUMN last_updated_session_id TEXT",
+        "ALTER TABLE location_atlas ADD COLUMN last_updated_session_id TEXT"
     ];
 
     for (const m of migrations) {

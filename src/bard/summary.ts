@@ -511,6 +511,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         // Accumulatore dati (Analista + Scrittore)
         let aggregatedData: any = {
             title: "",
+            narrativeBrief: "", // Brief generato dall'AI (max 1800 char)
             loot: [],
             loot_removed: [],
             quests: [],
@@ -636,6 +637,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             // Titolo (Prendi il primo valido)
             if (!aggregatedData.title && parsed.title) aggregatedData.title = parsed.title;
 
+            // NarrativeBrief (Prendi l'ultimo valido - per sessioni multi-part sarà il brief finale)
+            if (parsed.narrativeBrief && parsed.narrativeBrief.length > 10) {
+                aggregatedData.narrativeBrief = parsed.narrativeBrief;
+            }
+
         } // FINE LOOP EPISODICO
 
         console.log(`[Bardo] 🏁 generateSummary completato (Totale ${parts.length} parti).`);
@@ -646,7 +652,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             title: aggregatedData.title || `Sessione del ${new Date().toLocaleDateString()}`,
             tokens: accumulatedTokens,
             narrative: finalNarrative || "Errore generazione.",
-            narrativeBrief: (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")),
+            narrativeBrief: aggregatedData.narrativeBrief || (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")),
             log: aggregatedData.log,
             character_growth: aggregatedData.character_growth,
             npc_events: aggregatedData.npc_events,

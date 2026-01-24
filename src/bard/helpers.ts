@@ -228,3 +228,27 @@ export function containsSubstring(name1: string, name2: string): boolean {
 export function escapeRegex(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+/**
+ * Divide il testo in chunk sicuri basati su un limite di caratteri,
+ * rispettando i paragrafi (doppi a capo) per non tagliare le frasi.
+ */
+export function smartSplitTranscript(text: string, maxChars: number = 300000): string[] {
+    if (!text) return [];
+    if (text.length <= maxChars) return [text];
+
+    const chunks: string[] = [];
+    const paragraphs = text.split('\n\n');
+    let currentChunk = "";
+
+    for (const para of paragraphs) {
+        if ((currentChunk.length + para.length) > maxChars) {
+            chunks.push(currentChunk);
+            currentChunk = "";
+        }
+        currentChunk += para + '\n\n';
+    }
+    if (currentChunk.trim().length > 0) chunks.push(currentChunk);
+
+    return chunks;
+}

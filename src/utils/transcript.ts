@@ -44,7 +44,7 @@ interface FlattenedSegment {
  */
 export function safeJsonParse(input: string): any {
     if (!input) return null;
-    
+
     let cleaned = input.replace(/```json/gi, '').replace(/```/g, '').trim();
 
     // Cerca array o oggetto
@@ -55,12 +55,12 @@ export function safeJsonParse(input: string): any {
 
     // Se sembra un array, diamo priorità a quello
     if (firstBracket !== -1 && lastBracket !== -1) {
-         // Se c'è una graffa prima della quadra, potrebbe essere un oggetto che contiene un array, ma qui ci aspettiamo array di segmenti
-         if (firstBrace === -1 || firstBracket < firstBrace) {
-             cleaned = cleaned.substring(firstBracket, lastBracket + 1);
-         } else {
-             cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-         }
+        // Se c'è una graffa prima della quadra, potrebbe essere un oggetto che contiene un array, ma qui ci aspettiamo array di segmenti
+        if (firstBrace === -1 || firstBracket < firstBrace) {
+            cleaned = cleaned.substring(firstBracket, lastBracket + 1);
+        } else {
+            cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+        }
     } else if (firstBrace !== -1 && lastBrace !== -1) {
         cleaned = cleaned.substring(firstBrace, lastBrace + 1);
     } else {
@@ -90,7 +90,7 @@ export function processChronologicalSession(
     compact: boolean = false
 ): ProcessedSession {
     const segments: FlattenedSegment[] = [];
-    
+
     // Se sessionStartTime è null, usiamo il timestamp del primo transcript come riferimento
     // Se non ci sono transcript, usiamo 0 (o il primo note timestamp)
     let refTime = sessionStartTime;
@@ -107,16 +107,16 @@ export function processChronologicalSession(
     for (const t of transcripts) {
         const fileLabel = new Date(t.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const charName = t.character_name || 'Sconosciuto';
-        
+
         // Tenta parsing JSON
         let parsed = safeJsonParse(t.transcription_text || "");
-        
+
         if (Array.isArray(parsed)) {
             // È un array di segmenti
             parsed.forEach((s: any) => {
                 const segmentStart = typeof s.start === 'number' ? s.start : 0;
                 const absTime = t.timestamp + Math.floor(segmentStart * 1000);
-                
+
                 segments.push({
                     absoluteTime: absTime,
                     text: s.text || "",
@@ -178,7 +178,7 @@ export function processChronologicalSession(
 export function formatRelativeTime(absTime: number, refTime: number): string {
     if (refTime <= 0) return "[00:00]";
     const diff = Math.max(0, absTime - refTime);
-    
+
     const totalSeconds = Math.floor(diff / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -197,12 +197,12 @@ function generateFormattedOutput(segments: FlattenedSegment[], compact: boolean 
 
     segments.forEach(seg => {
         const header = `--- ${seg.character} (File: ${seg.fileLabel}) ---`;
-        
+
         if (header !== lastHeader) {
             output += `\n\n${header}\n`;
             lastHeader = header;
         }
-        
+
         if (compact) {
             output += `${seg.formattedTime} ${seg.text}`;
         } else {
@@ -229,8 +229,53 @@ function generateLinearOutput(segments: FlattenedSegment[]): string {
         }
 
         const prefix = seg.type === 'note' ? '📝 ' : '';
-        output += `${prefix}${seg.formattedTime} ${seg.character}: ${seg.text}\n`;
+        // MODIFICA: Usa la pulizia aggressiva
+        const cleanText = cleanTranscriptForNarrative(seg.text);
+        if (cleanText.length > 1) { // Ignora righe vuote o rumore (min 2 chars)
+            // Formato Copione: NOME: Frase (Senza timestamp per risparmiare token e focus sulla storia)
+            output += `${prefix}${seg.character.toUpperCase()}: ${cleanText}\n\n`;
+        }
     });
 
     return output.trim();
+}
+
+/**
+ * Pulisce aggressivamente il testo rimuovendo artefatti JSON e Timestamps.
+ * Restituisce formato copione puro per massima qualità narrativa.
+ */
+export function cleanTranscriptForNarrative(text: string): string {
+    if (!text) return "";
+
+    // 1. Se è già pulito, ritorna
+    if (!text.trim().startsWith('[') && !text.includes('"text":')) return text;
+
+    // 2. Tenta parsing JSON robusto
+    try {
+        // Rimuove eventuali wrapper markdown o caratteri sporchi all'inizio/fine
+        let cleaner = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaner);
+
+        if (Array.isArray(parsed)) {
+            return parsed
+                .map((p: any) => p.text ? p.text.trim() : "")
+                .filter((t: any) => t.length > 0)
+                .join(" ");
+        } else if (typeof parsed === 'object' && parsed.text) {
+            return parsed.text;
+        }
+    } catch (e) {
+        // 3. FALLBACK ESTREMO (Regex) se il JSON è rotto
+        // Cerca pattern "text": "contenuto" ignorando il resto
+        const regex = /"text"\s*:\s*"([^"]*)"/g;
+        let match;
+        let result = [];
+        while ((match = regex.exec(text)) !== null) {
+            result.push(match[1]);
+        }
+        if (result.length > 0) return result.join(" ");
+    }
+
+    // Se tutto fallisce, ritorna il testo ma prova a pulire le graffe esterne
+    return text;
 }

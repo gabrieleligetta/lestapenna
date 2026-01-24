@@ -44,7 +44,8 @@ import {
     withRetry,
     safeJsonParse,
     normalizeStringList,
-    normalizeLootList
+    normalizeLootList,
+    smartSplitTranscript
 } from './helpers';
 
 import {
@@ -281,9 +282,12 @@ interface AnalystOutput {
     present_npcs: string[];
 }
 
-export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string): Promise<AnalystOutput> {
-    console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)...`);
-    const prompt = ANALYST_PROMPT(castContext, memoryContext, narrativeText);
+export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string, partContext?: string): Promise<AnalystOutput> {
+    console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)${partContext ? ` [${partContext}]` : ''}...`);
+
+    // Inietto il contesto della parte se presente
+    const effectiveText = partContext ? `[[${partContext}]]\n\n${narrativeText}` : narrativeText;
+    const prompt = ANALYST_PROMPT(castContext, memoryContext, effectiveText);
     saveDebugFile(sessionId, 'analyst_prompt.txt', prompt);
 
     const startAI = Date.now();
@@ -404,207 +408,258 @@ export function prepareCleanText(sessionId: string): string | undefined {
  * GENERATE SUMMARY (Main Function)
  */
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string): Promise<SummaryResponse> {
-    console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
-
-    const transcriptions = getSessionTranscript(sessionId);
-    const notes = getSessionNotes(sessionId);
-    const startTime = getSessionStartTime(sessionId) || 0;
-    const campaignId = getSessionCampaignId(sessionId);
-
-    if (transcriptions.length === 0 && notes.length === 0) return { summary: "Nessuna trascrizione trovata.", title: "Sessione Vuota", tokens: 0 };
-
-    const userIds = new Set(transcriptions.map((t: any) => t.user_id));
-    let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
-
-    if (campaignId) {
-        const campaign = getCampaignById(campaignId);
-        if (campaign) castContext += `CAMPAGNA: ${campaign.name}\n`;
-        userIds.forEach(uid => {
-            const p = getUserProfile(uid, campaignId);
-            if (p.character_name) {
-                let charInfo = `- **${p.character_name}**`;
-                const details = [];
-                if (p.race) details.push(p.race);
-                if (p.class) details.push(p.class);
-                if (details.length > 0) charInfo += ` (${details.join(' ')})`;
-                if (p.description) charInfo += `: "${p.description}"`;
-                castContext += charInfo + "\n";
-            }
-        });
-    }
-
-    // --- TOTAL RECALL (CONTEXT INJECTION HYBRID) ---
-    let memoryContext = "";
-    if (campaignId) {
-        console.log(`[Bardo] 🧠 Avvio Total Recall Ibrido...`);
-        const snapshot = getCampaignSnapshot(campaignId);
-
-        const locationQuery = snapshot.location ? `${snapshot.location.macro || ''} ${snapshot.location.micro || ''}`.trim() : "";
-        const staticQueries = locationQuery ? [searchKnowledge(campaignId, `Info su luogo: ${locationQuery}`, 2)] : [];
-
-        const rawTranscript = transcriptions.map((t: any) => t.transcription_text).join('\n');
-        const textForAnalysis = (narrativeText && narrativeText.length > 100) ? narrativeText : rawTranscript;
-
-        const dynamicQueries = await identifyRelevantContext(campaignId, textForAnalysis, snapshot, narrativeText);
-        const dynamicPromises = dynamicQueries.map(q => searchKnowledge(campaignId, q, 3));
-
-        const [staticResults, ...dynamicResults] = await Promise.all([Promise.all(staticQueries), ...dynamicPromises]);
-
-        memoryContext = `\n[[MEMORIA DEL MONDO E CONTESTO]]\n`;
-        memoryContext += `📍 LUOGO: ${snapshot.location_context || 'Sconosciuto'}\n`;
-        memoryContext += `⚔️ QUEST ATTIVE: ${snapshot.quest_context || 'Nessuna'}\n`;
-
-        const existingNpcs = listNpcs(campaignId);
-        if (existingNpcs.length > 0) {
-            memoryContext += `\n👥 NPC GIÀ NOTI (USA QUESTI NOMI!):\n`;
-            existingNpcs.forEach((npc: any) => {
-                memoryContext += `- "${npc.name}" (${npc.role || '?'})\n`;
-            });
-        }
-
-        const existingLocations = listAtlasEntries(campaignId, 50);
-        if (existingLocations.length > 0) {
-            memoryContext += `\n🗺️ LUOGHI GIÀ NOTI:\n`;
-            existingLocations.forEach((loc: any) => {
-                memoryContext += `- "${loc.macro_location} - ${loc.micro_location}"\n`;
-            });
-        }
-
-        const allMemories = [...staticResults.flat(), ...dynamicResults.flat()];
-        const uniqueMemories = Array.from(new Set(allMemories));
-        if (uniqueMemories.length > 0) {
-            memoryContext += `\n🔍 RICORDI RILEVANTI:\n${uniqueMemories.map(m => `- ${m}`).join('\n')}\n`;
-        }
-    }
-
-    let fullDialogue: string;
-    if (narrativeText && narrativeText.length > 100) {
-        fullDialogue = narrativeText;
-        console.log(`[Bardo] ✅ Usando testo narrativo pulito (${fullDialogue.length} chars)`);
-    } else {
-        const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId || 0);
-        fullDialogue = processed.linearText;
-        console.log(`[Bardo] ⚠️ Fallback a trascrizioni standard (${fullDialogue.length} chars)`);
-    }
-
-    let contextForFinalStep = fullDialogue;
-    let accumulatedTokens = 0;
-
-    // STEP 1: ANALISTA
-    console.log(`[Bardo] 📊 STEP 1: Analista - Estrazione dati strutturati...`);
-    const analystData = await extractStructuredData(sessionId, fullDialogue, castContext, memoryContext);
-    console.log(`[Bardo] ✅ Analista completato: ${analystData.loot.length} loot, ${analystData.monsters.length} mostri, ${analystData.npc_dossier_updates.length} NPC`);
-
-    // FASE MAP (solo per testi molto lunghi)
-    if (fullDialogue.length > MAX_CHUNK_SIZE) {
-        console.log(`[Bardo] 🐘 Testo lungo (${fullDialogue.length} chars). Avvio Map-Reduce.`);
-        const chunks = splitTextInChunks(fullDialogue, MAX_CHUNK_SIZE, CHUNK_OVERLAP);
-        const mapResults = await processInBatches(chunks, MAP_CONCURRENCY, async (chunk: string, index: number) => {
-            return await extractFactsFromChunk(chunk, index, chunks.length, castContext);
-        }, "Analisi Frammenti");
-        contextForFinalStep = mapResults.map((r: any) => r.text).join("\n\n--- SEGMENTO SUCCESSIVO ---\n\n");
-        accumulatedTokens = mapResults.reduce((acc: number, curr: any) => acc + (curr.tokens || 0), 0);
-    }
-
-    // STEP 2: SCRITTORE
-    console.log(`[Bardo] ✍️ STEP 2: Scrittore - Narrazione epica (${tone})...`);
-    const analystJson = JSON.stringify(analystData, null, 2);
-
-    let reducePrompt = "";
-    if (tone === 'DM') {
-        reducePrompt = WRITER_DM_PROMPT(castContext, memoryContext, analystJson) + `\n\nTRASCRIZIONE:\n${contextForFinalStep.substring(0, 80000)}`;
-    } else {
-        reducePrompt = WRITER_BARDO_PROMPT(tone, castContext, memoryContext, analystJson) + `\n\nTRASCRIZIONE:\n${contextForFinalStep.substring(0, 80000)}`;
-    }
-    saveDebugFile(sessionId, 'writer_prompt.txt', reducePrompt);
-
     const startAI = Date.now();
     try {
-        const options: any = {
-            model: SUMMARY_MODEL,
-            messages: [
-                { role: "system", content: "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido." },
-                { role: "user", content: reducePrompt }
-            ]
+        console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
+
+        const transcriptions = getSessionTranscript(sessionId);
+        const notes = getSessionNotes(sessionId);
+        const startTime = getSessionStartTime(sessionId) || 0;
+        const campaignId = getSessionCampaignId(sessionId);
+
+        if (transcriptions.length === 0 && notes.length === 0) return { summary: "Nessuna trascrizione trovata.", title: "Sessione Vuota", tokens: 0 };
+
+        const userIds = new Set(transcriptions.map((t: any) => t.user_id));
+        let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
+
+        if (campaignId) {
+            const campaign = getCampaignById(campaignId);
+            if (campaign) castContext += `CAMPAGNA: ${campaign.name}\n`;
+            userIds.forEach(uid => {
+                const p = getUserProfile(uid, campaignId);
+                if (p.character_name) {
+                    let charInfo = `- **${p.character_name}**`;
+                    const details = [];
+                    if (p.race) details.push(p.race);
+                    if (p.class) details.push(p.class);
+                    if (details.length > 0) charInfo += ` (${details.join(' ')})`;
+                    if (p.description) charInfo += `: "${p.description}"`;
+                    castContext += charInfo + "\n";
+                }
+            });
+        }
+
+        // --- TOTAL RECALL (CONTEXT INJECTION HYBRID) ---
+        let memoryContext = "";
+        if (campaignId) {
+            console.log(`[Bardo] 🧠 Avvio Total Recall Ibrido...`);
+            const snapshot = getCampaignSnapshot(campaignId);
+
+            const locationQuery = snapshot.location ? `${snapshot.location.macro || ''} ${snapshot.location.micro || ''}`.trim() : "";
+            const staticQueries = locationQuery ? [searchKnowledge(campaignId, `Info su luogo: ${locationQuery}`, 2)] : [];
+
+            const rawTranscript = transcriptions.map((t: any) => t.transcription_text).join('\n');
+            const textForAnalysis = (narrativeText && narrativeText.length > 100) ? narrativeText : rawTranscript;
+
+            const dynamicQueries = await identifyRelevantContext(campaignId, textForAnalysis, snapshot, narrativeText);
+            const dynamicPromises = dynamicQueries.map(q => searchKnowledge(campaignId, q, 3));
+
+            const [staticResults, ...dynamicResults] = await Promise.all([Promise.all(staticQueries), ...dynamicPromises]);
+
+            memoryContext = `\n[[MEMORIA DEL MONDO E CONTESTO]]\n`;
+            memoryContext += `📍 LUOGO: ${snapshot.location_context || 'Sconosciuto'}\n`;
+            memoryContext += `⚔️ QUEST ATTIVE: ${snapshot.quest_context || 'Nessuna'}\n`;
+
+            const existingNpcs = listNpcs(campaignId);
+            if (existingNpcs.length > 0) {
+                memoryContext += `\n👥 NPC GIÀ NOTI (USA QUESTI NOMI!):\n`;
+                existingNpcs.forEach((npc: any) => {
+                    memoryContext += `- "${npc.name}" (${npc.role || '?'})\n`;
+                });
+            }
+
+            const existingLocations = listAtlasEntries(campaignId, 50);
+            if (existingLocations.length > 0) {
+                memoryContext += `\n🗺️ LUOGHI GIÀ NOTI:\n`;
+                existingLocations.forEach((loc: any) => {
+                    memoryContext += `- "${loc.macro_location} - ${loc.micro_location}"\n`;
+                });
+            }
+
+            const allMemories = [...staticResults.flat(), ...dynamicResults.flat()];
+            const uniqueMemories = Array.from(new Set(allMemories));
+            if (uniqueMemories.length > 0) {
+                memoryContext += `\n🔍 RICORDI RILEVANTI:\n${uniqueMemories.map(m => `- ${m}`).join('\n')}\n`;
+            }
+        }
+
+        let fullDialogue: string;
+        if (narrativeText && narrativeText.length > 100) {
+            fullDialogue = narrativeText;
+            console.log(`[Bardo] ✅ Usando testo narrativo pulito (${fullDialogue.length} chars)`);
+        } else {
+            const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId || 0);
+            fullDialogue = processed.linearText;
+            console.log(`[Bardo] ⚠️ Fallback a trascrizioni standard (${fullDialogue.length} chars)`);
+        }
+
+        // CALCOLO DINAMICO DEL LIMITE
+        // Usa 300.000 (circa 75k token) per rimanere entro 128k totali con output e prompt
+        const SAFE_CHAR_LIMIT = 300000;
+
+        const parts = smartSplitTranscript(fullDialogue, SAFE_CHAR_LIMIT);
+
+        if (parts.length > 1) {
+            console.warn(`[Bardo] ⚠️ ATTENZIONE: La sessione è ENORME (${fullDialogue.length} chars). Attivo modalità episodica in ${parts.length} parti.`);
+        } else {
+            console.log(`[Bardo] ✅ Sessione nei limiti (${fullDialogue.length} chars). Elaborazione singola standard.`);
+        }
+
+        let finalNarrative = "";
+        let accumulatedTokens = 0;
+
+        // Accumulatore dati (Analista + Scrittore)
+        let aggregatedData: any = {
+            title: "",
+            loot: [],
+            loot_removed: [],
+            quests: [],
+            monsters: [],
+            npc_dossier_updates: [],
+            location_updates: [],
+            travel_sequence: [],
+            present_npcs: [],
+            character_growth: [],
+            npc_events: [],
+            world_events: [],
+            log: []
         };
 
-        // Imposta formato JSON in base al provider
-        if (SUMMARY_PROVIDER === 'openai') {
-            options.response_format = { type: "json_object" };
-            options.max_completion_tokens = 16000; // Ensure enough tokens for long narrative
-        } else if (SUMMARY_PROVIDER === 'ollama') {
-            options.format = 'json';
-            options.options = { num_ctx: 8192 };
-        }
+        // CICLO EPISODICO
+        for (let i = 0; i < parts.length; i++) {
+            const currentPart = parts[i];
+            const isMultiPart = parts.length > 1;
+            const actNumber = i + 1;
 
-        console.log(`[Bardo] 🖊️ Chiamata API scrittore (${SUMMARY_MODEL})...`);
-        const response = await withRetry(() => summaryClient.chat.completions.create(options));
-        const latency = Date.now() - startAI;
-        const inputTokens = response.usage?.prompt_tokens || 0;
-        const outputTokens = response.usage?.completion_tokens || 0;
-        const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+            console.log(`[Bardo] 🎬 Elaborazione Atto ${actNumber}/${parts.length}...`);
 
-        console.log(`[Bardo] ✅ Scrittore completato in ${(latency / 1000).toFixed(1)}s`);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+            // --- STEP A: ANALISTA (Per questa parte) ---
+            // Nota: Passiamo memoryContext globale e il contesto della parte
+            const partHeader = isMultiPart ? `PARTE ${actNumber} DI ${parts.length}` : undefined;
+            const partialAnalystData = await extractStructuredData(sessionId, currentPart, castContext, memoryContext, partHeader);
 
-        // 🆕 Context Window Logging
-        const CONTEXT_LIMIT = 128000;
-        const OUTPUT_LIMIT = 16384;
-        const totalTokens = inputTokens + outputTokens;
-        const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
-        const outputPct = ((outputTokens / OUTPUT_LIMIT) * 100).toFixed(1);
-        const contextWarning = inputTokens > CONTEXT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
-        const outputWarning = outputTokens > OUTPUT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
-        console.log(`[Bardo] 📊 Token Usage: ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}`);
+            // Merge Dati Analista
+            if (partialAnalystData.loot) aggregatedData.loot.push(...partialAnalystData.loot);
+            if (partialAnalystData.loot_removed) aggregatedData.loot_removed.push(...partialAnalystData.loot_removed);
+            if (partialAnalystData.quests) aggregatedData.quests.push(...partialAnalystData.quests);
+            if (partialAnalystData.monsters) aggregatedData.monsters.push(...partialAnalystData.monsters);
+            if (partialAnalystData.npc_dossier_updates) aggregatedData.npc_dossier_updates.push(...partialAnalystData.npc_dossier_updates);
+            if (partialAnalystData.location_updates) aggregatedData.location_updates.push(...partialAnalystData.location_updates);
+            if (partialAnalystData.travel_sequence) aggregatedData.travel_sequence.push(...partialAnalystData.travel_sequence);
+            if (partialAnalystData.present_npcs) aggregatedData.present_npcs.push(...partialAnalystData.present_npcs);
 
-        const content = response.choices[0].message.content || "{}";
+            // --- STEP B: SCRITTORE (Per questa parte) ---
+            console.log(`[Bardo] ✍️ STEP 2: Scrittore - Atto ${actNumber} (${tone})...`);
+            const partialAnalystJson = JSON.stringify(partialAnalystData, null, 2);
 
-        // 🆕 Save Token Usage
-        const tokenUsage = {
-            phase: 'writer',
-            input: inputTokens,
-            output: outputTokens,
-            total: (inputTokens + outputTokens),
-            inputChars: reducePrompt.length,
-            outputChars: content.length
-        };
-        saveDebugFile(sessionId, 'writer_tokens.json', JSON.stringify(tokenUsage, null, 2));
-        saveDebugFile(sessionId, 'writer_response.txt', content);
-        accumulatedTokens += response.usage?.total_tokens || 0;
+            let writerInject = "";
+            if (isMultiPart) {
+                writerInject = `\n\n[NOTA PER L'AI: Questa è la PARTE ${actNumber} di ${parts.length} di una sessione lunga. `;
+                if (i > 0) writerInject += `Continua la narrazione coerentemente con la parte precedente.]`;
+                else writerInject += `]`;
+                writerInject += `\n\n`;
+            }
 
-        let parsed = safeJsonParse(content);
-        if (!parsed) {
-            console.error("[Bardo] ⚠️ Errore parsing JSON Riassunto");
-            parsed = { title: "Sessione (Errore Parsing)", summary: content, loot: [], quests: [] };
-        }
+            let reducePrompt = "";
+            const narrativeContext = writerInject + `TRASCRIZIONE PARTE ${actNumber}:\n${currentPart}`;
 
-        let finalSummary = parsed.narrative || parsed.summary || "";
-        if (!finalSummary && Array.isArray(parsed.log) && parsed.log.length > 0) {
-            finalSummary = parsed.log.join('\n');
-        }
+            if (tone === 'DM') {
+                reducePrompt = WRITER_DM_PROMPT(castContext, memoryContext, partialAnalystJson)
+                    + `\n\n${narrativeContext}`;
+            } else {
+                reducePrompt = WRITER_BARDO_PROMPT(tone, castContext, memoryContext, partialAnalystJson)
+                    + `\n\n${narrativeContext}`;
+            }
 
-        // MERGE: Dati Analista + Narrazione Scrittore
-        console.log(`[Bardo] 🏁 generateSummary completato.`);
+            console.log(`[Bardo] 📏 Dimensione Prompt Scrittore: ${reducePrompt.length} chars`);
+            saveDebugFile(sessionId, `writer_prompt_act${actNumber}.txt`, reducePrompt);
+
+            const startAI = Date.now();
+            const options: any = {
+                model: SUMMARY_MODEL,
+                messages: [
+                    { role: "system", content: "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido." },
+                    { role: "user", content: reducePrompt }
+                ]
+            };
+
+            if (SUMMARY_PROVIDER === 'openai') {
+                options.response_format = { type: "json_object" };
+                options.max_completion_tokens = 16000;
+            } else if (SUMMARY_PROVIDER === 'ollama') {
+                options.format = 'json';
+                options.options = { num_ctx: 8192 };
+            }
+
+            const response = await withRetry(() => summaryClient.chat.completions.create(options));
+            const latency = Date.now() - startAI;
+            const inputTokens = response.usage?.prompt_tokens || 0;
+            const outputTokens = response.usage?.completion_tokens || 0;
+            const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+            accumulatedTokens += (response.usage?.total_tokens || 0);
+
+            monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+
+            // 🆕 Context Window Logging (Per il singolo atto)
+            const CONTEXT_LIMIT = 128000;
+            const OUTPUT_LIMIT = 16384;
+            const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
+            console.log(`[Bardo] 📊 Token Usage (Atto ${actNumber}): ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} (${contextPct}%)`);
+
+            const content = response.choices[0].message.content || "{}";
+            saveDebugFile(sessionId, `writer_response_act${actNumber}.txt`, content);
+
+            // Parsing output scrittore
+            let parsed = safeJsonParse(content);
+            if (!parsed) {
+                console.error(`[Bardo] ⚠️ Errore parsing JSON Atto ${actNumber}`);
+                parsed = { summary: content, title: "Errore Atto " + actNumber };
+            }
+
+            let partialNarrative = parsed.narrative || parsed.summary || "";
+            if (!partialNarrative && Array.isArray(parsed.log) && parsed.log.length > 0) {
+                partialNarrative = parsed.log.join('\n');
+            }
+
+            // Unione narrativa
+            if (finalNarrative.length > 0) {
+                finalNarrative += `\n\n`;
+            }
+            finalNarrative += partialNarrative;
+
+            // Merge dati dallo scrittore
+            if (parsed.character_growth) aggregatedData.character_growth.push(...parsed.character_growth);
+            if (parsed.npc_events) aggregatedData.npc_events.push(...parsed.npc_events);
+            if (parsed.world_events) aggregatedData.world_events.push(...parsed.world_events);
+            if (parsed.log) aggregatedData.log.push(...parsed.log);
+
+            // Titolo (Prendi il primo valido)
+            if (!aggregatedData.title && parsed.title) aggregatedData.title = parsed.title;
+
+        } // FINE LOOP EPISODICO
+
+        console.log(`[Bardo] 🏁 generateSummary completato (Totale ${parts.length} parti).`);
+
         return {
-            // DALLO SCRITTORE (narrazione)
-            summary: finalSummary || "Errore generazione.",
-            title: parsed.title || "Sessione Senza Titolo",
+            // DALLO SCRITTORE (aggregato)
+            summary: finalNarrative || "Errore generazione.",
+            title: aggregatedData.title || `Sessione del ${new Date().toLocaleDateString()}`,
             tokens: accumulatedTokens,
-            narrative: finalSummary || "Errore generazione.",
-            narrativeBrief: parsed.narrativeBrief || (finalSummary.substring(0, 1800) + (finalSummary.length > 1800 ? "..." : "")),
-            log: Array.isArray(parsed.log) ? parsed.log : [],
-            character_growth: Array.isArray(parsed.character_growth) ? parsed.character_growth : [],
-            npc_events: Array.isArray(parsed.npc_events) ? parsed.npc_events : [],
-            world_events: Array.isArray(parsed.world_events) ? parsed.world_events : [],
-            // DALL'ANALISTA (dati strutturati)
-            loot: analystData.loot,
-            loot_removed: analystData.loot_removed,
-            quests: analystData.quests,
-            monsters: analystData.monsters,
-            npc_dossier_updates: analystData.npc_dossier_updates,
-            location_updates: analystData.location_updates,
-            travel_sequence: analystData.travel_sequence,
-            present_npcs: analystData.present_npcs
+            narrative: finalNarrative || "Errore generazione.",
+            narrativeBrief: (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")),
+            log: aggregatedData.log,
+            character_growth: aggregatedData.character_growth,
+            npc_events: aggregatedData.npc_events,
+            world_events: aggregatedData.world_events,
+            // DALL'ANALISTA (aggregato)
+            loot: aggregatedData.loot,
+            loot_removed: aggregatedData.loot_removed,
+            quests: aggregatedData.quests,
+            monsters: aggregatedData.monsters,
+            npc_dossier_updates: aggregatedData.npc_dossier_updates,
+            location_updates: aggregatedData.location_updates,
+            travel_sequence: aggregatedData.travel_sequence,
+            present_npcs: aggregatedData.present_npcs
         };
     } catch (err: any) {
         console.error("[Bardo] ❌ Errore finale:", err);

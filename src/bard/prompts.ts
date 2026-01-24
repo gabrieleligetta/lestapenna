@@ -134,7 +134,7 @@ ${memoryContext}
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dei luoghi FISICAMENTE visitati (dall'inizio alla fine, l'ultimo è la posizione finale). location_updates = descrizioni per l'Atlante (solo luoghi con descrizione significativa)
 
 **TESTO DA ANALIZZARE**:
-${narrativeText.substring(0, 80000)}
+${narrativeText.substring(0, 320000)}
 
 Rispondi SOLO con JSON valido.`;
 

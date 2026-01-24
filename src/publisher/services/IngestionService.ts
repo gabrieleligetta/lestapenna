@@ -20,7 +20,8 @@ import {
     updateSessionPresentNPCs,
     markCharacterDirtyByName,
     markNpcDirty,
-    markAtlasDirty
+    markAtlasDirty,
+    clearSessionDerivedData
 } from '../../db';
 import {
     ingestSessionComplete,
@@ -56,6 +57,13 @@ export class IngestionService {
      */
     updateSessionTitle(sessionId: string, title: string): void {
         updateSessionTitle(sessionId, title);
+    }
+
+    /**
+     * Clears all derived data for a session (history, loot, quests)
+     */
+    clearSessionData(sessionId: string): void {
+        clearSessionDerivedData(sessionId);
     }
 
     /**

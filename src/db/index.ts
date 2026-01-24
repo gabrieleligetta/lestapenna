@@ -159,6 +159,7 @@ export const getSessionCampaignId = sessionRepository.getSessionCampaignId;
 export const findSessionByTimestamp = sessionRepository.findSessionByTimestamp;
 export const addSessionNote = sessionRepository.addSessionNote;
 export const getSessionNotes = sessionRepository.getSessionNotes;
+export const clearSessionDerivedData = sessionRepository.clearSessionDerivedData;
 
 // Recording
 export const addRecording = recordingRepository.addRecording;

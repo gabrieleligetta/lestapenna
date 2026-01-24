@@ -2,7 +2,8 @@ import { EmbedBuilder, TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     getAvailableSessions,
-    getSessionCampaignId as getSessionCampaignIdFromDb
+    getSessionCampaignId as getSessionCampaignIdFromDb,
+    db
 } from '../../db';
 import {
     TONES,
@@ -12,6 +13,7 @@ import { monitor } from '../../monitor';
 import { PipelineService } from '../../publisher/services/PipelineService';
 import { IngestionService } from '../../publisher/services/IngestionService';
 import { NotificationService } from '../../publisher/services/NotificationService';
+import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 
 export const narrateCommand: Command = {
     name: 'narrate',
@@ -20,8 +22,21 @@ export const narrateCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args, activeCampaign, client } = ctx;
-        const targetSessionId = args[0];
-        const requestedTone = args[1]?.toUpperCase() as ToneKey;
+
+        // Parse arguments: $racconta <ID> [tono] [--reindex]
+        let targetSessionId = args[0];
+        let requestedTone: ToneKey | undefined;
+        let forceReindex = false;
+
+        // Parse remaining args
+        for (let i = 1; i < args.length; i++) {
+            const arg = args[i].toLowerCase();
+            if (arg === '--reindex' || arg === 'reindex') {
+                forceReindex = true;
+            } else if (!requestedTone && TONES[arg.toUpperCase() as ToneKey]) {
+                requestedTone = arg.toUpperCase() as ToneKey;
+            }
+        }
 
         if (!targetSessionId) {
             // Mostra sessioni della campagna attiva
@@ -57,25 +72,48 @@ export const narrateCommand: Command = {
         const notificationService = new NotificationService();
 
         try {
+            // Check session status
+            const phaseInfo = sessionPhaseManager.getPhase(targetSessionId);
+            const isAlreadyProcessed = phaseInfo?.phase === 'DONE';
+
+            // Se è già processata e NON è richiesto reindex, saltiamo la parte di ingestione
+            const shouldIngest = forceReindex || !isAlreadyProcessed;
+
+            if (isAlreadyProcessed && !forceReindex) {
+                await channel.send("ℹ️ Sessione già indicizzata (rebuild). Generazione solo riassunto...");
+            } else if (forceReindex) {
+                await channel.send("🔄 Reindicizzazione forzata richiesta.");
+            }
+
             await channel.send("📚 Il Bardo sta preparando il testo...");
             await channel.send("✍️ Inizio stesura del racconto...");
 
             // 1. Generate Summary (Pipeline)
             const result = await pipelineService.generateSessionSummary(targetSessionId, activeCampaign!.id, requestedTone || 'DM');
 
-            // 2. Ingest to RAG & DB
-            await ingestionService.ingestSummary(targetSessionId, result);
-            ingestionService.updateSessionTitle(targetSessionId, result.title);
+            if (shouldIngest) {
+                // 2. Ingest to RAG & DB
+                if (forceReindex) {
+                    ingestionService.clearSessionData(targetSessionId);
+                }
+                await ingestionService.ingestSummary(targetSessionId, result);
+                ingestionService.updateSessionTitle(targetSessionId, result.title);
 
-            // 3. Process Batch Events
-            if (activeCampaign) {
-                await ingestionService.processBatchEvents(activeCampaign.id, targetSessionId, result, channel);
+                // 3. Process Batch Events
+                if (activeCampaign) {
+                    await ingestionService.processBatchEvents(activeCampaign.id, targetSessionId, result, channel);
+                }
+
+                // Update phase to DONE if we ingested
+                sessionPhaseManager.setPhase(targetSessionId, 'DONE');
+            } else {
+                console.log(`[Racconta] Saltata indicizzazione per ${targetSessionId} (già DONE)`);
             }
 
-            // 4. Publish to Discord
+            // 4. Publish to Discord (Sempre, è lo scopo del comando)
             await notificationService.publishToDiscord(client, targetSessionId, result, channel);
 
-            // 5. Email Recap
+            // 5. Email Recap (Sempre)
             const currentCampaignId = getSessionCampaignIdFromDb(targetSessionId) || activeCampaign?.id;
             if (currentCampaignId) {
                 await notificationService.sendEmailRecap(targetSessionId, currentCampaignId, result);

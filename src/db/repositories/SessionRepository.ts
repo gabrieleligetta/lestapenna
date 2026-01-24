@@ -114,5 +114,21 @@ export const sessionRepository = {
 
     getSessionNotes: (sessionId: string): SessionNote[] => {
         return db.prepare('SELECT * FROM session_notes WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId) as SessionNote[];
+    },
+
+    clearSessionDerivedData: (sessionId: string): void => {
+        const tables = [
+            'character_history',
+            'npc_history',
+            'world_history',
+            'location_history',
+            'quests',
+            'inventory',
+            'bestiary'
+        ];
+
+        for (const table of tables) {
+            db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
+        }
     }
 };

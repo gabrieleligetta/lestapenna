@@ -390,6 +390,10 @@ Il processo:
                         undefined // No channel notifications during rebuild
                     );
 
+                    // Mark as DONE in state machine
+                    const { sessionPhaseManager } = await import('../../services/SessionPhaseManager');
+                    sessionPhaseManager.setPhase(session.session_id, 'DONE');
+
                     successCount++;
                     console.log(`[Rebuild] ${progress} Sessione ${session.session_id} completata`);
 

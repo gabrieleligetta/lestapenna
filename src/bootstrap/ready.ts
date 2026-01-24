@@ -36,6 +36,7 @@ import { audioQueue, removeSessionJobs } from '../services/queue';
 // utils/publish likely exports publishSummary, not waitFor...
 import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../publisher';
 import { sessionPhaseManager, SessionPhase } from '../services/SessionPhaseManager';
+import { config } from '../config';
 
 // Note: recoverOrphanedFiles and processOrphanedSessionsSequentially were local. Moving here.
 
@@ -166,74 +167,17 @@ async function recoverIncompleteSessions(client: Client): Promise<void> {
             continue;
         }
 
-        // Get target channel for notifications
-        let channel: TextChannel | null = null;
         if (guildId) {
-            const targetChannelId = getGuildConfig(guildId, 'summary_channel_id') || getGuildConfig(guildId, 'cmd_channel_id');
-            if (targetChannelId) {
-                try {
-                    channel = await client.channels.fetch(targetChannelId) as TextChannel;
-                    await channel.send(`🔄 **Sessione Recuperata** (Crash Recovery): \`${sessionId}\`\nFase interrotta: \`${phase}\` → Riprendo da: \`${recoveryPhase}\``);
-                } catch (err) {
-                    console.warn(`⚠️ Impossibile accedere al canale ${targetChannelId}`);
-                }
-            }
+            // We just log to console as requested.
+        } else {
+            console.warn(`[Recovery] ⚠️ Sessione ${sessionId} senza Guild ID associato.`);
         }
 
-        try {
-            if (recoveryPhase === 'TRANSCRIBING') {
-                // Transcription was incomplete - reset recordings and re-queue
-                console.log(`[Recovery] 📝 Reset recordings e ri-trascrizione per ${sessionId}...`);
-                await removeSessionJobs(sessionId);
-                const filesToProcess = resetUnfinishedRecordings(sessionId);
-
-                if (filesToProcess.length === 0) {
-                    console.log(`[Recovery] ⚠️ Nessun file da riprocessare per ${sessionId}, tentando summary...`);
-                    // Maybe transcription finished but phase wasn't updated - try summary
-                    monitor.startSession(sessionId);
-                    await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
-                    await monitor.endSession();
-                } else {
-                    console.log(`[Recovery] 📁 Ri-accodamento ${filesToProcess.length} file per trascrizione...`);
-                    for (const job of filesToProcess) {
-                        await audioQueue.add('transcribe-job', {
-                            sessionId: job.session_id,
-                            fileName: job.filename,
-                            filePath: job.filepath,
-                            userId: job.user_id
-                        }, {
-                            jobId: job.filename,
-                            attempts: 5,
-                            backoff: { type: 'exponential', delay: 2000 },
-                            removeOnComplete: true,
-                            removeOnFail: false
-                        });
-                    }
-
-                    // Start monitoring and wait for completion
-                    monitor.startSession(sessionId);
-                    await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
-                    const metrics = await monitor.endSession();
-                    if (metrics) await processSessionReport(metrics);
-                }
-
-            } else if (recoveryPhase === 'SUMMARIZING') {
-                // Transcripts are complete - just regenerate summary
-                console.log(`[Recovery] 📝 Trascrizioni OK, rigenero solo il summary per ${sessionId}...`);
-                monitor.startSession(sessionId);
-                await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
-                const metrics = await monitor.endSession();
-                if (metrics) await processSessionReport(metrics);
-            }
-
-            console.log(`[Recovery] ✅ Sessione ${sessionId} recuperata con successo!`);
-
-        } catch (err: any) {
-            console.error(`[Recovery] ❌ Errore recupero sessione ${sessionId}:`, err.message);
-            if (channel) {
-                await channel.send(`⚠️ Errore durante recupero sessione \`${sessionId}\`: ${err.message}`).catch(() => { });
-            }
-        }
+        console.warn(`\n⚠️  [RECOVERY REQUIRED] Sessione interrotta rilevata!`);
+        console.warn(`   ID: ${sessionId}`);
+        console.warn(`   Fase: ${phase}`);
+        console.warn(`   Azione: Invia il comando \`$recover ${sessionId}\` su Discord per ripristinare.`);
+        console.warn(`   Oppure \`$reset ${sessionId}\` per cancellare e ricominciare.\n`);
     }
 }
 

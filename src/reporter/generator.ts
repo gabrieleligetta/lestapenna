@@ -314,21 +314,26 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
     const attachments: any[] = [{ filename: logFileName, content: statsJson }];
 
     // 🆕 Attach Debug Prompts/Responses if available
+    // 🆕 Attach ALL Debug Prompts/Responses found in folder
     const debugDir = path.join(__dirname, '..', '..', 'transcripts', metrics.sessionId, 'debug_prompts');
-    const debugFiles = ['analyst_prompt.txt', 'analyst_response.txt', 'writer_prompt.txt', 'writer_response.txt'];
 
     if (fs.existsSync(debugDir)) {
-        debugFiles.forEach(file => {
-            const filePath = path.join(debugDir, file);
-            if (fs.existsSync(filePath)) {
-                try {
-                    const content = fs.readFileSync(filePath, 'utf-8');
-                    attachments.push({ filename: file, content: content });
-                } catch (e) {
-                    console.error(`[Reporter] Failed to read debug file ${file}:`, e);
+        try {
+            const allFiles = fs.readdirSync(debugDir);
+            allFiles.forEach(file => {
+                if (file.endsWith('.txt') || file.endsWith('.json')) {
+                    const filePath = path.join(debugDir, file);
+                    try {
+                        const content = fs.readFileSync(filePath, 'utf-8');
+                        attachments.push({ filename: file, content: content });
+                    } catch (e) {
+                        console.error(`[Reporter] Failed to read debug file ${file}:`, e);
+                    }
                 }
-            }
-        });
+            });
+        } catch (e) {
+            console.error(`[Reporter] Failed to list debug dir:`, e);
+        }
     }
 
     await sendEmail(

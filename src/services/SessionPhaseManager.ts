@@ -14,6 +14,7 @@ export type SessionPhase =
     | 'INGESTING'
     | 'SYNCING'
     | 'PUBLISHING'
+    | 'ERROR' // 🆕 New Error Phase
     | 'DONE';
 
 // Phases where transcripts are considered complete and valid
@@ -37,7 +38,7 @@ export interface SessionPhaseInfo {
 // All phases in order for progress display (matches actual execution order)
 const ALL_PHASES: SessionPhase[] = [
     'RECORDING', 'TRANSCRIBING', 'CORRECTING', 'SUMMARIZING',
-    'INGESTING', 'VALIDATING', 'SYNCING', 'PUBLISHING', 'DONE'
+    'INGESTING', 'VALIDATING', 'SYNCING', 'PUBLISHING', 'DONE', 'ERROR'
 ];
 
 class SessionPhaseManagerImpl {
@@ -96,13 +97,13 @@ class SessionPhaseManagerImpl {
     }
 
     /**
-     * Gets all sessions that are not IDLE or DONE (incomplete)
+     * Gets all sessions that are not IDLE, DONE, or ERROR
      */
     getIncompleteSessions(): SessionPhaseInfo[] {
         const rows = db.prepare(`
             SELECT session_id, processing_phase, phase_started_at, guild_id
             FROM sessions 
-            WHERE processing_phase NOT IN ('IDLE', 'DONE', '')
+            WHERE processing_phase NOT IN ('IDLE', 'DONE', 'ERROR', '')
             AND processing_phase IS NOT NULL
         `).all() as Array<{
             session_id: string;
@@ -158,12 +159,15 @@ class SessionPhaseManagerImpl {
     }
 
     /**
-     * Marks a session as failed (for manual intervention)
+     * Marks a session as failed
      */
     markFailed(sessionId: string, reason: string): void {
         console.error(`[Phase] ❌ ${sessionId} FAILED: ${reason}`);
-        // Keep the phase as-is for debugging, but log the failure
-        // The session will be picked up by recovery on next restart
+        db.prepare(`
+            UPDATE sessions 
+            SET processing_phase = 'ERROR', phase_started_at = ?
+            WHERE session_id = ?
+        `).run(Date.now(), sessionId);
     }
 
     /**

@@ -54,11 +54,13 @@ export const sessionRepository = {
         return row ? row.session_number : null;
     },
 
-    setSessionNumber: (sessionId: string, num: number): void => {
+    setSessionNumber: (sessionId: string, num: number): boolean => {
         const exists = db.prepare('SELECT 1 FROM sessions WHERE session_id = ?').get(sessionId);
         if (exists) {
             db.prepare('UPDATE sessions SET session_number = ? WHERE session_id = ?').run(num, sessionId);
+            return true;
         }
+        return false;
     },
 
     updateSessionTitle: (sessionId: string, title: string): void => {

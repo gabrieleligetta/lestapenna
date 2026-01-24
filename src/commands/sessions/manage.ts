@@ -41,8 +41,13 @@ export const manageCommand: Command = {
                 return;
             }
 
-            setSessionNumber(targetSessionId, sessionNum);
-            await message.reply(`✅ Numero sessione per \`${targetSessionId}\` impostato a **${sessionNum}**.`);
+            const success = setSessionNumber(targetSessionId, sessionNum);
+
+            if (success) {
+                await message.reply(`✅ Numero sessione per \`${targetSessionId}\` impostato a **${sessionNum}**.`);
+            } else {
+                await message.reply(`⚠️ Errore: Sessione \`${targetSessionId}\` non trovata.`);
+            }
             return;
         }
     }

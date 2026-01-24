@@ -98,17 +98,17 @@ function printRecentSessions(): void {
             return;
         }
 
-        console.log('\n┌───────────────────────────────────────────────────────────────────────────────────────────────┐');
-        console.log('│                                          📜 ULTIME 5 SESSIONI                                               │');
-        console.log('├──────┬────────────────────────────────────┬───────────────────┬─────────────────┬─────────────────┤');
-        console.log('│  #   │ Session ID                         │ Data/Ora          │ Campagna        │ Stato           │');
-        console.log('├──────┼────────────────────────────────────┼───────────────────┼─────────────────┼─────────────────┤');
+        console.log('\n┌─────────────────────────────────────────────────────────────────────────────────────────────────┐');
+        console.log('│                                            📜 ULTIME 5 SESSIONI                                             │');
+        console.log('├──────┬──────────────────────────────────────┬───────────────────┬─────────────────┬─────────────────┤');
+        console.log('│  #   │ Session ID                           │ Data/Ora          │ Campagna        │ Stato           │');
+        console.log('├──────┼──────────────────────────────────────┼───────────────────┼─────────────────┼─────────────────┤');
 
         // Reverse so most recent is at bottom
         const reversed = [...sessions].reverse();
         for (const s of reversed) {
             const num = s.session_number ? String(s.session_number).padStart(4, ' ') : '  - ';
-            const id = s.session_id.substring(0, 34).padEnd(34, ' ');
+            const id = s.session_id.padEnd(36, ' ');
             const dateTime = s.start_time
                 ? new Date(s.start_time).toLocaleString('it-IT', {
                     day: '2-digit',
@@ -134,7 +134,7 @@ function printRecentSessions(): void {
             console.log(`│ ${num} │ ${id} │ ${dateTime.padEnd(17, ' ')} │ ${campaign} │ ${phaseDisplay} │`);
         }
 
-        console.log('└──────┴────────────────────────────────────┴───────────────────┴─────────────────┴─────────────────┘\n');
+        console.log('└──────┴──────────────────────────────────────┴───────────────────┴─────────────────┴─────────────────┘\n');
     } catch (e) {
         console.warn('[Startup] ⚠️ Impossibile caricare sessioni recenti:', e);
     }
@@ -254,6 +254,7 @@ async function recoverOrphanedFiles(): Promise<string[]> {
 
     console.log(`🔍 Scansione file orfani in corso (${mp3Files.length} file trovati)...`);
     let recoveredCount = 0;
+    const affectedSessionIds = new Set<string>();
 
     for (const file of mp3Files) {
         const filePath = path.join(recordingsDir, file);
@@ -293,6 +294,7 @@ async function recoverOrphanedFiles(): Promise<string[]> {
         }
 
         addRecording(sessionId, file, filePath, userId, timestamp);
+        affectedSessionIds.add(sessionId);
 
         try {
             const uploaded = await uploadToOracle(filePath, file, sessionId);
@@ -323,14 +325,8 @@ async function recoverOrphanedFiles(): Promise<string[]> {
         console.log(`✅ Recupero completato: ${recoveredCount} file orfani ripristinati.`);
     }
 
-    // Return the set of session IDs that were affected by recovery
-    return [...new Set(mp3Files.map(file => {
-        const match = file.match(/^(.+)-(\d+)\.mp3$/);
-        if (!match) return null;
-        const timestamp = parseInt(match[2]);
-        // Re-find session to be sure (since we might have just created it)
-        return findSessionByTimestamp(timestamp);
-    }).filter(id => id !== null))] as string[];
+    // Return only the set of session IDs that were affected by recovery
+    return [...affectedSessionIds];
 }
 
 async function processOrphanedSessionsSequentially(client: Client, sessionIds: string[]) {

@@ -49,12 +49,12 @@ export class SystemMonitor {
     }
 
     startIdleMonitoring() {
-        console.log("[Monitor] 💤 Avvio monitoraggio Idle (Heartbeat 60s)...");
+        console.log("[Monitor] 💤 Avvio monitoraggio Idle (Heartbeat 1h)...");
         setInterval(() => {
             if (!this.currentSession) {
                 this.logSystemHealth(true);
             }
-        }, 60000);
+        }, 3600000); // 1 hour
     }
 
     private async sampleResources() {

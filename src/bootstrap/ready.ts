@@ -65,9 +65,6 @@ export function registerReadyHandler(client: Client) {
         monitor.startIdleMonitoring();
         startMemoryMonitor();
 
-        monitor.startIdleMonitoring();
-        startMemoryMonitor();
-
         // 🆕 PHASE-BASED RECOVERY: Check for sessions interrupted by crash
         await recoverIncompleteSessions(client);
 

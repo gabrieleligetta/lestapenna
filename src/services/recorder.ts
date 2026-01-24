@@ -26,7 +26,7 @@ class SilenceInjector extends Transform {
 
     // Buffer statico di ~1 secondo di silenzio (riutilizzabile)
     // 192 bytes/ms * 1000ms = 192000 bytes
-    private static readonly ZERO_BUFFER = Buffer.alloc(192000); 
+    private static readonly ZERO_BUFFER = Buffer.alloc(192000);
 
     constructor() {
         super();
@@ -35,7 +35,7 @@ class SilenceInjector extends Transform {
 
     _transform(chunk: Buffer, encoding: string, callback: TransformCallback): void {
         const now = Date.now();
-        
+
         if (this.isFirstPacket) {
             this.isFirstPacket = false;
             this.lastPacketTime = now;
@@ -43,10 +43,10 @@ class SilenceInjector extends Transform {
             callback();
             return;
         }
-        
+
         const timeDelta = now - this.lastPacketTime;
         const expectedBytes = timeDelta * this.bytesPerMs;
-        
+
         // Inietta silenzio se il gap è significativo (> 1 frame + chunk size)
         if (expectedBytes > (chunk.length + this.frameSize)) {
             const missingBytes = Math.floor(expectedBytes - chunk.length);
@@ -54,7 +54,7 @@ class SilenceInjector extends Transform {
 
             if (alignedMissingBytes > 0) {
                 this.silenceInjected += alignedMissingBytes;
-                
+
                 // Logica di invio a blocchi per evitare allocazioni
                 let remainingToSend = alignedMissingBytes;
                 const maxChunkSize = SilenceInjector.ZERO_BUFFER.length;
@@ -72,7 +72,7 @@ class SilenceInjector extends Transform {
         this.lastPacketTime = now;
         callback();
     }
-    
+
     getSilenceInjectedMs(): number {
         return Math.floor(this.silenceInjected / this.bytesPerMs);
     }
@@ -104,13 +104,13 @@ let isStopping = false;
 export function pauseRecording(guildId: string) {
     pausedGuilds.add(guildId);
     console.log(`[Recorder] ⏸️ Registrazione in PAUSA per Guild ${guildId}`);
-    
+
     // Chiudiamo forzatamente gli stream attivi per evitare di registrare durante la pausa
-    for (const [key, stream] of activeStreams) {
+    for (const [key, stream] of Array.from(activeStreams)) {
         if (key.startsWith(`${guildId}-`)) {
             try {
                 stream.ffmpeg.stdin?.end();
-            } catch (e) {}
+            } catch (e) { }
             activeStreams.delete(key);
         }
     }
@@ -129,10 +129,10 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     if (!channel.guild) return;
 
     const guildId = channel.guild.id;
-    
+
     // Reset stato pausa alla connessione
     pausedGuilds.delete(guildId);
-    
+
     // 🆕 TRACCIA MAPPA GUILD->SESSION
     guildToSession.set(guildId, sessionId);
 
@@ -166,7 +166,7 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
         const user = channel.client.users.cache.get(userId);
         if (user?.bot) {
             // Ignoriamo completamente lo stream audio dei bot
-            return; 
+            return;
         }
         // -----------------
 
@@ -177,7 +177,7 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
 function createListeningStream(receiver: any, userId: string, sessionId: string, guildId: string) {
     const streamKey = `${guildId}-${userId}`;
     const lastError = connectionErrors.get(streamKey) || 0;
-    if (Date.now() - lastError < 1000) return; 
+    if (Date.now() - lastError < 1000) return;
 
     if (activeStreams.has(streamKey)) return;
 
@@ -209,7 +209,7 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     const getNewFile = () => {
         const filename = `${userId}-${Date.now()}.flac`;
         const filepath = path.join(__dirname, '..', 'recordings', filename);
-        
+
         // Assicuriamoci che la cartella recordings esista
         const recordingsDir = path.dirname(filepath);
         if (!fs.existsSync(recordingsDir)) {
@@ -241,15 +241,15 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
     // GESTIONE ERRORI PIPELINE (Prevenzione Crash)
     const handleError = (err: Error, source: string) => {
         if (err.message === 'Premature close') return;
-        
+
         console.warn(`⚠️ Errore Audio (${source}) per utente ${userId}: ${err.message}`);
-        
+
         // Se l'errore è critico, chiudiamo lo stream per evitare loop o file corrotti
         if (activeStreams.has(streamKey)) {
             activeStreams.delete(streamKey);
-            try { opusStream.destroy(); } catch {}
-            try { decoder.destroy(); } catch {}
-            try { ffmpeg.stdin?.end(); } catch {}
+            try { opusStream.destroy(); } catch { }
+            try { decoder.destroy(); } catch { }
+            try { ffmpeg.stdin?.end(); } catch { }
         }
         connectionErrors.set(streamKey, Date.now());
     };
@@ -275,25 +275,25 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
             if (code === 0 && firstChunkTimestamp) {
                 const silenceMs = silenceInjector.getSilenceInjectedMs();
                 console.log(`[VoiceRec] ✅ ${filename}: +${silenceMs}ms silenzio iniettato`);
-                
+
                 if (activeStreams.has(streamKey)) {
                     activeStreams.delete(streamKey);
                 }
-                
+
                 // Marca come pending per tracking
                 if (!pendingFileProcessing.has(guildId)) {
                     pendingFileProcessing.set(guildId, new Set());
                 }
                 pendingFileProcessing.get(guildId)!.add(filename);
-                
+
                 // USA TIMESTAMP REALE (primo chunk)
                 await onFileClosed(userId, filepath, filename, firstChunkTimestamp, sessionId, guildId);
-                
+
             } else if (!firstChunkTimestamp) {
                 console.warn(`[VoiceRec] ⚠️ ${filename}: Nessun chunk audio ricevuto, file vuoto`);
                 // Pulizia file vuoto se creato
                 if (fs.existsSync(filepath)) {
-                    try { fs.unlinkSync(filepath); } catch {}
+                    try { fs.unlinkSync(filepath); } catch { }
                 }
             } else {
                 console.warn(`[VoiceRec] ⚠️ FFmpeg exited with code ${code} for ${filename}`);
@@ -342,7 +342,7 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
     try {
         const stats = fs.statSync(filePath);
         fileSizeMB = stats.size / (1024 * 1024);
-    } catch (e) {}
+    } catch (e) { }
 
     try {
         const uploaded = await uploadToOracle(filePath, fileName, sessionId);
@@ -370,7 +370,7 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         removeOnComplete: true,
         removeOnFail: false
     });
-    
+
     // 4. AGGIUNGI AL MIXER (Cruciale per il podcast completo)
     addFileToStreamingMixer(sessionId, userId, filePath, timestamp);
 
@@ -387,7 +387,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
     // A. Raccogli tutte le promesse di chiusura degli stream attivi
     const closePromises: Promise<void>[] = [];
 
-    for (const [key, stream] of activeStreams) {
+    for (const [key, stream] of Array.from(activeStreams)) {
         if (key.startsWith(`${guildId}-`)) {
             // Creiamo una Promise che si risolve SOLO quando ffmpeg finisce davvero
             const p = new Promise<void>((resolve) => {
@@ -415,7 +415,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
     const pendingFiles = pendingFileProcessing.get(guildId);
     if (pendingFiles && pendingFiles.size > 0) {
         console.log(`[Recorder] ⏳ Attesa elaborazione finale di ${pendingFiles.size} file...`);
-        
+
         await new Promise<void>((resolve) => {
             // Registriamo il resolver. Verrà chiamato da ffmpeg.on('close') -> finally
             if (!fileProcessingResolvers.has(guildId)) {
@@ -423,7 +423,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
             }
             fileProcessingResolvers.get(guildId)!.push(resolve);
         });
-        
+
         console.log(`[Recorder] ✅ Tutti i file sono stati processati.`);
     }
 
@@ -432,14 +432,14 @@ export async function disconnect(guildId: string): Promise<boolean> {
     if (sessionId && sessionMixers.has(sessionId)) {
         console.log(`[Recorder] 🎵 Audio fermo. Arresto mixer...`);
         // Questa chiamata ora sarà bloccante e sicura
-        await stopStreamingMixer(sessionId); 
+        await stopStreamingMixer(sessionId);
         sessionMixers.delete(sessionId);
     }
 
     guildToSession.delete(guildId);
     pendingFileProcessing.delete(guildId);
     fileProcessingResolvers.delete(guildId);
-    
+
     connection.destroy();
     isStopping = false; // Reset per la prossima volta
     console.log("👋 Disconnesso in sicurezza.");
@@ -450,7 +450,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
 // e li accumuliamo in coda.
 export function isFileActive(fullPath: string): boolean {
     const target = path.resolve(fullPath);
-    for (const data of activeStreams.values()) {
+    for (const data of Array.from(activeStreams.values())) {
         if (path.resolve(data.currentPath) === target) return true;
     }
     return false;
@@ -461,7 +461,7 @@ export function isFileActive(fullPath: string): boolean {
  */
 export function wipeLocalFiles() {
     // 1. Pulizia Recordings
-    const recordingsDir = path.join(__dirname, '..', 'recordings');
+    const recordingsDir = path.join(__dirname, '..', '..', 'recordings'); // Fixed path to root recordings
     if (fs.existsSync(recordingsDir)) {
         try {
             const files = fs.readdirSync(recordingsDir);

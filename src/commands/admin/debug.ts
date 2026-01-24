@@ -29,9 +29,8 @@ async function ensureTestEnvironment(guildId: string, authorId: string, message:
 
     if (!testCamp) {
         await message.reply("⚙️ Creazione campagna di test automatica...");
-        const newId = uuidv4();
-        createCampaign(guildId, "Campagna di Test");
-        testCamp = { id: newId, guild_id: guildId, name: "Campagna di Test", description: "Campagna per debug e test stream" } as any; // Cast as simplified
+        const newId = createCampaign(guildId, "Campagna di Test");
+        testCamp = { id: newId, guild_id: guildId, name: "Campagna di Test", description: "Campagna per debug e test stream", role: "game-master" } as any;
     }
 
     // Set active locally for this context? 

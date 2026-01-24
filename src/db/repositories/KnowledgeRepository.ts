@@ -103,7 +103,7 @@ export const knowledgeRepository = {
             if (f.associated_npc_ids) {
                 const ids = f.associated_npc_ids.split(',').map(id => parseInt(id.trim()));
                 const updatedIds = ids.map(id => id === oldNpcId ? newNpcId : id);
-                const uniqueIds = [...new Set(updatedIds)];
+                const uniqueIds = Array.from(new Set(updatedIds));
                 updatedNpcIds = uniqueIds.join(',');
             }
 

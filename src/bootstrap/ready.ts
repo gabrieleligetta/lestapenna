@@ -16,17 +16,19 @@ import {
 } from '../reporter';
 import { initIdentityGuard } from '../utils/identity';
 import {
-    getUnprocessedRecordings,
-    // removeSessionJobs,
-    resetUnfinishedRecordings,
-    db,
-    getGuildConfig,
     createSession,
     addRecording,
     updateRecordingStatus,
     getRecording,
-    findSessionByTimestamp
+    findSessionByTimestamp,
+    getCampaigns,
+    createCampaign,
+    getUnprocessedRecordings,
+    resetUnfinishedRecordings,
+    db,
+    getGuildConfig
 } from '../db';
+
 import { audioQueue, removeSessionJobs } from '../services/queue';
 // If waitForCompletionAndSummarize logic was different in index.ts, I should use the one from utils/publish if compatible.
 // index.ts used waitForCompletionAndSummarize(sessionId, channel).
@@ -58,35 +60,40 @@ export function registerReadyHandler(client: Client) {
         monitor.startIdleMonitoring();
         startMemoryMonitor();
 
-        await recoverOrphanedFiles();
+        monitor.startIdleMonitoring();
+        startMemoryMonitor();
+
+        const recoveredSessionIds = await recoverOrphanedFiles();
 
         console.log('🔍 Controllo lavori interrotti nel database...');
         const orphanJobs = getUnprocessedRecordings();
+        const orphanSessionIds = orphanJobs.map(job => job.session_id);
 
-        if (orphanJobs.length > 0) {
-            const sessionIds = [...new Set(orphanJobs.map(job => job.session_id))];
-            console.log(`📦 Trovati ${orphanJobs.length} file orfani in ${sessionIds.length} sessioni.`);
+        // Merge recovered sessions and database orphans
+        const allPendingSessions = [...new Set([...recoveredSessionIds, ...orphanSessionIds])];
 
-            await processOrphanedSessionsSequentially(client, sessionIds);
+        if (allPendingSessions.length > 0) {
+            console.log(`📦 Trovati ${allPendingSessions.length} sessioni pendenti (Recovered + DB Orphans).`);
+            await processOrphanedSessionsSequentially(client, allPendingSessions);
         } else {
             console.log('✅ Nessun lavoro in sospeso trovato.');
         }
     });
 }
 
-async function recoverOrphanedFiles() {
+async function recoverOrphanedFiles(): Promise<string[]> {
     const recordingsDir = path.join(__dirname, '..', '..', 'recordings'); // Adjusted path: src/bootstrap -> ../../recordings
     // index.ts was in src/. recordings in root/recordings?
     // index.ts: path.join(__dirname, '..', 'recordings') -> src/../recordings = root/recordings.
     // bootstrap/ready.ts: __dirname is src/bootstrap.
     // So ../../recordings is correct.
 
-    if (!fs.existsSync(recordingsDir)) return;
+    if (!fs.existsSync(recordingsDir)) return [];
 
     const files = fs.readdirSync(recordingsDir);
     const mp3Files = files.filter(f => f.endsWith('.mp3'));
 
-    if (mp3Files.length === 0) return;
+    if (mp3Files.length === 0) return [];
 
     console.log(`🔍 Scansione file orfani in corso (${mp3Files.length} file trovati)...`);
     let recoveredCount = 0;
@@ -109,9 +116,23 @@ async function recoverOrphanedFiles() {
         let sessionId = findSessionByTimestamp(timestamp);
 
         if (!sessionId) {
+            // FIX: Ensure valid campaign ID for emergency session
+            const recoveryGuildId = 'recovery_guild'; // Placeholder guild for orphans
+            const campaigns = getCampaigns(recoveryGuildId);
+            let recoveryCamp = campaigns.find(c => c.name === "Campagna di Recupero");
+
+            if (!recoveryCamp) {
+                console.log(`[Recovery] Creazione "Campagna di Recupero" per sessioni orfane...`);
+                // createCampaign returns number ID
+                const newId = createCampaign(recoveryGuildId, "Campagna di Recupero");
+                recoveryCamp = { id: newId } as any;
+            }
+
             sessionId = `recovered-${uuidv4().substring(0, 8)}`;
-            console.log(`🆕 Nessuna sessione trovata per ${file}. Creo sessione di emergenza: ${sessionId}`);
-            createSession(sessionId, 'unknown', 0);
+            console.log(`🆕 Nessuna sessione trovata per ${file}. Creo sessione di emergenza: ${sessionId} (Campaign: ${recoveryCamp?.id})`);
+
+            // Use the valid campaign ID
+            createSession(sessionId, recoveryGuildId, recoveryCamp!.id);
         }
 
         addRecording(sessionId, file, filePath, userId, timestamp);
@@ -144,6 +165,15 @@ async function recoverOrphanedFiles() {
     if (recoveredCount > 0) {
         console.log(`✅ Recupero completato: ${recoveredCount} file orfani ripristinati.`);
     }
+
+    // Return the set of session IDs that were affected by recovery
+    return [...new Set(mp3Files.map(file => {
+        const match = file.match(/^(.+)-(\d+)\.mp3$/);
+        if (!match) return null;
+        const timestamp = parseInt(match[2]);
+        // Re-find session to be sure (since we might have just created it)
+        return findSessionByTimestamp(timestamp);
+    }).filter(id => id !== null))] as string[];
 }
 
 async function processOrphanedSessionsSequentially(client: Client, sessionIds: string[]) {

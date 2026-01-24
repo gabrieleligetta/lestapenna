@@ -18,6 +18,8 @@ import {
     getCharacterHistory, // for generateCharacterBio
     getNpcHistory
 } from '../db';
+import * as fs from 'fs';
+import * as path from 'path';
 
 import {
     SUMMARY_MODEL,
@@ -91,6 +93,21 @@ function normalizeLocationNames(macro: string, micro: string): { macro: string; 
         micro = micro.substring(macro.length + 3);
     }
     return { macro, micro };
+}
+
+/**
+ * Utility: Save debug file
+ */
+function saveDebugFile(sessionId: string, filename: string, content: string) {
+    try {
+        const debugDir = path.join(__dirname, '..', '..', 'transcripts', sessionId, 'debug_prompts');
+        if (!fs.existsSync(debugDir)) {
+            fs.mkdirSync(debugDir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(debugDir, filename), content, 'utf-8');
+    } catch (e) {
+        console.error(`[Debug] Failed to save ${filename}:`, e);
+    }
 }
 
 /**
@@ -264,9 +281,10 @@ interface AnalystOutput {
     present_npcs: string[];
 }
 
-async function extractStructuredData(narrativeText: string, castContext: string, memoryContext: string): Promise<AnalystOutput> {
+export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string): Promise<AnalystOutput> {
     console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)...`);
     const prompt = ANALYST_PROMPT(castContext, memoryContext, narrativeText);
+    saveDebugFile(sessionId, 'analyst_prompt.txt', prompt);
 
     const startAI = Date.now();
     try {
@@ -287,7 +305,30 @@ async function extractStructuredData(narrativeText: string, castContext: string,
         const outputTokens = response.usage?.completion_tokens || 0;
         monitor.logAIRequestWithCost('analyst', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
 
-        const parsed = safeJsonParse(response.choices[0].message.content || "{}");
+        // 🆕 Context Window Logging
+        const CONTEXT_LIMIT = 128000;
+        const OUTPUT_LIMIT = 16384;
+        const totalTokens = inputTokens + outputTokens;
+        const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
+        const outputPct = ((outputTokens / OUTPUT_LIMIT) * 100).toFixed(1);
+        const contextWarning = inputTokens > CONTEXT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
+        const outputWarning = outputTokens > OUTPUT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
+        console.log(`[Analista] 📊 Token Usage: ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}`);
+
+        const content = response.choices[0].message.content || "{}";
+
+        // 🆕 Save Token Usage
+        const tokenUsage = {
+            phase: 'analyst',
+            input: inputTokens,
+            output: outputTokens,
+            total: (inputTokens + outputTokens),
+            inputChars: prompt.length,
+            outputChars: content.length
+        };
+        saveDebugFile(sessionId, 'analyst_tokens.json', JSON.stringify(tokenUsage, null, 2));
+        saveDebugFile(sessionId, 'analyst_response.txt', content);
+        const parsed = safeJsonParse(content);
 
         // Normalizations
         const validStatuses = ['ALIVE', 'DEAD', 'MISSING'] as const;
@@ -451,7 +492,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
     // STEP 1: ANALISTA
     console.log(`[Bardo] 📊 STEP 1: Analista - Estrazione dati strutturati...`);
-    const analystData = await extractStructuredData(fullDialogue, castContext, memoryContext);
+    const analystData = await extractStructuredData(sessionId, fullDialogue, castContext, memoryContext);
     console.log(`[Bardo] ✅ Analista completato: ${analystData.loot.length} loot, ${analystData.monsters.length} mostri, ${analystData.npc_dossier_updates.length} NPC`);
 
     // FASE MAP (solo per testi molto lunghi)
@@ -475,6 +516,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
     } else {
         reducePrompt = WRITER_BARDO_PROMPT(tone, castContext, memoryContext, analystJson) + `\n\nTRASCRIZIONE:\n${contextForFinalStep.substring(0, 80000)}`;
     }
+    saveDebugFile(sessionId, 'writer_prompt.txt', reducePrompt);
 
     const startAI = Date.now();
     try {
@@ -489,6 +531,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         // Imposta formato JSON in base al provider
         if (SUMMARY_PROVIDER === 'openai') {
             options.response_format = { type: "json_object" };
+            options.max_completion_tokens = 16000; // Ensure enough tokens for long narrative
         } else if (SUMMARY_PROVIDER === 'ollama') {
             options.format = 'json';
             options.options = { num_ctx: 8192 };
@@ -504,7 +547,29 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         console.log(`[Bardo] ✅ Scrittore completato in ${(latency / 1000).toFixed(1)}s`);
         monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
 
+        // 🆕 Context Window Logging
+        const CONTEXT_LIMIT = 128000;
+        const OUTPUT_LIMIT = 16384;
+        const totalTokens = inputTokens + outputTokens;
+        const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
+        const outputPct = ((outputTokens / OUTPUT_LIMIT) * 100).toFixed(1);
+        const contextWarning = inputTokens > CONTEXT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
+        const outputWarning = outputTokens > OUTPUT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
+        console.log(`[Bardo] 📊 Token Usage: ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}`);
+
         const content = response.choices[0].message.content || "{}";
+
+        // 🆕 Save Token Usage
+        const tokenUsage = {
+            phase: 'writer',
+            input: inputTokens,
+            output: outputTokens,
+            total: (inputTokens + outputTokens),
+            inputChars: reducePrompt.length,
+            outputChars: content.length
+        };
+        saveDebugFile(sessionId, 'writer_tokens.json', JSON.stringify(tokenUsage, null, 2));
+        saveDebugFile(sessionId, 'writer_response.txt', content);
         accumulatedTokens += response.usage?.total_tokens || 0;
 
         let parsed = safeJsonParse(content);

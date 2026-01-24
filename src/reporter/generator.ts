@@ -178,7 +178,7 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
         return indexA - indexB;
     });
 
-    const htmlTable = `
+    let htmlTable = `
     <h2>📊 Session Metrics Report</h2>
     ${thermalWarning ? `<p style="color: red; font-weight: bold;">${thermalWarning}</p>` : ''}
     <p><strong>Session ID:</strong> ${metrics.sessionId}</p>
@@ -241,6 +241,60 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
     ${metrics.errors.length > 0 ? `<h3>⚠️ Errors</h3><pre>${metrics.errors.join('\n')}</pre>` : ''}
     `;
 
+    // 🆕 Append Token Usage Details for Analyst/Writer
+    const tokenDebugDir = path.join(__dirname, '..', '..', 'transcripts', metrics.sessionId, 'debug_prompts');
+    let tokenHtml = "";
+
+    try {
+        if (fs.existsSync(tokenDebugDir)) {
+            const analystPath = path.join(tokenDebugDir, 'analyst_tokens.json');
+            const writerPath = path.join(tokenDebugDir, 'writer_tokens.json');
+            let analystTokens = { input: 0, output: 0, total: 0, inputChars: 0, outputChars: 0 };
+            let writerTokens = { input: 0, output: 0, total: 0, inputChars: 0, outputChars: 0 };
+
+            if (fs.existsSync(analystPath)) analystTokens = JSON.parse(fs.readFileSync(analystPath, 'utf-8'));
+            if (fs.existsSync(writerPath)) writerTokens = JSON.parse(fs.readFileSync(writerPath, 'utf-8'));
+
+            if (analystTokens.total > 0 || writerTokens.total > 0) {
+                tokenHtml = `
+                <div style="margin-top: 20px; padding: 10px; background-color: #eef2f3; border-radius: 5px;">
+                    <h3>🧠 Detailed Token Usage</h3>
+                    <table border="1" cellpadding="5" cellspacing="0" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <th>Phase</th>
+                            <th>Prompt (In)</th>
+                            <th>Response (Out)</th>
+                            <th>Total</th>
+                        </tr>
+                        <tr>
+                            <td><strong>Analyst</strong></td>
+                            <td>${analystTokens.input.toLocaleString()} <small>(${analystTokens.inputChars?.toLocaleString() || 0} chars)</small></td>
+                            <td>${analystTokens.output.toLocaleString()} <small>(${analystTokens.outputChars?.toLocaleString() || 0} chars)</small></td>
+                            <td>${analystTokens.total.toLocaleString()}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Writer (Summary)</strong></td>
+                            <td>${writerTokens.input.toLocaleString()} <small>(${writerTokens.inputChars?.toLocaleString() || 0} chars)</small></td>
+                            <td>${writerTokens.output.toLocaleString()} <small>(${writerTokens.outputChars?.toLocaleString() || 0} chars)</small></td>
+                            <td>${writerTokens.total.toLocaleString()}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>TOTAL SESSION</strong></td>
+                            <td><strong>${(analystTokens.input + writerTokens.input).toLocaleString()}</strong></td>
+                            <td><strong>${(analystTokens.output + writerTokens.output).toLocaleString()}</strong></td>
+                            <td><strong>${(analystTokens.total + writerTokens.total).toLocaleString()}</strong></td>
+                        </tr>
+                    </table>
+                </div>
+                `;
+            }
+        }
+    } catch (e) {
+        console.error("[Reporter] Failed to read token stats:", e);
+    }
+
+    htmlTable += tokenHtml;
+
     // 4. Salvataggio locale temporaneo del log
     const logFileName = `report-${metrics.sessionId}.json`;
     const logPath = path.join(__dirname, '..', '..', 'recordings', logFileName); // Adjust path
@@ -257,12 +311,32 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
     // 6. Invio Email
     const recipients = getRecipients('TECHNICAL_REPORT_RECIPIENT');
 
+    const attachments: any[] = [{ filename: logFileName, content: statsJson }];
+
+    // 🆕 Attach Debug Prompts/Responses if available
+    const debugDir = path.join(__dirname, '..', '..', 'transcripts', metrics.sessionId, 'debug_prompts');
+    const debugFiles = ['analyst_prompt.txt', 'analyst_response.txt', 'writer_prompt.txt', 'writer_response.txt'];
+
+    if (fs.existsSync(debugDir)) {
+        debugFiles.forEach(file => {
+            const filePath = path.join(debugDir, file);
+            if (fs.existsSync(filePath)) {
+                try {
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    attachments.push({ filename: file, content: content });
+                } catch (e) {
+                    console.error(`[Reporter] Failed to read debug file ${file}:`, e);
+                }
+            }
+        });
+    }
+
     await sendEmail(
         recipients,
         `[Lestapenna] Report Sessione ${metrics.sessionId} - ${metrics.errors.length > 0 ? '⚠️ ALERT' : '✅ OK'}`,
         emailBody + `\n\nDATI RAW:\n${statsJson}`,
         htmlTable,
-        [{ filename: logFileName, content: statsJson }]
+        attachments
     );
 
     if (fs.existsSync(logPath)) {

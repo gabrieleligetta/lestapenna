@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import { getCampaignById, getExplicitSessionNumber, getSessionStartTime, getSessionTravelLog, getSessionEncounteredNPCs } from '../db';
 import { getPresignedUrl } from '../services/backup';
 import { archiveSessionTranscripts } from './archives';
-import { sendEmail } from './email';
+import { sendEmail, getRecipients } from './email';
 
 export { processSessionReport } from './generator';
 export { archiveSessionTranscripts } from './archives';
@@ -107,11 +107,88 @@ export async function sendSessionRecap(
         </ul>
     </div>
 
-    <!-- ... other sections omitted for brevity but should be here ... -->
-    <!-- Assuming standard HTML structure described in user prompt -->
+    <!-- 🗺️ Cronologia Luoghi -->
+    ${travels && travels.length > 0 ? `
+    <h3>🗺️ Cronologia Luoghi</h3>
+    <div style="background-color: #e8f8f5; padding: 10px; border-radius: 5px; border-left: 4px solid #1abc9c;">
+        <ul style="margin: 0; padding-left: 20px;">
+            ${travels.map(t => `<li><strong>${t.macro_location || 'Viaggio'}</strong> - ${t.micro_location}</li>`).join('\n')}
+        </ul>
+    </div>
+    ` : `
+    <h3>🗺️ Cronologia Luoghi</h3>
+    <p style="color: #7f8c8d; font-style: italic;">Nessuno spostamento rilevato.</p>
+    `}
+
+    <!-- 💰 Bilancio Oggetti -->
+    ${(loot?.length || 0) + (lootRemoved?.length || 0) > 0 ? `
+    <h3>💰 Bilancio Oggetti</h3>
+    <div style="background-color: #fcf3cf; padding: 10px; border-radius: 5px; border-left: 4px solid #f1c40f;">
+        ${loot?.length ? `<p style="margin: 5px 0;"><strong>Ottenuti:</strong></p>
+        <ul style="margin: 0 0 10px 0; padding-left: 20px; color: #27ae60;">
+            ${loot.map(l => `<li>+ ${l.name}${l.quantity && l.quantity > 1 ? ` (x${l.quantity})` : ''}</li>`).join('\n')}
+        </ul>` : ''}
+
+        ${lootRemoved?.length ? `<p style="margin: 5px 0;"><strong>Persi/Usati:</strong></p>
+        <ul style="margin: 0; padding-left: 20px; color: #c0392b;">
+            ${lootRemoved.map(l => `<li>- ${l.name}${l.quantity && l.quantity > 1 ? ` (x${l.quantity})` : ''}</li>`).join('\n')}
+        </ul>` : ''}
+    </div>
+    ` : ''}
+
+    <!-- 👥 NPC Incontrati -->
+    ${npcs && npcs.length > 0 ? `
+    <h3>👥 NPC Incontrati</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+        <tr style="background-color: #ecf0f1;">
+            <th style="padding: 8px; border: 1px solid #bdc3c7; text-align: left;">Nome</th>
+            <th style="padding: 8px; border: 1px solid #bdc3c7; text-align: left;">Ruolo</th>
+            <th style="padding: 8px; border: 1px solid #bdc3c7; text-align: left;">Note / Status</th>
+        </tr>
+        ${npcs.map((npc: any) => `
+        <tr>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;"><strong>${npc.name}</strong></td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">${npc.role || '-'}</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">
+                ${npc.status === 'DEAD' ? '💀 MORTO ' : ''}${npc.description || ''}
+            </td>
+        </tr>
+        `).join('\n')}
+    </table>
+    ` : ''}
+
+    <!-- 👹 Bestiario -->
+    ${monsters && monsters.length > 0 ? `
+    <h3>👹 Bestiario / Minacce</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+        <tr style="background-color: #fadbd8;">
+            <th style="padding: 8px; border: 1px solid #e6b0aa; text-align: left;">Creatura</th>
+            <th style="padding: 8px; border: 1px solid #e6b0aa; text-align: left;">Stato</th>
+            <th style="padding: 8px; border: 1px solid #e6b0aa; text-align: left;">Quantità</th>
+        </tr>
+        ${monsters.map(m => `
+        <tr>
+            <td style="padding: 8px; border: 1px solid #e6b0aa;"><strong>${m.name}</strong></td>
+            <td style="padding: 8px; border: 1px solid #e6b0aa;">${m.status}</td>
+            <td style="padding: 8px; border: 1px solid #e6b0aa;">${m.count || '-'}</td>
+        </tr>
+        `).join('\n')}
+    </table>
+    ` : `
+    <h3>👹 Bestiario / Minacce</h3>
+    <p style="color: #7f8c8d; font-style: italic;">Nessuna minaccia rilevata.</p>
+    `}
+
+    <!-- 📎 Allegati -->
+    <h3>📎 Allegati</h3>
+    <ul style="color: #7f8c8d;">
+        <li><strong>Trascrizioni Corrette:</strong> Testo rivisto dall'AI con ortografia e punteggiatura corrette</li>
+        <li><strong>Trascrizioni Grezze:</strong> Output originale di Whisper senza modifiche</li>
+        <li><strong>Trascrizioni Narrative:</strong> Versione ottimizzata per analisi RAG (senza metagaming, eventi normalizzati in terza persona)</li>
+    </ul>
     
-    <h3 style="margin-top: 20px;">👥 NPC Incontrati</h3>
-    <!-- ... NPC table ... -->
+    <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;">
+    <p style="font-size: 11px; color: #95a5a6; text-align: center;">Generato automaticamente dal Bardo AI Lestapenna.</p>
 </div>
         `;
 
@@ -122,11 +199,21 @@ export async function sendSessionRecap(
 
         // ... (Full HTML construction would go here) ...
 
+        // Attachments logic
+        const attachments = [];
+        if (filePaths) {
+            if (fs.existsSync(filePaths.cleaned)) attachments.push({ path: filePaths.cleaned });
+            if (fs.existsSync(filePaths.raw)) attachments.push({ path: filePaths.raw });
+            if (filePaths.summary && fs.existsSync(filePaths.summary)) attachments.push({ path: filePaths.summary });
+        }
+
+        const recipients = getRecipients('SESSION_REPORT_RECIPIENT');
         await sendEmail(
-            process.env.REPORT_RECIPIENT || 'gabligetta@gmail.com',
+            recipients,
             `[Lestapenna] Recap Sessione ${sessionNum}: ${campaign?.name}`,
             `Recap disponibile in HTML.`,
-            htmlContent
+            htmlContent,
+            attachments
         );
 
         // Cleanup

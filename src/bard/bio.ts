@@ -10,9 +10,10 @@ import {
     REGENERATE_NPC_NOTES_PROMPT,
 } from './prompts';
 
-export type BioEntityType = 'CHARACTER' | 'NPC' | 'LOCATION';
+export type BioEntityType = 'CHARACTER' | 'NPC' | 'LOCATION' | 'QUEST' | 'MONSTER' | 'ITEM';
 
 interface BioContext {
+    campaignId?: number; // Optional for backward compat or forced? Should be required really.
     name: string;
     // Context fields (optional based on type)
     role?: string;       // NPC
@@ -65,6 +66,49 @@ function generatePrompt(type: BioEntityType, ctx: BioContext, historyText: strin
     3. **Formato:** Testo descrittivo unico, niente elenchi puntati.
     
     Restituisci SOLO il testo della nuova descrizione.`;
+
+        case 'QUEST':
+            return `Sei il Bardo, custode delle imprese. Scrivi il **Diario della Missione** per la quest: "${ctx.name}".
+STATO ATTUALE: ${ctx.role || 'In Corso'}
+
+CRONOLOGIA EVENTI:
+${historyText}
+
+OBIETTIVO:
+Scrivi un riassunto narrativo della missione che integri gli eventi accaduti.
+- Stile: Diario di bordo o Cronaca avventurosa.
+- Includi gli obiettivi raggiunti e quelli falliti.
+- Se la quest è conclusa, scrivi un epilogo.
+- NO liste puntate, usa paragrafi fluidi.
+- Lunghezza: Massimo 200 parole.`;
+
+        case 'MONSTER':
+            return `Sei uno Studioso di Mostri. Scrivi il **Dossier Ecologico** per: "${ctx.name}".
+NOTE ESISTENTI: ${ctx.currentDesc || 'Nessuna'}
+
+OSSERVAZIONI E INCONTRI:
+${historyText}
+
+OBIETTIVO:
+Compila una descrizione tecnica ma narrativa della creatura basata SOLO su ciò che è stato osservato.
+- Descrivi aspetto, comportamento e abilità viste.
+- Evidenzia debolezze o resistenze scoperte (es. "Sembra temere il fuoco").
+- Non inventare fatti non supportati dalla storia.
+- Stile: Accademico ma pratico (Manuale di Sopravvivenza).`;
+
+        case 'ITEM':
+            return `Sei un Antiquario Arcano. Scrivi la **Leggenda** dell'oggetto: "${ctx.name}".
+DESCRIZIONE BASE: ${ctx.currentDesc || 'Nessuna'}
+
+STORIA DELL'OGGETTO:
+${historyText}
+
+OBIETTIVO:
+Scrivi la storia dell'oggetto basandoti sui suoi passaggi di mano e utilizzi.
+- Chi lo ha trovato? Chi lo ha usato?
+- Ha mostrato poteri particolari?
+- Si è danneggiato o modificato nel tempo?
+- Stile: Descrizione da catalogo d'asta magica o leggenda sussurrata.`;
 
         default:
             return `Aggiorna la descrizione di ${ctx.name} basandoti su: ${historyText}`;
@@ -120,6 +164,28 @@ export async function generateBio(
         monitor.logAIRequestWithCost('bio_gen', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
 
         const newDesc = response.choices[0].message.content?.trim() || ctx.currentDesc || "";
+
+        // 5. Persist Changes (Phase 2 Unification)
+        if (ctx.campaignId) {
+            const campaignId = ctx.campaignId;
+            switch (type) {
+                case 'QUEST': {
+                    const { questRepository } = await import('../db/repositories/QuestRepository');
+                    questRepository.updateQuestDescription(campaignId, ctx.name, newDesc);
+                    break;
+                }
+                case 'MONSTER': {
+                    const { bestiaryRepository } = await import('../db/repositories/BestiaryRepository');
+                    bestiaryRepository.updateBestiaryDescription(campaignId, ctx.name, newDesc);
+                    break;
+                }
+                case 'ITEM': {
+                    const { inventoryRepository } = await import('../db/repositories/InventoryRepository');
+                    inventoryRepository.updateInventoryDescription(campaignId, ctx.name, newDesc);
+                    break;
+                }
+            }
+        }
 
         console.log(`[BioGen] ✅ Bio aggiornata per ${ctx.name} (${newDesc.length} chars)`);
         return newDesc;

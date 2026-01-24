@@ -276,7 +276,7 @@ export const npcCommand: Command = {
                     // But if we want to "Replace completely", we might need a "snapshot" event that says "This is the new truth".
 
                     const eventDesc = `[AGGIORNAMENTO FORZATO] ${value}`;
-                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL_UPDATE', eventDesc, 'FORCE_UPDATE');
+                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'FORCE_UPDATE');
 
                     const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
 
@@ -286,7 +286,7 @@ export const npcCommand: Command = {
                     const loadingMsg = await ctx.message.reply(`⚙️ Aggiungo nota al dossier di **${name}**...`);
 
                     const eventDesc = `[NOTA DM] ${value}`;
-                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL_UPDATE', eventDesc, 'DM_NOTE');
+                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'DM_NOTE');
 
                     // Trigger regen
                     const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);

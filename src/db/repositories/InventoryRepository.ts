@@ -76,19 +76,54 @@ export const inventoryRepository = {
 
                 db.prepare(`
                     UPDATE inventory 
-                    SET quantity = ?, description = ?, notes = ?, last_updated = ?
+                    SET quantity = ?, description = ?, notes = ?, last_updated = ?, rag_sync_needed = 1
                     WHERE id = ?
                 `).run(totalQty, newDesc.trim() || null, newNotes.trim() || null, Date.now(), target.id);
 
                 db.prepare('DELETE FROM inventory WHERE id = ?').run(source.id);
             } else {
                 // Rename
-                db.prepare('UPDATE inventory SET item_name = ?, last_updated = ? WHERE id = ?')
+                db.prepare('UPDATE inventory SET item_name = ?, last_updated = ?, rag_sync_needed = 1 WHERE id = ?')
                     .run(newName, Date.now(), source.id);
             }
         })();
 
         console.log(`[Inventory] 🔀 Merged: ${oldName} -> ${newName}`);
         return true;
+    },
+
+    addInventoryEvent: (campaignId: number, itemName: string, sessionId: string, description: string, type: string) => {
+        db.prepare(`
+            INSERT INTO inventory_history (campaign_id, item_name, session_id, description, event_type, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(campaignId, itemName, sessionId, description, type, Date.now());
+    },
+
+    getInventoryHistory: (campaignId: number, itemName: string): any[] => {
+        return db.prepare(`
+            SELECT * FROM inventory_history 
+            WHERE campaign_id = ? AND lower(item_name) = lower(?)
+            ORDER BY timestamp ASC
+        `).all(campaignId, itemName);
+    },
+
+    updateInventoryDescription: (campaignId: number, itemName: string, description: string) => {
+        db.prepare(`
+            UPDATE inventory 
+            SET description = ?, rag_sync_needed = 1
+            WHERE campaign_id = ? AND lower(item_name) = lower(?)
+        `).run(description, campaignId, itemName);
+    },
+
+    markInventoryDirty: (campaignId: number, itemName: string) => {
+        db.prepare('UPDATE inventory SET rag_sync_needed = 1 WHERE campaign_id = ? AND lower(item_name) = lower(?)').run(campaignId, itemName);
+    },
+
+    getDirtyInventoryItems: (campaignId: number): InventoryItem[] => {
+        return db.prepare('SELECT * FROM inventory WHERE campaign_id = ? AND rag_sync_needed = 1').all(campaignId) as InventoryItem[];
+    },
+
+    clearInventoryDirtyFlag: (campaignId: number, itemName: string) => {
+        db.prepare('UPDATE inventory SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(item_name) = lower(?)').run(campaignId, itemName);
     }
 };

@@ -8,10 +8,26 @@ import {
     removeLoot,
     getInventory,
     getSessionInventory,
-    mergeInventoryItems
+    mergeInventoryItems,
+    // New imports
+    addInventoryEvent,
+    getInventoryItemByName,
+    getInventoryHistory
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
+import { generateBio } from '../../bard/bio';
+
+// Helper for Regen
+async function regenerateItemBio(campaignId: number, itemName: string) {
+    const history = getInventoryHistory(campaignId, itemName);
+    const item = getInventoryItemByName(campaignId, itemName);
+    const currentDesc = item?.description || "";
+
+    // Map history to simple objects
+    const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
+    await generateBio('ITEM', { campaignId, name: itemName, currentDesc }, simpleHistory);
+}
 
 export const inventoryCommand: Command = {
     name: 'inventory',
@@ -34,25 +50,68 @@ export const inventoryCommand: Command = {
                 return;
             }
 
-            const list = sessionItems.map((i: any) => `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}`).join('\n');
+            const list = sessionItems.map((i: any) => {
+                const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
+                return `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+            }).join('\n');
             await ctx.message.reply(`**💰 Loot della Sessione \`${sessionId}\`:**\n\n${list}`);
             return;
         }
 
         // SUBCOMMAND: $loot add <Item>
         if (arg.toLowerCase().startsWith('add ')) {
-            const item = arg.substring(4);
+            const item = arg.substring(4).trim();
             const currentSession = guildSessions.get(ctx.guildId);
             addLoot(ctx.activeCampaign!.id, item, 1, currentSession);
+
+            // Add Event
+            if (currentSession) {
+                addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto acquisito.", "LOOT");
+                regenerateItemBio(ctx.activeCampaign!.id, item);
+            }
+
             await ctx.message.reply(`💰 Aggiunto: **${item}**`);
+            return;
+        }
+
+        // SUBCOMMAND: $loot update <Item> | <Note>
+        if (arg.toLowerCase().startsWith('update ')) {
+            const content = arg.substring(7);
+            const parts = content.split('|');
+            if (parts.length < 2) {
+                await ctx.message.reply("⚠️ Uso: `$loot update <Oggetto> | <Nota/Storia>`");
+                return;
+            }
+            const item = parts[0].trim();
+            const note = parts.slice(1).join('|').trim();
+
+            const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
+            if (!existing) {
+                await ctx.message.reply(`❌ Oggetto non trovato: "${item}"`);
+                return;
+            }
+
+            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, note, "MANUAL_UPDATE");
+            await ctx.message.reply(`📝 Nota aggiunta a **${item}**. Aggiornamento leggenda...`);
+
+            await regenerateItemBio(ctx.activeCampaign!.id, item);
             return;
         }
 
         // SUBCOMMAND: $loot use <Item>
         if (arg.toLowerCase().startsWith('use ') || arg.toLowerCase().startsWith('usa ') || arg.toLowerCase().startsWith('remove ')) {
-            const item = arg.split(' ').slice(1).join(' ');
+            const item = arg.split(' ').slice(1).join(' '); // Simple split isn't perfect for multi-word items but legacy was like this
+            // We should arguably parse better but sticking to legacy behavior:
+            // The split is `arg.split(' ').slice(1).join(' ')` which basically takes everything after "use".
+
             const removed = removeLoot(ctx.activeCampaign!.id, item, 1);
-            if (removed) await ctx.message.reply(`📉 Rimosso/Usato: **${item}**`);
+            if (removed) {
+                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto utilizzato/rimosso.", "USE");
+                regenerateItemBio(ctx.activeCampaign!.id, item);
+                await ctx.message.reply(`📉 Rimosso/Usato: **${item}**`);
+            }
             else await ctx.message.reply(`⚠️ Oggetto "${item}" non trovato nell'inventario.`);
             return;
         }
@@ -64,8 +123,11 @@ export const inventoryCommand: Command = {
             return;
         }
 
-        const list = items.map((i: any) => `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}`).join('\n');
-        await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}`);
+        const list = items.map((i: any) => {
+            const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
+            return `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+        }).join('\n');
+        await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$loot update <Item> | <Nota>\` per aggiungere storia.`);
     }
 };
 

@@ -126,6 +126,10 @@ export const getMonsterByName = bestiaryRepository.getMonsterByName;
 export const mergeMonsters = bestiaryRepository.mergeMonsters;
 export const listMonsters = bestiaryRepository.listMonsters;
 export const getSessionMonsters = bestiaryRepository.getSessionMonsters;
+export const addBestiaryEvent = bestiaryRepository.addBestiaryEvent;
+export const getBestiaryHistory = bestiaryRepository.getBestiaryHistory;
+export const getDirtyBestiaryEntries = bestiaryRepository.getDirtyBestiaryEntries;
+export const clearBestiaryDirtyFlag = bestiaryRepository.clearBestiaryDirtyFlag;
 
 // Quest
 export const addQuest = questRepository.addQuest;
@@ -137,6 +141,10 @@ export const getOpenQuests = questRepository.getOpenQuests;
 export const listAllQuests = questRepository.listAllQuests;
 export const getQuestByTitle = questRepository.getQuestByTitle;
 export const mergeQuests = questRepository.mergeQuests;
+export const addQuestEvent = questRepository.addQuestEvent;
+export const getQuestHistory = questRepository.getQuestHistory;
+export const getDirtyQuests = questRepository.getDirtyQuests;
+export const clearQuestDirtyFlag = questRepository.clearQuestDirtyFlag;
 
 // Inventory
 export const addLoot = inventoryRepository.addLoot;
@@ -146,6 +154,10 @@ export const getSessionInventory = inventoryRepository.getSessionInventory;
 export const listAllInventory = inventoryRepository.listAllInventory;
 export const getInventoryItemByName = inventoryRepository.getInventoryItemByName;
 export const mergeInventoryItems = inventoryRepository.mergeInventoryItems;
+export const addInventoryEvent = inventoryRepository.addInventoryEvent;
+export const getInventoryHistory = inventoryRepository.getInventoryHistory;
+export const getDirtyInventoryItems = inventoryRepository.getDirtyInventoryItems;
+export const clearInventoryDirtyFlag = inventoryRepository.clearInventoryDirtyFlag;
 
 // Character
 export const addCharacterEvent = characterRepository.addCharacterEvent;

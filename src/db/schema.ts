@@ -216,6 +216,7 @@ export const initDatabase = () => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         campaign_id INTEGER NOT NULL,
         title TEXT NOT NULL,
+        description TEXT, -- 🆕 Narrative Journal
         status TEXT DEFAULT 'OPEN', -- OPEN, COMPLETED, FAILED
         created_at INTEGER,
         last_updated INTEGER,
@@ -260,6 +261,45 @@ export const initDatabase = () => {
         role TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // --- TABELLA STORIA QUEST ---
+    db.exec(`CREATE TABLE IF NOT EXISTS quest_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        quest_title TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT, -- 'PROGRESS', 'COMPLETION', 'FAILURE', 'MANUAL_UPDATE'
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_quest_history_title ON quest_history (campaign_id, quest_title)`);
+
+    // --- TABELLA STORIA BESTIARIO ---
+    db.exec(`CREATE TABLE IF NOT EXISTS bestiary_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        monster_name TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT, -- 'ENCOUNTER', 'OBSERVATION', 'AUTOPSY', 'MANUAL_UPDATE'
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_bestiary_history_name ON bestiary_history (campaign_id, monster_name)`);
+
+    // --- TABELLA STORIA INVENTARIO ---
+    db.exec(`CREATE TABLE IF NOT EXISTS inventory_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        item_name TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT, -- 'LOOT', 'USE', 'DAMAGE', 'SALE', 'MANUAL_UPDATE'
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_history_name ON inventory_history (campaign_id, item_name)`);
 
     // --- MIGRATIONS ---
     const migrations = [
@@ -335,7 +375,13 @@ export const initDatabase = () => {
         "ALTER TABLE location_atlas ADD COLUMN last_updated_session_id TEXT",
         // 🆕 UNIFIED BIO FLOW: Storia per Atlante
         "CREATE TABLE IF NOT EXISTS atlas_history (id INTEGER PRIMARY KEY AUTOINCREMENT, campaign_id INTEGER NOT NULL, macro_location TEXT, micro_location TEXT, description TEXT NOT NULL, event_type TEXT, session_id TEXT, timestamp INTEGER, FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE)",
-        "CREATE INDEX IF NOT EXISTS idx_atlas_history_loc ON atlas_history (campaign_id, macro_location, micro_location)"
+        "CREATE INDEX IF NOT EXISTS idx_atlas_history_loc ON atlas_history (campaign_id, macro_location, micro_location)",
+        // 🆕 PHASE 2: Rag Sync per tutti
+        "ALTER TABLE quests ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+        "ALTER TABLE bestiary ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+        "ALTER TABLE inventory ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
+        // 🆕 PHASE 2: Description for Quests
+        "ALTER TABLE quests ADD COLUMN description TEXT"
     ];
 
     for (const m of migrations) {

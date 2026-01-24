@@ -180,5 +180,58 @@ export const bestiaryRepository = {
         return db.prepare(`
             SELECT * FROM bestiary WHERE session_id = ?
         `).all(sessionId) as BestiaryEntry[];
+    },
+
+    addBestiaryEvent: (campaignId: number, name: string, sessionId: string, description: string, type: string) => {
+        db.prepare(`
+            INSERT INTO bestiary_history (campaign_id, monster_name, session_id, description, event_type, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(campaignId, name, sessionId, description, type, Date.now());
+    },
+
+    getBestiaryHistory: (campaignId: number, name: string): any[] => {
+        return db.prepare(`
+            SELECT * FROM bestiary_history 
+            WHERE campaign_id = ? AND lower(monster_name) = lower(?)
+            ORDER BY timestamp ASC
+        `).all(campaignId, name);
+    },
+
+    updateBestiaryDescription: (campaignId: number, name: string, description: string) => {
+        // Update the main description (and sets dirty = 0 because this comes from bio generator?)
+        // Actually BioGenerator usually sets dirty=1 to trigger RAG sync.
+        // Let's stick to pattern: Update Desc -> Dirty=1 -> RAG Sync -> Dirty=0.
+        db.prepare(`
+            UPDATE bestiary 
+            SET description = ?, rag_sync_needed = 1
+            WHERE campaign_id = ? AND lower(name) = lower(?)
+        `).run(description, campaignId, name);
+        // Note: Bestiary rows are PER SESSION in the current design (unique idx on session_id).
+        // If we want a GLOBAL description, we should update ALL rows for that monster? 
+        // OR we should have a "Canonical" entry with session_id = NULL?
+        // The implementation plan implies a global entity.
+        // Current Bestiary schema: unique per session.
+        // `getMonsterByName` gets the MOST RECENT.
+        // If we update description, we probably want to update the MOST RECENT one or all?
+        // Let's update ALL for now to keep them consistent, or just the latest?
+        // Updating all is safer for "Knowledge".
+        db.prepare(`
+            UPDATE bestiary 
+            SET description = ?, rag_sync_needed = 1
+            WHERE campaign_id = ? AND lower(name) = lower(?)
+        `).run(description, campaignId, name);
+    },
+
+    markBestiaryDirty: (campaignId: number, name: string) => {
+        db.prepare('UPDATE bestiary SET rag_sync_needed = 1 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+    },
+
+    getDirtyBestiaryEntries: (campaignId: number): BestiaryEntry[] => {
+        // Group by name to avoid duplicates
+        return db.prepare('SELECT * FROM bestiary WHERE campaign_id = ? AND rag_sync_needed = 1 GROUP BY name').all(campaignId) as BestiaryEntry[];
+    },
+
+    clearBestiaryDirtyFlag: (campaignId: number, name: string) => {
+        db.prepare('UPDATE bestiary SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
     }
 };

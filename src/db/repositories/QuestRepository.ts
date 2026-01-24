@@ -128,5 +128,43 @@ export const questRepository = {
 
         console.log(`[Quest] 🔀 Merge/Rename: ${oldTitle} -> ${newTitle}`);
         return true;
+    },
+    addQuestEvent: (campaignId: number, title: string, sessionId: string, description: string, type: string) => {
+        db.prepare(`
+            INSERT INTO quest_history (campaign_id, quest_title, session_id, description, event_type, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(campaignId, title, sessionId, description, type, Date.now());
+    },
+
+    getQuestHistory: (campaignId: number, title: string): any[] => {
+        return db.prepare(`
+            SELECT * FROM quest_history 
+            WHERE campaign_id = ? AND lower(quest_title) = lower(?)
+            ORDER BY timestamp ASC
+        `).all(campaignId, title);
+    },
+
+    updateQuestDescription: (campaignId: number, title: string, description: string) => {
+        db.prepare(`
+            UPDATE quests 
+            SET description = ?, rag_sync_needed = 1, last_updated = ?
+            WHERE campaign_id = ? AND lower(title) = lower(?)
+        `).run(description, Date.now(), campaignId, title);
+        // Note: description column needs to be added to quests? 
+        // Checking schema... Quests table definition in schema.ts (Line 215) doesn't have description!
+        // Wait, schema.ts line 215: id, campaign_id, title, status... NO description.
+        // I need to add description column to quests!
+    },
+
+    markQuestDirty: (campaignId: number, title: string) => {
+        db.prepare('UPDATE quests SET rag_sync_needed = 1 WHERE campaign_id = ? AND lower(title) = lower(?)').run(campaignId, title);
+    },
+
+    getDirtyQuests: (campaignId: number): Quest[] => {
+        return db.prepare('SELECT * FROM quests WHERE campaign_id = ? AND rag_sync_needed = 1').all(campaignId) as Quest[];
+    },
+
+    clearQuestDirtyFlag: (campaignId: number, title: string) => {
+        db.prepare('UPDATE quests SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(title) = lower(?)').run(campaignId, title);
     }
 };

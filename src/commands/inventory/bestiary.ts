@@ -3,7 +3,27 @@
  */
 
 import { Command, CommandContext } from '../types';
-import { listAllMonsters, mergeMonsters } from '../../db';
+import {
+    listAllMonsters,
+    mergeMonsters,
+    // New imports
+    addBestiaryEvent,
+    getMonsterByName,
+    getBestiaryHistory
+} from '../../db';
+import { guildSessions } from '../../state/sessionState';
+import { generateBio } from '../../bard/bio';
+
+// Helper for Regen
+async function regenerateMonsterBio(campaignId: number, monsterName: string) {
+    const history = getBestiaryHistory(campaignId, monsterName);
+    const monster = getMonsterByName(campaignId, monsterName);
+    const currentDesc = monster?.description || "";
+
+    // Map history to simple objects
+    const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
+    await generateBio('MONSTER', { campaignId, name: monsterName, currentDesc }, simpleHistory);
+}
 
 export const bestiaryCommand: Command = {
     name: 'bestiary',
@@ -12,6 +32,31 @@ export const bestiaryCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const arg = ctx.args.join(' ');
+
+        // SUBCOMMAND: $bestiario update <Name> | <Note>
+        if (arg.toLowerCase().startsWith('update ')) {
+            const content = arg.substring(7);
+            const parts = content.split('|');
+            if (parts.length < 2) {
+                await ctx.message.reply("⚠️ Uso: `$bestiario update <Mostro> | <Nota/Osservazione>`");
+                return;
+            }
+            const name = parts[0].trim();
+            const note = parts.slice(1).join('|').trim();
+
+            const monster = getMonsterByName(ctx.activeCampaign!.id, name);
+            if (!monster) {
+                await ctx.message.reply(`❌ Mostro "${name}" non trovato.`);
+                return;
+            }
+
+            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            addBestiaryEvent(ctx.activeCampaign!.id, name, currentSession, note, "MANUAL_UPDATE");
+            await ctx.message.reply(`📝 Nota aggiunta a **${name}**. Aggiornamento dossier...`);
+
+            await regenerateMonsterBio(ctx.activeCampaign!.id, name);
+            return;
+        }
 
         // SUBCOMMAND: $bestiario merge <old> | <new>
         if (arg.toLowerCase().startsWith('merge ')) {
@@ -24,6 +69,9 @@ export const bestiaryCommand: Command = {
             const success = mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
             if (success) {
                 await ctx.message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);
+                // Trigger regen for new name?
+                // Maybe yes, but complicated logic with merged history.
+                // For now leave as is.
             } else {
                 await ctx.message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nel bestiario.`);
             }
@@ -54,7 +102,7 @@ export const bestiaryCommand: Command = {
             if (resistances.length > 0) details += `🛡️ **Resistenze:** ${resistances.join(', ')}\n`;
             if (monster.notes) details += `\n📝 **Note:** ${monster.notes}\n`;
 
-            await ctx.message.reply(details);
+            await ctx.message.reply(`${details}\n\n💡 Usa \`$bestiario update <Nome> | <Nota>\` per aggiungere osservazioni.`);
             return;
         }
 
@@ -69,6 +117,9 @@ export const bestiaryCommand: Command = {
         const alive = monsters.filter((m: any) => m.status === 'ALIVE');
         const fled = monsters.filter((m: any) => m.status === 'FLED');
 
+        // Only show top 20 or summary if too many?
+        // Current logic shows all. 
+
         let response = `**👹 Bestiario (${ctx.activeCampaign?.name})**\n\n`;
 
         if (alive.length > 0) {
@@ -81,7 +132,7 @@ export const bestiaryCommand: Command = {
             response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
 
-        response += `💡 Usa \`$bestiario <nome>\` per dettagli o \`$bestiario merge <v> | <n>\` per unire duplicati.`;
+        response += `💡 Usa \`$bestiario <nome>\` per dettagli o \`$bestiario update ...\` per note.`;
         await ctx.message.reply(response);
     }
 };

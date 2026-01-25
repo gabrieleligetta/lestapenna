@@ -17,6 +17,8 @@ import {
     updateNpcEntry, // ??
     getCharacterHistory, // for generateCharacterBio
     getNpcHistory,
+    addSessionLog,
+    getSessionLog,
     // Add repositories for hydration
     inventoryRepository,
     questRepository,
@@ -627,6 +629,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
                 // If we have travel log, we can infer location updates roughly or leave empty as they are for atlas
                 // partialAnalystData.location_updates = ... 
+
+                // Hydrate Logs
+                partialAnalystData.log = getSessionLog(sessionId);
             }
 
             // Merge Dati Analista

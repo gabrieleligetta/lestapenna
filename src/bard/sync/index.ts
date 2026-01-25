@@ -12,3 +12,6 @@ export {
     resetAllCharacterBios,
     regenerateCharacterDescription
 } from './character';
+export { syncAllDirtyBestiary, syncBestiaryEntryIfNeeded } from './bestiary';
+export { syncAllDirtyInventory, syncInventoryEntryIfNeeded } from './inventory';
+export { syncAllDirtyQuests, syncQuestEntryIfNeeded } from './quest';

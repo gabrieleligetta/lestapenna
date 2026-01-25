@@ -134,5 +134,17 @@ export const sessionRepository = {
         for (const table of tables) {
             db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
         }
+
+        // Also clear logs
+        db.prepare(`DELETE FROM session_logs WHERE session_id = ?`).run(sessionId);
+    },
+
+    addSessionLog: (sessionId: string, content: string): void => {
+        db.prepare('INSERT INTO session_logs (session_id, content) VALUES (?, ?)').run(sessionId, content);
+    },
+
+    getSessionLog: (sessionId: string): string[] => {
+        const rows = db.prepare('SELECT content FROM session_logs WHERE session_id = ? ORDER BY id ASC').all(sessionId) as { content: string }[];
+        return rows.map(r => r.content);
     }
 };

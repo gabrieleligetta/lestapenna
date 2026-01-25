@@ -108,6 +108,7 @@ export interface Quest {
     id: number;
     campaign_id: number;
     title: string;
+    description?: string;
     status: 'OPEN' | 'COMPLETED' | 'FAILED';
     created_at: number;
     last_updated: number;

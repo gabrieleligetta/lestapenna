@@ -21,7 +21,8 @@ import {
     markCharacterDirtyByName,
     markNpcDirty,
     markAtlasDirty,
-    clearSessionDerivedData
+    clearSessionDerivedData,
+    addSessionLog
 } from '../../db';
 import {
     ingestSessionComplete,
@@ -29,6 +30,7 @@ import {
     ingestBioEvent,
     ingestWorldEvent,
     ingestLootEvent,
+    ingestGenericEvent,
     deduplicateItemBatch,
     reconcileItemName,
     deduplicateNpcBatch,
@@ -40,7 +42,10 @@ import {
     reconcileMonsterName,
     syncAllDirtyNpcs,
     syncAllDirtyCharacters,
-    syncAllDirtyAtlas
+    syncAllDirtyAtlas,
+    syncAllDirtyBestiary,
+    syncAllDirtyInventory,
+    syncAllDirtyQuests
 } from '../../bard';
 
 export class IngestionService {
@@ -82,6 +87,7 @@ export class IngestionService {
         if (result.npc_events?.length) batchInput.npc_events = result.npc_events;
         if (result.world_events?.length) batchInput.world_events = result.world_events;
         if (result.loot?.length) batchInput.loot = result.loot;
+        if (result.loot_removed?.length) batchInput.loot_removed = result.loot_removed;
         if (result.quests?.length) batchInput.quests = result.quests;
 
         // 📍 PHASE: VALIDATING
@@ -106,6 +112,7 @@ export class IngestionService {
                 (validated.character_events.keep.length) +
                 (validated.world_events.keep.length) +
                 (validated.loot.keep.length) +
+                (validated.loot_removed.keep.length) +
                 (validated.quests.keep.length);
 
             const totalSkipped = totalInput - totalKept;
@@ -134,9 +141,27 @@ export class IngestionService {
         // Process monsters
         await this.processMonsters(campaignId, sessionId, result.monsters);
 
-        // Update present NPCs
+        // Process present NPCs
         if (result.present_npcs?.length) {
             updateSessionPresentNPCs(sessionId, result.present_npcs);
+        }
+
+        // 🆕 Process Logs (Bullet points)
+        if (result.log?.length) {
+            console.log(`[Ingestion] 📝 Salvataggio ${result.log.length} voci di log...`);
+            for (const entry of result.log) {
+                addSessionLog(sessionId, entry);
+                // Also ingest in RAG for better semantic search of specific actions
+                await ingestGenericEvent(campaignId, sessionId, `[LOG AZIONE] ${entry}`, [], 'SESSION_LOG');
+            }
+        }
+
+        // 🆕 Process Travel Sequence
+        if (result.travel_sequence?.length) {
+            console.log(`[Ingestion] 🗺️ Salvataggio ${result.travel_sequence.length} spostamenti...`);
+            for (const travel of result.travel_sequence) {
+                updateLocation(campaignId, travel.macro, travel.micro, sessionId, travel.reason);
+            }
         }
 
         // 📍 PHASE: SYNCING
@@ -152,10 +177,10 @@ export class IngestionService {
     private async processValidatedEvents(campaignId: number, sessionId: string, validated: any): Promise<void> {
         // Character events
         for (const evt of validated.character_events.keep) {
-            const safeDesc = evt.description || "Evento significativo registrato.";
+            const safeDesc = evt.event || "Evento significativo registrato.";
             console.log(`[PG] ➕ ${evt.name}: ${safeDesc}`);
             // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string)
-            addCharacterEvent(campaignId, evt.name, sessionId, safeDesc, 'GROWTH');
+            addCharacterEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'GROWTH');
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string)
             await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG');
             markCharacterDirtyByName(campaignId, evt.name);
@@ -163,10 +188,10 @@ export class IngestionService {
 
         // NPC events
         for (const evt of validated.npc_events.keep) {
-            const safeDesc = evt.description || "Interazione rilevante registrata.";
+            const safeDesc = evt.event || "Interazione rilevante registrata.";
             console.log(`[NPC] ➕ ${evt.name}: ${safeDesc}`);
             // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string)
-            addNpcEvent(campaignId, evt.name, sessionId, safeDesc, 'EVENT');
+            addNpcEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'EVENT');
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string)
             await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'NPC');
             markNpcDirty(campaignId, evt.name);
@@ -174,12 +199,12 @@ export class IngestionService {
 
         // World events
         for (const evt of validated.world_events.keep) {
-            const safeDesc = evt.description || "Evento mondiale registrato.";
+            const safeDesc = evt.event || "Evento mondiale registrato.";
             console.log(`[World] ➕ ${safeDesc}`);
             // Signature: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number)
-            addWorldEvent(campaignId, sessionId, safeDesc, 'EVENT');
+            addWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT');
             // Signature: (campaignId: number, sessionId: string, event: string, type: string)
-            await ingestWorldEvent(campaignId, sessionId, safeDesc, 'EVENT');
+            await ingestWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT');
         }
 
         // Loot (with reconciliation)
@@ -212,14 +237,20 @@ export class IngestionService {
                 if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
                 removeLoot(campaignId, finalName, item.quantity || 1);
+
+                // Also ingest in RAG to track WHY it was removed
+                await ingestLootEvent(campaignId, sessionId, {
+                    ...item,
+                    name: `[RIMOSSO/USATO] ${finalName}`
+                });
             }
         }
 
         // Quests
         for (const quest of validated.quests.keep) {
-            console.log(`[Quest] ➕ ${quest.title}`);
+            console.log(`[Quest] ➕ ${quest}`);
             // Signature: (campaignId: number, title: string, sessionId?: string)
-            addQuest(campaignId, quest.title, sessionId);
+            addQuest(campaignId, quest, sessionId);
         }
     }
 
@@ -343,6 +374,24 @@ export class IngestionService {
                 if (syncedAtlasCount > 0) {
                     console.log(`[Sync] ✅ Sincronizzati ${syncedAtlasCount} luoghi con RAG.`);
                 }
+            }
+
+            // Sync Bestiary
+            const syncedBestiaryCount = await syncAllDirtyBestiary(campaignId);
+            if (syncedBestiaryCount > 0) {
+                console.log(`[Sync] ✅ Sincronizzati ${syncedBestiaryCount} mostri con RAG.`);
+            }
+
+            // Sync Inventory
+            const syncedInventoryCount = await syncAllDirtyInventory(campaignId);
+            if (syncedInventoryCount > 0) {
+                console.log(`[Sync] ✅ Sincronizzati ${syncedInventoryCount} oggetti con RAG.`);
+            }
+
+            // Sync Quests
+            const syncedQuestCount = await syncAllDirtyQuests(campaignId);
+            if (syncedQuestCount > 0) {
+                console.log(`[Sync] ✅ Sincronizzati ${syncedQuestCount} quest con RAG.`);
             }
         } catch (e) {
             console.error('[Sync] ⚠️ Errore batch sync:', e);

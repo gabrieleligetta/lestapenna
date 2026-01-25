@@ -54,11 +54,11 @@ export const bestiaryRepository = {
         db.prepare(`
             INSERT INTO bestiary (
                 campaign_id, name, status, count, session_id, last_seen,
-                description, abilities, weaknesses, resistances, notes, first_session_id
+                description, abilities, weaknesses, resistances, notes, first_session_id, rag_sync_needed
             )
             VALUES (
                 $campaignId, $name, $status, $count, $sessionId, $timestamp,
-                $desc, $abil, $weak, $res, $notes, $sessionId
+                $desc, $abil, $weak, $res, $notes, $sessionId, 1
             )
             ON CONFLICT(campaign_id, name, session_id) WHERE session_id IS NOT NULL
             DO UPDATE SET 
@@ -69,7 +69,8 @@ export const bestiaryRepository = {
                 abilities = COALESCE($abil, abilities),
                 weaknesses = COALESCE($weak, weaknesses),
                 resistances = COALESCE($res, resistances),
-                notes = COALESCE($notes, notes)
+                notes = COALESCE($notes, notes),
+                rag_sync_needed = 1
         `).run({
             campaignId,
             name,

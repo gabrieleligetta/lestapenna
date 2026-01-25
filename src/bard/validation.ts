@@ -86,6 +86,7 @@ export async function validateBatch(
             character_events: result.character_events || { keep: input.character_events || [], skip: [] },
             world_events: result.world_events || { keep: input.world_events || [], skip: [] },
             loot: result.loot || { keep: input.loot || [], skip: [] },
+            loot_removed: result.loot_removed || { keep: input.loot_removed || [], skip: [] },
             quests: result.quests || { keep: input.quests || [], skip: [] },
             atlas: result.atlas || { action: 'keep' }
         };
@@ -99,6 +100,7 @@ export async function validateBatch(
             character_events: { keep: input.character_events || [], skip: [] },
             world_events: { keep: input.world_events || [], skip: [] },
             loot: { keep: input.loot || [], skip: [] },
+            loot_removed: { keep: input.loot_removed || [], skip: [] },
             quests: { keep: input.quests || [], skip: [] },
             atlas: { action: 'keep' }
         };

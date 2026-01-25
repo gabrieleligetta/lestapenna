@@ -114,6 +114,7 @@ export interface ValidationBatchInput {
     character_events?: Array<{ name: string; event: string; type: string }>;
     world_events?: Array<{ event: string; type: string }>;
     loot?: Array<{ name: string; quantity?: number; description?: string }>;
+    loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
     quests?: string[];
     atlas_update?: {
         macro: string;
@@ -128,6 +129,7 @@ export interface ValidationBatchOutput {
     character_events: { keep: any[]; skip: string[] };
     world_events: { keep: any[]; skip: string[] };
     loot: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
+    loot_removed: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
     quests: { keep: string[]; skip: string[] };
     atlas: { action: 'keep' | 'skip' | 'merge'; text?: string };
 }

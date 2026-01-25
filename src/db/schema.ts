@@ -161,6 +161,7 @@ export const initDatabase = () => {
         location TEXT,
         macro_location TEXT,
         micro_location TEXT,
+        reason TEXT, -- 🆕 Motivo spostamento
         session_date TEXT,
         session_id TEXT,
         timestamp INTEGER,
@@ -301,6 +302,15 @@ export const initDatabase = () => {
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_history_name ON inventory_history (campaign_id, item_name)`);
 
+    // --- TABELLA LOG SESSIONE (RIASSUNTO EVENTI) ---
+    db.exec(`CREATE TABLE IF NOT EXISTS session_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_session_logs_session ON session_logs (session_id)`);
+
     // --- MIGRATIONS ---
     const migrations = [
         "ALTER TABLE sessions ADD COLUMN guild_id TEXT",
@@ -381,7 +391,12 @@ export const initDatabase = () => {
         "ALTER TABLE bestiary ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
         "ALTER TABLE inventory ADD COLUMN rag_sync_needed INTEGER DEFAULT 0",
         // 🆕 PHASE 2: Description for Quests
-        "ALTER TABLE quests ADD COLUMN description TEXT"
+        "ALTER TABLE quests ADD COLUMN description TEXT",
+        // 🆕 SESSION LOGS (Bullet points)
+        "CREATE TABLE IF NOT EXISTS session_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, content TEXT NOT NULL, FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE)",
+        "CREATE INDEX IF NOT EXISTS idx_session_logs_session ON session_logs (session_id)",
+        // 🆕 TRAVEL REASONS
+        "ALTER TABLE location_history ADD COLUMN reason TEXT"
     ];
 
     for (const m of migrations) {

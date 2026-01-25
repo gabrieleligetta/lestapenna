@@ -56,7 +56,7 @@ export const questRepository = {
             }
         }
 
-        db.prepare('INSERT INTO quests (campaign_id, title, session_id, created_at, last_updated) VALUES (?, ?, ?, ?, ?)')
+        db.prepare('INSERT INTO quests (campaign_id, title, session_id, created_at, last_updated, rag_sync_needed) VALUES (?, ?, ?, ?, ?, 1)')
             .run(campaignId, cleanedTitle, sessionId || null, Date.now(), Date.now());
 
         console.log(`[Quest] 🆕 Nuova Quest: ${cleanedTitle}`);
@@ -131,7 +131,7 @@ export const questRepository = {
                 db.prepare('DELETE FROM quests WHERE id = ?').run(source.id);
             } else {
                 // Rename
-                db.prepare('UPDATE quests SET title = ?, last_updated = ? WHERE id = ?')
+                db.prepare('UPDATE quests SET title = ?, last_updated = ?, rag_sync_needed = 1 WHERE id = ?')
                     .run(newTitle, Date.now(), source.id);
             }
         })();

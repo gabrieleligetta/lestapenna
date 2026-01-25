@@ -188,5 +188,18 @@ export const knowledgeRepository = {
                 db.prepare('DELETE FROM knowledge_fragments WHERE id = ?').run(row.id);
             }
         }
+    },
+
+    deleteBestiaryRagSummary: (campaignId: number, monsterName: string) => {
+        const rows = db.prepare(`
+            SELECT id, content FROM knowledge_fragments 
+            WHERE campaign_id = ? AND session_id = 'BESTIARY_UPDATE'
+        `).all(campaignId) as { id: number, content: string }[];
+
+        for (const row of rows) {
+            if (row.content.includes(monsterName)) {
+                db.prepare('DELETE FROM knowledge_fragments WHERE id = ?').run(row.id);
+            }
+        }
     }
 };

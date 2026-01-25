@@ -85,15 +85,19 @@ export async function waitForCompletionAndSummarize(client: Client, sessionId: s
             sessionPhaseManager.setPhase(sessionId, 'SUMMARIZING');
             const result = await pipelineService.generateSessionSummary(sessionId, campaignId);
 
-            // 📍 PHASE: INGESTING (RAG base ingestion)
+            // 📍 PHASE: INGESTING (RAG base ingestion & DB Sync)
             sessionPhaseManager.setPhase(sessionId, 'INGESTING');
-            await ingestionService.ingestSummary(sessionId, result);
-            ingestionService.updateSessionTitle(sessionId, result.title);
 
-            // processBatchEvents handles VALIDATING and SYNCING phases internally
+            // First process and validate all batch events (Loot, NPCs, Monsters, Atlas, etc.)
+            // and sync them to RAG
             if (activeCampaign) {
                 await ingestionService.processBatchEvents(campaignId, sessionId, result, channel);
             }
+
+            // Then ingest the final narrative summary into RAG
+            // This ensures entity references (like new NPC IDs) are valid in DB
+            await ingestionService.ingestSummary(sessionId, result);
+            ingestionService.updateSessionTitle(sessionId, result.title);
 
             // Get encountered NPCs for publishing
             const encounteredNPCs = getSessionEncounteredNPCs(sessionId);

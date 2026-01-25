@@ -92,6 +92,7 @@ export const getDirtyAtlasEntries = locationRepository.getDirtyAtlasEntries;
 export const clearAtlasDirtyFlag = locationRepository.clearAtlasDirtyFlag;
 export const markAtlasDirty = locationRepository.markAtlasDirty;
 export const getSessionTravelLog = locationRepository.getSessionTravelLog;
+export const clearSessionLocationHistory = locationRepository.clearSessionLocationHistory;
 export const addAtlasEvent = locationRepository.addAtlasEvent;
 export const getAtlasHistory = locationRepository.getAtlasHistory;
 
@@ -191,6 +192,8 @@ export const findSessionByTimestamp = sessionRepository.findSessionByTimestamp;
 export const addSessionNote = sessionRepository.addSessionNote;
 export const getSessionNotes = sessionRepository.getSessionNotes;
 export const clearSessionDerivedData = sessionRepository.clearSessionDerivedData;
+export const addSessionLog = sessionRepository.addSessionLog;
+export const getSessionLog = sessionRepository.getSessionLog;
 
 // Recording
 export const addRecording = recordingRepository.addRecording;
@@ -221,9 +224,9 @@ export const deleteQuestHistory = questRepository.deleteQuestHistory; // 🆕
 export const deleteQuestRagSummary = knowledgeRepository.deleteQuestRagSummary; // 🆕
 
 // Inventory
-export const deleteInventoryHistory = inventoryRepository.deleteInventoryHistory; // 🆕
 export const deleteInventoryRagSummary = knowledgeRepository.deleteInventoryRagSummary; // 🆕
 export const deleteAtlasRagSummary = knowledgeRepository.deleteAtlasRagSummary;
+export const deleteBestiaryRagSummary = knowledgeRepository.deleteBestiaryRagSummary; // 🆕
 
 // Chat
 export const addChatMessage = chatRepository.addChatMessage;

@@ -15,10 +15,10 @@ export const inventoryRepository = {
             // Legacy Parity: Update session_id to current one if provided (or keep existing if null, but usually we want to track latest touch or first? Legacy used COALESCE(session_id, ?), implying keep original if set? Or set if null?)
             // Legacy: session_id = COALESCE(session_id, ?)
             // This means: if session_id is NULL, set it to new one. If it IS set, KEEP it (track origin).
-            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ?, description = ?, session_id = COALESCE(session_id, ?) WHERE id = ?')
+            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ?, description = ?, session_id = COALESCE(session_id, ?), rag_sync_needed = 1 WHERE id = ?')
                 .run(qty, Date.now(), finalDesc, sessionId || null, existing.id);
         } else {
-            db.prepare('INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            db.prepare('INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed) VALUES (?, ?, ?, ?, ?, ?, ?, 1)')
                 .run(campaignId, cleanName, qty, Date.now(), Date.now(), sessionId || null, description || null);
         }
     },
@@ -33,7 +33,7 @@ export const inventoryRepository = {
             if (newQty === 0) {
                 db.prepare('DELETE FROM inventory WHERE id = ?').run(existing.id);
             } else {
-                db.prepare('UPDATE inventory SET quantity = ?, last_updated = ? WHERE id = ?')
+                db.prepare('UPDATE inventory SET quantity = ?, last_updated = ?, rag_sync_needed = 1 WHERE id = ?')
                     .run(newQty, Date.now(), existing.id);
             }
             return true;

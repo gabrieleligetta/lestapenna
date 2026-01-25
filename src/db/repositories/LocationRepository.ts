@@ -3,7 +3,7 @@ import { AtlasEntryFull } from '../types';
 import { campaignRepository } from './CampaignRepository';
 
 export const locationRepository = {
-    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string): void => {
+    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string): void => {
         // 1. Aggiorna lo stato corrente della campagna
         const current = campaignRepository.getCampaignLocationById(campaignId);
 
@@ -26,10 +26,10 @@ export const locationRepository = {
         else if (micro) legacyLocation = micro;
 
         const historyStmt = db.prepare(`
-            INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_date, timestamp, session_id)
-            VALUES (?, ?, ?, ?, date('now'), ?, ?)
+            INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_id, reason, timestamp, session_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, date('now'))
         `);
-        historyStmt.run(campaignId, legacyLocation, macro, micro, Date.now(), sessionId || null);
+        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, Date.now());
 
         console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
     },
@@ -289,5 +289,9 @@ export const locationRepository = {
             AND lower(micro_location) = lower(?)
             ORDER BY timestamp ASC
         `).all(campaignId, macro, micro) as { description: string, event_type: string, session_id: string }[];
+    },
+
+    clearSessionLocationHistory: (sessionId: string): void => {
+        db.prepare('DELETE FROM location_history WHERE session_id = ?').run(sessionId);
     }
 };

@@ -162,6 +162,7 @@ export const addInventoryEvent = inventoryRepository.addInventoryEvent;
 export const getInventoryHistory = inventoryRepository.getInventoryHistory;
 export const getDirtyInventoryItems = inventoryRepository.getDirtyInventoryItems;
 export const clearInventoryDirtyFlag = inventoryRepository.clearInventoryDirtyFlag;
+export const deleteInventoryHistory = inventoryRepository.deleteInventoryHistory;
 
 // Character
 export const addCharacterEvent = characterRepository.addCharacterEvent;

@@ -85,9 +85,6 @@ async function runJanitorCycle() {
  * Purges all derived data from a session (DB, RAG, Character Sync)
  * Used by $reset and $reprocess commands.
  */
- * Purges all derived data from a session(DB, RAG, Character Sync)
-    * Used by $reset and $reprocess commands.
- */
 export function purgeSessionData(sessionId: string, clearCache: boolean = false) {
     console.log(`[Janitor] 🧹 Purge completo dati derivati per sessione ${sessionId} (ClearCache: ${clearCache})...`);
 

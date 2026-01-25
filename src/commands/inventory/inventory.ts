@@ -16,6 +16,7 @@ import {
     deleteInventoryHistory,
     deleteInventoryRagSummary
 } from '../../db';
+import { inventoryRepository } from '../../db/repositories/InventoryRepository';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
@@ -91,8 +92,9 @@ export const inventoryCommand: Command = {
             const idMatch = item.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const all = getInventory(ctx.activeCampaign!.id);
-                if (all[idx]) item = all[idx].item_name;
+                // Fetch specific item by offset
+                const all = getInventory(ctx.activeCampaign!.id, 1, idx);
+                if (all.length > 0) item = all[0].item_name;
             }
 
             const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
@@ -120,8 +122,8 @@ export const inventoryCommand: Command = {
             const idMatch = item.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const all = getInventory(ctx.activeCampaign!.id);
-                if (all[idx]) item = all[idx].item_name;
+                const all = getInventory(ctx.activeCampaign!.id, 1, idx);
+                if (all.length > 0) item = all[0].item_name;
             }
             // We should arguably parse better but sticking to legacy behavior:
             // The split is `arg.split(' ').slice(1).join(' ')` which basically takes everything after "use".
@@ -135,7 +137,6 @@ export const inventoryCommand: Command = {
             }
             else await ctx.message.reply(`⚠️ Oggetto "${item}" non trovato nell'inventario.`);
             return;
-            return;
         }
 
         // SUBCOMMAND: $loot delete <Item> (Full Wipe)
@@ -146,8 +147,8 @@ export const inventoryCommand: Command = {
             const idMatch = item.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const all = getInventory(ctx.activeCampaign!.id);
-                if (all[idx]) item = all[idx].item_name;
+                const all = getInventory(ctx.activeCampaign!.id, 1, idx);
+                if (all.length > 0) item = all[0].item_name;
             }
 
             const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
@@ -169,18 +170,93 @@ export const inventoryCommand: Command = {
             return;
         }
 
-        // VIEW: Show inventory
-        const items = getInventory(ctx.activeCampaign!.id);
-        if (items.length === 0) {
-            await ctx.message.reply("Lo zaino è vuoto.");
+        // SUBCOMMAND: list [page]
+        if (arg.toLowerCase().startsWith('list') || arg.toLowerCase().startsWith('lista')) {
+            let page = 1;
+            const parts = arg.split(' ');
+            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                page = parseInt(parts[1]);
+            }
+
+            const pageSize = 20;
+            const offset = (page - 1) * pageSize;
+            const total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(total / pageSize);
+
+            if (page < 1 || (totalPages > 0 && page > totalPages)) {
+                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
+                return;
+            }
+
+            const items = getInventory(ctx.activeCampaign!.id, pageSize, offset);
+            if (items.length === 0) {
+                await ctx.message.reply("Lo zaino è vuoto.");
+                return;
+            }
+
+            const list = items.map((i: any, idx: number) => {
+                const absoluteIndex = offset + idx + 1;
+                const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
+                return `\`${absoluteIndex}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+            }).join('\n');
+
+            let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
+            if (totalPages > 1) footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$loot list ${page + 1}\` per la prossima)` + footer;
+
+            await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
             return;
         }
 
-        const list = items.map((i: any, idx: number) => {
-            const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-            return `\`${idx + 1}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
-        }).join('\n');
-        await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`);
+        // VIEW: Show inventory (Page 1)
+        if (!arg) {
+            const pageSize = 20;
+            const items = getInventory(ctx.activeCampaign!.id, pageSize, 0);
+            const total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(total / pageSize);
+
+            if (items.length === 0) {
+                await ctx.message.reply("Lo zaino è vuoto.");
+                return;
+            }
+
+            const list = items.map((i: any, idx: number) => {
+                const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
+                return `\`${idx + 1}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+            }).join('\n');
+
+            let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
+            if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$loot list 2\` per la prossima)` + footer;
+
+            await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
+            return;
+        }
+
+        // VIEW SPECIFIC ITEM: $loot <ID> or $loot <Name>
+        // If arg is numeric, it's ID. If not, it's name.
+        const idMatch = arg.match(/^#?(\d+)$/);
+        if (idMatch) {
+            const idx = parseInt(idMatch[1]) - 1;
+            const items = getInventory(ctx.activeCampaign!.id, 1, idx);
+            if (items.length > 0) {
+                const i = items[0];
+                const desc = i.description ? `\n\n📜 **Descrizione:**\n${i.description}` : '';
+                const notes = i.notes ? `\n\n📝 **Note:**\n${i.notes}` : '';
+                await ctx.message.reply(`📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}${notes}`);
+            } else {
+                await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
+            }
+            return;
+        }
+
+        // Name search
+        const item = getInventoryItemByName(ctx.activeCampaign!.id, arg);
+        if (item) {
+            const desc = item.description ? `\n\n📜 **Descrizione:**\n${item.description}` : '';
+            const notes = item.notes ? `\n\n📝 **Note:**\n${item.notes}` : '';
+            await ctx.message.reply(`📦 **${item.item_name}** ${item.quantity > 1 ? `(x${item.quantity})` : ''}${desc}${notes}`);
+        } else {
+            await ctx.message.reply(`❌ Oggetto "${arg}" non trovato.`);
+        }
     }
 };
 

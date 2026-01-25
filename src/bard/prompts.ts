@@ -104,9 +104,9 @@ ${memoryContext}
 {
     "loot": [
         {
-            "name": "Nome oggetto",
+            "name": "Nome oggetto (ESATTO, senza descrizioni tra parentesi)",
             "quantity": 1,
-            "description": "Descrizione opzionale fisica/magica"
+            "description": "Descrizione fisica/magica. Inserisci QUI i dettagli che metteresti tra parentesi."
         }
     ],
     "loot_removed": [
@@ -119,10 +119,10 @@ ${memoryContext}
     "quests": ["Lista missioni ACCETTATE/COMPLETATE/AGGIORNATE in questa sessione"],
     "monsters": [
         {
-            "name": "Nome creatura",
+            "name": "Nome creatura (es. 'Scheletro', NON 'Scheletro (con spada)'). NON usare parentesi.",
             "status": "DEFEATED|ALIVE|FLED",
             "count": "numero o 'molti'",
-            "description": "Descrizione fisica/aspetto (se menzionato)",
+            "description": "Descrizione fisica/aspetto. Inserisci QUI i dettagli descrittivi.",
             "abilities": ["Abilità speciali osservate (es. 'soffio di fuoco', 'attacco multiplo')"],
             "weaknesses": ["Debolezze scoperte (es. 'vulnerabile al fuoco')"],
             "resistances": ["Resistenze osservate (es. 'immune al veleno')"]
@@ -133,16 +133,17 @@ ${memoryContext}
     ],
     "npc_dossier_updates": [
         {
-            "name": "Nome PROPRIO dell'NPC (es. 'Elminster', non 'il mago')",
-            "description": "Descrizione fisica/personalità basata su ciò che emerge dal testo",
+            "name": "Nome PROPRIO dell'NPC (es. 'Elminster', NON 'Elminster (mago)'). NON inserire descrizioni tra parentesi nel nome.",
+            "description": "Descrizione fisica/personalità basata su ciò che emerge dal testo. Inserisci QUI eventuali dettagli descrittivi che metteresti tra parentesi.",
             "role": "Ruolo (es. 'Mercante', 'Guardia')",
             "status": "ALIVE|DEAD|MISSING"
         }
     ],
+
     "location_updates": [
         {
             "macro": "Città/Regione (es. 'Waterdeep')",
-            "micro": "Luogo specifico SENZA il macro (es. 'Taverna del Drago' NON 'Waterdeep - Taverna del Drago')",
+            "micro": "Luogo specifico SENZA il macro e SENZA parentesi (es. 'Taverna del Drago' NON 'Taverna del Drago (piana)')",
             "description": "Descrizione atmosferica del luogo (per Atlante)"
         }
     ],

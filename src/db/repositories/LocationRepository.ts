@@ -72,14 +72,19 @@ export const locationRepository = {
         console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
     },
 
-    listAtlasEntries: (campaignId: number, limit: number = 15): any[] => {
+    listAtlasEntries: (campaignId: number, limit: number = 15, offset: number = 0): any[] => {
         return db.prepare(`
             SELECT id, macro_location, micro_location, description, last_updated
             FROM location_atlas
             WHERE campaign_id = ?
             ORDER BY last_updated DESC
-            LIMIT ?
-        `).all(campaignId, limit);
+            LIMIT ? OFFSET ?
+        `).all(campaignId, limit, offset);
+    },
+
+    countAtlasEntries: (campaignId: number): number => {
+        const result = db.prepare('SELECT COUNT(*) as count FROM location_atlas WHERE campaign_id = ?').get(campaignId) as { count: number };
+        return result.count;
     },
 
     listAllAtlasEntries: (campaignId: number): any[] => {

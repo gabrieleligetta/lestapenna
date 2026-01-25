@@ -98,8 +98,13 @@ export const questRepository = {
         return result.changes > 0;
     },
 
-    getOpenQuests: (campaignId: number): Quest[] => {
-        return db.prepare("SELECT * FROM quests WHERE campaign_id = ? AND status = 'OPEN'").all(campaignId) as Quest[];
+    getOpenQuests: (campaignId: number, limit: number = 20, offset: number = 0): Quest[] => {
+        return db.prepare("SELECT * FROM quests WHERE campaign_id = ? AND status = 'OPEN' LIMIT ? OFFSET ?").all(campaignId, limit, offset) as Quest[];
+    },
+
+    countOpenQuests: (campaignId: number): number => {
+        const result = db.prepare("SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status = 'OPEN'").get(campaignId) as { count: number };
+        return result.count;
     },
 
     listAllQuests: (campaignId: number): Quest[] => {

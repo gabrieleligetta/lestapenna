@@ -46,8 +46,13 @@ export const inventoryRepository = {
         return result.changes > 0;
     },
 
-    getInventory: (campaignId: number): InventoryItem[] => {
-        return db.prepare('SELECT * FROM inventory WHERE campaign_id = ? AND quantity > 0 ORDER BY item_name').all(campaignId) as InventoryItem[];
+    getInventory: (campaignId: number, limit: number = 20, offset: number = 0): InventoryItem[] => {
+        return db.prepare('SELECT * FROM inventory WHERE campaign_id = ? AND quantity > 0 ORDER BY item_name LIMIT ? OFFSET ?').all(campaignId, limit, offset) as InventoryItem[];
+    },
+
+    countInventory: (campaignId: number): number => {
+        const result = db.prepare('SELECT COUNT(*) as count FROM inventory WHERE campaign_id = ? AND quantity > 0').get(campaignId) as { count: number };
+        return result.count;
     },
 
     getSessionInventory: (sessionId: string): any[] => {

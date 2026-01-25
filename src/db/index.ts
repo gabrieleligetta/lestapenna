@@ -78,6 +78,7 @@ export const getLocationHistory = locationRepository.getLocationHistory;
 export const getAtlasEntry = locationRepository.getAtlasEntry;
 export const updateAtlasEntry = locationRepository.updateAtlasEntry;
 export const listAtlasEntries = locationRepository.listAtlasEntries;
+export const countAtlasEntries = locationRepository.countAtlasEntries;
 export const listAllAtlasEntries = locationRepository.listAllAtlasEntries;
 export const deleteAtlasEntry = locationRepository.deleteAtlasEntry;
 export const getAtlasEntryFull = locationRepository.getAtlasEntryFull;

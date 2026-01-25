@@ -8,6 +8,7 @@ import {
     getAtlasEntry,
     getAtlasEntryFull,
     listAtlasEntries,
+    countAtlasEntries,
     updateAtlasEntry,
     deleteAtlasEntry,
     renameAtlasEntry,
@@ -73,17 +74,25 @@ export const atlasCommand: Command = {
         if (!argsStr) {
             const loc = getCampaignLocation(ctx.guildId);
             if (!loc || !loc.macro || !loc.micro) {
-                // No current position, show list
-                const entries = listAtlasEntries(ctx.activeCampaign!.id);
+                // No current position, show list (Page 1)
+                const pageSize = 10;
+                const entries = listAtlasEntries(ctx.activeCampaign!.id, pageSize, 0);
+                const total = countAtlasEntries(ctx.activeCampaign!.id);
+                const totalPages = Math.ceil(total / pageSize);
+
                 if (entries.length === 0) {
                     await ctx.message.reply("📖 L'Atlante è vuoto. Usa `$atlante <Regione> | <Luogo> | <Descrizione>` per aggiungere voci.");
                     return;
                 }
 
-                const list = entries.slice(0, 10).map((e: any) =>
-                    `🗺️ **${e.macro_location}** - *${e.micro_location}*`
+                const list = entries.map((e: any, i: number) =>
+                    `\`${i + 1}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
                 ).join('\n');
-                await ctx.message.reply(`**📖 Atlante (Luoghi Recenti)**\n${list}\n\n💡 Usa \`$atlante <Regione> | <Luogo>\` per dettagli.`);
+                
+                let footer = `\n\n💡 Usa \`$atlante <ID>\` o \`$atlante <Regione> | <Luogo>\` per dettagli.`;
+                if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$atlante list 2\` per la prossima)` + footer;
+
+                await ctx.message.reply(`**📖 Atlante (Luoghi Recenti)**\n${list}${footer}`);
                 return;
             }
 
@@ -96,19 +105,40 @@ export const atlasCommand: Command = {
             return;
         }
 
-        // --- SUBCOMMAND: list ---
-        if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
-            const entries = listAtlasEntries(ctx.activeCampaign!.id);
+        // --- SUBCOMMAND: list [page] ---
+        if (argsStr.toLowerCase().startsWith('list') || argsStr.toLowerCase().startsWith('lista')) {
+            let page = 1;
+            const parts = argsStr.split(' ');
+            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                page = parseInt(parts[1]);
+            }
+
+            const pageSize = 15;
+            const offset = (page - 1) * pageSize;
+            const total = countAtlasEntries(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(total / pageSize);
+
+            if (page < 1 || (totalPages > 0 && page > totalPages)) {
+                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
+                return;
+            }
+
+            const entries = listAtlasEntries(ctx.activeCampaign!.id, pageSize, offset);
             if (entries.length === 0) {
                 await ctx.message.reply("📖 L'Atlante è vuoto.");
                 return;
             }
 
             const list = entries.map((e: any, i: number) => {
+                const absoluteIndex = offset + i + 1;
                 const descPreview = e.description ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '') : '*nessuna descrizione*';
-                return `\`${i + 1}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
+                return `\`${absoluteIndex}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
             }).join('\n');
-            await ctx.message.reply(`**📖 Atlante Completo**\n${list}\n💡 Usa \`$atlante <ID>\` o \`$atlante update <ID> | <Nota>\``);
+
+            let footer = `\n💡 Usa \`$atlante <ID>\` o \`$atlante update <ID> | <Nota>\``;
+            if (totalPages > 1) footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$atlante list ${page + 1}\` per la prossima)` + footer;
+
+            await ctx.message.reply(`**📖 Atlante Completo**\n${list}${footer}`);
             return;
         }
 
@@ -134,13 +164,14 @@ export const atlasCommand: Command = {
                     return;
                 }
                 const idx = parseInt(idMatch[1]) - 1;
-                const entries = listAtlasEntries(ctx.activeCampaign!.id);
-                if (!entries[idx]) {
+                // Fetch specific entry by offset
+                const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
+                if (entries.length === 0) {
                     await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
                     return;
                 }
-                macro = entries[idx].macro_location;
-                micro = entries[idx].micro_location;
+                macro = entries[0].macro_location;
+                micro = entries[0].micro_location;
                 note = parts.slice(1).join('|').trim();
             } else {
                 // Name Mode: Region | Place | Note
@@ -174,13 +205,13 @@ export const atlasCommand: Command = {
             const idMatch = deleteArgs.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const entries = listAtlasEntries(ctx.activeCampaign!.id);
-                if (!entries[idx]) {
+                const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
+                if (entries.length === 0) {
                     await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
                     return;
                 }
-                macro = entries[idx].macro_location;
-                micro = entries[idx].micro_location;
+                macro = entries[0].macro_location;
+                micro = entries[0].micro_location;
             } else {
                 const parts = deleteArgs.split('|').map(s => s.trim());
                 if (parts.length !== 2) {
@@ -218,9 +249,9 @@ export const atlasCommand: Command = {
         const idMatch = parts[0].match(/^#?(\d+)$/);
         if (parts.length === 1 && idMatch) {
             const idx = parseInt(idMatch[1]) - 1;
-            const entries = listAtlasEntries(ctx.activeCampaign!.id);
-            if (entries[idx]) {
-                const entry = entries[idx];
+            const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
+            if (entries.length > 0) {
+                const entry = entries[0];
                 const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
                 await ctx.message.reply(
                     `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
@@ -264,7 +295,7 @@ export const atlasCommand: Command = {
         await ctx.message.reply(
             `**📖 Uso del comando $atlante:**\n` +
             `\`$atlante\` - Mostra luogo corrente o lista\n` +
-            `\`$atlante list\` - Lista luoghi con ID\n` +
+            `\`$atlante list [pag]\` - Lista luoghi con ID\n` +
             `\`$atlante <ID>\` o \`$atlante <R> | <L>\` - Vedi dettaglio\n` +
             `\`$atlante update <ID> | <Nota>\` - Aggiorna luogo\n` +
             `\`$atlante update <R> | <L> | <Nota>\` - Aggiorna luogo`

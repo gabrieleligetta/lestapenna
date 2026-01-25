@@ -18,6 +18,7 @@ import {
     deleteQuestHistory,
     deleteQuestRagSummary
 } from '../../db';
+import { questRepository } from '../../db/repositories/QuestRepository';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
@@ -98,8 +99,9 @@ export const questCommand: Command = {
             const idMatch = title.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const active = getOpenQuests(ctx.activeCampaign!.id);
-                if (active[idx]) title = active[idx].title;
+                // Fetch specific quest by offset
+                const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
+                if (active.length > 0) title = active[0].title;
             }
 
             const quest = getQuestByTitle(ctx.activeCampaign!.id, title);
@@ -114,8 +116,6 @@ export const questCommand: Command = {
 
             // Trigger Regen
             await regenerateQuestBio(ctx.activeCampaign!.id, title, quest.status);
-            // Trigger Regen
-            await regenerateQuestBio(ctx.activeCampaign!.id, title, quest.status);
             return;
         }
 
@@ -127,8 +127,8 @@ export const questCommand: Command = {
             const idMatch = search.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const active = getOpenQuests(ctx.activeCampaign!.id);
-                if (active[idx]) search = active[idx].title;
+                const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
+                if (active.length > 0) search = active[0].title;
             }
 
             const quest = getQuestByTitle(ctx.activeCampaign!.id, search);
@@ -155,8 +155,8 @@ export const questCommand: Command = {
             const idMatch = search.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const active = getOpenQuests(ctx.activeCampaign!.id);
-                if (active[idx]) search = active[idx].title;
+                const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
+                if (active.length > 0) search = active[0].title;
             }
 
             updateQuestStatus(ctx.activeCampaign!.id, search, 'COMPLETED');
@@ -174,19 +174,66 @@ export const questCommand: Command = {
             return;
         }
 
-        // VIEW: Show active quests
-        const quests = getOpenQuests(ctx.activeCampaign!.id);
-        if (quests.length === 0) {
-            await ctx.message.reply("Nessuna quest attiva al momento.");
+        // SUBCOMMAND: list [page]
+        if (arg.toLowerCase().startsWith('list') || arg.toLowerCase().startsWith('lista')) {
+            let page = 1;
+            const parts = arg.split(' ');
+            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                page = parseInt(parts[1]);
+            }
+
+            const pageSize = 10;
+            const offset = (page - 1) * pageSize;
+            const total = questRepository.countOpenQuests(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(total / pageSize);
+
+            if (page < 1 || (totalPages > 0 && page > totalPages)) {
+                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
+                return;
+            }
+
+            const quests = questRepository.getOpenQuests(ctx.activeCampaign!.id, pageSize, offset);
+            if (quests.length === 0) {
+                await ctx.message.reply("Nessuna quest attiva al momento.");
+                return;
+            }
+
+            const list = quests.map((q: any, i: number) => {
+                const absoluteIndex = offset + i + 1;
+                const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
+                return `\`${absoluteIndex}\` 🔹 **${q.title}**${desc}`;
+            }).join('\n');
+
+            let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;
+            if (totalPages > 1) footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$quest list ${page + 1}\` per la prossima)` + footer;
+
+            await ctx.message.reply(`**🗺️ Quest Attive (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
             return;
         }
 
-        const list = quests.map((q: any, i: number) => {
-            const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-            return `\`${i + 1}\` 🔹 **${q.title}**${desc}`;
-        }).join('\n');
+        // VIEW: Show active quests (Page 1)
+        if (!arg) {
+            const pageSize = 10;
+            const quests = questRepository.getOpenQuests(ctx.activeCampaign!.id, pageSize, 0);
+            const total = questRepository.countOpenQuests(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(total / pageSize);
 
-        await ctx.message.reply(`**🗺️ Quest Attive (${ctx.activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`);
+            if (quests.length === 0) {
+                await ctx.message.reply("Nessuna quest attiva al momento.");
+                return;
+            }
+
+            const list = quests.map((q: any, i: number) => {
+                const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
+                return `\`${i + 1}\` 🔹 **${q.title}**${desc}`;
+            }).join('\n');
+
+            let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;
+            if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$quest list 2\` per la prossima)` + footer;
+
+            await ctx.message.reply(`**🗺️ Quest Attive (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
+            return;
+        }
     }
 };
 

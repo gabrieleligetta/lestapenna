@@ -6,6 +6,7 @@ import { EmbedBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     listNpcs,
+    countNpcs,
     getNpcEntry,
     getNpcHistory,
     updateNpcEntry,
@@ -38,31 +39,66 @@ export const npcCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const argsStr = ctx.args.join(' ');
 
-        if (!argsStr || argsStr.toLowerCase() === 'list') {
-            // LIST with numeric IDs
-            const npcs = listNpcs(ctx.activeCampaign!.id);
+        // --- LIST / PAGINATION: $npc list [page] or $npc [page] ---
+        // Check if argsStr is empty, "list", "list <n>", or just "<n>" (where n is page if > 10 items?)
+        // Actually, "$npc <n>" is currently used for SELECTION.
+        // We need to distinguish between "Select NPC #2" and "Show Page 2".
+        // Convention: "$npc list <n>" for page. "$npc <n>" for selection.
+        // If "$npc" alone -> Page 1.
+
+        if (!argsStr || argsStr.toLowerCase().startsWith('list')) {
+            let page = 1;
+            const parts = argsStr.split(' ');
+            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                page = parseInt(parts[1]);
+            }
+
+            const pageSize = 10;
+            const offset = (page - 1) * pageSize;
+            const totalNpcs = countNpcs(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(totalNpcs / pageSize);
+
+            if (page < 1 || (totalPages > 0 && page > totalPages)) {
+                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
+                return;
+            }
+
+            const npcs = listNpcs(ctx.activeCampaign!.id, pageSize, offset);
             if (npcs.length === 0) {
                 await ctx.message.reply("L'archivio NPC è vuoto.");
                 return;
             }
 
-            const list = npcs.map((n: any, i: number) => `\`${i + 1}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`).join('\n');
-            await safeReply(ctx.message, `**📂 Dossier NPC Recenti**\n${list}\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`);
+            const list = npcs.map((n: any, i: number) => {
+                const absoluteIndex = offset + i + 1;
+                return `\`${absoluteIndex}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`;
+            }).join('\n');
+
+            let footer = `\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`;
+            if (totalPages > 1) {
+                footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$npc list ${page + 1}\` per la prossima)` + footer;
+            }
+
+            await safeReply(ctx.message, `**📂 Dossier NPC Recenti**\n${list}${footer}`);
             return;
         }
 
         // --- SELECTION BY NUMERIC ID: $npc 1, $npc #2 ---
         const numericMatch = argsStr.match(/^#?(\d+)$/);
         if (numericMatch) {
-            const idx = parseInt(numericMatch[1]) - 1;
-            const npcs = listNpcs(ctx.activeCampaign!.id);
+            const absoluteIdx = parseInt(numericMatch[1]); // 1-based index
+            
+            // We need to fetch the specific NPC at that offset
+            // listNpcs(limit=1, offset=absoluteIdx-1)
+            const npcs = listNpcs(ctx.activeCampaign!.id, 1, absoluteIdx - 1);
 
-            if (idx < 0 || idx >= npcs.length) {
-                await ctx.message.reply(`❌ ID non valido. Usa un numero da 1 a ${npcs.length}.`);
+            if (npcs.length === 0) {
+                const total = countNpcs(ctx.activeCampaign!.id);
+                await ctx.message.reply(`❌ ID non valido. Usa un numero da 1 a ${total}.`);
                 return;
             }
 
-            const npc = npcs[idx];
+            const npc = npcs[0];
             const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
             let response = `${statusIcon} **${npc.name}**\n`;
             response += `🎭 **Ruolo:** ${npc.role || 'Sconosciuto'}\n`;
@@ -179,8 +215,9 @@ export const npcCommand: Command = {
             const idMatch = name.match(/^#?(\d+)$/);
             if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                const all = listNpcs(ctx.activeCampaign!.id);
-                if (all[idx]) name = all[idx].name;
+                // We need to find the name from the ID (absolute index)
+                const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
+                if (npcs.length > 0) name = npcs[0].name;
             }
 
             // Full Wipe: RAG + History + Dossier
@@ -299,8 +336,8 @@ export const npcCommand: Command = {
                 const idMatch = name.match(/^#?(\d+)$/);
                 if (idMatch) {
                     const idx = parseInt(idMatch[1]) - 1;
-                    const all = listNpcs(ctx.activeCampaign!.id);
-                    if (all[idx]) name = all[idx].name;
+                    const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
+                    if (npcs.length > 0) name = npcs[0].name;
                 }
 
                 const npc = getNpcEntry(ctx.activeCampaign!.id, name);
@@ -340,8 +377,8 @@ export const npcCommand: Command = {
                 const idMatch = name.match(/^#?(\d+)$/);
                 if (idMatch) {
                     const idx = parseInt(idMatch[1]) - 1;
-                    const all = listNpcs(ctx.activeCampaign!.id);
-                    if (all[idx]) name = all[idx].name;
+                    const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
+                    if (npcs.length > 0) name = npcs[0].name;
                 }
 
                 const firstSpace = remainder.indexOf(' ');

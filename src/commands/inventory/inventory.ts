@@ -79,11 +79,19 @@ export const inventoryCommand: Command = {
             const content = arg.substring(7);
             const parts = content.split('|');
             if (parts.length < 2) {
-                await ctx.message.reply("⚠️ Uso: `$loot update <Oggetto> | <Nota/Storia>`");
+                await ctx.message.reply("⚠️ Uso: `$loot update <Oggetto/ID> | <Nota/Storia>`");
                 return;
             }
-            const item = parts[0].trim();
+            let item = parts[0].trim();
             const note = parts.slice(1).join('|').trim();
+
+            // ID Resolution
+            const idMatch = item.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = getInventory(ctx.activeCampaign!.id);
+                if (all[idx]) item = all[idx].item_name;
+            }
 
             const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
             if (!existing) {
@@ -100,8 +108,19 @@ export const inventoryCommand: Command = {
         }
 
         // SUBCOMMAND: $loot use <Item>
-        if (arg.toLowerCase().startsWith('use ') || arg.toLowerCase().startsWith('usa ') || arg.toLowerCase().startsWith('remove ')) {
-            const item = arg.split(' ').slice(1).join(' '); // Simple split isn't perfect for multi-word items but legacy was like this
+        const usePrefixes = ['use ', 'usa ', 'remove '];
+        const prefix = usePrefixes.find(p => arg.toLowerCase().startsWith(p));
+
+        if (prefix) {
+            let item = arg.substring(prefix.length).trim();
+
+            // ID Resolution
+            const idMatch = item.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = getInventory(ctx.activeCampaign!.id);
+                if (all[idx]) item = all[idx].item_name;
+            }
             // We should arguably parse better but sticking to legacy behavior:
             // The split is `arg.split(' ').slice(1).join(' ')` which basically takes everything after "use".
 
@@ -123,11 +142,11 @@ export const inventoryCommand: Command = {
             return;
         }
 
-        const list = items.map((i: any) => {
+        const list = items.map((i: any, idx: number) => {
             const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-            return `📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+            return `\`${idx + 1}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
         }).join('\n');
-        await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$loot update <Item> | <Nota>\` per aggiungere storia.`);
+        await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`);
     }
 };
 

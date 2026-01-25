@@ -34,6 +34,7 @@ export const sessionRepository = {
                 MIN(r.timestamp) as start_time, 
                 COUNT(*) as fragments,
                 c.name as campaign_name,
+                s.campaign_id,
                 s.session_number,
                 s.title
             FROM recordings r
@@ -44,6 +45,9 @@ export const sessionRepository = {
             ORDER BY start_time DESC
             LIMIT ?
         `;
+
+        // SQLite treats -1 as no limit, but 0 as 0 rows.
+        if (limit <= 0) limit = -1;
         params.push(limit);
 
         return db.prepare(sql).all(...params) as SessionSummary[];

@@ -11,146 +11,141 @@ export const helpCommand: Command = {
     requiresCampaign: false,
 
     async execute(ctx: CommandContext): Promise<void> {
-        const helpEmbed = new EmbedBuilder()
-            .setTitle("🖋️ Lestapenna - Available Commands")
+        const isAdvanced = ctx.args[0]?.toLowerCase() === 'advanced';
+
+        const embed = new EmbedBuilder()
             .setColor("#D4AF37")
-            .setDescription("Welcome, adventurers! I am your personal bard and chronicler.")
-            .addFields(
+            .setFooter({ text: "🇮🇹 Per la versione italiana: $aiuto" })
+            .setTitle(isAdvanced ? "🔧 Lestapenna - Advanced Commands" : "🖋️ Lestapenna - Basic Commands")
+            .setDescription(isAdvanced
+                ? "Power tools for Dungeon Masters and Admins.\nFor basic usage, type `$help`."
+                : "Essential commands for players and quick reference.\nFor editing and admin tools, type `$help advanced`.");
+
+        if (isAdvanced) {
+            // --- ADVANCED VIEW ---
+            embed.addFields(
                 {
                     name: "🗺️ Campaigns",
                     value:
-                        "`$createcampaign <Name>`: Create a new campaign.\n" +
-                        "`$selectcampaign <Name>`: Activate a campaign.\n" +
-                        "`$listcampaigns`: Show available campaigns.\n" +
+                        "`$listcampaigns`: List all campaigns.\n" +
+                        "`$createcampaign <Name>`: Create new campaign.\n" +
+                        "`$selectcampaign <Name>`: Switch active campaign.\n" +
                         "`$deletecampaign <Name>`: Delete a campaign."
                 },
                 {
-                    name: "🎙️ Session Management",
+                    name: "🧩 Unified Entity Interface",
                     value:
-                        "`$listen [Location]`: Start recording (Active Campaign).\n" +
-                        "`$stoplistening`: End the session.\n" +
-                        "`$pause`: Pause recording.\n" +
-                        "`$resume`: Resume recording.\n" +
-                        "`$note <Text>`: Add a manual note to the summary.\n" +
-                        "`$setsession <N>`: Manually set session number.\n" +
-                        "`$reset <ID>`: Force re-processing of a session."
+                        "**Entities:** `$npc`, `$quest`, `$atlas`, `$loot`, `$bestiary`\n" +
+                        "**Syntaxes:**\n" +
+                        "• `$cmd list` / `$cmd #ID`\n" +
+                        "• `$cmd update <ID> | <Note>` (Narrative)\n" +
+                        "• `$cmd update <ID> field:<key> <val>` (Metadata)\n" +
+                        "• `$cmd merge <Old> | <New>`\n" +
+                        "• `$cmd delete <ID>`"
                 },
                 {
-                    name: "🕰️ Session Specific Commands",
-                    value: "Many commands accept a session ID (`session_xxxxx` or UUID) to view history:\n" +
-                           "`$travels <ID>`: Session travels.\n" +
-                           "`$presenze <ID>`: Encountered NPCs.\n" +
-                           "`$npc <ID>`: NPC preview.\n" +
-                           "`$atlas <ID>`: Visited locations.\n" +
-                           "`$inventory <ID>`: Acquired items.\n" +
-                           "`$quest <ID>`: Added quests."
-                },
-                {
-                    name: "📍 Locations & Atlas",
+                    name: "👥 Specific Commands",
                     value:
-                        "`$location [Macro | Micro]`: View or update location.\n" +
-                        "`$travels`: Travel history.\n" +
-                        "`$travels fix #ID | <R> | <L>`: Fix history entry.\n" +
-                        "`$atlas`: Current location memory.\n" +
-                        "`$atlas list`: List all locations.\n" +
-                        "`$atlas rename <OR>|<OL>|<NR>|<NL>`: Rename location.\n" +
-                        "`$atlas <R> | <L> | <Desc> [| force]`: Update.\n" +
-                        "`$atlas sync [all|Name]`: Sync RAG."
+                        "`$npc alias`: Manage nicknames.\n" +
+                        "`$loot use`: Consume item.\n" +
+                        "`$mergeitem`: Merge duplicate items.\n" +
+                        "`$quest done`: Complete quest.\n" +
+                        "`$travels fix`: Fix location history.\n" +
+                        "`$timeline add <Year> | <Type> | <Desc>`\n" +
+                        "`$date <Year>` / `$year0 <Desc>`"
                 },
                 {
-                    name: "👥 NPC & Dossier",
+                    name: "🔧 Admin & Config",
                     value:
-                        "`$npc [Name]`: View or update NPC dossier.\n" +
-                        "`$npc add <Name> | <Role> | <Desc>`: Create a new NPC.\n" +
-                        "`$npc merge <Old> | <New>`: Merge two NPCs.\n" +
-                        "`$npc delete <Name>`: Delete an NPC.\n" +
-                        "`$npc update <Name> | <Field> | <Val> [| force]`: Update fields.\n" +
-                        "`$npc regen <Name>`: Regenerate notes using history.\n" +
-                        "`$npc sync [Name|all]`: Manually sync RAG.\n" +
-                        "`$presenze`: Show NPCs encountered in session."
+                        "`$setcmd`: Set command channel.\n" +
+                        "`$setsession <N>`: Force session number.\n" +
+                        "`$autoupdate on/off`: Auto-update bios.\n" +
+                        "`$download <ID>`: Download master audio.\n" +
+                        "`$ingest <ID>`: Manual import.\n" +
+                        "`$presenze <ID>`: Session NPC list."
                 },
                 {
-                    name: "📜 Storytelling & Archives",
+                    name: "⚠️ Danger Zone",
                     value:
-                        "`$listsessions`: Last 5 sessions (Active Campaign).\n" +
-                        "`$narrate <ID> [tone]`: Regenerate summary.\n" +
-                        "`$edittitle <ID> <Title>`: Edit session title.\n" +
-                        "`$ask <Question>`: Ask the Bard about the lore.\n" +
-                        "`$lore <Term>`: Search exact lore fragments.\n" +
-                        "`$timeline`: Show world history timeline.\n" +
-                        "`$ingest <ID>`: Manually index a session into memory.\n" +
-                        "`$download <ID>`: Download audio.\n" +
-                        "`$downloadtxt <ID>`: Download transcriptions (txt)."
-                },
-                {
-                    name: "🐲 Bestiary",
-                    value:
-                        "`$bestiario`: Show encountered monsters.\n" +
-                        "`$bestiario <Name>`: Monster details (abilities, weaknesses, etc.).\n" +
-                        "`$bestiario merge <Old> | <New>`: Merge two monsters."
-                },
-                {
-                    name: "🎒 Inventory & Quests",
-                    value:
-                        "`$quest`: View active quests.\n" +
-                        "`$quest add <Title>`: Add a quest.\n" +
-                        "`$quest done <Title>`: Complete a quest.\n" +
-                        "`$quest delete <ID>`: Delete a quest.\n" +
-                        "`$inventory`: View inventory.\n" +
-                        "`$loot add <Item>`: Add an item.\n" +
-                        "`$loot use <Item>`: Remove/Use an item.\n" +
-                        "`$mergeitem <Old> | <New>`: Merge two items.\n" +
-                        "`$mergequest <Old> | <New>`: Merge two quests."
-                },
-                {
-                    name: "👤 Character Sheet (Active Campaign)",
-                    value:
-                        "`$iam <Name>`: Set your character name.\n" +
-                        "`$myclass <Class>`: Set your class.\n" +
-                        "`$myrace <Race>`: Set your race.\n" +
-                        "`$mydesc <Text>`: Add details.\n" +
-                        "`$whoami [Name]`: View character sheet (yours or others).\n" +
-                        "`$party`: View all characters.\n" +
-                        "`$story <CharName>`: Generate character biography.\n" +
-                        "`$clearchara`: Reset your sheet."
-                },
-                {
-                    name: "⚙️ Configuration & Status",
-                    value:
-                        "`$setcmd`: Set this channel for commands.\n" +
-                        "`$setsummary`: Set this channel for summaries.\n" +
-                        "`$status`: Show processing queue status.\n" +
-                        "`$metrics`: Show live session metrics."
-                },
-                {
-                    name: "🔧 Advanced Commands",
-                    value:
-                        "**NPC Alias (for RAG)**\n" +
-                        "`$npc alias <Name> add <Alias>`: Add alias.\n" +
-                        "`$npc alias <Name> remove <Alias>`: Remove alias.\n\n" +
-                        "**Timeline**\n" +
-                        "`$timeline delete <ID>`: Delete historical event.\n\n" +
-                        "**Travels**\n" +
-                        "`$travels fixcurrent <R> | <L>`: Fix current position.\n" +
-                        "`$travels delete <ID>`: Delete history entry.\n\n" +
-                        "**Other**\n" +
-                        "`$tones`: List narrative tones for `$narrate`.\n" +
-                        "`$autoupdate on/off`: Toggle auto-update PC biographies.\n" +
-                        "`$reprocess <ID>`: Regenerate memory/data (no re-transcription)."
-                },
-                {
-                    name: "🧪 Test & Debug",
-                    value:
-                        "`$teststream <URL>`: Simulate a session via direct audio link.\n" +
-                        "`$cleantest`: Remove all test sessions from DB."
-                },
-                {
-                    name: "💡 Command Aliases",
-                    value: "Many commands have Italian aliases: `$location`/`$luogo`, `$atlas`/`$atlante`, `$dossier`/`$npc`, `$travels`/`$viaggi`, `$inventory`/`$inventario`, `$bestiary`/`$bestiario`, `$mergeitem`/`$unisciitem`, `$mergequest`/`$unisciquest`, etc."
+                        "`$recover <ID>`: Retry stuck session.\n" +
+                        "`$reprocess <ID>`: Regen data (No transcribe).\n" +
+                        "`$reset <ID>`: Full Reset (From Audio).\n" +
+                        "`$recover regenerate-all`: **Time Travel** (Full Regen).\n" +
+                        "`$wipe`: Reset data."
                 }
-            )
-            .setFooter({ text: "Per la versione italiana usa $aiuto" });
+            );
+        } else if (ctx.args[0]?.toLowerCase() === 'dev') {
+            // --- DEVELOPER VIEW ---
+            embed.setTitle("👨‍💻 Developer Tools")
+                .setDescription("Debug and maintenance tools. Use with caution.")
+                .addFields(
+                    {
+                        name: "🧪 Debug & Test",
+                        value:
+                            "`$debug teststream <URL>`: Simulate session from audio link.\n" +
+                            "`$debug testmail`: Send test email report.\n" +
+                            "`$rebuild CONFIRM`: Re-index full database (DEV ONLY).\n" +
+                            "`$status`: Show internal queue health."
+                    },
+                    {
+                        name: "🛠️ Low Level",
+                        value:
+                            "`$wipe softwipe`: Clear RAG/derived data.\n" +
+                            "`$wipe wipe`: NUKE DATABASE.\n" +
+                            "`$clearchara`: Delete your PC."
+                    }
+                );
+        } else {
+            // --- BASIC VIEW ---
+            embed.addFields(
+                {
+                    name: "ℹ️ General",
+                    value:
+                        "`$help`: Show this list.\n" +
+                        "`$status`: System health & queues.\n" +
+                        "`$metrics`: Session stats (cost, tokens)."
+                },
+                {
+                    name: "🎙️ Session",
+                    value:
+                        "`$listen [Location]`: Start recording.\n" +
+                        "`$stop`: End session & transcribe.\n" +
+                        "`$listsessions`: List stored sessions.\n" +
+                        "`$pause` / `$resume`: Control recording.\n" +
+                        "`$note <Text>`: Add manual note."
+                },
+                {
+                    name: "🌍 Location",
+                    value:
+                        "`$location`: Show current location.\n" +
+                        "`$location <Region> | <Place>`: Set location manually."
+                },
+                {
+                    name: "📜 Narrative",
+                    value:
+                        "`$ask <Question>`: Ask the Bard (Lore).\n" +
+                        "`$wiki <Term>`: Search archives.\n" +
+                        "`$narrate <ID> [tone]`: Regenerate summary.\n" +
+                        "`$timeline`: Show history."
+                },
+                {
+                    name: "👤 Character",
+                    value:
+                        "`$iam <Name>`: Link your user.\n" +
+                        "`$whoami`: View your sheet.\n" +
+                        "`$party`: View party members.\n" +
+                        "`$myclass <Class>` / `$myrace <Race>`: Set sheet info.\n" +
+                        "`$story <Name>`: Read PC history.\n" +
+                        "`$mydesc <Text>`: Set manual bio.\n" +
+                        "`$bio reset [Name]`: Regenerate PC bio."
+                },
+                {
+                    name: "🔧 Advanced Tools",
+                    value: "Need to manage entities, inventory, or admin tools?\n👉 **Type `$help advanced`**"
+                }
+            );
+        }
 
-        await ctx.message.reply({ embeds: [helpEmbed] });
+        await ctx.message.reply({ embeds: [embed] });
     }
 };

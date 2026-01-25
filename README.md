@@ -57,82 +57,113 @@ docker-compose up -d
 
 ## 📖 Guida ai Comandi
 
-Tutti i comandi iniziano con il prefisso `$`.
+### 🔰 1. Comandi Semplici (Base)
+*Comandi essenziali per l'uso quotidiano durante la sessione.*
 
-### ℹ️ Generale
+#### ℹ️ Generale
+*   `$aiuto` / `$help`: Mostra la lista rapida dei comandi.
+*   `$stato`: Verifica lo stato delle code di elaborazione (es. trascrizioni in corso).
+*   `$metriche`: Visualizza statistiche tecniche della sessione (utilizzo token, costi, durata).
 
-*   `$aiuto` / `$help`: Mostra l'elenco dei comandi.
-*   `$stato` / `$status`: Mostra lo stato delle code di elaborazione e dei servizi.
-*   `$metriche` / `$metrics`: Visualizza statistiche tecniche della sessione corrente (utilizzo risorse, costi stimati).
-
-### 🗺️ Gestione Campagne
-
-Il sistema supporta multiple campagne per server.
-
-*   `$creacampagna <Nome>`: Crea una nuova campagna.
-*   `$selezionacampagna <Nome>`: Attiva una campagna.
-*   `$listacampagne`: Elenco delle campagne disponibili.
-*   `$eliminacampagna <Nome>`: Cancella una campagna (Irreversibile).
-*   `$autoaggiorna [on|off]`: Abilita/Disabilita l'aggiornamento automatico delle bio dei PG basato sugli eventi di sessione.
-
-### 🎙️ Sessione di Gioco
-
+#### 🎙️ Sessione
 *   `$ascolta [Luogo]` (o `$listen`): Il bot entra in vocale e inizia a registrare.
-    *   Es: `$ascolta Locanda del Pony`
-*   `$pausa` / `$riprendi`: Sospende/Riprende la registrazione.
-*   `$nota <Testo>`: Aggiunge una nota manuale al log della sessione (utile per evidenziare momenti chiave).
-*   `$termina` (o `$stop`): Conclude la sessione, avvia la trascrizione e la generazione del riassunto.
+    *   Es: `$ascolta Locanda del Puledro Impennato`
+*   `$pausa` / `$riprendi`: Sospende e riprende la registrazione audio.
+*   `$nota <Testo>`: Inserisce una nota manuale nel log (utile per aiutare l'AI sui nomi propri o eventi chiave).
+*   `$stop` / `$termina`: Chiude la sessione, avvia trascrizione e generazione riassunto.
 
-### 📜 Narrazione e Storia
+#### 🌍 Luogo e Atmosfera
+*   `$luogo`: Mostra dove si trova il gruppo attualmente.
+*   `$luogo <Regione> | <Dettaglio>`: Imposta manualmente la posizione attuale.
+    *   Es: `$luogo Neverwinter | I Quartieri Alti`
 
-*   `$racconta <ID_SESSIONE> [tono]`: Rigenera il riassunto di una sessione passata.
-    *   Toni: `DM`, `EPIC`, `DARK`, `COMIC`, ecc.
-*   `$chiedialbardo <Domanda>` (o `$ask`): Interroga la memoria del bot sulla storia della campagna.
-*   `$wiki <Termine>`: Ricerca testuale diretta negli archivi.
-*   `$timeline` / `$cronologia`: Gestione degli eventi storici.
-    *   `$timeline add <Anno> | <Tipo> | <Descrizione>`
-*   `$anno0 <Descrizione>` / `$data <Anno>`: Gestione del calendario di gioco.
+#### 📜 Narrazione e Storia
+*   `$racconta <ID> [tono]`: Rigenera il riassunto di una sessione passata.
+    *   Toni: `DM`, `EPIC`, `DARK`, `COMIC`.
+*   `$chiedialbardo <Domanda>`: Chiedi qualsiasi cosa sulla storia della campagna (Il Bardo cercherà nella sua memoria).
+*   `$wiki <Termine>`: Cerca informazioni specifiche negli archivi.
 
-#### Gestione Personaggi (PG)
+#### 👤 Il Tuo Personaggio
+*   `$sono <NomePG>`: Associa il tuo account Discord a un personaggio.
+*   `$chisono` (o `$whoami`): Visualizza la tua scheda personaggio (se associata).
+*   `$compagni` (o `$party`): Visualizza l'elenco degli avventurieri nel party.
+*   `$storia <NomePG>`: Leggi la storia del tuo PG narrata dal Bardo.
+*   `$bio reset [NomePG]`: **[Avanzato]** Forza la rigenerazione completa della biografia del PG rileggendo tutta la storia della campagna.
 
-*   `$sono <Nome>`: Associa il tuo utente Discord a un PG.
-*   `$storia <Nome>`: Mostra la storia narrata di un PG o NPC.
-    *   `$storia sync`: Forza l'aggiornamento delle storie di tutti i PG in base agli ultimi eventi.
-*   `$bio reset [Nome]`: **[Distruttivo]** Rigenera completamente la biografia di un PG riscrivendola da zero basandosi su *tutta* la storia della campagna.
+---
 
-### 👥 Atlante e NPC (Mondo Dinamico)
+### 🛠️ 2. Comandi Avanzati & Gestione Mondo
+*Strumenti di world-building per il DM. Interfaccia unificata per tutte le entità.*
 
-Il bot popola automaticamente questi database, ma puoi curarli manualmente.
+#### 🧩 Sintassi Unificata Entità
+Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri**) condividono gli stessi comandi base:
+*   `$comando list`: Elenco completo.
+*   `$comando #ID`: Vedi dettagli scheda (es. `$npc 1`).
+*   `$comando <Nome>`: Cerca per nome (es. `$npc Garlon`).
+*   `$comando update <Nome/ID> | <Nota>`: Aggiunge un evento/osservazione alla storia dell'entità.
+*   `$comando delete <Nome/ID>`: Elimina l'entità.
+*   `$comando merge <Old> | <New>`: Unisce due entità (trasferisce storia e dettagli).
 
-*   `$atlante` (o `$location`): Gestione luoghi.
-    *   `$atlante sync [all|Nome]`: Forza la sincronizzazione RAG per i luoghi.
-    *   `$atlante rename ...`: Rinomina luoghi correggendo anche la storia passata.
-*   `$npc` (o `$dossier`): Gestione PNG.
-    *   `$npc merge <Vecchio> | <Nuovo>`: Unisce due NPC duplicati.
-    *   `$npc sync [all|Nome]`: Forza la sincronizzazione RAG per gli NPC.
-    *   `$npc update ...`: Modifica attributi manuali (Ruolo, Status).
-*   `$bestiario`: Catalogo dei mostri incontrati.
+#### 👥 `$npc` (Personaggi Non Giocanti)
+*   **Creazione**: `$npc add <Nome> | <Ruolo> | <Descrizione>`
+*   **Alias**: `$npc alias <Nome> | add | <Soprannome>` (es. "Il Rosso").
+*   **Metadati**: `$npc update <Nome> field:<campo> <valore>`
+    *   `field:status`: `ALIVE`, `DEAD`, `MISSING`.
+    *   `field:role`: Cambia ruolo (es. "Re").
+    *   `field:name`: Rinomina e aggiorna RAG.
+*   **Rigenerazione**: `$npc regen <Nome>` (Riscrive la scheda basandosi sulla storia).
 
-### 🔧 Amministrazione e Manutenzione (Avanzato)
+#### 🗺️ `$atlante` (Luoghi)
+*   **Aggiornamento**: `$atlante update <Regione> | <Luogo> | <Nota>`
+    *   Es: `$atlante Costa della Spada | Neverwinter | La città è in festa.`
+*   Non richiede creazione esplicita: il primo update o `$luogo` crea la voce.
 
-Questi comandi sono riservati allo sviluppatore o all'admin del bot.
+#### ⚔️ `$quest` (Missioni)
+*   **Nuova**: `$quest add <Titolo>`
+*   **Aggiornamento**: `$quest update <Titolo> | <Progresso>`
+*   **Completamento**: `$quest done <Titolo>` (La segna come completata e la narra).
 
-#### 🔄 Recupero e Time Travel (`$recover`)
+#### 🎒 `$loot` (Inventario di Gruppo)
+*   **Aggiungi**: `$loot add <Oggetto>`
+*   **Usa/Consuma**: `$loot use <Oggetto>` (Rimuove una quantità).
+*   **Dettagli**: `$loot update <Oggetto> | <Descrizione>`
 
-*   `$recover <ID_SESSIONE>`: Tenta di recuperare una sessione bloccata o in errore, riprendendo dall'ultima fase valida.
-*   `$recover regenerate-all`: **Time Travel**. Rianalizza l'intera cronologia della campagna per rigenerare e sincronizzare massivamente tutte le biografie dei PG, le schede NPC e le voci dell'Atlante. Usare con cautela su campagne molto lunghe.
+#### 👹 `$bestiario` (Mostri)
+*   **Aggiornamento**: `$bestiario update <Mostro> | <Osservazione tattica>`
+*   **Lista**: Mostra automaticamente i mostri divisi per stato (Vivi, Sconfitti, Fuggiti).
 
-#### 🧹 Pulizia (`$wipe`)
+#### ⏳ Timeline e Data
+*   `$data <Anno>`: Imposta l'anno corrente (D.E. positivi, P.E. negativi).
+*   `$anno0 <Descrizione>`: Definisce l'evento cardine per l'anno 0.
+*   `$timeline add <Anno> | <Tipo> | <Descrizione>`: Inserisce evento storico.
+    *   Tipi: `WAR`, `POLITICS`, `DISCOVERY`, `CALAMITY`, `GENERIC`.
+*   `$viaggi fix`: Correzione manuale del log spostamenti (es. `$viaggi fix #ID | NuovaRegione | NuovoLuogo`).
 
-*   `$wipe softwipe`: **Soft Reset**. Cancella tutta la memoria derivata (RAG, Inventario, Quest, Storie PG/NPC) e svuota la coda Redis.
-    *   *Cosa rimane*: Campagne, Sessioni, File Audio, PG.
-    *   *Uso*: Utile per rigenerare la conoscenza (`$recover regenerate-all`) senza perdere i dati grezzi.
-*   `$wipe wipe`: **RAGNAROK (Hard Reset)**. Cancella **TUTTO**: Database, File locali, Backup Cloud, Code. **Irreversibile**. Riporta il bot allo stato iniziale.
+#### 🔧 Amministrazione e Config
+*   `$impostasessione <N>`: Forza il numero della sessione attuale.
+*   `$autoaggiorna on/off`: Abilita/Disabilita l'aggiornamento automatico delle biografie dei PG.
+*   `$setcmd`: Imposta il canale corrente come canale comandi.
+*   `$setsummary`: Imposta il canale corrente per i riassunti.
+*   `$memorizza <ID_SESSIONE>`: Avvia l'ingestione manuale di una vecchia sessione (senza audio).
+*   `$scarica <ID_SESSIONE>`: Link download audio masterizzato (file master.mp3).
+*   `$presenze <ID_SESSIONE>`: Elenca gli NPC incontrati in quella specifica sessione.
 
-#### 💾 Download Dati
+#### ⚠️ Area Pericolo (Admin)
+*   `$recover <ID>`: Tenta di ripristinare una sessione bloccata.
+*   `$recover regenerate-all`: **Time Travel**. Rilancia l'elaborazione di TUTTA la campagna per rigenerare le entità.
+*   `$wipe`: Cancella database e memoria (vari livelli di distruzione).
+*   `$scarica <ID>`: Link download audio masterizzato.
 
-*   `$scarica <ID_SESSIONE>`: Genera e fornisce il link per scaricare l'audio masterizzato della sessione.
-*   `$scaricatrascrizioni`: *Deprecato/Rimosso*. Le trascrizioni sono gestite internamente per la generazione dei riassunti.
+---
+
+### 👨‍💻 3. Comandi Sviluppatore (Dev Tools)
+*Strumenti di debug per lo sviluppatore. Accessibili via `$help dev`.*
+
+*   `$debug teststream <URL>`: Simula una sessione scaricando un file audio da URL.
+*   `$debug testmail`: Invia un report di test via email.
+*   `$rebuild CONFIRM`: **[CRITICO]** Re-indicizza l'intero database e rigenera tutte le entità dai log (irreversibile).
+*   `$resetpg` (o `$clearchara`): Cancella definitivamente la scheda del PG dell'utente.
+*   `$wipe softwipe`: Pulisce solo i dati derivati (RAG, bio PG) mantenendo sessioni e anagrafiche.
 
 ---
 

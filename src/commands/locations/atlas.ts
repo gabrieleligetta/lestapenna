@@ -102,150 +102,124 @@ export const atlasCommand: Command = {
                 return;
             }
 
-            const list = entries.map((e: any) => {
+            const list = entries.map((e: any, i: number) => {
                 const descPreview = e.description ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '') : '*nessuna descrizione*';
-                return `🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
+                return `\`${i + 1}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
             }).join('\n');
-            await ctx.message.reply(`**📖 Atlante Completo**\n${list}`);
+            await ctx.message.reply(`**📖 Atlante Completo**\n${list}\n💡 Usa \`$atlante <ID>\` o \`$atlante update <ID> | <Nota>\``);
             return;
         }
 
-        // --- SUBCOMMAND: sync ---
-        if (argsStr.toLowerCase().startsWith('sync')) {
-            const syncArgs = argsStr.substring(4).trim();
+        // --- SUBCOMMAND: update ---
+        if (argsStr.toLowerCase().startsWith('update')) {
+            const content = argsStr.substring(7).trim();
+            // ID or Macro|Micro
+            // $atlante update 1 | Note
+            // $atlante update Region | Place | Note
 
-            // $atlante sync all - Sync all dirty locations
-            if (!syncArgs || syncArgs.toLowerCase() === 'all') {
-                const dirtyCount = getDirtyAtlasEntries(ctx.activeCampaign!.id).length;
-                if (dirtyCount === 0) {
-                    await ctx.message.reply('📍 Nessun luogo in attesa di sincronizzazione RAG.');
+            const parts = content.split('|').map(s => s.trim());
+
+            let macro = '';
+            let micro = '';
+            let note = '';
+
+            // Check ID in first part
+            const idMatch = parts[0].match(/^#?(\d+)$/);
+            if (idMatch) {
+                // ID Mode
+                if (parts.length < 2) {
+                    await ctx.message.reply('Uso: `$atlante update <ID> | <Nota>`');
                     return;
                 }
-
-                const loadingMsg = await ctx.message.reply(`🔄 Sincronizzazione RAG di **${dirtyCount}** luoghi in corso...`);
-                const synced = await syncAllDirtyAtlas(ctx.activeCampaign!.id);
-                await loadingMsg.edit(`✅ Sincronizzati **${synced}** luoghi nel RAG.`);
-                return;
-            }
-
-            // $atlante sync <Macro> | <Micro> - Sync specific location
-            const parts = syncArgs.split('|').map(s => s.trim());
-            if (parts.length === 2) {
-                const [macro, micro] = parts;
-                const loadingMsg = await ctx.message.reply(`🔄 Sincronizzazione RAG per **${macro} - ${micro}**...`);
-                const result = await syncAtlasEntryIfNeeded(ctx.activeCampaign!.id, macro, micro, true);
-                if (result) {
-                    await loadingMsg.edit(`✅ **${macro} - ${micro}** sincronizzato nel RAG.`);
-                } else {
-                    await loadingMsg.edit(`❌ Luogo **${macro} - ${micro}** non trovato.`);
-                }
-                return;
-            }
-
-            await ctx.message.reply(
-                '**Uso: `$atlante sync`**\n' +
-                '`$atlante sync all` - Sincronizza tutti i luoghi dirty\n' +
-                '`$atlante sync <Regione> | <Luogo>` - Sincronizza un luogo specifico'
-            );
-            return;
-        }
-
-        // --- SUBCOMMAND: rename/move ---
-        if (argsStr.toLowerCase().startsWith('rename ') || argsStr.toLowerCase().startsWith('move ') || argsStr.toLowerCase().startsWith('rinomina ')) {
-            const renameArgs = argsStr.substring(argsStr.indexOf(' ') + 1);
-            const parts = renameArgs.split('|').map(s => s.trim());
-
-            if (parts.length < 4) {
-                await ctx.message.reply(
-                    '**Uso: `$atlante rename`**\n' +
-                    '`$atlante rename <VecchiaRegione> | <VecchioLuogo> | <NuovaRegione> | <NuovoLuogo>`\n' +
-                    '`$atlante rename <VR> | <VL> | <NR> | <NL> | history` - Aggiorna anche la cronologia viaggi'
-                );
-                return;
-            }
-
-            const [oldMacro, oldMicro, newMacro, newMicro] = parts;
-            const updateHistory = parts[4]?.toLowerCase() === 'history' || parts[4]?.toLowerCase() === 'storia';
-
-            const existingTarget = getAtlasEntryFull(ctx.activeCampaign!.id, newMacro, newMicro);
-            const existingSource = getAtlasEntryFull(ctx.activeCampaign!.id, oldMacro, oldMicro);
-
-            if (!existingSource) {
-                await ctx.message.reply(`❌ Luogo di origine **${oldMacro} - ${oldMicro}** non trovato.`);
-                return;
-            }
-
-            if (existingTarget) {
-                // SMART MERGE
-                const loadingMsg = await ctx.message.reply(`⚙️ **Smart Merge:** Il luogo di destinazione esiste già. Unisco le memorie...`);
-
-                const mergedDesc = await smartMergeBios(existingTarget.description || "", existingSource.description || "");
-
-                const success = mergeAtlasEntry(ctx.activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, mergedDesc);
-
-                if (success) {
-                    markAtlasDirty(ctx.activeCampaign!.id, newMacro, newMicro);
-
-                    await loadingMsg.edit(
-                        `✅ **Luoghi Uniti!**\n` +
-                        `📖 **${oldMacro} - ${oldMicro}** è stato integrato in **${newMacro} - ${newMicro}**\n` +
-                        `📜 Cronologia aggiornata. Sync RAG programmato.\n\n` +
-                        `**Nuova Descrizione:**\n${mergedDesc.substring(0, 500)}${mergedDesc.length > 500 ? '...' : ''}`
-                    );
-                    return;
-                } else {
-                    await ctx.message.reply(`❌ Errore durante l'unione dei luoghi.`);
+                const idx = parseInt(idMatch[1]) - 1;
+                const entries = listAtlasEntries(ctx.activeCampaign!.id);
+                if (!entries[idx]) {
+                    await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
                     return;
                 }
+                macro = entries[idx].macro_location;
+                micro = entries[idx].micro_location;
+                note = parts.slice(1).join('|').trim();
             } else {
-                // STANDARD RENAME
-                const success = renameAtlasEntry(ctx.activeCampaign!.id, oldMacro, oldMicro, newMacro, newMicro, updateHistory);
-
-                if (success) {
-                    let response = `✅ **Luogo rinominato!**\n` +
-                        `📖 **${oldMacro} - ${oldMicro}** → **${newMacro} - ${newMicro}**`;
-
-                    if (updateHistory) {
-                        response += `\n📜 Anche la cronologia viaggi è stata aggiornata.`;
-                    } else {
-                        response += `\n💡 Tip: Aggiungi \`| history\` per aggiornare anche la cronologia.`;
-                    }
-
-                    markAtlasDirty(ctx.activeCampaign!.id, newMacro, newMicro);
-                    response += `\n📌 Sync RAG programmato.`;
-
-                    await ctx.message.reply(response);
-                    return;
-                } else {
-                    await ctx.message.reply(`❌ Impossibile rinominare.`);
+                // Name Mode: Region | Place | Note
+                if (parts.length < 3) {
+                    await ctx.message.reply('Uso: `$atlante update <Regione> | <Luogo> | <Nota>`');
                     return;
                 }
+                macro = parts[0];
+                micro = parts[1];
+                note = parts.slice(2).join('|').trim();
             }
+
+            // Check existence?
+            // Since we use ID or explicit names from list, it should exist. 
+            // Logic in existing code registers event even if not exists?
+            // "addAtlasEvent" takes macro/micro.
+
+            addAtlasEvent(ctx.activeCampaign!.id, macro, micro, null, note, "MANUAL_UPDATE");
+            await ctx.message.reply(`📝 Nota aggiunta a **${macro} - ${micro}**. Aggiornamento atmosfera...`);
+
+            await syncAtlasEntryIfNeeded(ctx.activeCampaign!.id, macro, micro, true);
+            return;
         }
 
         // --- SUBCOMMAND: delete ---
         if (argsStr.toLowerCase().startsWith('delete ') || argsStr.toLowerCase().startsWith('elimina ')) {
             const deleteArgs = argsStr.substring(argsStr.indexOf(' ') + 1);
-            const parts = deleteArgs.split('|').map(s => s.trim());
+            let macro = '';
+            let micro = '';
 
-            if (parts.length !== 2) {
-                await ctx.message.reply('Uso: `$atlante delete <Regione> | <Luogo>`');
-                return;
+            const idMatch = deleteArgs.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const entries = listAtlasEntries(ctx.activeCampaign!.id);
+                if (!entries[idx]) {
+                    await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
+                    return;
+                }
+                macro = entries[idx].macro_location;
+                micro = entries[idx].micro_location;
+            } else {
+                const parts = deleteArgs.split('|').map(s => s.trim());
+                if (parts.length !== 2) {
+                    await ctx.message.reply('Uso: `$atlante delete <Regione> | <Luogo>` o `$atlante delete <ID>`');
+                    return;
+                }
+                macro = parts[0];
+                micro = parts[1];
             }
 
-            const [macro, micro] = parts;
             const success = deleteAtlasEntry(ctx.activeCampaign!.id, macro, micro);
 
             if (success) {
                 await ctx.message.reply(`🗑️ Voce **${macro} - ${micro}** eliminata dall'Atlante.`);
             } else {
-                await ctx.message.reply(`❌ Luogo **${macro} - ${micro}** non trovato nell'Atlante.`);
+                await ctx.message.reply(`❌ Luogo **${macro} - ${micro}** non trovato.`);
             }
             return;
         }
 
-        // --- PARSE PIPE-SEPARATED ARGS ---
+        // --- PARSE PIPE-SEPARATED ARGS or ID ---
         const parts = argsStr.split('|').map(s => s.trim());
+
+        // ID View: $atlante 1
+        const idMatch = parts[0].match(/^#?(\d+)$/);
+        if (parts.length === 1 && idMatch) {
+            const idx = parseInt(idMatch[1]) - 1;
+            const entries = listAtlasEntries(ctx.activeCampaign!.id);
+            if (entries[idx]) {
+                const entry = entries[idx];
+                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
+                await ctx.message.reply(
+                    `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
+                    `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
+                    `${entry.description || '*Nessuna descrizione*'}`
+                );
+            } else {
+                await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
+            }
+            return;
+        }
 
         // --- VIEW SPECIFIC LOCATION: $atlante <Macro> | <Micro> ---
         if (parts.length === 2) {
@@ -262,56 +236,15 @@ export const atlasCommand: Command = {
             } else {
                 await ctx.message.reply(
                     `📖 **${macro} - ${micro}** non è ancora nell'Atlante.\n` +
-                    `💡 Usa \`$atlante ${macro} | ${micro} | <descrizione>\` per aggiungerlo.`
+                    `💡 Usa \`$atlante update ${macro} | ${micro} | <descrizione>\` per aggiungerlo.`
                 );
             }
             return;
         }
 
-        // --- UPDATE LOCATION: $atlante <Macro> | <Micro> | <Description> [| force] ---
+        // --- LEGACY/FALLBACK ---
         if (parts.length >= 3) {
-            const [macro, micro, newDesc] = parts;
-            const forceFlag = parts[3]?.toLowerCase();
-            const isForceMode = forceFlag === 'force' || forceFlag === '--force' || forceFlag === '!';
-
-            const existing = getAtlasEntryFull(ctx.activeCampaign!.id, macro, micro);
-
-            // 1. Registra l'evento nella storia (Unica fonte di verità)
-            const eventType = isForceMode ? 'FORCE_UPDATE' : 'MANUAL_UPDATE';
-
-            // SE è la prima volta che lo creiamo, forse vogliamo un evento "DISCOVERY"?
-            // O manual update va bene.
-
-            addAtlasEvent(
-                ctx.activeCampaign!.id,
-                macro,
-                micro,
-                null, // No session ID link for manual command usually, or could use current pending context? keeping null for clean history logging for now
-                newDesc,
-                eventType
-            );
-
-            // 2. Trigghera rigenerazione immediata (Sync)
-            const loadingMsg = await ctx.message.reply(`⚙️ Recepito! Aggiorno la descrizione di **${macro} - ${micro}**...`);
-
-            // Usa il sync che ora userà la storia (dobbiamo aggiornarlo nel prossimo step)
-            // Per ora syncAtlasEntryIfNeeded usa ancora la vecchia logica lazy?
-            // No, SYNC deve diventare "Regenerate from History".
-
-            // Poiché stiamo migrando, dobbiamo assicurarci che syncAtlasEntryIfNeeded faccia il lavoro sporco.
-            // Seleziona force=true per rigenerare subito.
-            const updatedDesc = await syncAtlasEntryIfNeeded(ctx.activeCampaign!.id, macro, micro, true);
-
-            if (updatedDesc) {
-                await loadingMsg.edit(
-                    `✅ **Atlante Aggiornato!**\n` +
-                    `📖 **${macro} - ${micro}**\n` +
-                    `📜 Nota registrata nella storia.\n\n` +
-                    `${updatedDesc.substring(0, 600)}${updatedDesc.length > 600 ? '...' : ''}`
-                );
-            } else {
-                await loadingMsg.edit(`❌ Errore durante l'aggiornamento.`);
-            }
+            await ctx.message.reply("⚠️ Sintassi aggiornata. Usa: `$atlante update <Regione> | <Luogo> | <Nota>`");
             return;
         }
 
@@ -319,12 +252,10 @@ export const atlasCommand: Command = {
         await ctx.message.reply(
             `**📖 Uso del comando $atlante:**\n` +
             `\`$atlante\` - Mostra luogo corrente o lista\n` +
-            `\`$atlante list\` - Lista tutti i luoghi\n` +
-            `\`$atlante sync [all|<R>|<L>]\` - Sincronizza RAG\n` +
-            `\`$atlante rename <VR> | <VL> | <NR> | <NL> [| history]\` - Rinomina\n` +
-            `\`$atlante <R> | <L>\` - Vedi descrizione\n` +
-            `\`$atlante <R> | <L> | <Testo> [| force]\` - Aggiorna\n` +
-            `\`$atlante delete <R> | <L>\` - Elimina voce`
+            `\`$atlante list\` - Lista luoghi con ID\n` +
+            `\`$atlante <ID>\` o \`$atlante <R> | <L>\` - Vedi dettaglio\n` +
+            `\`$atlante update <ID> | <Nota>\` - Aggiorna luogo\n` +
+            `\`$atlante update <R> | <L> | <Nota>\` - Aggiorna luogo`
         );
     }
 };

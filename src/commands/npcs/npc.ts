@@ -36,7 +36,7 @@ export const npcCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const argsStr = ctx.args.join(' ');
 
-        if (!argsStr) {
+        if (!argsStr || argsStr.toLowerCase() === 'list') {
             // LIST with numeric IDs
             const npcs = listNpcs(ctx.activeCampaign!.id);
             if (npcs.length === 0) {
@@ -171,7 +171,16 @@ export const npcCommand: Command = {
 
         // SUBCOMMAND: delete
         if (argsStr.toLowerCase().startsWith('delete ')) {
-            const name = argsStr.substring(7).trim();
+            let name = argsStr.substring(7).trim();
+
+            // ID Resolution
+            const idMatch = name.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = listNpcs(ctx.activeCampaign!.id);
+                if (all[idx]) name = all[idx].name;
+            }
+
             const success = deleteNpcEntry(ctx.activeCampaign!.id, name);
             if (success) await ctx.message.reply(`🗑️ NPC **${name}** eliminato dal dossier.`);
             else await ctx.message.reply(`❌ NPC "${name}" non trovato.`);
@@ -249,79 +258,129 @@ export const npcCommand: Command = {
         }
 
         // SUBCOMMAND: update
+        // Unified Syntax:
+        // 1. Narrative: $npc update <Name> | <Note>
+        // 2. Metadata:  $npc update <Name> field:<Field> <Value>
         if (argsStr.toLowerCase().startsWith('update')) {
-            const parts = argsStr.substring(7).split('|').map(s => s.trim());
+            const content = argsStr.substring(7).trim(); // Remove 'update '
 
-            if (parts.length < 3 || parts.length > 4) {
-                await ctx.message.reply('Uso: `$npc update <Nome> | <Campo> | <Valore> [| force]`\nCampi validi: `name`, `role`, `status`, `description`\n💡 Aggiungi `| force` per sovrascrittura diretta (solo description)');
-                return;
-            }
+            // Pattern 2: Metadata Update (field:...)
+            // check if second token is field:something
+            // We need to parse strict tokens for this, or split by pipe?
+            // If it contains pipe, it's likely Type 1 (unless name has pipe... unlikely).
 
-            const [name, field, value] = parts;
-            const forceFlag = parts[3]?.toLowerCase();
-            const isForceMode = forceFlag === 'force' || forceFlag === '--force' || forceFlag === '!';
+            // Let's rely on pipe separation for Narrative, and non-pipe for Metadata?
+            // "Garlon field:status DEAD"
 
-            const npc = getNpcEntry(ctx.activeCampaign!.id, name);
-            if (!npc) {
-                await ctx.message.reply(`❌ NPC **${name}** non trovato.`);
-                return;
-            }
-
-            if (field === 'description' || field === 'desc') {
-                if (isForceMode) {
-                    const loadingMsg = await ctx.message.reply(`🔥 **FORCE MODE** attivato per **${name}**...\n⚠️ La vecchia descrizione verrà completamente sostituita.`);
-
-                    // Force Mode: Add event AND maybe a special marker?
-                    // Actually, "Force" in the new paradigm means "Add event and regen immediately".
-                    // But if we want to "Replace completely", we might need a "snapshot" event that says "This is the new truth".
-
-                    const eventDesc = `[AGGIORNAMENTO FORZATO] ${value}`;
-                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'FORCE_UPDATE');
-
-                    const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
-
-                    await loadingMsg.edit(`🔥 **Sovrascrittura completata!**\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${newDesc ? newDesc.substring(0, 500) : ''}${newDesc && newDesc.length > 500 ? '...' : ''}`);
+            if (content.includes('|')) {
+                // Type 1: Narrative Update
+                const parts = content.split('|').map(s => s.trim());
+                if (parts.length < 2) {
+                    await ctx.message.reply('Uso: `$npc update <Nome> | <Nota/Fatto>`');
                     return;
+                }
+                let name = parts[0];
+                const note = parts.slice(1).join('|').trim();
+
+                // ID Resolution
+                const idMatch = name.match(/^#?(\d+)$/);
+                if (idMatch) {
+                    const idx = parseInt(idMatch[1]) - 1;
+                    const all = listNpcs(ctx.activeCampaign!.id);
+                    if (all[idx]) name = all[idx].name;
+                }
+
+                const npc = getNpcEntry(ctx.activeCampaign!.id, name);
+                if (!npc) {
+                    await ctx.message.reply(`❌ NPC **${name}** non trovato.`);
+                    return;
+                }
+
+                const loadingMsg = await ctx.message.reply(`⚙️ Aggiungo nota al dossier di **${name}**...`);
+
+                const eventDesc = `[NOTA DM] ${note}`;
+                addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'DM_NOTE');
+
+                // Trigger regen
+                const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
+
+                await loadingMsg.edit(`✅ Dossier aggiornato!\n📌 Sync RAG programmato.\n\n📜 **Nuova Bio:**\n${newDesc ? newDesc.substring(0, 500) : ''}${newDesc && newDesc.length > 500 ? '...' : ''}`);
+                return;
+            } else {
+                // Type 2: Metadata Update
+                // Expect: Name field:status Value
+                // This is tricky if Name has spaces.
+                // Alternative: $npc update Name | field:status Value ?
+                // Guide says: "$npc update Garlon field:status DEAD"
+                // Parse strategy: Name is everything before "field:".
+
+                const fieldIndex = content.indexOf('field:');
+                if (fieldIndex === -1) {
+                    await ctx.message.reply('Uso:\n1. `$npc update <Nome> | <Nota>` (Narrativo)\n2. `$npc update <Nome> field:<campo> <valore>` (Metadati)');
+                    return;
+                }
+
+                let name = content.substring(0, fieldIndex).trim();
+                const remainder = content.substring(fieldIndex); // field:status DEAD
+
+                // ID Resolution
+                const idMatch = name.match(/^#?(\d+)$/);
+                if (idMatch) {
+                    const idx = parseInt(idMatch[1]) - 1;
+                    const all = listNpcs(ctx.activeCampaign!.id);
+                    if (all[idx]) name = all[idx].name;
+                }
+
+                const firstSpace = remainder.indexOf(' ');
+
+                let fieldKey = '';
+                let value = '';
+
+                if (firstSpace === -1) {
+                    // "field:status" (missing value?)
+                    await ctx.message.reply('❌ Valore mancante.');
+                    return;
+                }
+
+                fieldKey = remainder.substring(6, firstSpace); // remove field:
+                value = remainder.substring(firstSpace + 1).trim();
+
+                const npc = getNpcEntry(ctx.activeCampaign!.id, name);
+                if (!npc) {
+                    await ctx.message.reply(`❌ NPC **${name}** non trovato.`);
+                    return;
+                }
+
+                const updates: any = {};
+                if (fieldKey === 'name') {
+                    updates.name = value;
+                } else if (fieldKey === 'role') {
+                    updates.role = value;
+                } else if (fieldKey === 'status') {
+                    updates.status = value;
+                } else if (fieldKey === 'desc' || fieldKey === 'description') {
+                    // Legacy fallback manual overwrite
+                    updates.description = value;
                 } else {
-                    const loadingMsg = await ctx.message.reply(`⚙️ Aggiungo nota al dossier di **${name}**...`);
-
-                    const eventDesc = `[NOTA DM] ${value}`;
-                    addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'DM_NOTE');
-
-                    // Trigger regen
-                    const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
-
-                    await loadingMsg.edit(`✅ Dossier aggiornato!\n📌 Sync RAG programmato.\n💡 Tip: Usa \`| force\` alla fine per sovrascrittura diretta.\n\n📜 **Nuova Bio:**\n${newDesc ? newDesc.substring(0, 500) : ''}${newDesc && newDesc.length > 500 ? '...' : ''}`);
+                    await ctx.message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`');
                     return;
                 }
-            }
 
-            const updates: any = {};
-            if (field === 'name') {
-                updates.name = value;
-            } else if (field === 'role') {
-                updates.role = value;
-            } else if (field === 'status') {
-                updates.status = value;
-            } else {
-                await ctx.message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`, `description`');
+                const success = updateNpcFields(ctx.activeCampaign!.id, name, updates);
+
+                if (success) {
+                    if (updates.name) {
+                        migrateKnowledgeFragments(ctx.activeCampaign!.id, name, updates.name);
+                        markNpcDirty(ctx.activeCampaign!.id, updates.name);
+                        await ctx.message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
+                        return;
+                    }
+                    await ctx.message.reply(`✅ NPC **${name}** aggiornato: ${fieldKey} = ${value}`);
+                } else {
+                    await ctx.message.reply(`❌ Errore durante l'aggiornamento.`);
+                }
                 return;
             }
-
-            const success = updateNpcFields(ctx.activeCampaign!.id, name, updates);
-
-            if (success) {
-                if (updates.name) {
-                    migrateKnowledgeFragments(ctx.activeCampaign!.id, name, updates.name);
-                    markNpcDirty(ctx.activeCampaign!.id, updates.name);
-                    await ctx.message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
-                    return;
-                }
-                await ctx.message.reply(`✅ NPC **${name}** aggiornato: ${field} = ${value}`);
-            } else {
-                await ctx.message.reply(`❌ Errore durante l'aggiornamento.`);
-            }
-            return;
         }
 
         // SUBCOMMAND: regen

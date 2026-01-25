@@ -86,11 +86,19 @@ export const questCommand: Command = {
             const content = arg.substring(7);
             const parts = content.split('|');
             if (parts.length < 2) {
-                await ctx.message.reply("⚠️ Uso: `$quest update <Titolo> | <Evento/Progresso>`");
+                await ctx.message.reply("⚠️ Uso: `$quest update <Titolo/ID> | <Evento/Progresso>`");
                 return;
             }
-            const title = parts[0].trim();
+            let title = parts[0].trim();
             const note = parts.slice(1).join('|').trim();
+
+            // ID Resolution
+            const idMatch = title.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const active = getOpenQuests(ctx.activeCampaign!.id);
+                if (active[idx]) title = active[idx].title;
+            }
 
             const quest = getQuestByTitle(ctx.activeCampaign!.id, title);
             if (!quest) {
@@ -109,19 +117,15 @@ export const questCommand: Command = {
 
         // SUBCOMMAND: $quest done <Title or ID>
         if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
-            const search = arg.split(' ').slice(1).join(' ');
+            let search = arg.split(' ').slice(1).join(' ');
 
-            // TODO: Search by ID is tricky without fetching title.
-            // Let's rely on Title search primarily or implement fetchById.
-            // For now, assume Title search or ID usage requires lookup.
-            // Actually, `updateQuestStatusById` works but doesn't give us title for history.
-            // Let's assume search is Title for now or implement logic.
-            // Simplified: treat as Title.
-
-            // If numeric ID?
-            // Converting ID logic check...
-            // Skipped for brevity, focusing on unified flow. 
-            // Let's support Title logic mostly as ID is legacy-ish.
+            // ID Resolution
+            const idMatch = search.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const active = getOpenQuests(ctx.activeCampaign!.id);
+                if (active[idx]) search = active[idx].title;
+            }
 
             updateQuestStatus(ctx.activeCampaign!.id, search, 'COMPLETED');
 
@@ -145,9 +149,9 @@ export const questCommand: Command = {
             return;
         }
 
-        const list = quests.map((q: any) => {
-            const desc = q.description ? `\n> *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-            return `\`#${q.id}\` 🔹 **${q.title}**${desc}`;
+        const list = quests.map((q: any, i: number) => {
+            const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
+            return `\`${i + 1}\` 🔹 **${q.title}**${desc}`;
         }).join('\n');
 
         await ctx.message.reply(`**🗺️ Quest Attive (${ctx.activeCampaign?.name})**\n\n${list}\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`);

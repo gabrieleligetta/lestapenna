@@ -5,21 +5,20 @@ import { getAvailableSessions } from '../../db';
 export const listCommand: Command = {
     name: 'list',
     aliases: ['listasessioni', 'listsessions'],
-    requiresCampaign: true, // Needs active campaign to list ITS sessions? OR generic?
-    // index.ts: getAvailableSessions(message.guild.id, activeCampaign?.id, 0);
-    // So if activeCampaign is set, filter by it. If not, filtered by guild?
-    // getAvailableSessions signature: (guildId, campaignId?, limit?)
-    // command logic line 3070 uses activeCampaign?.id.
-    // So it works with or without campaign, but if no campaign, it lists all for guild? 
-    // Wait, getAvailableSessions might require campaignId.
-    // I'll follow index.ts: activeCampaign?.id.
+    requiresCampaign: false,
 
     async execute(ctx: CommandContext): Promise<void> {
         const { message, activeCampaign } = ctx;
 
-        const sessions = getAvailableSessions(message.guild!.id, activeCampaign?.id, 0); // 0 = No limit
+        // calling getAvailableSessions
+        const sessions = getAvailableSessions(message.guild!.id, activeCampaign?.id, 0);
+
         if (sessions.length === 0) {
-            await message.reply("Nessuna sessione trovata negli archivi per questa campagna.");
+            if (activeCampaign) {
+                await message.reply("Nessuna sessione trovata negli archivi per questa campagna.");
+            } else {
+                await message.reply("Nessuna sessione trovata negli archivi del server. Usa `$creacampagna` per iniziare!");
+            }
             return;
         }
 
@@ -34,11 +33,12 @@ export const listCommand: Command = {
 
             const list = currentSessions.map(s => {
                 const title = s.title ? `📜 **${s.title}**` : "";
-                return `🆔 \`${s.session_id}\`\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)\n${title}`;
+                const campaignInfo = !activeCampaign && s.campaign_name ? `\n🌍 **${s.campaign_name}**` : "";
+                return `🆔 \`${s.session_id}\`${campaignInfo}\n📅 ${new Date(s.start_time).toLocaleString()} (${s.fragments} frammenti)\n${title}`;
             }).join('\n\n');
 
             return new EmbedBuilder()
-                .setTitle(`📜 Cronache: ${activeCampaign?.name || 'Tutte'}`)
+                .setTitle(`📜 Cronache: ${activeCampaign?.name || 'Tutte le Campagne'}`)
                 .setColor("#7289DA")
                 .setDescription(list)
                 .setFooter({ text: `Pagina ${page + 1} di ${totalPages}` });

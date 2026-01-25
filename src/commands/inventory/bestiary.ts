@@ -38,11 +38,19 @@ export const bestiaryCommand: Command = {
             const content = arg.substring(7);
             const parts = content.split('|');
             if (parts.length < 2) {
-                await ctx.message.reply("⚠️ Uso: `$bestiario update <Mostro> | <Nota/Osservazione>`");
+                await ctx.message.reply("⚠️ Uso: `$bestiario update <Mostro/ID> | <Nota/Osservazione>`");
                 return;
             }
-            const name = parts[0].trim();
+            let name = parts[0].trim();
             const note = parts.slice(1).join('|').trim();
+
+            // ID Resolution
+            const idMatch = name.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = listAllMonsters(ctx.activeCampaign!.id);
+                if (all[idx]) name = all[idx].name;
+            }
 
             const monster = getMonsterByName(ctx.activeCampaign!.id, name);
             if (!monster) {
@@ -78,10 +86,20 @@ export const bestiaryCommand: Command = {
             return;
         }
 
-        // VIEW: Show specific monster details
+        // VIEW: Show specific monster details (ID or Name)
         if (arg && !arg.includes('|')) {
+            let search = arg;
+
+            // ID Resolution
+            const idMatch = search.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = listAllMonsters(ctx.activeCampaign!.id);
+                if (all[idx]) search = all[idx].name;
+            }
+
             const monster = listAllMonsters(ctx.activeCampaign!.id).find((m: any) =>
-                m.name.toLowerCase().includes(arg.toLowerCase())
+                m.name.toLowerCase().includes(search.toLowerCase())
             );
             if (!monster) {
                 await ctx.message.reply(`❌ Mostro "${arg}" non trovato nel bestiario.`);
@@ -113,9 +131,9 @@ export const bestiaryCommand: Command = {
             return;
         }
 
-        const defeated = monsters.filter((m: any) => m.status === 'DEFEATED');
-        const alive = monsters.filter((m: any) => m.status === 'ALIVE');
-        const fled = monsters.filter((m: any) => m.status === 'FLED');
+        const defeated = monsters.map((m: any, i: number) => ({ ...m, idx: i + 1 })).filter((m: any) => m.status === 'DEFEATED');
+        const alive = monsters.map((m: any, i: number) => ({ ...m, idx: i + 1 })).filter((m: any) => m.status === 'ALIVE');
+        const fled = monsters.map((m: any, i: number) => ({ ...m, idx: i + 1 })).filter((m: any) => m.status === 'FLED');
 
         // Only show top 20 or summary if too many?
         // Current logic shows all. 
@@ -123,16 +141,16 @@ export const bestiaryCommand: Command = {
         let response = `**👹 Bestiario (${ctx.activeCampaign?.name})**\n\n`;
 
         if (alive.length > 0) {
-            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `\`${m.idx}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
         if (defeated.length > 0) {
-            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `\`${m.idx}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
         if (fled.length > 0) {
-            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `• ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `\`${m.idx}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
 
-        response += `💡 Usa \`$bestiario <nome>\` per dettagli o \`$bestiario update ...\` per note.`;
+        response += `💡 Usa \`$bestiario <ID>\` per dettagli o \`$bestiario update <ID> | <Nota>\`.`;
         await ctx.message.reply(response);
     }
 };

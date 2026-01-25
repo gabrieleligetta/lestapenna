@@ -39,6 +39,7 @@ export interface SessionSummary {
     start_time: number;
     fragments: number;
     campaign_name?: string;
+    campaign_id?: number; // Added for filtering
     session_number?: number;
     title?: string;
 }

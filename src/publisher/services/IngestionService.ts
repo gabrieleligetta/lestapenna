@@ -321,15 +321,27 @@ export class IngestionService {
         const dedupedLocations = await deduplicateLocationBatch(locationUpdates);
         for (const loc of dedupedLocations) {
             if (loc.macro && loc.description) {
-                const reconciled = await reconcileLocationName(campaignId, loc.macro, loc.micro, loc.description);
+                // Clean Names to remove parentheses (e.g. "Location (Extra)")
+                const cleanMacro = cleanEntityName(loc.macro);
+                const cleanMicro = cleanEntityName(loc.micro);
+
+                const finalMacro = cleanMacro.name;
+                const finalMicro = cleanMicro.name;
+
+                // Append extra info to description if found
+                let finalDesc = loc.description;
+                if (cleanMacro.extra) finalDesc = `${finalDesc} (${cleanMacro.extra})`;
+                if (cleanMicro.extra) finalDesc = `${finalDesc} (${cleanMicro.extra})`;
+
+                const reconciled = await reconcileLocationName(campaignId, finalMacro, finalMicro, finalDesc);
 
                 if (reconciled) {
                     console.log(`[Atlas] 🔄 Riconciliato: "${loc.macro}" / "${loc.micro}" → "${reconciled.canonicalMacro}" / "${reconciled.canonicalMicro}"`);
-                    updateAtlasEntry(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, loc.description, sessionId);
+                    updateAtlasEntry(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, finalDesc, sessionId);
                     markAtlasDirty(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
                 } else {
-                    updateAtlasEntry(campaignId, loc.macro, loc.micro, loc.description, sessionId);
-                    markAtlasDirty(campaignId, loc.macro, loc.micro);
+                    updateAtlasEntry(campaignId, finalMacro, finalMicro, finalDesc, sessionId);
+                    markAtlasDirty(campaignId, finalMacro, finalMicro);
                 }
             }
         }

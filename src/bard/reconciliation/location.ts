@@ -178,6 +178,21 @@ export async function reconcileLocationName(
 
         if (score > 0.55) {
             candidates.push({ entry, similarity: score, reason });
+        } else {
+            // 4. NEW: Full Path Similarity (Handle different splitting)
+            // e.g. "Region - City" | "District" vs "Region" | "City - District"
+            const fullPathEntry = `${entryMacroClean} - ${entryMicroClean}`;
+            const fullPathNew = `${newMacroClean} - ${newMicroClean}`;
+
+            const fullSim = levenshteinSimilarity(fullPathNew, fullPathEntry);
+
+            // Check also "Micro" ONLY vs "Micro"
+            // Sometimes Macro is totally different or missing but Micro is unique enough?
+            // Not sure, let's stick to full path for now.
+
+            if (fullSim > 0.85) {
+                candidates.push({ entry, similarity: fullSim, reason: `full_path_sim=${fullSim.toFixed(2)}` });
+            }
         }
     }
 

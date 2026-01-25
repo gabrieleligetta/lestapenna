@@ -58,8 +58,13 @@ export const npcRepository = {
         return db.prepare('SELECT * FROM npc_dossier WHERE campaign_id = ? AND lower(name) = lower(?)').get(campaignId, name) as NpcEntry | undefined;
     },
 
-    listNpcs: (campaignId: number, limit: number = 10): NpcEntry[] => {
-        return db.prepare('SELECT * FROM npc_dossier WHERE campaign_id = ? ORDER BY last_updated DESC LIMIT ?').all(campaignId, limit) as NpcEntry[];
+    listNpcs: (campaignId: number, limit: number = 10, offset: number = 0): NpcEntry[] => {
+        return db.prepare('SELECT * FROM npc_dossier WHERE campaign_id = ? ORDER BY last_updated DESC LIMIT ? OFFSET ?').all(campaignId, limit, offset) as NpcEntry[];
+    },
+
+    countNpcs: (campaignId: number): number => {
+        const result = db.prepare('SELECT COUNT(*) as count FROM npc_dossier WHERE campaign_id = ?').get(campaignId) as { count: number };
+        return result.count;
     },
 
     addNpcEvent: (campaignId: number, npcName: string, sessionId: string, description: string, type: string) => {

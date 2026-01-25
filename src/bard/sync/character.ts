@@ -76,7 +76,7 @@ export async function syncCharacterIfNeeded(
         return char.description;
     }
 
-    console.log(`[Sync Character] Avvio sync per ${char.character_name} (+${newEvents.length} nuovi eventi, lastSync: ${lastSyncedId} → ${maxId})...`);
+    console.log(`[Sync Character] Avvio sync per ${char.character_name} (+${newEvents.length} nuovi eventi) [Debug ID range: ${lastSyncedId} → ${maxId}]...`);
 
     const newDesc = await regenerateCharacterDescription(
         char.character_name,

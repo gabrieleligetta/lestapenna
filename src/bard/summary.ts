@@ -668,7 +668,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             }
 
             console.log(`[Bardo] 📏 Dimensione Prompt Scrittore: ${reducePrompt.length} chars`);
-            console.log(`[Bardo] 📏 Dimensione Prompt Scrittore: ${reducePrompt.length} chars`);
 
             // FILENAME FIX: Use standard name if single part, otherwise indexed
             const promptFileName = (!isMultiPart && i === 0) ? 'writer_prompt.txt' : `writer_prompt_act${actNumber}.txt`;

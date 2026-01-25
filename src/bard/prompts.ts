@@ -585,8 +585,9 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
 **REGOLE DI VALIDAZIONE:**
 
 **Eventi (NPC/PG/World):**
-- SKIP se: duplicato semantico della storia recente, evento banale (es. "ha parlato", "ha mangiato"), contraddittorio con eventi recenti
-- KEEP se: cambio di status significativo, rivelazione importante, impatto sulla trama
+- SKIP se: duplicato semantico della storia recente, evento banale (es. "ha parlato", "ha mangiato", "ha camminato"), dialoghi senza conseguenze, spostamenti minori.
+- KEEP se: cambio di status significativo, rivelazione importante, impatto sulla trama, ferite gravi, acquisizione abilità/oggetti unici.
+- CRITERIO: "Se questo evento non fosse scritto, la storia cambierebbe?" Se NO -> SKIP.
 - Per eventi KEEP: riscrivi in modo conciso (max 1 frase chiara)
 
 **Loot:**

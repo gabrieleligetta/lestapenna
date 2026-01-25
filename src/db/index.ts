@@ -99,6 +99,7 @@ export const getAtlasHistory = locationRepository.getAtlasHistory;
 export const updateNpcEntry = npcRepository.updateNpcEntry;
 export const getNpcEntry = npcRepository.getNpcEntry;
 export const listNpcs = npcRepository.listNpcs;
+export const countNpcs = npcRepository.countNpcs;
 export const addNpcEvent = npcRepository.addNpcEvent;
 export const getAllNpcs = npcRepository.getAllNpcs;
 export const getDirtyNpcDossiers = npcRepository.getDirtyNpcDossiers;

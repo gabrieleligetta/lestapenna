@@ -287,3 +287,42 @@ export function findBestMatch<T extends { name: string }>(
     return bestMatch;
 }
 
+/**
+ * Pulisce il nome di un'entità, spostando il contenuto tra parentesi nella descrizione extra.
+ * Es. "Goblin (Arciere)" -> { name: "Goblin", extra: "Arciere" }
+ */
+export function cleanEntityName(rawName: string): { name: string; extra: string | null } {
+    if (!rawName) return { name: "", extra: null };
+
+    // Regex per trovare contenuto tra parentesi alla fine della stringa
+    // Gestisce "(testo)" e anche "(testo) (altro)"
+    const parenthesizedRegex = /\s*\(([^)]+)\)$/;
+
+    let name = rawName.trim();
+    let extraParts: string[] = [];
+
+    // Estrai ripetutamente le parentesi finali
+    while (true) {
+        const match = name.match(parenthesizedRegex);
+        if (!match) break;
+
+        // Aggiungi il contenuto trovato (in ordine inverso di estrazione)
+        extraParts.unshift(match[1]);
+
+        // Rimuovi la parte matchata dal nome
+        name = name.substring(0, match.index).trim();
+    }
+
+    return {
+        name: name,
+        extra: extraParts.length > 0 ? extraParts.join(', ') : null
+    };
+}
+
+/**
+ * Rimuove articoli e prefissi comuni per migliorare il matching fuzzy.
+ */
+export function stripPrefix(str: string): string {
+    return str.replace(/^(il|lo|la|i|gli|le|un|uno|una|the|a|an)\s+/i, '').trim();
+}
+

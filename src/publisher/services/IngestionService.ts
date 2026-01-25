@@ -48,7 +48,8 @@ import {
     syncAllDirtyAtlas,
     syncAllDirtyBestiary,
     syncAllDirtyInventory,
-    syncAllDirtyQuests
+    syncAllDirtyQuests,
+    cleanEntityName
 } from '../../bard';
 
 export class IngestionService {
@@ -214,14 +215,19 @@ export class IngestionService {
         if (validated.loot?.keep && validated.loot.keep.length > 0) {
             const dedupedLoot = await deduplicateItemBatch(validated.loot.keep);
             for (const item of dedupedLoot) {
-                const reconciled = await reconcileItemName(campaignId, item);
-                const finalName = reconciled ? reconciled.canonicalName : item.name;
+                // Name Cleaning
+                const clean = cleanEntityName(item.name);
+                const itemName = clean.name;
+                const itemDesc = clean.extra ? `${item.description || ''} (${clean.extra})`.trim() : item.description;
+
+                const reconciled = await reconcileItemName(campaignId, { ...item, name: itemName });
+                const finalName = reconciled ? reconciled.canonicalName : itemName;
                 if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
-                addLoot(campaignId, finalName, item.quantity || 1, sessionId, item.description);
-                
+                addLoot(campaignId, finalName, item.quantity || 1, sessionId, itemDesc);
+
                 // 🆕 History Tracking
-                addInventoryEvent(campaignId, finalName, sessionId, `Acquisito: ${item.description || 'Nessuna descrizione'}`, 'LOOT');
+                addInventoryEvent(campaignId, finalName, sessionId, `Acquisito: ${itemDesc || 'Nessuna descrizione'}`, 'LOOT');
 
                 // Skip simple currency from RAG
                 const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
@@ -263,7 +269,7 @@ export class IngestionService {
             const status = typeof quest === 'string' ? 'OPEN' : (quest.status || 'OPEN');
 
             console.log(`[Quest] ➕ ${title} (${status})`);
-            
+
             // Signature: (campaignId: number, title: string, sessionId?: string, description?: string, status?: string)
             addQuest(campaignId, title, sessionId, description, status);
 
@@ -281,16 +287,21 @@ export class IngestionService {
         const dedupedNpcs = await deduplicateNpcBatch(npcUpdates);
         for (const npc of dedupedNpcs) {
             if (npc.name && npc.description) {
+                // Name Cleaning
+                const clean = cleanEntityName(npc.name);
+                const npcName = clean.name;
+                const npcDesc = clean.extra ? `${npc.description} (Nota: ${clean.extra})` : npc.description;
+
                 // Signature: (campaignId: number, newName: string, newDescription: string = "")
-                const reconciled = await reconcileNpcName(campaignId, npc.name, npc.description);
-                const finalName = reconciled ? reconciled.canonicalName : npc.name;
+                const reconciled = await reconcileNpcName(campaignId, npcName, npcDesc);
+                const finalName = reconciled ? reconciled.canonicalName : npcName;
                 if (reconciled) console.log(`[NPC Dossier] 🔄 Riconciliato: "${npc.name}" → "${finalName}"`);
 
                 // Get existing bio and merge with new one
                 const existing = getNpcEntry(campaignId, finalName);
                 const oldBio = existing?.description || '';
                 // Signature: (bio1: string, bio2: string)
-                const mergedBio = await smartMergeBios(oldBio, npc.description);
+                const mergedBio = await smartMergeBios(oldBio, npcDesc);
 
                 // Signature: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string)
                 updateNpcEntry(campaignId, finalName, mergedBio, npc.role, npc.status, sessionId);
@@ -335,9 +346,15 @@ export class IngestionService {
         const dedupedMonsters = await deduplicateMonsterBatch(monsters);
         for (const monster of dedupedMonsters) {
             if (monster.name) {
+                // Name Cleaning
+                const clean = cleanEntityName(monster.name);
+                const monsterName = clean.name;
+                // Append extra info to description or notes? Description seems safer.
+                const monsterDesc = clean.extra ? `${monster.description || ''} (${clean.extra})`.trim() : (monster.description || '');
+
                 // Signature: (campaignId: number, newName: string, newDescription: string = "")
-                const reconciled = await reconcileMonsterName(campaignId, monster.name, monster.description || '');
-                const finalName = reconciled ? reconciled.canonicalName : monster.name;
+                const reconciled = await reconcileMonsterName(campaignId, monsterName, monsterDesc);
+                const finalName = reconciled ? reconciled.canonicalName : monsterName;
                 if (reconciled) console.log(`[Bestiario] 🔄 Riconciliato: "${monster.name}" → "${finalName}"`);
 
                 upsertMonster(
@@ -347,15 +364,16 @@ export class IngestionService {
                     monster.count,
                     sessionId,
                     {
-                        description: monster.description,
+                        description: monsterDesc,
                         abilities: monster.abilities,
                         weaknesses: monster.weaknesses,
                         resistances: monster.resistances
-                    }
+                    },
+                    monsterName
                 );
 
                 // 🆕 History Tracking
-                addBestiaryEvent(campaignId, finalName, sessionId, `Incontro: ${monster.description || 'Nessuna descrizione'}`, 'ENCOUNTER');
+                addBestiaryEvent(campaignId, finalName, sessionId, `Incontro: ${monsterDesc || 'Nessuna descrizione'}`, 'ENCOUNTER');
             }
         }
     }

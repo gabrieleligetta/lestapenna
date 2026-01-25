@@ -67,6 +67,35 @@ describe('Reconciliation Case-Sensitivity Deduplication', () => {
             // Ensure AI WAS called for fuzzy match
             expect(metadataClient.chat.completions.create).toHaveBeenCalled();
         });
+
+        it('should handle "Il Respiro" vs "Respiro di Ogma" even with other Ogma entities', async () => {
+            (listNpcs as jest.Mock).mockReturnValue([
+                { id: 101, name: 'Pensiero di Ogma', description: 'Altro Arcangelo' },
+                { id: 102, name: 'Il Respiro', description: 'Aspetto di Ogma' }, // The correct match
+                { id: 103, name: 'Forma di Ogma', description: 'Altro Arcangelo' }
+            ]);
+
+            // Setup AI mock to reject "Pensiero" but accept "Il Respiro"
+            (metadataClient.chat.completions.create as jest.Mock).mockImplementation(async (args) => {
+                const prompt = args.messages[0].content;
+                if (prompt.includes('Pensiero di Ogma')) return { choices: [{ message: { content: 'NO' } }] };
+                if (prompt.includes('Forma di Ogma')) return { choices: [{ message: { content: 'NO' } }] };
+                if (prompt.includes('Il Respiro')) return { choices: [{ message: { content: 'YES' } }] };
+                return { choices: [{ message: { content: 'NO' } }] };
+            });
+
+            // "Respiro di Ogma" should match "Il Respiro" 
+            // BUT "Pensiero di Ogma" also matches "Ogma" part, so it might be checked first.
+            // valid candidates: 
+            // 1. Pensiero di Ogma (matches 'Ogma', 'di')
+            // 2. Il Respiro (matches 'Respiro')
+            // 3. Forma di Ogma (matches 'Ogma', 'di')
+
+            const result = await reconcileNpcName(CAMPAIGN_ID, 'Respiro di Ogma', 'Arcangelo');
+
+            expect(result).not.toBeNull();
+            expect(result?.canonicalName).toBe('Il Respiro');
+        });
     });
 
     describe('Item Reconciliation', () => {
@@ -171,6 +200,46 @@ describe('Reconciliation Case-Sensitivity Deduplication', () => {
             expect(result).not.toBeNull();
             expect(result?.canonicalTitle).toBe('Rescue Leosin');
             expect(metadataClient.chat.completions.create).toHaveBeenCalled();
+        });
+    });
+
+
+    describe('Feature: Strip Prefixes & Smart Fuzzy', () => {
+
+        it('should reconcile "The Sword" vs "Sword" (Item)', async () => {
+            (listAllInventory as jest.Mock).mockReturnValue([
+                { id: 202, item_name: 'Sword of Justice' }
+            ]);
+            // "The Sword of Justice" -> strip "The" -> "Sword of Justice" -> Match
+            const result = await reconcileItemName(CAMPAIGN_ID, 'The Sword of Justice');
+            expect(result?.canonicalName).toBe('Sword of Justice');
+        });
+
+        it('should reconcile "La Palude" vs "Palude dei Morti" (Location)', async () => {
+            (listAllAtlasEntries as jest.Mock).mockReturnValue([
+                { id: 302, macro_location: 'Regione', micro_location: 'Palude dei Morti' }
+            ]);
+            // "La Palude dei Morti" -> strip "La" -> "Palude dei Morti" -> Match
+            const result = await reconcileLocationName(CAMPAIGN_ID, 'Regione', 'La Palude dei Morti');
+            expect(result?.canonicalMicro).toBe('Palude dei Morti');
+        });
+
+        it('should reconcile "Un Goblin" vs "Goblin Warrior" (Monster)', async () => {
+            (listAllMonsters as jest.Mock).mockReturnValue([
+                { id: 402, name: 'Goblin Warrior' }
+            ]);
+            // "Un Goblin Warrior" -> strip "Un" -> "Goblin Warrior" -> Match
+            const result = await reconcileMonsterName(CAMPAIGN_ID, 'Un Goblin Warrior');
+            expect(result?.canonicalName).toBe('Goblin Warrior');
+        });
+
+        it('should reconcile "A Rescue Mission" vs "Rescue Mission" (Quest)', async () => {
+            (listAllQuests as jest.Mock).mockReturnValue([
+                { id: 502, title: 'Rescue Mission' }
+            ]);
+            // "A Rescue Mission" -> strip "A" -> "Rescue Mission" -> Match
+            const result = await reconcileQuestTitle(CAMPAIGN_ID, 'A Rescue Mission');
+            expect(result?.canonicalTitle).toBe('Rescue Mission');
         });
     });
 });

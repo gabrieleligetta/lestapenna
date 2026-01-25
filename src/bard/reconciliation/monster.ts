@@ -4,7 +4,7 @@
 
 import { listAllMonsters } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
-import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { AI_CONFIRM_SAME_MONSTER_PROMPT } from '../prompts';
 
 /**
@@ -40,6 +40,8 @@ export async function reconcileMonsterName(
 
     const newNameLower = newName.toLowerCase().trim();
 
+    const newNameClean = stripPrefix(newNameLower);
+
     const exactMatch = existingMonsters.find((m: any) => m.name.toLowerCase() === newNameLower);
     if (exactMatch) {
         console.log(`[Monster Reconcile] ✅ Match esatto (case-insensitive): "${newName}" = "${exactMatch.name}"`);
@@ -50,9 +52,11 @@ export async function reconcileMonsterName(
 
     for (const monster of existingMonsters) {
         const existingName = monster.name;
-        const similarity = levenshteinSimilarity(newName, existingName);
+        const existingNameClean = stripPrefix(existingName.toLowerCase());
 
-        const minLen = Math.min(newName.length, existingName.length);
+        const similarity = levenshteinSimilarity(newNameClean, existingNameClean);
+
+        const minLen = Math.min(newNameClean.length, existingNameClean.length);
         const threshold = minLen < 6 ? 0.7 : 0.6;
 
         if (similarity >= threshold) {
@@ -60,7 +64,7 @@ export async function reconcileMonsterName(
             continue;
         }
 
-        if (containsSubstring(newName, existingName)) {
+        if (containsSubstring(newNameClean, existingNameClean)) {
             candidates.push({ monster, similarity: 0.8, reason: 'substring_match' });
         }
     }

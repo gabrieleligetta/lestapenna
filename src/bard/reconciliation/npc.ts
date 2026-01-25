@@ -4,7 +4,7 @@
 
 import { listNpcs } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
-import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
 import {
     AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT,
@@ -89,57 +89,80 @@ export async function reconcileNpcName(
         return { canonicalName: exactMatch.name, existingNpc: exactMatch };
     }
 
+    const newNameClean = stripPrefix(newName.toLowerCase());
     const candidates: Array<{ npc: any; similarity: number; reason: string }> = [];
 
     for (const npc of existingNpcs) {
         const existingName = npc.name;
-        const similarity = levenshteinSimilarity(newName, existingName);
+        const existingNameClean = stripPrefix(existingName.toLowerCase());
 
-        const minLen = Math.min(newName.length, existingName.length);
-        const threshold = minLen < 6 ? 0.7 : 0.6;
+        // 1. Clean Levenshtein
+        const similarity = levenshteinSimilarity(newNameClean, existingNameClean);
+        const minLen = Math.min(newNameClean.length, existingNameClean.length);
+        const threshold = minLen < 6 ? 0.75 : 0.65; // Slightly stricter for short names
 
         if (similarity >= threshold) {
             candidates.push({ npc, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
             continue;
         }
 
+        // 2. Substring Match (Boosted)
         if (containsSubstring(newName, existingName)) {
-            candidates.push({ npc, similarity: 0.8, reason: 'substring_match' });
+            candidates.push({ npc, similarity: 0.85, reason: 'substring_match' });
             continue;
         }
 
-        const newParts = newName.toLowerCase().split(/\s+/);
-        const existingParts = existingName.toLowerCase().split(/\s+/);
+        // 3. Significant Token Overlap (Boosted for multi-word names)
+        const newParts = newName.toLowerCase().split(/\s+/).filter(p => p.length > 2 && !['del', 'della', 'dei', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra'].includes(p));
+        const existingParts = existingName.toLowerCase().split(/\s+/).filter(p => p.length > 2 && !['del', 'della', 'dei', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra'].includes(p));
 
+        let matchCount = 0;
         for (const np of newParts) {
             for (const ep of existingParts) {
-                if (np.length > 3 && ep.length > 3 && levenshteinSimilarity(np, ep) > 0.8) {
-                    candidates.push({ npc, similarity: 0.75, reason: `part_match: ${np}≈${ep}` });
+                if (levenshteinSimilarity(np, ep) > 0.85) {
+                    matchCount++;
                 }
+            }
+        }
+
+        if (matchCount > 0) {
+            // If all significant parts of shorter name match, high confidence
+            const minParts = Math.min(newParts.length, existingParts.length);
+            if (matchCount >= minParts) {
+                candidates.push({ npc, similarity: 0.8, reason: `full_token_overlap (${matchCount}/${minParts})` });
+            } else if (matchCount >= 1 && minParts >= 2) {
+                // Partial overlap
+                candidates.push({ npc, similarity: 0.6 + (0.1 * matchCount), reason: `partial_token_overlap (${matchCount})` });
             }
         }
     }
 
     if (candidates.length === 0) return null;
 
+    // Sort by similarity descending
     candidates.sort((a, b) => b.similarity - a.similarity);
-    const bestCandidate = candidates[0];
 
-    console.log(`[Reconcile] 🔍 "${newName}" simile a "${bestCandidate.npc.name}" (${bestCandidate.reason}). Avvio Deep Check (RAG)...`);
+    // Consider TOP 3 Candidates (not just 1)
+    const topCandidates = candidates.slice(0, 3);
+    console.log(`[Reconcile] 🔍 "${newName}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.npc.name}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
-    const isSame = await aiConfirmSamePersonExtended(
-        campaignId,
-        newName,
-        newDescription,
-        bestCandidate.npc.name,
-        bestCandidate.npc.description || ""
-    );
+    for (const candidate of topCandidates) {
+        console.log(`[Reconcile] 🤔 Checking candidate: "${candidate.npc.name}" (${candidate.reason})...`);
 
-    if (isSame) {
-        console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${bestCandidate.npc.name}"`);
-        return { canonicalName: bestCandidate.npc.name, existingNpc: bestCandidate.npc };
-    } else {
-        console.log(`[Reconcile] ❌ "${newName}" ≠ "${bestCandidate.npc.name}"`);
+        const isSame = await aiConfirmSamePersonExtended(
+            campaignId,
+            newName,
+            newDescription,
+            candidate.npc.name,
+            candidate.npc.description || ""
+        );
+
+        if (isSame) {
+            console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.npc.name}"`);
+            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
+        } else {
+            console.log(`[Reconcile] ❌ Rifiutato: "${candidate.npc.name}"`);
+        }
     }
 
     return null;

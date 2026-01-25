@@ -400,7 +400,9 @@ export const initDatabase = () => {
         // 🆕 PERSISTENCE & REPLAY
         "ALTER TABLE sessions ADD COLUMN analyst_data TEXT",
         "ALTER TABLE sessions ADD COLUMN summary_data TEXT",
-        "ALTER TABLE sessions ADD COLUMN last_generated_at INTEGER"
+        "ALTER TABLE sessions ADD COLUMN last_generated_at INTEGER",
+        // 🆕 BESTIARIO: Supporto per varianti e deduplicazione
+        "ALTER TABLE bestiary ADD COLUMN variants TEXT"       // JSON array di nomi varianti es. ["Goblin Arciere", "Goblin Sciamano"]
     ];
 
     for (const m of migrations) {
@@ -413,6 +415,87 @@ export const initDatabase = () => {
                 console.error(`[DB] ⚠️ Migration error: "${m}"`, err);
             }
         }
+    }
+
+    // --- MIGRATION: DEDUPLICAZIONE BESTIARIO ---
+    try {
+        // Verifica se dobbiamo migrare: se esiste il vecchio indice e NON quello nuovo
+        const oldIndex = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bestiary_unique'").get();
+        const newIndex = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bestiary_unique_global'").get();
+
+        if (oldIndex && !newIndex) {
+            console.log("[Migration] 🔄 Inizio deduplicazione Bestiario...");
+
+            // 1. Recupera tutti i mostri ordinati per ultima vista (il primo sarà il master)
+            const monsters = db.prepare("SELECT * FROM bestiary ORDER BY campaign_id, name, last_seen DESC").all() as any[];
+            const grouped = new Map<string, any[]>();
+
+            for (const m of monsters) {
+                const key = `${m.campaign_id}:${m.name.toLowerCase()}`;
+                if (!grouped.has(key)) grouped.set(key, []);
+                grouped.get(key)!.push(m);
+            }
+
+            const migrationTx = db.transaction(() => {
+                let mergedCount = 0;
+                for (const [key, group] of grouped) {
+                    if (group.length > 1) {
+                        const master = group[0]; // Il più recente
+
+                        // Set per merge univoci
+                        const mergedAbilities = new Set<string>();
+                        const mergedWeaknesses = new Set<string>();
+                        const mergedResistances = new Set<string>();
+                        let mergedNotes = master.notes || '';
+
+                        // Popola dal master
+                        try { JSON.parse(master.abilities || '[]').forEach((x: string) => mergedAbilities.add(x)); } catch { }
+                        try { JSON.parse(master.weaknesses || '[]').forEach((x: string) => mergedWeaknesses.add(x)); } catch { }
+                        try { JSON.parse(master.resistances || '[]').forEach((x: string) => mergedResistances.add(x)); } catch { }
+
+                        // Merge degli altri
+                        for (let i = 1; i < group.length; i++) {
+                            const duplicate = group[i];
+                            try { JSON.parse(duplicate.abilities || '[]').forEach((x: string) => mergedAbilities.add(x)); } catch { }
+                            try { JSON.parse(duplicate.weaknesses || '[]').forEach((x: string) => mergedWeaknesses.add(x)); } catch { }
+                            try { JSON.parse(duplicate.resistances || '[]').forEach((x: string) => mergedResistances.add(x)); } catch { }
+
+                            if (duplicate.notes && !mergedNotes.includes(duplicate.notes)) {
+                                mergedNotes += `\n[Da Sessione ${duplicate.session_id || '?'}]: ${duplicate.notes}`;
+                            }
+
+                            // Elimina duplicato
+                            db.prepare("DELETE FROM bestiary WHERE id = ?").run(duplicate.id);
+                        }
+
+                        // Aggiorna master
+                        db.prepare(`
+                            UPDATE bestiary 
+                            SET abilities = ?, weaknesses = ?, resistances = ?, notes = ?
+                            WHERE id = ?
+                        `).run(
+                            JSON.stringify([...mergedAbilities]),
+                            JSON.stringify([...mergedWeaknesses]),
+                            JSON.stringify([...mergedResistances]),
+                            mergedNotes.trim(),
+                            master.id
+                        );
+                        mergedCount++;
+                    }
+                }
+
+                console.log(`[Migration] 🔗 Unificati ${mergedCount} gruppi di mostri duplicati.`);
+
+                // Drop e Create Index
+                db.prepare("DROP INDEX IF EXISTS idx_bestiary_unique").run();
+                db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_bestiary_unique_global ON bestiary(campaign_id, name)").run();
+            });
+
+            migrationTx();
+            console.log("[Migration] ✅ Deduplicazione Bestiario completata con successo.");
+        }
+    } catch (e) {
+        console.error("[Migration] ❌ Errore critico migrazione bestiario:", e);
     }
 
     // --- INDICI ---

@@ -57,7 +57,8 @@ export {
     cosineSimilarity,
     levenshteinSimilarity,
     containsSubstring,
-    escapeRegex
+    escapeRegex,
+    cleanEntityName
 } from './helpers';
 
 // Validation

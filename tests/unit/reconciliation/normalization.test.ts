@@ -78,3 +78,22 @@ describe('Normalization Logic', () => {
         expect(result.npc_events[0].name).toBe('Canonical Pari');
     });
 });
+
+import { cleanEntityName } from '../../../src/bard/helpers';
+
+describe('Entity Name Cleaning', () => {
+    it('should strip parenthetical text from names', () => {
+        expect(cleanEntityName('Goblin (Archer)')).toEqual({ name: 'Goblin', extra: 'Archer' });
+        expect(cleanEntityName('Mano di Ogma (Avatar)')).toEqual({ name: 'Mano di Ogma', extra: 'Avatar' });
+        expect(cleanEntityName('Angelo (rango basso)')).toEqual({ name: 'Angelo', extra: 'rango basso' });
+    });
+
+    it('should handle names without parentheses', () => {
+        expect(cleanEntityName('Goblin')).toEqual({ name: 'Goblin', extra: null });
+        expect(cleanEntityName('   Spada Lunga   ')).toEqual({ name: 'Spada Lunga', extra: null });
+    });
+
+    it('should handle multiple parentheses (unlikely but possible)', () => {
+        expect(cleanEntityName('Goblin (Archer) (Elite)')).toEqual({ name: 'Goblin', extra: 'Archer, Elite' });
+    });
+});

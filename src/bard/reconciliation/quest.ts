@@ -4,7 +4,7 @@
 
 import { listAllQuests } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
-import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { AI_CONFIRM_SAME_QUEST_PROMPT } from '../prompts';
 
 /**
@@ -38,6 +38,7 @@ export async function reconcileQuestTitle(
     if (existingQuests.length === 0) return null;
 
     const newTitleLower = newTitle.toLowerCase().trim();
+    const newTitleClean = stripPrefix(newTitleLower);
 
     const exactMatch = existingQuests.find((q: any) => q.title.toLowerCase() === newTitleLower);
     if (exactMatch) {
@@ -49,14 +50,16 @@ export async function reconcileQuestTitle(
 
     for (const quest of existingQuests) {
         const existingTitle = quest.title;
-        const similarity = levenshteinSimilarity(newTitle, existingTitle);
+        const existingTitleClean = stripPrefix(existingTitle.toLowerCase());
+
+        const similarity = levenshteinSimilarity(newTitleClean, existingTitleClean);
 
         if (similarity >= 0.6) {
             candidates.push({ quest, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
             continue;
         }
 
-        if (containsSubstring(newTitle, existingTitle)) {
+        if (containsSubstring(newTitleClean, existingTitleClean)) {
             candidates.push({ quest, similarity: 0.7, reason: 'substring_match' });
         }
     }

@@ -4,7 +4,7 @@
 
 import { listAllAtlasEntries } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
-import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
 import { AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT, AI_CONFIRM_SAME_LOCATION_PROMPT } from '../prompts';
 
@@ -135,12 +135,13 @@ export async function reconcileLocationName(
     newMacro = normalized.macro;
     newMicro = normalized.micro;
 
-    const newMacroLower = newMacro.toLowerCase().trim();
-    const newMicroLower = newMicro.toLowerCase().trim();
+    // Remove articles/prefixes for cleaner fuzzy match
+    const newMacroClean = stripPrefix(newMacro.toLowerCase());
+    const newMicroClean = stripPrefix(newMicro.toLowerCase());
 
     const exactMatch = existingLocations.find((loc: any) =>
-        loc.macro_location.toLowerCase() === newMacroLower &&
-        loc.micro_location.toLowerCase() === newMicroLower
+        loc.macro_location.toLowerCase() === newMacro.toLowerCase() &&
+        loc.micro_location.toLowerCase() === newMicro.toLowerCase()
     );
     if (exactMatch) {
         console.log(`[Location Reconcile] ✅ Match esatto (case-insensitive): "${newMacro} - ${newMicro}" = "${exactMatch.macro_location} - ${exactMatch.micro_location}"`);
@@ -154,10 +155,26 @@ export async function reconcileLocationName(
     const candidates: Array<{ entry: any; similarity: number; reason: string }> = [];
 
     for (const entry of existingLocations) {
-        const { score, reason } = locationSimilarity(
-            { macro: newMacro, micro: newMicro },
-            { macro: entry.macro_location, micro: entry.micro_location }
+        // Use clean versions for similarity
+        const entryMacroClean = stripPrefix(entry.macro_location.toLowerCase());
+        const entryMicroClean = stripPrefix(entry.micro_location.toLowerCase());
+
+        let { score, reason } = locationSimilarity(
+            { macro: newMacroClean, micro: newMicroClean },
+            { macro: entryMacroClean, micro: entryMicroClean }
         );
+
+        // Boost scoring slightly for clean matches or fallback to raw
+        if (score < 0.6) {
+            const rawSim = locationSimilarity(
+                { macro: newMacro, micro: newMicro },
+                { macro: entry.macro_location, micro: entry.micro_location }
+            );
+            if (rawSim.score > score) {
+                score = rawSim.score;
+                reason = rawSim.reason;
+            }
+        }
 
         if (score > 0.55) {
             candidates.push({ entry, similarity: score, reason });
@@ -167,29 +184,34 @@ export async function reconcileLocationName(
     if (candidates.length === 0) return null;
 
     candidates.sort((a, b) => b.similarity - a.similarity);
-    const bestCandidate = candidates[0];
 
-    console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" simile a "${bestCandidate.entry.macro_location} - ${bestCandidate.entry.micro_location}" (${bestCandidate.reason}). Avvio Deep Check (RAG)...`);
+    // Check Top 3 Candidates
+    const topCandidates = candidates.slice(0, 3);
+    console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.entry.macro_location}-${c.entry.micro_location}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
-    const isSame = await aiConfirmSameLocationExtended(
-        campaignId,
-        newMacro,
-        newMicro,
-        newDescription,
-        bestCandidate.entry.macro_location,
-        bestCandidate.entry.micro_location,
-        bestCandidate.entry.description || ""
-    );
+    for (const candidate of topCandidates) {
+        console.log(`[Location Reconcile] 🤔 Checking candidate: "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason})...`);
 
-    if (isSame) {
-        console.log(`[Location Reconcile] ✅ CONFERMATO: "${newMacro} - ${newMicro}" = "${bestCandidate.entry.macro_location} - ${bestCandidate.entry.micro_location}"`);
-        return {
-            canonicalMacro: bestCandidate.entry.macro_location,
-            canonicalMicro: bestCandidate.entry.micro_location,
-            existingEntry: bestCandidate.entry
-        };
-    } else {
-        console.log(`[Location Reconcile] ❌ "${newMacro} - ${newMicro}" ≠ "${bestCandidate.entry.macro_location} - ${bestCandidate.entry.micro_location}"`);
+        const isSame = await aiConfirmSameLocationExtended(
+            campaignId,
+            newMacro,
+            newMicro,
+            newDescription,
+            candidate.entry.macro_location,
+            candidate.entry.micro_location,
+            candidate.entry.description || ""
+        );
+
+        if (isSame) {
+            console.log(`[Location Reconcile] ✅ CONFERMATO: "${newMacro} - ${newMicro}" = "${candidate.entry.macro_location} - ${candidate.entry.micro_location}"`);
+            return {
+                canonicalMacro: candidate.entry.macro_location,
+                canonicalMicro: candidate.entry.micro_location,
+                existingEntry: candidate.entry
+            };
+        } else {
+            console.log(`[Location Reconcile] ❌ Rifiutato: "${candidate.entry.macro_location} - ${candidate.entry.micro_location}"`);
+        }
     }
 
     return null;

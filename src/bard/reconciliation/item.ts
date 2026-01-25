@@ -4,7 +4,7 @@
 
 import { listAllInventory } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
-import { levenshteinSimilarity, containsSubstring } from '../helpers';
+import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { AI_CONFIRM_SAME_ITEM_PROMPT } from '../prompts';
 
 /**
@@ -40,6 +40,8 @@ export async function reconcileItemName(
 
     const newItemLower = itemName.toLowerCase().trim();
 
+    const newItemClean = stripPrefix(newItemLower);
+
     const exactMatch = existingItems.find((i: any) => i.item_name.toLowerCase() === newItemLower);
     if (exactMatch) {
         console.log(`[Item Reconcile] ✅ Match esatto (case-insensitive): "${itemName}" = "${exactMatch.item_name}"`);
@@ -50,14 +52,16 @@ export async function reconcileItemName(
 
     for (const existingItem of existingItems) {
         const existingName = existingItem.item_name;
-        const similarity = levenshteinSimilarity(itemName, existingName);
+        const existingNameClean = stripPrefix(existingName.toLowerCase());
+
+        const similarity = levenshteinSimilarity(newItemClean, existingNameClean);
 
         if (similarity >= 0.65) {
             candidates.push({ item: existingItem, similarity, reason: `levenshtein=${similarity.toFixed(2)}` });
             continue;
         }
 
-        if (containsSubstring(itemName, existingName)) {
+        if (containsSubstring(newItemClean, existingNameClean)) {
             candidates.push({ item: existingItem, similarity: 0.75, reason: 'substring_match' });
         }
     }

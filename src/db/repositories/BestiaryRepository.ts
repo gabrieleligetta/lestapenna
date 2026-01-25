@@ -20,7 +20,8 @@ export const bestiaryRepository = {
         status: string,
         count?: string,
         sessionId?: string,
-        details?: MonsterDetails
+        details?: MonsterDetails,
+        originalName?: string
     ): void => {
         // Sanitize
         const safeDesc = details?.description ?
@@ -32,44 +33,50 @@ export const bestiaryRepository = {
         const safeResistances = details?.resistances ? JSON.stringify(details.resistances) : null;
         const safeNotes = details?.notes ? String(details.notes) : null;
 
-        // Logica Upsert Complessa:
-        // Se non esiste, inserisci.
-        // Se esiste, aggiorna solo se i nuovi valori sono "migliori" o aggiuntivi? 
-        // Per ora facciamo overwrite dei campi non-nulli e COALESCE per mantenere i vecchi.
+        // Variants logic: se originalName è diverso da name, è una variante.
+        // Inseriamo come array JSON ["Nome Variante"].
+        let variantsJson = null;
+        if (originalName && originalName.toLowerCase() !== name.toLowerCase()) {
+            variantsJson = JSON.stringify([originalName]);
+        }
 
-        /*
-           Nota: unique index idx_bestiary_unique ON bestiary(campaign_id, name, session_id) 
-           Questo indice include session_id. Quindi possiamo avere lo stesso mostro in sessioni diverse!
-           È corretto? Sì, vogliamo tracciare che "Goblin" sono stati visti in Sessione 1 e Sessione 5.
-           MA `listMonsters` raggruppa? No.
-           Se vogliamo un "Global Entry" per il mostro, forse dovremmo avere session_id NULL?
-           
-           Se sessionId è fornito, stiamo registrando un INCONTRO specifico.
-           Se vogliamo aggiornare il "template" globale del mostro, forse dovremmo usare una logica diversa.
-           
-           Per ora seguiamo la logica originale:
-           Se session_id C'È, inseriamo un record specifico per quella sessione (o lo aggiorniamo).
-        */
+        // Logic Upsert Globale:
+        // Index: idx_bestiary_unique_global (campaign_id, name)
+        // Se esiste, aggiorniamo last_seen, session_id (ultimo incontro), e mergiamo le varianti.
 
         db.prepare(`
             INSERT INTO bestiary (
                 campaign_id, name, status, count, session_id, last_seen,
-                description, abilities, weaknesses, resistances, notes, first_session_id, rag_sync_needed
+                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed
             )
             VALUES (
                 $campaignId, $name, $status, $count, $sessionId, $timestamp,
-                $desc, $abil, $weak, $res, $notes, $sessionId, 1
+                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1
             )
-            ON CONFLICT(campaign_id, name, session_id) WHERE session_id IS NOT NULL
+            ON CONFLICT(campaign_id, name)
             DO UPDATE SET 
                 status = $status,
                 count = COALESCE($count, count),
+                session_id = $sessionId, -- Aggiorna all'ultima sessione
                 last_seen = $timestamp,
                 description = COALESCE($desc, description),
                 abilities = COALESCE($abil, abilities),
                 weaknesses = COALESCE($weak, weaknesses),
                 resistances = COALESCE($res, resistances),
                 notes = COALESCE($notes, notes),
+                -- Merge variants: appende la nuova variante se non esiste
+                variants = CASE 
+                    WHEN $variants IS NOT NULL THEN 
+                        (
+                            SELECT json_group_array(DISTINCT value)
+                            FROM (
+                                SELECT value FROM json_each(COALESCE(variants, '[]'))
+                                UNION
+                                SELECT value FROM json_each($variants)
+                            )
+                        )
+                    ELSE variants
+                END,
                 rag_sync_needed = 1
         `).run({
             campaignId,
@@ -82,10 +89,11 @@ export const bestiaryRepository = {
             abil: safeAbilities,
             weak: safeWeaknesses,
             res: safeResistances,
-            notes: safeNotes
+            notes: safeNotes,
+            variants: variantsJson
         });
 
-        console.log(`[Bestiary] 👹 Mostro tracciato: ${name} (Session: ${sessionId})`);
+        console.log(`[Bestiary] 👹 Mostro tracciato/aggiornato: ${name} (Var: ${originalName || '-'})`);
     },
 
     listAllMonsters: (campaignId: number): BestiaryEntry[] => {

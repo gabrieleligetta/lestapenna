@@ -18,7 +18,7 @@ export type ToneKey = keyof typeof TONES;
 export const MAP_PROMPT = `Sei un analista di D&D.
     \${castContext}
     Estrai un elenco puntato cronologico strutturato esattamente così:
-    1. Nomi di NPC incontrati e le frasi chiave che hanno pronunciato (anche se lette dalla voce del DM);
+    1. Nomi di NPC incontrati (SOLO se agiscono o parlano nel testo, IGNORA il contesto se non presenti);
     2. Luoghi visitati;
     3. Oggetti ottenuti (Loot) con dettagli;
     4. Numeri/Danni rilevanti;
@@ -123,7 +123,9 @@ ${memoryContext}
             "reason": "Motivo spostamento (opzionale)"
         }
     ],
-    "present_npcs": ["Lista TUTTI i nomi NPC menzionati nel testo"],
+}
+    ],
+    "present_npcs": ["Lista TUTTI i nomi NPC che AGISCONO o PARLANO esplicitamente nel testo. IGNORA i nomi presenti solo nel Contesto/Memoria se non appaiono nella trascrizione."],
     "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM, log azioni principali)"],
     "character_growth": [
         {

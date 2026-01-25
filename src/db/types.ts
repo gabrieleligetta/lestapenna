@@ -110,6 +110,7 @@ export interface Quest {
     title: string;
     description?: string;
     status: 'OPEN' | 'COMPLETED' | 'FAILED';
+    type?: 'MAJOR' | 'MINOR';
     created_at: number;
     last_updated: number;
     session_id?: string;

@@ -219,6 +219,7 @@ export const initDatabase = () => {
         title TEXT NOT NULL,
         description TEXT, -- 🆕 Narrative Journal
         status TEXT DEFAULT 'OPEN', -- OPEN, COMPLETED, FAILED
+        type TEXT DEFAULT 'MAJOR', -- 🆕 MAJOR, MINOR
         created_at INTEGER,
         last_updated INTEGER,
         session_id TEXT,
@@ -402,7 +403,9 @@ export const initDatabase = () => {
         "ALTER TABLE sessions ADD COLUMN summary_data TEXT",
         "ALTER TABLE sessions ADD COLUMN last_generated_at INTEGER",
         // 🆕 BESTIARIO: Supporto per varianti e deduplicazione
-        "ALTER TABLE bestiary ADD COLUMN variants TEXT"       // JSON array di nomi varianti es. ["Goblin Arciere", "Goblin Sciamano"]
+        "ALTER TABLE bestiary ADD COLUMN variants TEXT",      // JSON array di nomi varianti es. ["Goblin Arciere", "Goblin Sciamano"]
+        // 🆕 QUEST TYPE: Granularità
+        "ALTER TABLE quests ADD COLUMN type TEXT DEFAULT 'MAJOR'"
     ];
 
     for (const m of migrations) {

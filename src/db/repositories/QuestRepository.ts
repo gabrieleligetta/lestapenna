@@ -35,7 +35,7 @@ const cleanQuestTitle = (title: string): string => {
 };
 
 export const questRepository = {
-    addQuest: (campaignId: number, title: string, sessionId?: string, description?: string, status: string = 'OPEN') => {
+    addQuest: (campaignId: number, title: string, sessionId?: string, description?: string, status: string = 'OPEN', type: string = 'MAJOR') => {
         // 0. Guard against undefined/null title
         if (!title) {
             console.warn(`[Quest] ⚠️ Tentativo di aggiungere quest senza titolo. Ignoro.`);
@@ -71,10 +71,10 @@ export const questRepository = {
         } else {
             // Insert new quest
             db.prepare(`
-                INSERT INTO quests (campaign_id, title, session_id, description, status, created_at, last_updated, rag_sync_needed) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, Date.now(), Date.now());
-            console.log(`[Quest] 🆕 Nuova Quest: ${cleanedTitle}`);
+                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, Date.now(), Date.now());
+            console.log(`[Quest] 🆕 Nuova Quest (${type}): ${cleanedTitle}`);
         }
     },
 

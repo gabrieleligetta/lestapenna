@@ -270,8 +270,8 @@ export class IngestionService {
 
             console.log(`[Quest] ➕ ${title} (${status})`);
 
-            // Signature: (campaignId: number, title: string, sessionId?: string, description?: string, status?: string)
-            addQuest(campaignId, title, sessionId, description, status);
+            // Signature: (campaignId: number, title: string, sessionId?: string, description?: string, status?: string, type?: string)
+            addQuest(campaignId, title, sessionId, description, status, quest.type || 'MAJOR');
 
             // 🆕 History Tracking
             addQuestEvent(campaignId, title, sessionId, description || `Quest aggiornata: ${status}`, status === 'OPEN' ? 'PROGRESS' : status);

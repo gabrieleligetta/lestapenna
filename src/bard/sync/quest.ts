@@ -23,6 +23,7 @@ export async function syncQuestEntryIfNeeded(
     console.log(`[Sync] Avvio sync Quest per ${questTitle}...`);
 
     let ragContent = `[[MISSIONE/QUEST: ${questTitle}]]\n`;
+    ragContent += `TIPO: ${quest.type || 'MAJOR'}\n`;
     ragContent += `STATO: ${quest.status}\n`;
     if (quest.description) ragContent += `DIARIO/NOTE: ${quest.description}\n`;
 

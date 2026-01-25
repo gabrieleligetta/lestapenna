@@ -57,9 +57,10 @@ export const questCommand: Command = {
 
             const list = sessionQuests.map((q: any) => {
                 const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '🔹';
+                const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 // Show description snippet if available
                 const snippet = q.description ? `\n> *${q.description.substring(0, 100)}${q.description.length > 100 ? '...' : ''}*` : '';
-                return `${statusIcon} **${q.title}** [${q.status}]${snippet}`;
+                return `${typeIcon} ${statusIcon} **${q.title}** [${q.status}]${snippet}`;
             }).join('\n');
 
             const header = `Quest della Sessione \`${sessionId}\``;
@@ -200,8 +201,9 @@ export const questCommand: Command = {
 
             const list = quests.map((q: any, i: number) => {
                 const absoluteIndex = offset + i + 1;
+                const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${absoluteIndex}\` 🔹 **${q.title}**${desc}`;
+                return `\`${absoluteIndex}\` ${typeIcon} **${q.title}**${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;
@@ -224,8 +226,9 @@ export const questCommand: Command = {
             }
 
             const list = quests.map((q: any, i: number) => {
+                const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${i + 1}\` 🔹 **${q.title}**${desc}`;
+                return `\`${i + 1}\` ${typeIcon} **${q.title}**${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;

@@ -79,20 +79,28 @@ Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": []}
 
 // --- ANALYZER ---
 
-export const ANALYST_PROMPT = (castContext: string, memoryContext: string, narrativeText: string) => `Sei un ANALISTA DATI esperto di D&D. Il tuo UNICO compito è ESTRARRE DATI STRUTTURATI.
+export const ANALYST_PROMPT = (castContext: string, memoryContext: string, narrativeText: string) => `Sei un ANALISTA DATI esperto di D&D. Il tuo UNICO compito è ESTRARRE DATI STRUTTURATI da un testo di sessione.
 NON scrivere narrativa. NON riassumere. SOLO estrai e cataloga.
+
+=========================================
+## 1. CONTESTO DI RIFERIMENTO (DA IGNORARE PER L'EXTRAZIONE)
+Queste informazioni servono SOLO per riconoscere i nomi propri corretti. 
+NON ESTRARRE loot, quest o mostri da questa sezione. 
+Se un oggetto è elencato qui ma non viene acquisito NUOVAMENTE nel "Testo da Analizzare", NON aggiungerlo.
 
 ${castContext}
 ${memoryContext}
+=========================================
 
-**ISTRUZIONI RIGOROSE**:
-1. Leggi ATTENTAMENTE il testo
-2. Estrai SOLO ciò che è ESPLICITAMENTE menzionato
-3. NON inventare, NON inferire, NON aggiungere
-4. Se non trovi qualcosa, lascia array vuoto []
-5. **GLOSSARIO CANONICO**: Il contesto fornito contiene SOLO le entità rilevanti (identificate dallo Scout). USA ESATTAMENTE QUESTI NOMI. Non creare duplicati (es. se contesto ha "Firnen", non scrivere "Filmen").
+## 2. ISTRUZIONI RIGOROSE
+1. Analizza SOLO il "TESTO DA ANALIZZARE" in fondo.
+2. Estrai SOLO ciò che è ESPLICITAMENTE acquisito o accaduto in QUESTA parte di testo.
+3. **LOOT**: Se il testo dice "Usa la pozione che aveva", NON è loot. Se dice "Trova una pozione", È loot.
+4. **MONSTERS**: Se il testo cita "Ricordarono il drago ucciso ieri", NON estrarre il drago. Estrai solo mostri combattuti ORA.
+5. **QUEST**: Estrai solo se c'è un progresso attivo.
+6. **GLOSSARIO**: Usa i nomi esatti del Contesto di Riferimento se corrispondesi.
 
-**OUTPUT JSON RICHIESTO**:
+## 3. OUTPUT JSON RICHIESTO
 {
     "loot": [
         {
@@ -119,6 +127,9 @@ ${memoryContext}
             "weaknesses": ["Debolezze scoperte (es. 'vulnerabile al fuoco')"],
             "resistances": ["Resistenze osservate (es. 'immune al veleno')"]
         }
+        // AVVISO AI: NON INCLUDERE creature menzionate solo nel "Contesto".
+        // ESEMPIO NEGATIVO: Se il testo dice "Ti ricordi il Troll di ieri?", ARRAY VUOTO [].
+        // ESEMPIO POSITIVO: Se il testo dice "Un Troll esce dalla grotta!", AGGIUNGI Troll.
     ],
     "npc_dossier_updates": [
         {
@@ -189,13 +200,17 @@ export const WRITER_DM_PROMPT = (castContext: string, memoryContext: string, ana
 I dati strutturati (loot, quest, mostri, NPC) sono già stati estratti da un analista.
 Tu devi concentrarti SOLO sulla NARRAZIONE EPICA.
 
-CONTESTO PERSONAGGI:
+=========================================
+## 1. CONTESTO DI RIFERIMENTO
 ${castContext}
 
-MEMORIA DEL MONDO (per riferimento, NON inventare eventi):
+## 2. MEMORIA DEL MONDO
+(Fatti passati per coerenza, NON inventare questi eventi come se accadessero ora)
 ${memoryContext}
+=========================================
 
-DATI ESTRATTI DALL'ANALISTA (Usa questi fatti come ossatura della narrazione):
+## 3. DATI DI SESSIONE (Vera ossatura della narrazione)
+Questi sono i fatti ESPLICITI accaduti in QUESTO episodio:
 ${analystJson}
 
 **IL TUO COMPITO**: Scrivi un racconto epico e coinvolgente della sessione.
@@ -222,10 +237,15 @@ Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei
 - Il "narrative" è epico e dettagliato`;
 
 export const WRITER_BARDO_PROMPT = (tone: ToneKey, castContext: string, memoryContext: string, analystJson: string) => `Sei un Bardo. ${TONES[tone] || TONES.EPICO}
+
+=========================================
+## CONTESTO (MEMORY)
 ${castContext}
 ${memoryContext}
+=========================================
 
-DATI ESTRATTI DALL'ANALISTA (Usa questi fatti come ossatura della narrazione):
+## FATTI DELLA SESSIONE CORRENTE
+(Questi sono gli eventi che devi narrare come accaduti ORA):
 ${analystJson}
 
 **IL TUO COMPITO**: Scrivi un racconto della sessione nel tono richiesto.

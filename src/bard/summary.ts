@@ -668,7 +668,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             }
 
             console.log(`[Bardo] 📏 Dimensione Prompt Scrittore: ${reducePrompt.length} chars`);
-            saveDebugFile(sessionId, `writer_prompt_act${actNumber}.txt`, reducePrompt);
+            console.log(`[Bardo] 📏 Dimensione Prompt Scrittore: ${reducePrompt.length} chars`);
+
+            // FILENAME FIX: Use standard name if single part, otherwise indexed
+            const promptFileName = (!isMultiPart && i === 0) ? 'writer_prompt.txt' : `writer_prompt_act${actNumber}.txt`;
+            saveDebugFile(sessionId, promptFileName, reducePrompt);
 
             const startAI = Date.now();
             const summaryOptions: any = {
@@ -703,7 +707,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             console.log(`[Bardo] 📊 Token Usage (Atto ${actNumber}): ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} (${contextPct}%)`);
 
             const content = response.choices[0].message.content || "{}";
-            saveDebugFile(sessionId, `writer_response_act${actNumber}.txt`, content);
+            const responseFileName = (!isMultiPart && i === 0) ? 'writer_response.txt' : `writer_response_act${actNumber}.txt`;
+            saveDebugFile(sessionId, responseFileName, content);
 
             // Parsing output scrittore
             let parsed = safeJsonParse(content);

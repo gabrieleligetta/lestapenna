@@ -41,7 +41,10 @@ export async function reconcileMonsterName(
     const newNameLower = newName.toLowerCase().trim();
 
     const exactMatch = existingMonsters.find((m: any) => m.name.toLowerCase() === newNameLower);
-    if (exactMatch) return null;
+    if (exactMatch) {
+        console.log(`[Monster Reconcile] ✅ Match esatto (case-insensitive): "${newName}" = "${exactMatch.name}"`);
+        return { canonicalName: exactMatch.name, existingMonster: exactMatch };
+    }
 
     const candidates: Array<{ monster: any; similarity: number; reason: string }> = [];
 

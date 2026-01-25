@@ -41,7 +41,10 @@ export async function reconcileItemName(
     const newItemLower = itemName.toLowerCase().trim();
 
     const exactMatch = existingItems.find((i: any) => i.item_name.toLowerCase() === newItemLower);
-    if (exactMatch) return null;
+    if (exactMatch) {
+        console.log(`[Item Reconcile] ✅ Match esatto (case-insensitive): "${itemName}" = "${exactMatch.item_name}"`);
+        return { canonicalName: exactMatch.item_name, existingItem: exactMatch };
+    }
 
     const candidates: Array<{ item: any; similarity: number; reason: string }> = [];
 

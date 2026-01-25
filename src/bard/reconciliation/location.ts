@@ -37,6 +37,12 @@ function locationSimilarity(
         }
     }
 
+    // NEW: If micro location is significantly unique/identical (e.g. "Paludi dei Morti"), treat as high match
+    // independently of Macro (which might be "Paludi" vs "Regione Nerithar")
+    if (microSim > 0.95) {
+        return { score: 0.9, reason: `same_micro_exact` };
+    }
+
     if (microSim > 0.8 && macroSim > 0.5) {
         return { score: (macroSim + microSim) / 2, reason: `high_micro_sim=${microSim.toFixed(2)}` };
     }
@@ -136,7 +142,14 @@ export async function reconcileLocationName(
         loc.macro_location.toLowerCase() === newMacroLower &&
         loc.micro_location.toLowerCase() === newMicroLower
     );
-    if (exactMatch) return null;
+    if (exactMatch) {
+        console.log(`[Location Reconcile] ✅ Match esatto (case-insensitive): "${newMacro} - ${newMicro}" = "${exactMatch.macro_location} - ${exactMatch.micro_location}"`);
+        return {
+            canonicalMacro: exactMatch.macro_location,
+            canonicalMicro: exactMatch.micro_location,
+            existingEntry: exactMatch
+        };
+    }
 
     const candidates: Array<{ entry: any; similarity: number; reason: string }> = [];
 

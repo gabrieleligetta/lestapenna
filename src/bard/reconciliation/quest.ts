@@ -40,7 +40,10 @@ export async function reconcileQuestTitle(
     const newTitleLower = newTitle.toLowerCase().trim();
 
     const exactMatch = existingQuests.find((q: any) => q.title.toLowerCase() === newTitleLower);
-    if (exactMatch) return null;
+    if (exactMatch) {
+        console.log(`[Quest Reconcile] ✅ Match esatto (case-insensitive): "${newTitle}" = "${exactMatch.title}"`);
+        return { canonicalTitle: exactMatch.title, existingQuest: exactMatch };
+    }
 
     const candidates: Array<{ quest: any; similarity: number; reason: string }> = [];
 

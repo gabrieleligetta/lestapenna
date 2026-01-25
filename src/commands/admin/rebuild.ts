@@ -5,6 +5,8 @@ import { PipelineService } from '../../publisher/services/PipelineService';
 import { IngestionService } from '../../publisher/services/IngestionService';
 import { monitor } from '../../monitor';
 import { processSessionReport } from '../../reporter';
+import * as fs from 'fs';
+import * as path from 'path';
 
 interface SessionInfo {
     session_id: string;
@@ -366,6 +368,20 @@ Il processo:
                 try {
                     console.log(`[Rebuild] ${progress} Inizio sessione ${session.session_id}`);
 
+                    // CLEANUP: Rimuovi vecchi file di debug per evitare duplicati (es. writer_prompt.txt vs act1)
+                    const debugDir = path.join(__dirname, '..', '..', '..', 'transcripts', session.session_id, 'debug_prompts');
+                    if (fs.existsSync(debugDir)) {
+                        try {
+                            const files = fs.readdirSync(debugDir);
+                            for (const file of files) {
+                                fs.unlinkSync(path.join(debugDir, file));
+                            }
+                            console.log(`[Rebuild] 🧹 Pulita cartella debug per ${session.session_id}`);
+                        } catch (cleanupErr) {
+                            console.warn(`[Rebuild] ⚠️ Errore pulizia debug dir:`, cleanupErr);
+                        }
+                    }
+
                     // Generate summary
                     const campaignId = session.campaign_id || getSessionCampaignId(session.session_id);
                     if (!campaignId) {
@@ -435,7 +451,7 @@ Il processo:
             await statusMsg.edit(finalMessage);
 
             // Send technical report via email
-            await sendTechnicalReport(rebuildSessionId, successCount, sessions.length, errorCount, errors);
+            await sendTechnicalReport(rebuildSessionId, sessions, successCount, sessions.length, errorCount, errors);
 
         } catch (err: any) {
             console.error('[Rebuild] Errore critico:', err);
@@ -443,7 +459,7 @@ Il processo:
 
             // Send report even on critical error
             monitor.logError('Rebuild', err.message);
-            await sendTechnicalReport(rebuildSessionId, 0, 0, 1, [err.message]);
+            await sendTechnicalReport(rebuildSessionId, [], 0, 0, 1, [err.message]);
         }
     }
 };
@@ -451,14 +467,42 @@ Il processo:
 /**
  * Sends technical report email with rebuild costs
  */
-async function sendTechnicalReport(
+export async function sendTechnicalReport(
     rebuildSessionId: string,
+    sessions: SessionInfo[],
     successCount: number,
     totalSessions: number,
     errorCount: number,
     errors: string[]
 ): Promise<void> {
     try {
+        // Aggregazione file di debug
+        const rebuildDebugDir = path.join(__dirname, '..', '..', '..', 'transcripts', rebuildSessionId, 'debug_prompts');
+        if (sessions.length > 0) {
+            try {
+                if (!fs.existsSync(rebuildDebugDir)) {
+                    fs.mkdirSync(rebuildDebugDir, { recursive: true });
+                }
+
+                for (const session of sessions) {
+                    const sessionDebugDir = path.join(__dirname, '..', '..', '..', 'transcripts', session.session_id, 'debug_prompts');
+                    if (fs.existsSync(sessionDebugDir)) {
+                        const files = fs.readdirSync(sessionDebugDir);
+                        for (const file of files) {
+                            if (file.endsWith('.txt') || file.endsWith('.json')) {
+                                const srcPath = path.join(sessionDebugDir, file);
+                                const destPath = path.join(rebuildDebugDir, `${session.session_id}_${file}`);
+                                fs.copyFileSync(srcPath, destPath);
+                            }
+                        }
+                    }
+                }
+                console.log(`[Rebuild] 📂 Aggregati file di debug in ${rebuildDebugDir}`);
+            } catch (e) {
+                console.warn(`[Rebuild] ⚠️ Errore aggregazione file debug:`, e);
+            }
+        }
+
         const metrics = await monitor.endSession();
         if (metrics) {
             // Add rebuild-specific info to errors for context

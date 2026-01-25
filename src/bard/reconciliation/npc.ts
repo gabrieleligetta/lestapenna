@@ -84,7 +84,10 @@ export async function reconcileNpcName(
     const newNameLower = newName.toLowerCase().trim();
 
     const exactMatch = existingNpcs.find((n: any) => n.name.toLowerCase() === newNameLower);
-    if (exactMatch) return null;
+    if (exactMatch) {
+        console.log(`[Reconcile] ✅ Match esatto (case-insensitive): "${newName}" = "${exactMatch.name}"`);
+        return { canonicalName: exactMatch.name, existingNpc: exactMatch };
+    }
 
     const candidates: Array<{ npc: any; similarity: number; reason: string }> = [];
 

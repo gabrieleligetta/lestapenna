@@ -71,7 +71,7 @@ export class PipelineService {
     /**
      * Generates summary for the session
      */
-    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM', options: { skipAnalysis?: boolean } = {}): Promise<any> {
+    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM', options: { skipAnalysis?: boolean, forceRegeneration?: boolean } = {}): Promise<any> {
         const cleanText = prepareCleanText(sessionId);
         if (!cleanText) {
             console.warn(`[Pipeline] ⚠️ Clean text non disponibile, fallback a raw transcription gestito da generateSummary.`);

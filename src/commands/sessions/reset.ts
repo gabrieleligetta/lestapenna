@@ -24,8 +24,8 @@ export const resetCommand: Command = {
 
         const removed = await removeSessionJobs(targetSessionId);
 
-        // 1.5 Purge Derived Data (DB + RAG + Clean Bio State)
-        purgeSessionData(targetSessionId);
+        // 1.5 Purge Derived Data (DB + RAG + Clean Bio State + AI Cache)
+        purgeSessionData(targetSessionId, true); // 🆕 Clear cache on full reset
 
         const filesToProcess = resetSessionData(targetSessionId);
 

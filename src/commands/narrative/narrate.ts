@@ -32,12 +32,14 @@ export const narrateCommand: Command = {
         // Parse remaining args
         for (let i = 1; i < args.length; i++) {
             const arg = args[i].toLowerCase();
-            if (arg === '--reindex' || arg === 'reindex') {
+            if (arg === '--reindex' || arg === 'reindex' || arg === 'force') {
                 forceReindex = true;
             } else if (!requestedTone && TONES[arg.toUpperCase() as ToneKey]) {
                 requestedTone = arg.toUpperCase() as ToneKey;
             }
         }
+
+        // ... existing validation checks ...
 
         if (!targetSessionId) {
             // Mostra sessioni della campagna attiva
@@ -81,9 +83,9 @@ export const narrateCommand: Command = {
             const shouldIngest = forceReindex || !isAlreadyProcessed;
 
             if (isAlreadyProcessed && !forceReindex) {
-                await channel.send("ℹ️ Sessione già indicizzata (rebuild). Generazione solo riassunto...");
+                await channel.send("ℹ️ Sessione già indicizzata (rebuild). Generazione solo riassunto (uso cache se possibile)...");
             } else if (forceReindex) {
-                await channel.send("🔄 Reindicizzazione forzata richiesta.");
+                await channel.send("🔄 Reindicizzazione forzata richiesta (FORCE attiva).");
             }
 
             await channel.send("📚 Il Bardo sta preparando il testo...");
@@ -107,7 +109,10 @@ export const narrateCommand: Command = {
                 targetSessionId,
                 activeCampaign!.id,
                 requestedTone || 'DM',
-                { skipAnalysis }
+                {
+                    skipAnalysis,
+                    forceRegeneration: forceReindex // 🆕 Link force behavior
+                }
             );
 
             if (shouldIngest) {

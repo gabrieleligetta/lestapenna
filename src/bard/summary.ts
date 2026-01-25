@@ -25,7 +25,9 @@ import {
     bestiaryRepository,
     npcRepository,
     locationRepository,
-    worldRepository
+    worldRepository,
+    getSessionAIOutput,
+    saveSessionAIOutput
 } from '../db';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -432,10 +434,45 @@ export function prepareCleanText(sessionId: string): string | undefined {
 /**
  * GENERATE SUMMARY (Main Function)
  */
-export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string, options: { skipAnalysis?: boolean } = {}): Promise<SummaryResponse> {
+export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string, options: { skipAnalysis?: boolean, forceRegeneration?: boolean } = {}): Promise<SummaryResponse> {
     const startAI = Date.now();
     try {
-        console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL})...`);
+        console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL}, Force: ${options.forceRegeneration})...`);
+
+        // 1. CHECK CACHE (If not forcing regeneration)
+        if (!options.forceRegeneration) {
+            const cached = getSessionAIOutput(sessionId);
+            if (cached) {
+                // 🆕 Check Tone Compatibility
+                const cachedTone = cached.summaryData.tone || 'DM'; // Default to DM if missing (backward compat)
+                if (cachedTone !== tone) {
+                    console.log(`[Bardo] ⚠️ Cache trovata ma con tono diverso (${cachedTone} vs ${tone}). Rigenero.`);
+                } else {
+                    console.log(`[Bardo] 💾 Trovata cache valida (generata il ${new Date(cached.lastGeneratedAt).toLocaleString()}). Uso dati salvati.`);
+                    return {
+                        // Reconstruct SummaryResponse from cached data
+                        summary: cached.summaryData.summary,
+                        title: cached.summaryData.title,
+                        tokens: cached.summaryData.tokens,
+                        narrative: cached.summaryData.narrative,
+                        narrativeBriefs: cached.summaryData.narrativeBriefs,
+                        narrativeBrief: cached.summaryData.narrativeBrief,
+                        log: cached.analystData.log,
+                        character_growth: cached.analystData.character_growth,
+                        npc_events: cached.analystData.npc_events,
+                        world_events: cached.analystData.world_events,
+                        loot: cached.analystData.loot,
+                        loot_removed: cached.analystData.loot_removed,
+                        quests: cached.analystData.quests,
+                        monsters: cached.analystData.monsters,
+                        npc_dossier_updates: cached.analystData.npc_dossier_updates,
+                        location_updates: cached.analystData.location_updates,
+                        travel_sequence: cached.analystData.travel_sequence,
+                        present_npcs: cached.analystData.present_npcs
+                    };
+                }
+            }
+        }
 
         const transcriptions = getSessionTranscript(sessionId);
         const notes = getSessionNotes(sessionId);
@@ -770,6 +807,26 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         } // FINE LOOP EPISODICO
 
         console.log(`[Bardo] 🏁 generateSummary completato (Totale ${parts.length} parti).`);
+
+        // SAVE TO DB (Persistence)
+        const summaryData = {
+            summary: finalNarrative || "Errore generazione.",
+            title: aggregatedData.title || `Sessione del ${new Date().toLocaleDateString()}`,
+            tokens: accumulatedTokens,
+            tone: tone, // 🆕 Save tone for cache validation
+            narrative: finalNarrative || "Errore generazione.",
+            narrativeBriefs: aggregatedData.narrativeBriefs.length > 0
+                ? aggregatedData.narrativeBriefs
+                : [finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : "")],
+            narrativeBrief: aggregatedData.narrativeBriefs.length > 0
+                ? aggregatedData.narrativeBriefs.map((b: string, i: number) =>
+                    aggregatedData.narrativeBriefs.length > 1 ? `**Atto ${i + 1}**\n${b}` : b
+                ).join('\n\n---\n\n')
+                : (finalNarrative.substring(0, 1800) + (finalNarrative.length > 1800 ? "..." : ""))
+        };
+
+        saveSessionAIOutput(sessionId, aggregatedData, summaryData);
+        console.log(`[Bardo] 💾 Salvati dati Analyst e Summary nel DB.`);
 
         return {
             // DALLO SCRITTORE (aggregato)

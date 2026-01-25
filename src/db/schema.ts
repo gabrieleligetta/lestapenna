@@ -396,7 +396,11 @@ export const initDatabase = () => {
         "CREATE TABLE IF NOT EXISTS session_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, content TEXT NOT NULL, FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE)",
         "CREATE INDEX IF NOT EXISTS idx_session_logs_session ON session_logs (session_id)",
         // 🆕 TRAVEL REASONS
-        "ALTER TABLE location_history ADD COLUMN reason TEXT"
+        "ALTER TABLE location_history ADD COLUMN reason TEXT",
+        // 🆕 PERSISTENCE & REPLAY
+        "ALTER TABLE sessions ADD COLUMN analyst_data TEXT",
+        "ALTER TABLE sessions ADD COLUMN summary_data TEXT",
+        "ALTER TABLE sessions ADD COLUMN last_generated_at INTEGER"
     ];
 
     for (const m of migrations) {

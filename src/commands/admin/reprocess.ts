@@ -15,6 +15,7 @@ export const reprocessCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args, client } = ctx;
         const targetSessionId = args[0];
+        const forceRegeneration = args[1]?.toUpperCase() === 'FORCE';
 
         if (!targetSessionId) {
             await message.reply("Uso: `$riprocessa <ID_SESSIONE>` - Rigenera memoria e dati senza ritrascrivere.");
@@ -22,6 +23,13 @@ export const reprocessCommand: Command = {
         }
 
         const channel = message.channel as TextChannel;
+
+        if (forceRegeneration) {
+            await channel.send("⚠️ **MODALITÀ FORCE ATTIVA**: Verrà forzata la rigenerazione AI del riassunto.");
+        } else {
+            await channel.send("ℹ️ **MODALITÀ SMART**: Uso dati salvati se disponibili (Zero costi).");
+        }
+
         await channel.send(`🔄 **Riprocessamento Logico** avviato per sessione \`${targetSessionId}\`...\n1. Pulizia dati derivati (Loot, Quest, Storia, RAG)...`);
 
         // AVVIO MONITORAGGIO TEMPORANEO (se non attivo)
@@ -45,7 +53,7 @@ export const reprocessCommand: Command = {
             await channel.send(`2. Preparazione testo e Analisi Eventi...`);
 
             // 2. Generate Summary (Pipeline)
-            const result = await pipelineService.generateSessionSummary(targetSessionId, campaignId, 'DM');
+            const result = await pipelineService.generateSessionSummary(targetSessionId, campaignId, 'DM', { forceRegeneration });
 
             // 3. Ingest to RAG & DB
             await ingestionService.ingestSummary(targetSessionId, result);

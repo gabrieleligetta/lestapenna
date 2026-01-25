@@ -146,5 +146,42 @@ export const sessionRepository = {
     getSessionLog: (sessionId: string): string[] => {
         const rows = db.prepare('SELECT content FROM session_logs WHERE session_id = ? ORDER BY id ASC').all(sessionId) as { content: string }[];
         return rows.map(r => r.content);
+    },
+
+    saveSessionAIOutput: (sessionId: string, analystData: any, summaryData: any): void => {
+        db.prepare(`
+            UPDATE sessions 
+            SET analyst_data = ?, 
+                summary_data = ?, 
+                last_generated_at = ? 
+            WHERE session_id = ?
+        `).run(
+            JSON.stringify(analystData),
+            JSON.stringify(summaryData),
+            Date.now(),
+            sessionId
+        );
+    },
+
+    getSessionAIOutput: (sessionId: string): { analystData: any, summaryData: any, lastGeneratedAt: number } | null => {
+        const row = db.prepare(`
+            SELECT analyst_data, summary_data, last_generated_at 
+            FROM sessions 
+            WHERE session_id = ?
+        `).get(sessionId) as { analyst_data: string, summary_data: string, last_generated_at: number } | undefined;
+
+        if (row && row.analyst_data && row.summary_data) {
+            try {
+                return {
+                    analystData: JSON.parse(row.analyst_data),
+                    summaryData: JSON.parse(row.summary_data),
+                    lastGeneratedAt: row.last_generated_at
+                };
+            } catch (e) {
+                console.error(`[DB] Failed to parse session AI output for ${sessionId}:`, e);
+                return null;
+            }
+        }
+        return null;
     }
 };

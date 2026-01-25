@@ -243,8 +243,15 @@ Il processo:
 
         // --- CONFIRM MODE ---
         if (args[0].toUpperCase() !== 'CONFIRM') {
-            await message.reply("Uso: `$rebuild` (diagnostica) o `$rebuild CONFIRM` (esegui)");
+            await message.reply("Uso: `$rebuild` (diagnostica) o `$rebuild CONFIRM [FORCE]` (esegui)");
             return;
+        }
+
+        const forceRegeneration = args[1]?.toUpperCase() === 'FORCE';
+        if (forceRegeneration) {
+            await message.reply("⚠️ **MODALITÀ FORCE ATTIVA**: Verrà forzata la rigenerazione AI di tutti i riassunti (Costi aggiuntivi!).");
+        } else {
+            await message.reply("ℹ️ **MODALITÀ SMART**: Verranno usati i dati AI salvati se disponibili (Zero costi).");
         }
 
         // Double confirmation
@@ -391,7 +398,8 @@ Il processo:
                     const result = await pipelineService.generateSessionSummary(
                         session.session_id,
                         campaignId,
-                        'DM'
+                        'DM',
+                        { forceRegeneration } // 🆕 Pass force flag
                     );
 
                     // Ingest to RAG

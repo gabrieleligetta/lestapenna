@@ -194,6 +194,8 @@ export const getSessionNotes = sessionRepository.getSessionNotes;
 export const clearSessionDerivedData = sessionRepository.clearSessionDerivedData;
 export const addSessionLog = sessionRepository.addSessionLog;
 export const getSessionLog = sessionRepository.getSessionLog;
+export const saveSessionAIOutput = sessionRepository.saveSessionAIOutput;
+export const getSessionAIOutput = sessionRepository.getSessionAIOutput;
 
 // Recording
 export const addRecording = recordingRepository.addRecording;

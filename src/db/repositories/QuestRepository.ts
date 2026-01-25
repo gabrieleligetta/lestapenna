@@ -35,7 +35,7 @@ const cleanQuestTitle = (title: string): string => {
 };
 
 export const questRepository = {
-    addQuest: (campaignId: number, title: string, sessionId?: string) => {
+    addQuest: (campaignId: number, title: string, sessionId?: string, description?: string, status: string = 'OPEN') => {
         // 0. Guard against undefined/null title
         if (!title) {
             console.warn(`[Quest] ⚠️ Tentativo di aggiungere quest senza titolo. Ignoro.`);
@@ -47,19 +47,35 @@ export const questRepository = {
 
         // 2. Controllo duplicati (Fuzzy)
         const openQuests = questRepository.getOpenQuests(campaignId);
+        let existingId: number | null = null;
 
         for (const q of openQuests) {
             const sim = calculateSimilarity(q.title.toLowerCase(), cleanedTitle.toLowerCase());
             if (sim > 0.85) {
-                console.log(`[Quest] ⚠️ Quest simile trovata "${q.title}" (~${Math.round(sim * 100)}%). Ignoro nuova: "${cleanedTitle}"`);
-                return; // Skip duplicate
+                console.log(`[Quest] ⚠️ Quest simile trovata "${q.title}" (~${Math.round(sim * 100)}%). Aggiorno esistente.`);
+                existingId = q.id;
+                break;
             }
         }
 
-        db.prepare('INSERT INTO quests (campaign_id, title, session_id, created_at, last_updated, rag_sync_needed) VALUES (?, ?, ?, ?, ?, 1)')
-            .run(campaignId, cleanedTitle, sessionId || null, Date.now(), Date.now());
-
-        console.log(`[Quest] 🆕 Nuova Quest: ${cleanedTitle}`);
+        if (existingId) {
+            // Update existing quest
+            db.prepare(`
+                UPDATE quests 
+                SET description = COALESCE(?, description), 
+                    status = ?, 
+                    last_updated = ?, 
+                    rag_sync_needed = 1 
+                WHERE id = ?
+            `).run(description || null, status, Date.now(), existingId);
+        } else {
+            // Insert new quest
+            db.prepare(`
+                INSERT INTO quests (campaign_id, title, session_id, description, status, created_at, last_updated, rag_sync_needed) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, Date.now(), Date.now());
+            console.log(`[Quest] 🆕 Nuova Quest: ${cleanedTitle}`);
+        }
     },
 
     getSessionQuests: (sessionId: string): any[] => {
@@ -160,10 +176,6 @@ export const questRepository = {
             SET description = ?, rag_sync_needed = 1, last_updated = ?
             WHERE campaign_id = ? AND lower(title) = lower(?)
         `).run(description, Date.now(), campaignId, title);
-        // Note: description column needs to be added to quests? 
-        // Checking schema... Quests table definition in schema.ts (Line 215) doesn't have description!
-        // Wait, schema.ts line 215: id, campaign_id, title, status... NO description.
-        // I need to add description column to quests!
     },
 
     markQuestDirty: (campaignId: number, title: string) => {

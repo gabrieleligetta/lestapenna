@@ -113,10 +113,16 @@ ${memoryContext}
         {
             "name": "Nome oggetto",
             "quantity": 1,
-            "description": "Motivo rimozione o utilizzo"
+            "description": "Motivo rimozione o utilizzo (es. 'Bevuta pozione', 'Persa spada')"
         }
     ],
-    "quests": ["Lista missioni ACCETTATE/COMPLETATE/AGGIORNATE in questa sessione"],
+    "quests": [
+        {
+            "title": "Titolo breve della missione (es. 'Salvare il Fabbro')",
+            "description": "Descrizione del progresso o aggiornamento (es. 'Il gruppo ha trovato la chiave della cella')",
+            "status": "OPEN|COMPLETED|FAILED"
+        }
+    ],
     "monsters": [
         {
             "name": "Nome creatura (es. 'Scheletro', NON 'Scheletro (con spada)'). NON usare parentesi.",
@@ -154,8 +160,6 @@ ${memoryContext}
             "reason": "Motivo spostamento (opzionale)"
         }
     ],
-}
-    ],
     "present_npcs": ["Lista TUTTI i nomi NPC che AGISCONO o PARLANO esplicitamente nel testo. Usa i nomi dal CONTESTO PERSONAGGI o NPC PRESENTI (Scout) se disponibili."],
     "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM, log azioni principali)"],
     "character_growth": [
@@ -183,7 +187,7 @@ ${memoryContext}
 **REGOLE CRITICHE**:
 - I PG (Personaggi Giocanti nel CONTESTO sopra) NON vanno in npc_dossier_updates
 - Per il loot: "parlano di una spada" ≠ "trovano una spada". Estrai SOLO acquisizioni certe.
-- Per le quest: Solo se c'è una chiara accettazione/completamento/aggiornamento
+- Per le quest: Solo se c'è una chiara accettazione/completamento/aggiornamento. Usa oggetti strutturati {title, description, status}.
 - Per i mostri: Solo creature ostili combattute, non NPC civili. **ESTRAI DETTAGLI**: se i PG scoprono abilità, debolezze o resistenze durante il combattimento, REGISTRALE (es. "il drago sputa fuoco" → abilities: ["soffio di fuoco"])
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dei luoghi FISICAMENTE visitati (dall'inizio alla fine, l'ultimo è la posizione finale). location_updates = descrizioni per l'Atlante (solo luoghi con descrizione significativa)
 - **LOG**: Deve essere una sequenza di fatti oggettivi.
@@ -566,7 +570,11 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     // Quest
     if (input.quests && input.quests.length > 0) {
         prompt += `**Quest (${input.quests.length}):**\n`;
-        input.quests.forEach((q: string, i: number) => prompt += `${i + 1}. ${q}\n`);
+        input.quests.forEach((q: any, i: number) => {
+            const title = typeof q === 'string' ? q : q.title;
+            const desc = typeof q === 'string' ? '' : ` - ${q.description || ''}`;
+            prompt += `${i + 1}. ${title}${desc}\n`;
+        });
         prompt += "\n";
     }
 
@@ -600,10 +608,11 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
 
 **Quest:**
 - **CRITICO**: Confronta OGNI quest di input con la lista "Quest Attive" nel contesto.
-- Se esiste già una quest con significato simile (es. "Uccidere Drago" vs "Sconfiggere il Drago"), **SKIP**.
-- Se l'input include stati come "(Completata)", "(In corso)", ignorali per il confronto semantico.
-- Mantieni SOLO le quest che sono *veramente* nuove (mai viste prima).
+- Se esiste già una quest con significato simile (es. "Uccidere Drago" vs "Sconfiggere il Drago"), **SKIP** a meno che non ci sia un aggiornamento di stato o descrizione.
+- Se l'input include stati come "(Completata)", "(In corso)", usali per aggiornare lo status.
+- Mantieni SOLO le quest che sono *veramente* nuove (mai viste prima) o che hanno un aggiornamento significativo.
 - Normalizza: rimuovi prefissi come "Quest:", "TODO:", capitalizza correttamente
+- MANTIENI STRUTTURA: Restituisci oggetti JSON { title, description, status }
 
 **Atlante:**
 - SKIP se: e' solo una riformulazione generica dello stesso contenuto, e' piu' generica e perde dettagli
@@ -630,7 +639,7 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     "skip": ["frecce rotte - valore <10mo"]
   },
   "quests": {
-    "keep": ["Recuperare la Spada del Destino"],
+    "keep": [{"title": "Recuperare la Spada", "description": "Trovata nella grotta", "status": "OPEN"}],
     "skip": ["parlare con oste - micro-task", "duplicato di quest attiva"]
   },
   "atlas": {

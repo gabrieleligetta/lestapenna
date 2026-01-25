@@ -366,10 +366,22 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
             return step;
         });
 
+        // Normalize Quests to structured objects
+        const normalizedQuests = (Array.isArray(parsed?.quests) ? parsed.quests : []).map((q: any) => {
+            if (typeof q === 'string') {
+                return { title: q, description: '', status: 'OPEN' };
+            }
+            return {
+                title: q.title,
+                description: q.description || '',
+                status: q.status || 'OPEN'
+            };
+        });
+
         return {
             loot: normalizeLootList(parsed?.loot),
             loot_removed: normalizeLootList(parsed?.loot_removed),
-            quests: normalizeStringList(parsed?.quests),
+            quests: normalizedQuests,
             monsters: Array.isArray(parsed?.monsters) ? parsed.monsters : [],
             npc_dossier_updates: normalizedNpcUpdates,
             location_updates: normalizedLocationUpdates,
@@ -599,7 +611,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
                 // Hydrate Quests
                 const dbQuests = questRepository.getSessionQuests(sessionId);
-                partialAnalystData.quests = dbQuests.map((q: any) => q.title);
+                partialAnalystData.quests = dbQuests.map((q: any) => ({
+                    title: q.title,
+                    description: q.description,
+                    status: q.status
+                }));
 
                 // Hydrate Monsters
                 const dbMonsters = bestiaryRepository.getSessionMonsters(sessionId);

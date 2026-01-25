@@ -22,7 +22,10 @@ import {
     markNpcDirty,
     markAtlasDirty,
     clearSessionDerivedData,
-    addSessionLog
+    addSessionLog,
+    addInventoryEvent,
+    addQuestEvent,
+    addBestiaryEvent
 } from '../../db';
 import {
     ingestSessionComplete,
@@ -216,6 +219,9 @@ export class IngestionService {
                 if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
                 addLoot(campaignId, finalName, item.quantity || 1, sessionId, item.description);
+                
+                // 🆕 History Tracking
+                addInventoryEvent(campaignId, finalName, sessionId, `Acquisito: ${item.description || 'Nessuna descrizione'}`, 'LOOT');
 
                 // Skip simple currency from RAG
                 const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
@@ -238,6 +244,9 @@ export class IngestionService {
 
                 removeLoot(campaignId, finalName, item.quantity || 1);
 
+                // 🆕 History Tracking
+                addInventoryEvent(campaignId, finalName, sessionId, `Rimosso/Usato: ${item.description || 'Nessuna descrizione'}`, 'USE');
+
                 // Also ingest in RAG to track WHY it was removed
                 await ingestLootEvent(campaignId, sessionId, {
                     ...item,
@@ -248,9 +257,18 @@ export class IngestionService {
 
         // Quests
         for (const quest of validated.quests.keep) {
-            console.log(`[Quest] ➕ ${quest}`);
-            // Signature: (campaignId: number, title: string, sessionId?: string)
-            addQuest(campaignId, quest, sessionId);
+            // Handle both string and object formats for backward compatibility
+            const title = typeof quest === 'string' ? quest : quest.title;
+            const description = typeof quest === 'string' ? '' : quest.description;
+            const status = typeof quest === 'string' ? 'OPEN' : (quest.status || 'OPEN');
+
+            console.log(`[Quest] ➕ ${title} (${status})`);
+            
+            // Signature: (campaignId: number, title: string, sessionId?: string, description?: string, status?: string)
+            addQuest(campaignId, title, sessionId, description, status);
+
+            // 🆕 History Tracking
+            addQuestEvent(campaignId, title, sessionId, description || `Quest aggiornata: ${status}`, status === 'OPEN' ? 'PROGRESS' : status);
         }
     }
 
@@ -335,6 +353,9 @@ export class IngestionService {
                         resistances: monster.resistances
                     }
                 );
+
+                // 🆕 History Tracking
+                addBestiaryEvent(campaignId, finalName, sessionId, `Incontro: ${monster.description || 'Nessuna descrizione'}`, 'ENCOUNTER');
             }
         }
     }

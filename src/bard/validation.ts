@@ -81,13 +81,22 @@ export async function validateBatch(
 
         const result = JSON.parse(response.choices[0].message.content || "{}");
 
+        // Normalize Quests in result
+        const normalizedQuests = {
+            keep: (result.quests?.keep || []).map((q: any) => {
+                if (typeof q === 'string') return { title: q, description: '', status: 'OPEN' };
+                return q;
+            }),
+            skip: result.quests?.skip || []
+        };
+
         return {
             npc_events: result.npc_events || { keep: input.npc_events || [], skip: [] },
             character_events: result.character_events || { keep: input.character_events || [], skip: [] },
             world_events: result.world_events || { keep: input.world_events || [], skip: [] },
             loot: result.loot || { keep: input.loot || [], skip: [] },
             loot_removed: result.loot_removed || { keep: input.loot_removed || [], skip: [] },
-            quests: result.quests || { keep: input.quests || [], skip: [] },
+            quests: normalizedQuests,
             atlas: result.atlas || { action: 'keep' }
         };
 

@@ -43,7 +43,7 @@ export interface SummaryResponse {
     tokens: number;
     loot?: Array<{ name: string; quantity?: number; description?: string }>;
     loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
-    quests?: string[];
+    quests?: Array<{ title: string; description?: string; status?: string }>;
     narrative?: string;
     narrativeBrief?: string;
     narrativeBriefs?: string[]; // Array di brief per ogni atto (per Discord multi-messaggio)
@@ -115,7 +115,7 @@ export interface ValidationBatchInput {
     world_events?: Array<{ event: string; type: string }>;
     loot?: Array<{ name: string; quantity?: number; description?: string }>;
     loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
-    quests?: string[];
+    quests?: Array<{ title: string; description?: string; status?: string }>;
     atlas_update?: {
         macro: string;
         micro: string;
@@ -130,7 +130,7 @@ export interface ValidationBatchOutput {
     world_events: { keep: any[]; skip: string[] };
     loot: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
     loot_removed: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
-    quests: { keep: string[]; skip: string[] };
+    quests: { keep: Array<{ title: string; description?: string; status?: string }>; skip: string[] };
     atlas: { action: 'keep' | 'skip' | 'merge'; text?: string };
 }
 
@@ -138,7 +138,7 @@ export interface ValidationBatchOutput {
 export interface AnalystOutput {
     loot: Array<{ name: string; quantity?: number; description?: string }>;
     loot_removed: Array<{ name: string; quantity?: number; description?: string }>;
-    quests: string[];
+    quests: Array<{ title: string; description?: string; status?: string }>;
     monsters: Array<{
         name: string;
         status: string;

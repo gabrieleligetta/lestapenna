@@ -191,6 +191,11 @@ export const npcRepository = {
         return res.changes > 0;
     },
 
+    deleteNpcHistory: (campaignId: number, name: string): boolean => {
+        const res = db.prepare('DELETE FROM npc_history WHERE campaign_id = ? AND npc_name = ?').run(campaignId, name);
+        return res.changes > 0;
+    },
+
     getSessionEncounteredNPCs: (sessionId: string): NpcEntry[] => {
         // 1. Gather names
         const npcSet = new Set<string>();

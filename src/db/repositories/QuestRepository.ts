@@ -93,6 +93,11 @@ export const questRepository = {
         return result.changes > 0;
     },
 
+    deleteQuestHistory: (campaignId: number, title: string): boolean => {
+        const result = db.prepare('DELETE FROM quest_history WHERE campaign_id = ? AND lower(quest_title) = lower(?)').run(campaignId, title);
+        return result.changes > 0;
+    },
+
     getOpenQuests: (campaignId: number): Quest[] => {
         return db.prepare("SELECT * FROM quests WHERE campaign_id = ? AND status = 'OPEN'").all(campaignId) as Quest[];
     },

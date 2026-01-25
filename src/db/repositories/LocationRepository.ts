@@ -106,6 +106,16 @@ export const locationRepository = {
         return false;
     },
 
+    deleteAtlasHistory: (campaignId: number, macro: string, micro: string): boolean => {
+        const result = db.prepare(`
+            DELETE FROM location_history
+            WHERE campaign_id = ?
+              AND lower(macro_location) = lower(?)
+              AND lower(micro_location) = lower(?)
+        `).run(campaignId, macro, micro);
+        return result.changes > 0;
+    },
+
     getAtlasEntryFull: (campaignId: number, macro: string, micro: string): any | null => {
         return db.prepare(`
             SELECT id, macro_location, micro_location, description, last_updated

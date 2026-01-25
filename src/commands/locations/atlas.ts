@@ -15,7 +15,9 @@ import {
     markAtlasDirty,
     getDirtyAtlasEntries,
     getSessionTravelLog,
-    addAtlasEvent // 🆕
+    addAtlasEvent, // 🆕
+    deleteAtlasHistory,
+    deleteAtlasRagSummary
 } from '../../db';
 import {
     smartMergeBios,
@@ -189,10 +191,20 @@ export const atlasCommand: Command = {
                 micro = parts[1];
             }
 
+            // Full Wipe: RAG + History + Entry
+            await ctx.message.reply(`🗑️ Eliminazione completa per **${macro} - ${micro}** in corso...`);
+
+            // 1. Delete RAG Summary
+            deleteAtlasRagSummary(ctx.activeCampaign!.id, macro, micro);
+
+            // 2. Delete History
+            deleteAtlasHistory(ctx.activeCampaign!.id, macro, micro);
+
+            // 3. Delete Entry
             const success = deleteAtlasEntry(ctx.activeCampaign!.id, macro, micro);
 
             if (success) {
-                await ctx.message.reply(`🗑️ Voce **${macro} - ${micro}** eliminata dall'Atlante.`);
+                await ctx.message.reply(`✅ Voce **${macro} - ${micro}** eliminata definitivamente (RAG, Storia, Atlante).`);
             } else {
                 await ctx.message.reply(`❌ Luogo **${macro} - ${micro}** non trovato.`);
             }

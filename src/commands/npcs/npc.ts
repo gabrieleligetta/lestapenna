@@ -18,7 +18,9 @@ import {
     addNpcAlias,
     removeNpcAlias,
     db,
-    addNpcEvent // 🆕
+    addNpcEvent, // 🆕
+    deleteNpcRagSummary,
+    deleteNpcHistory
 } from '../../db';
 import {
     smartMergeBios,
@@ -181,8 +183,19 @@ export const npcCommand: Command = {
                 if (all[idx]) name = all[idx].name;
             }
 
+            // Full Wipe: RAG + History + Dossier
+            await ctx.message.reply(`🗑️ Eliminazione completa per **${name}** in corso...`);
+
+            // 1. Delete RAG Dossier Summary
+            deleteNpcRagSummary(ctx.activeCampaign!.id, name);
+
+            // 2. Delete History
+            deleteNpcHistory(ctx.activeCampaign!.id, name);
+
+            // 3. Delete Dossier Entry
             const success = deleteNpcEntry(ctx.activeCampaign!.id, name);
-            if (success) await ctx.message.reply(`🗑️ NPC **${name}** eliminato dal dossier.`);
+
+            if (success) await ctx.message.reply(`✅ NPC **${name}** eliminato definitivamente (RAG, Storia, Dossier).`);
             else await ctx.message.reply(`❌ NPC "${name}" non trovato.`);
             return;
         }

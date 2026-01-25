@@ -41,6 +41,11 @@ export const inventoryRepository = {
         return false;
     },
 
+    deleteInventoryHistory: (campaignId: number, itemName: string): boolean => {
+        const result = db.prepare('DELETE FROM inventory_history WHERE campaign_id = ? AND lower(item_name) = lower(?)').run(campaignId, itemName);
+        return result.changes > 0;
+    },
+
     getInventory: (campaignId: number): InventoryItem[] => {
         return db.prepare('SELECT * FROM inventory WHERE campaign_id = ? AND quantity > 0 ORDER BY item_name').all(campaignId) as InventoryItem[];
     },

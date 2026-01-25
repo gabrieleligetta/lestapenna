@@ -58,6 +58,25 @@ Analizza la trascrizione e genera 3-5 query di ricerca specifiche per recuperare
 **OUTPUT:**
 Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 
+// --- SCOUT (NER) ---
+
+export const SCOUT_PROMPT = (text: string) => `
+Sei uno SCOUT di lettura veloce.
+Scansiona questa trascrizione di D&D e identifica le ENTITÀ SPECIFICHE citate che richiedono contesto.
+Analizza il testo e estrai i nomi propri.
+
+TESTO (Primi 40k caratteri):
+${text.substring(0, 40000)}...
+
+COMPITO:
+Restituisci un JSON con array di stringhe.
+- "npcs": Nomi propri di persone/creature che PARLANO o AGISCONO. (Ignora "il goblin", "la guardia" se generici).
+- "locations": Nomi di luoghi specifici visitati o menzionati.
+- "quests": Parole chiave o titoli di missioni citate.
+
+Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": []}
+`;
+
 // --- ANALYZER ---
 
 export const ANALYST_PROMPT = (castContext: string, memoryContext: string, narrativeText: string) => `Sei un ANALISTA DATI esperto di D&D. Il tuo UNICO compito è ESTRARRE DATI STRUTTURATI.
@@ -71,7 +90,7 @@ ${memoryContext}
 2. Estrai SOLO ciò che è ESPLICITAMENTE menzionato
 3. NON inventare, NON inferire, NON aggiungere
 4. Se non trovi qualcosa, lascia array vuoto []
-5. **GLOSSARIO CANONICO**: Se trovi nomi simili a quelli nel contesto (NPC, Luoghi), USA IL NOME ESATTO DEL CONTESTO. Non creare duplicati (es. "Filmen" -> "Firnen").
+5. **GLOSSARIO CANONICO**: Il contesto fornito contiene SOLO le entità rilevanti (identificate dallo Scout). USA ESATTAMENTE QUESTI NOMI. Non creare duplicati (es. se contesto ha "Firnen", non scrivere "Filmen").
 
 **OUTPUT JSON RICHIESTO**:
 {
@@ -125,7 +144,7 @@ ${memoryContext}
     ],
 }
     ],
-    "present_npcs": ["Lista TUTTI i nomi NPC che AGISCONO o PARLANO esplicitamente nel testo. IGNORA i nomi presenti solo nel Contesto/Memoria se non appaiono nella trascrizione."],
+    "present_npcs": ["Lista TUTTI i nomi NPC che AGISCONO o PARLANO esplicitamente nel testo. Usa i nomi dal CONTESTO PERSONAGGI o NPC PRESENTI (Scout) se disponibili."],
     "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM, log azioni principali)"],
     "character_growth": [
         {
@@ -194,7 +213,7 @@ Concentrati su: atmosfera, emozioni, dialoghi, colpi di scena, introspezione dei
 - Descrivi le emozioni e i pensieri dei personaggi
 - Usa i cambi di scena per strutturare il racconto
 - Il "narrative" deve essere un RACCONTO COMPLETO, non un riassunto
-- **GLOSSARIO**: Se devi citare NPC o Luoghi, usa i nomi esatti presenti nella MEMORIA DEL MONDO.
+- **GLOSSARIO**: Il contesto fornito è già filtrato e contiene solo le entità rilevanti. USA I NOMI ESATTI forniti nel contesto.
 
 **REGOLE**:
 - NON estrarre loot/quest/mostri (fatto dall'Analista)
@@ -218,7 +237,7 @@ ISTRUZIONI DI STILE:
 - Attribuisci correttamente i dialoghi agli NPC specifici anche se provengono dalla trascrizione del DM.
 - Le righe marcate con 📝 [NOTA UTENTE] sono fatti certi inseriti manualmente dai giocatori.
 - Usa i marker "--- CAMBIO SCENA ---" nel testo per strutturare il racconto in capitoli.
-- **GLOSSARIO**: Se devi citare NPC o Luoghi, usa i nomi esatti presenti nella MEMORIA DEL MONDO.
+- **GLOSSARIO**: Il contesto fornito è già filtrato. Usa i nomi esatti presenti nella memoria.
 
 **OUTPUT JSON** (SOLO questi campi narrativi):
     "title": "Titolo evocativo per la sessione",

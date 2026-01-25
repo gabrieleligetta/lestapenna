@@ -12,7 +12,9 @@ import {
     // New imports
     addInventoryEvent,
     getInventoryItemByName,
-    getInventoryHistory
+    getInventoryHistory,
+    deleteInventoryHistory,
+    deleteInventoryRagSummary
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
@@ -132,6 +134,38 @@ export const inventoryCommand: Command = {
                 await ctx.message.reply(`📉 Rimosso/Usato: **${item}**`);
             }
             else await ctx.message.reply(`⚠️ Oggetto "${item}" non trovato nell'inventario.`);
+            return;
+            return;
+        }
+
+        // SUBCOMMAND: $loot delete <Item> (Full Wipe)
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
+            let item = arg.split(' ').slice(1).join(' ');
+
+            // ID Resolution
+            const idMatch = item.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = getInventory(ctx.activeCampaign!.id);
+                if (all[idx]) item = all[idx].item_name;
+            }
+
+            const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
+            if (!existing) {
+                await ctx.message.reply(`❌ Oggetto non trovato: "${item}"`);
+                return;
+            }
+
+            // Full Wipe
+            await ctx.message.reply(`🗑️ Eliminazione completa per **${item}** in corso...`);
+            deleteInventoryRagSummary(ctx.activeCampaign!.id, item);
+            deleteInventoryHistory(ctx.activeCampaign!.id, item);
+            // removeLoot can delete if qty matches, but we want force delete. 
+            // We'll use removeLoot(all qty) or just directly delete?
+            // Existing `removeLoot` deletes if qty is 0. 
+            removeLoot(ctx.activeCampaign!.id, item, 999999);
+
+            await ctx.message.reply(`✅ Oggetto **${item}** eliminato definitivamente (RAG, Storia, Inventario).`);
             return;
         }
 

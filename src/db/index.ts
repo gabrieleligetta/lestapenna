@@ -113,6 +113,7 @@ export const updateNpcAliases = npcRepository.updateNpcAliases;
 export const updateNpcFields = npcRepository.updateNpcFields;
 export const renameNpcEntry = npcRepository.renameNpcEntry;
 export const deleteNpcEntry = npcRepository.deleteNpcEntry;
+export const deleteNpcHistory = npcRepository.deleteNpcHistory;
 export const getSessionEncounteredNPCs = npcRepository.getSessionEncounteredNPCs;
 export const getNpcHistory = npcRepository.getNpcHistory;
 export const findNpcDossierByName = npcRepository.findNpcDossierByName;
@@ -210,6 +211,16 @@ export const deleteSessionKnowledge = knowledgeRepository.deleteSessionKnowledge
 export const migrateKnowledgeFragments = knowledgeRepository.migrateKnowledgeFragments;
 export const migrateRagNpcReferences = knowledgeRepository.migrateRagNpcReferences;
 export const deleteNpcRagSummary = knowledgeRepository.deleteNpcRagSummary;
+// Location
+export const deleteAtlasHistory = locationRepository.deleteAtlasHistory; // 🆕
+
+// Quest
+export const deleteQuestHistory = questRepository.deleteQuestHistory; // 🆕
+export const deleteQuestRagSummary = knowledgeRepository.deleteQuestRagSummary; // 🆕
+
+// Inventory
+export const deleteInventoryHistory = inventoryRepository.deleteInventoryHistory; // 🆕
+export const deleteInventoryRagSummary = knowledgeRepository.deleteInventoryRagSummary; // 🆕
 export const deleteAtlasRagSummary = knowledgeRepository.deleteAtlasRagSummary;
 
 // Chat

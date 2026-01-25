@@ -14,7 +14,9 @@ import {
     // New imports
     addQuestEvent,
     getQuestHistory,
-    getQuestByTitle
+    getQuestByTitle,
+    deleteQuestHistory,
+    deleteQuestRagSummary
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
@@ -112,6 +114,36 @@ export const questCommand: Command = {
 
             // Trigger Regen
             await regenerateQuestBio(ctx.activeCampaign!.id, title, quest.status);
+            // Trigger Regen
+            await regenerateQuestBio(ctx.activeCampaign!.id, title, quest.status);
+            return;
+        }
+
+        // SUBCOMMAND: $quest delete <Title or ID>
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
+            let search = arg.split(' ').slice(1).join(' ');
+
+            // ID Resolution
+            const idMatch = search.match(/^#?(\d+)$/);
+            if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const active = getOpenQuests(ctx.activeCampaign!.id);
+                if (active[idx]) search = active[idx].title;
+            }
+
+            const quest = getQuestByTitle(ctx.activeCampaign!.id, search);
+            if (!quest) {
+                await ctx.message.reply(`❌ Quest non trovata: "${search}"`);
+                return;
+            }
+
+            // Full Wipe
+            await ctx.message.reply(`🗑️ Eliminazione completa per **${quest.title}** in corso...`);
+            deleteQuestRagSummary(ctx.activeCampaign!.id, quest.title);
+            deleteQuestHistory(ctx.activeCampaign!.id, quest.title);
+            deleteQuest(quest.id);
+
+            await ctx.message.reply(`✅ Quest **${quest.title}** eliminata definitivamente (RAG, Storia, Database).`);
             return;
         }
 

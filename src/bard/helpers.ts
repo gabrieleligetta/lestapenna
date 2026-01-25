@@ -252,3 +252,38 @@ export function smartSplitTranscript(text: string, maxChars: number = 300000): s
 
     return chunks;
 }
+
+/**
+ * Trova il miglior candidato in una lista usando Exact Match, Partial Match o Levenshtein.
+ */
+export function findBestMatch<T extends { name: string }>(
+    query: string,
+    candidates: T[],
+    threshold = 0.85 // Soglia alta per evitare falsi positivi
+): T | null {
+    if (!query || candidates.length === 0) return null;
+    const normalizedQuery = query.toLowerCase().trim();
+
+    // 1. Exact Match (Velocissimo)
+    const exact = candidates.find(c => c.name.toLowerCase() === normalizedQuery);
+    if (exact) return exact;
+
+    // 2. Contains Match (Simile a SQL LIKE)
+    const contains = candidates.find(c => c.name.toLowerCase().includes(normalizedQuery));
+    if (contains) return contains;
+
+    // 3. Fuzzy Match (Levenshtein) - Solo se i precedenti falliscono
+    let bestMatch: T | null = null;
+    let bestScore = 0;
+
+    for (const candidate of candidates) {
+        const score = levenshteinSimilarity(normalizedQuery, candidate.name.toLowerCase());
+        if (score > bestScore && score >= threshold) {
+            bestScore = score;
+            bestMatch = candidate;
+        }
+    }
+
+    return bestMatch;
+}
+

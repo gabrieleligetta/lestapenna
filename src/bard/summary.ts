@@ -52,7 +52,8 @@ import {
     safeJsonParse,
     normalizeStringList,
     normalizeLootList,
-    smartSplitTranscript
+    smartSplitTranscript,
+    findBestMatch
 } from './helpers';
 
 import {
@@ -67,6 +68,7 @@ import { monitor } from '../monitor';
 import {
     MAP_PROMPT,
     CONTEXT_IDENTIFICATION_PROMPT,
+    SCOUT_PROMPT,
     ANALYST_PROMPT,
     WRITER_DM_PROMPT,
     WRITER_BARDO_PROMPT,
@@ -447,51 +449,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 }
             });
         }
-
-        // --- TOTAL RECALL (CONTEXT INJECTION HYBRID) ---
-        let memoryContext = "";
-        if (campaignId) {
-            console.log(`[Bardo] 🧠 Avvio Total Recall Ibrido...`);
-            const snapshot = getCampaignSnapshot(campaignId);
-
-            const locationQuery = snapshot.location ? `${snapshot.location.macro || ''} ${snapshot.location.micro || ''}`.trim() : "";
-            const staticQueries = locationQuery ? [searchKnowledge(campaignId, `Info su luogo: ${locationQuery}`, 2)] : [];
-
-            const rawTranscript = transcriptions.map((t: any) => t.transcription_text).join('\n');
-            const textForAnalysis = (narrativeText && narrativeText.length > 100) ? narrativeText : rawTranscript;
-
-            const dynamicQueries = await identifyRelevantContext(campaignId, textForAnalysis, snapshot, narrativeText);
-            const dynamicPromises = dynamicQueries.map(q => searchKnowledge(campaignId, q, 3));
-
-            const [staticResults, ...dynamicResults] = await Promise.all([Promise.all(staticQueries), ...dynamicPromises]);
-
-            memoryContext = `\n[[MEMORIA DEL MONDO E CONTESTO]]\n`;
-            memoryContext += `📍 LUOGO: ${snapshot.location_context || 'Sconosciuto'}\n`;
-            memoryContext += `⚔️ QUEST ATTIVE: ${snapshot.quest_context || 'Nessuna'}\n`;
-
-            const existingNpcs = listNpcs(campaignId);
-            if (existingNpcs.length > 0) {
-                memoryContext += `\n👥 NPC GIÀ NOTI (USA QUESTI NOMI!):\n`;
-                existingNpcs.forEach((npc: any) => {
-                    memoryContext += `- "${npc.name}" (${npc.role || '?'})\n`;
-                });
-            }
-
-            const existingLocations = listAtlasEntries(campaignId, 50);
-            if (existingLocations.length > 0) {
-                memoryContext += `\n🗺️ LUOGHI GIÀ NOTI:\n`;
-                existingLocations.forEach((loc: any) => {
-                    memoryContext += `- "${loc.macro_location} - ${loc.micro_location}"\n`;
-                });
-            }
-
-            const allMemories = [...staticResults.flat(), ...dynamicResults.flat()];
-            const uniqueMemories = Array.from(new Set(allMemories));
-            if (uniqueMemories.length > 0) {
-                memoryContext += `\n🔍 RICORDI RILEVANTI:\n${uniqueMemories.map(m => `- ${m}`).join('\n')}\n`;
-            }
-        }
-
         let fullDialogue: string;
         if (narrativeText && narrativeText.length > 100) {
             fullDialogue = narrativeText;
@@ -500,6 +457,78 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             const processed = processChronologicalSession(transcriptions, notes, startTime, campaignId || 0);
             fullDialogue = processed.linearText;
             console.log(`[Bardo] ⚠️ Fallback a trascrizioni standard (${fullDialogue.length} chars)`);
+        }
+
+        // --- SCOUT PHASE (CONTEXT INJECTION) ---
+        let dynamicMemoryContext = "";
+        if (campaignId) {
+            console.log(`[Bardo] 🧠 Avvio Scout Phase...`);
+
+            try {
+                // 1. Eseguiamo lo Scout
+                const scoutResponse = await metadataClient.chat.completions.create({
+                    model: METADATA_MODEL,
+                    messages: [{ role: "user", content: SCOUT_PROMPT(fullDialogue) }],
+                    response_format: { type: "json_object" }
+                });
+
+                const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[]}');
+                console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi.`);
+
+                dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
+
+                // 2. Idratazione NPC
+                if (entities.npcs && Array.isArray(entities.npcs) && entities.npcs.length > 0) {
+                    const allNpcs = npcRepository.getAllNpcs(campaignId);
+                    const foundNpcs = new Set<number>();
+
+                    dynamicMemoryContext += `\n👥 NPC PRESENTI:\n`;
+
+                    entities.npcs.forEach((name: string) => {
+                        const match = findBestMatch(name, allNpcs);
+                        if (match && !foundNpcs.has(match.id)) {
+                            foundNpcs.add(match.id);
+                            dynamicMemoryContext += `- **${match.name}** (${match.role}): ${match.description} [Status: ${match.status}]\n`;
+                        }
+                    });
+                }
+
+                // 3. Idratazione Luoghi
+                if (entities.locations && Array.isArray(entities.locations) && entities.locations.length > 0) {
+                    const allLocs = locationRepository.listAllAtlasEntries(campaignId);
+                    const searchLocs = allLocs.map((l: any) => ({ ...l, name: `${l.macro_location} ${l.micro_location}` }));
+                    const foundLocs = new Set<number>();
+
+                    dynamicMemoryContext += `\n🗺️ LUOGHI CITATI:\n`;
+
+                    entities.locations.forEach((name: string) => {
+                        const match = findBestMatch(name, searchLocs);
+                        if (match && !foundLocs.has(match.id)) {
+                            foundLocs.add(match.id);
+                            dynamicMemoryContext += `- **${match.macro_location} - ${match.micro_location}**: ${match.description}\n`;
+                        }
+                    });
+                }
+
+                // 4. Idratazione Quest (Titoli attivi sempre)
+                const activeQuests = questRepository.getOpenQuests(campaignId);
+                if (activeQuests.length > 0) {
+                    dynamicMemoryContext += `\n⚔️ QUEST ATTIVE: ${activeQuests.map((q: any) => q.title).join(', ')}\n`;
+                } else {
+                    dynamicMemoryContext += `\n⚔️ NESSUNA QUEST ATTIVA.\n`;
+                }
+
+                // Fallback location corrente
+                const snapshot = getCampaignSnapshot(campaignId);
+                dynamicMemoryContext += `\n📍 LUOGO CORRENTE: ${snapshot.location_context || 'Sconosciuto'}\n`;
+
+            } catch (e) {
+                console.error("[Bardo] ⚠️ Errore fase Scout, fallback a contesto base:", e);
+                const snapshot = getCampaignSnapshot(campaignId);
+                dynamicMemoryContext = `\n[[CONTESTO BASE (FALLBACK)]]\n📍 LUOGO: ${snapshot.location_context}\n⚔️ QUEST: ${snapshot.quest_context}\n`;
+            }
+
+            console.log(`[Bardo] 💧 Contesto Idrato (${dynamicMemoryContext.length} chars).`);
         }
 
         // CALCOLO DINAMICO DEL LIMITE
@@ -553,7 +582,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             if (!options.skipAnalysis) {
                 // Nota: Passiamo memoryContext globale e il contesto della parte
                 const partHeader = isMultiPart ? `PARTE ${actNumber} DI ${parts.length}` : undefined;
-                partialAnalystData = await extractStructuredData(sessionId, currentPart, castContext, memoryContext, partHeader);
+                partialAnalystData = await extractStructuredData(sessionId, currentPart, castContext, dynamicMemoryContext, partHeader);
             } else if (i === 0) {
                 // HYDRATION (Only on first pass to avoid duplication if we were to loop, though hydration should be global)
                 console.log(`[Bardo] ⏩ Skipping Analysis. Hydrating from DB for session ${sessionId}...`);
@@ -631,10 +660,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             const narrativeContext = writerInject + `TRASCRIZIONE PARTE ${actNumber}:\n${currentPart}`;
 
             if (tone === 'DM') {
-                reducePrompt = WRITER_DM_PROMPT(castContext, memoryContext, partialAnalystJson)
+                reducePrompt = WRITER_DM_PROMPT(castContext, dynamicMemoryContext, partialAnalystJson)
                     + `\n\n${narrativeContext}`;
             } else {
-                reducePrompt = WRITER_BARDO_PROMPT(tone, castContext, memoryContext, partialAnalystJson)
+                reducePrompt = WRITER_BARDO_PROMPT(tone, castContext, dynamicMemoryContext, partialAnalystJson)
                     + `\n\n${narrativeContext}`;
             }
 

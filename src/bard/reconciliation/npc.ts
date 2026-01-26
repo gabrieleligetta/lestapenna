@@ -2,7 +2,7 @@
  * Bard Reconciliation - NPC name reconciliation
  */
 
-import { listNpcs } from '../../db';
+import { getAllNpcs } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
@@ -78,7 +78,7 @@ export async function reconcileNpcName(
     newName: string,
     newDescription: string = ""
 ): Promise<{ canonicalName: string; existingNpc: any } | null> {
-    const existingNpcs = listNpcs(campaignId);
+    const existingNpcs = getAllNpcs(campaignId);
     if (existingNpcs.length === 0) return null;
 
     const newNameLower = newName.toLowerCase().trim();
@@ -113,8 +113,9 @@ export async function reconcileNpcName(
         }
 
         // 3. Significant Token Overlap (Boosted for multi-word names)
-        const newParts = newName.toLowerCase().split(/\s+/).filter(p => p.length > 2 && !['del', 'della', 'dei', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra'].includes(p));
-        const existingParts = existingName.toLowerCase().split(/\s+/).filter(p => p.length > 2 && !['del', 'della', 'dei', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra'].includes(p));
+        const stopWords = ['del', 'della', 'dei', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra', 'il', 'lo', 'la', 'i', 'gli', 'le', 'un', 'una', 'uno'];
+        const newParts = newName.toLowerCase().split(/\s+/).filter(p => p.length > 2 && !stopWords.includes(p));
+        const existingParts = existingName.toLowerCase().split(/\s+/).filter(p => p.length > 2 && !stopWords.includes(p));
 
         let matchCount = 0;
         for (const np of newParts) {
@@ -129,7 +130,9 @@ export async function reconcileNpcName(
             // If all significant parts of shorter name match, high confidence
             const minParts = Math.min(newParts.length, existingParts.length);
             if (matchCount >= minParts) {
-                candidates.push({ npc, similarity: 0.8, reason: `full_token_overlap (${matchCount}/${minParts})` });
+                // Perfect overlap of significant tokens
+                const bonus = (newParts.length === existingParts.length) ? 0.15 : 0.05;
+                candidates.push({ npc, similarity: 0.85 + bonus, reason: `full_token_overlap (${matchCount}/${minParts})` });
             } else if (matchCount >= 1 && minParts >= 2) {
                 // Partial overlap
                 candidates.push({ npc, similarity: 0.6 + (0.1 * matchCount), reason: `partial_token_overlap (${matchCount})` });
@@ -174,6 +177,12 @@ export async function reconcileNpcName(
     console.log(`[Reconcile] 🔍 "${newName}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.npc.name}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
     for (const candidate of topCandidates) {
+        // SUPER-MATCH: If similarity is extremely high, accept immediately without AI
+        if (candidate.similarity >= 0.90) {
+            console.log(`[Reconcile] ⚡ AUTO-MERGE (High Sim): "${newName}" → "${candidate.npc.name}" (${candidate.reason})`);
+            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
+        }
+
         console.log(`[Reconcile] 🤔 Checking candidate: "${candidate.npc.name}" (${candidate.reason})...`);
 
         const isSame = await aiConfirmSamePersonExtended(

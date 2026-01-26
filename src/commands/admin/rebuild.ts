@@ -200,29 +200,68 @@ function purgeAllDerivedData(): Record<string, number> {
 /**
  * Prune "zombie" entities: deletes NPCs/Locations that remained without description after rebuild
  */
-function pruneEmptyEntities(): { npcs: number; locations: number } {
-    // Delete NPCs with null or too short description
-    const npcResult = db.prepare(`
-        DELETE FROM npc_dossier
-        WHERE (description IS NULL 
-            OR length(description) < 5
-            OR description LIKE 'Nessuna descrizione%')
-            AND COALESCE(is_manual, 0) = 0
-    `).run();
+export function pruneEmptyEntities(): { npcs: number; locations: number } {
+    return db.transaction(() => {
+        // 1. Identify NPCs to delete
+        const npcsToDelete = db.prepare(`
+            SELECT name FROM npc_dossier
+            WHERE (description IS NULL 
+                OR length(description) < 5
+                OR description LIKE 'Nessuna descrizione%')
+                AND COALESCE(is_manual, 0) = 0
+        `).all() as { name: string }[];
 
-    // Delete Locations with null or too short description
-    const locationResult = db.prepare(`
-        DELETE FROM location_atlas
-        WHERE (description IS NULL 
-            OR length(description) < 10
-            OR description LIKE 'Nessuna descrizione%')
-            AND COALESCE(is_manual, 0) = 0
-    `).run();
+        // 2. Identify Locations to delete
+        const locationsToDelete = db.prepare(`
+            SELECT macro_location, micro_location FROM location_atlas
+            WHERE (description IS NULL 
+                OR length(description) < 10
+                OR description LIKE 'Nessuna descrizione%')
+                AND COALESCE(is_manual, 0) = 0
+        `).all() as { macro_location: string; micro_location: string }[];
 
-    return {
-        npcs: npcResult.changes,
-        locations: locationResult.changes
-    };
+        // 3. Delete NPC history first
+        for (const npc of npcsToDelete) {
+            db.prepare('DELETE FROM npc_history WHERE npc_name = ?').run(npc.name);
+        }
+
+        // 4. Delete Location history
+        for (const loc of locationsToDelete) {
+            db.prepare(`
+                DELETE FROM location_history 
+                WHERE lower(macro_location) = lower(?) 
+                AND lower(micro_location) = lower(?)
+            `).run(loc.macro_location, loc.micro_location);
+
+            db.prepare(`
+                DELETE FROM atlas_history 
+                WHERE lower(macro_location) = lower(?) 
+                AND lower(micro_location) = lower(?)
+            `).run(loc.macro_location, loc.micro_location);
+        }
+
+        // 5. Delete actual entities
+        const npcResult = db.prepare(`
+            DELETE FROM npc_dossier
+            WHERE (description IS NULL 
+                OR length(description) < 5
+                OR description LIKE 'Nessuna descrizione%')
+                AND COALESCE(is_manual, 0) = 0
+        `).run();
+
+        const locationResult = db.prepare(`
+            DELETE FROM location_atlas
+            WHERE (description IS NULL 
+                OR length(description) < 10
+                OR description LIKE 'Nessuna descrizione%')
+                AND COALESCE(is_manual, 0) = 0
+        `).run();
+
+        return {
+            npcs: npcResult.changes,
+            locations: locationResult.changes
+        };
+    })();
 }
 
 export const rebuildCommand: Command = {

@@ -203,7 +203,16 @@ export class IngestionService {
 
         // World events
         for (const evt of validated.world_events.keep) {
-            const safeDesc = evt.event || "Evento mondiale registrato.";
+            // Clean event text just in case it has weird metadata like "(Source: ...)" caught by NER?
+            // Usually events are full sentences, so we be careful.
+            // But if cleanEntityName finds extra info in parens at end, we might want to keep it as text?
+            // actually cleanEntityName moves it to "extra".
+            // Let's just strip it if it looks like metadata, OR keep it if it looks like context.
+            // For World Events, we probably just want to sanitize leading/trailing.
+            // But let's apply cleanEntityName to be consistent with "Entity (Extra)" pattern.
+            const clean = cleanEntityName(evt.event);
+            const safeDesc = clean.extra ? `${clean.name} (${clean.extra})` : clean.name || "Evento mondiale registrato.";
+
             console.log(`[World] ➕ ${safeDesc}`);
             // Signature: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number)
             addWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT');
@@ -264,9 +273,17 @@ export class IngestionService {
         // Quests
         for (const quest of validated.quests.keep) {
             // Handle both string and object formats for backward compatibility
-            const title = typeof quest === 'string' ? quest : quest.title;
-            const description = typeof quest === 'string' ? '' : quest.description;
+            const rawTitle = typeof quest === 'string' ? quest : quest.title;
+            const rawDesc = typeof quest === 'string' ? '' : quest.description;
             const status = typeof quest === 'string' ? 'OPEN' : (quest.status || 'OPEN');
+
+            // Clean Title
+            const clean = cleanEntityName(rawTitle);
+            const title = clean.name;
+            // Prepend extra info to description if found
+            const description = clean.extra
+                ? (rawDesc ? `[${clean.extra}] ${rawDesc}` : `[${clean.extra}]`)
+                : rawDesc;
 
             console.log(`[Quest] ➕ ${title} (${status})`);
 
@@ -402,7 +419,10 @@ export class IngestionService {
                         weaknesses: monster.weaknesses,
                         resistances: monster.resistances
                     },
-                    monsterName
+                    // Pass original cleaned name as "originalName" to treat it as variant if different
+                    // ALSO: If we extracted "extra" info (e.g. "Archer"), treating "Goblin (Archer)" as originalName
+                    // automagically works because "Goblin (Archer)" != "Goblin".
+                    monster.name
                 );
 
                 // 🆕 History Tracking

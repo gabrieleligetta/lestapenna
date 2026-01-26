@@ -10,6 +10,24 @@ export const worldRepository = {
             effectiveYear = camp?.current_year || 0;
         }
 
+        if (sessionId) {
+            // Check for potential duplicates in the same session
+            const existingEvents = db.prepare(`
+                SELECT description FROM world_history 
+                WHERE campaign_id = ? AND session_id = ?
+            `).all(campaignId, sessionId) as { description: string }[];
+
+            const isDuplicate = existingEvents.some(e => {
+                // Check if description is very similar or contained
+                return e.description.includes(description) || description.includes(e.description);
+            });
+
+            if (isDuplicate) {
+                console.log(`[World] ⚠️ Evento duplicato ignorato per sessione ${sessionId}`);
+                return;
+            }
+        }
+
         db.prepare(`
             INSERT INTO world_history (campaign_id, session_id, description, event_type, timestamp, year, rag_sync_needed)
             VALUES (?, ?, ?, ?, ?, ?, 1)

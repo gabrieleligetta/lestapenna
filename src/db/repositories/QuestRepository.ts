@@ -59,15 +59,46 @@ export const questRepository = {
         }
 
         if (existingId) {
-            // Update existing quest
+            // Update existing quest with smart merge
+            const current = db.prepare('SELECT description, status FROM quests WHERE id = ?').get(existingId) as { description: string, status: string };
+
+            let finalDesc = current.description;
+            if (description && description.trim().length > 0) {
+                if (!finalDesc) {
+                    finalDesc = description;
+                } else if (!finalDesc.includes(description) && !description.includes(finalDesc)) {
+                    // Check fuzzy similarity to avoid appending same thing phrased differently? 
+                    // For now, simpler check + append if different.
+                    // Maybe check if it's just a status update formatted as desc?
+                    finalDesc = `${finalDesc}\n\n[Aggiornamento] ${description}`;
+                }
+            }
+
+            // Determine new status based on precedence
+            // Precedence: (COMPLETED | FAILED | SUCCEEDED | DONE) > (IN_PROGRESS) > (OPEN)
+            // If current is Final, don't revert to OPEN.
+            const isFinal = (s: string) => ['COMPLETED', 'FAILED', 'SUCCEEDED', 'DONE'].includes(s.toUpperCase());
+            const currentStatus = current.status || 'OPEN';
+            const newStatus = status || 'OPEN';
+
+            let finalStatus = currentStatus;
+
+            if (isFinal(newStatus)) {
+                finalStatus = newStatus; // Always accept new Final status
+            } else if (!isFinal(currentStatus)) {
+                finalStatus = newStatus; // Update if current is NOT final (e.g. Open -> In Progress)
+            }
+            // Else: Current is Final, New is Open/InProgress -> Keep Current (Final)
+
             db.prepare(`
                 UPDATE quests 
-                SET description = COALESCE(?, description), 
+                SET description = ?, 
                     status = ?, 
                     last_updated = ?, 
                     rag_sync_needed = 1 
                 WHERE id = ?
-            `).run(description || null, status, Date.now(), existingId);
+            `).run(finalDesc, finalStatus, Date.now(), existingId);
+            console.log(`[Quest] 🔄 Aggiornata Quest: ${cleanedTitle} (Status: ${currentStatus} -> ${finalStatus})`);
         } else {
             // Insert new quest
             db.prepare(`

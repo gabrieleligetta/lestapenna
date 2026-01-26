@@ -88,7 +88,7 @@ export const atlasCommand: Command = {
                 const list = entries.map((e: any, i: number) =>
                     `\`${i + 1}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
                 ).join('\n');
-                
+
                 let footer = `\n\n💡 Usa \`$atlante <ID>\` o \`$atlante <Regione> | <Luogo>\` per dettagli.`;
                 if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$atlante list 2\` per la prossima)` + footer;
 
@@ -131,7 +131,9 @@ export const atlasCommand: Command = {
 
             const list = entries.map((e: any, i: number) => {
                 const absoluteIndex = offset + i + 1;
-                const descPreview = e.description ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '') : '*nessuna descrizione*';
+                const descPreview = (e.description && e.description.trim().length > 0)
+                    ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '')
+                    : '*nessuna descrizione*';
                 return `\`${absoluteIndex}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
             }).join('\n');
 
@@ -256,7 +258,7 @@ export const atlasCommand: Command = {
                 await ctx.message.reply(
                     `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
                     `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
-                    `${entry.description || '*Nessuna descrizione*'}`
+                    `${(entry.description && entry.description.trim().length > 0) ? entry.description : '*Nessuna descrizione*'}`
                 );
             } else {
                 await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
@@ -274,7 +276,7 @@ export const atlasCommand: Command = {
                 await ctx.message.reply(
                     `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
                     `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
-                    `${entry.description || '*Nessuna descrizione*'}`
+                    `${(entry.description && entry.description.trim().length > 0) ? entry.description : '*Nessuna descrizione*'}`
                 );
             } else {
                 await ctx.message.reply(

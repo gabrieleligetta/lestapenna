@@ -320,7 +320,8 @@ export class IngestionService {
 
         const dedupedLocations = await deduplicateLocationBatch(locationUpdates);
         for (const loc of dedupedLocations) {
-            if (loc.macro && loc.description) {
+            // Allow processing even if description is empty, to catch parenthetical info in names
+            if (loc.macro) {
                 // Clean Names to remove parentheses (e.g. "Location (Extra)")
                 const cleanMacro = cleanEntityName(loc.macro);
                 const cleanMicro = cleanEntityName(loc.micro);
@@ -329,9 +330,29 @@ export class IngestionService {
                 const finalMicro = cleanMicro.name;
 
                 // Append extra info to description if found
-                let finalDesc = loc.description;
-                if (cleanMacro.extra) finalDesc = `${finalDesc} (${cleanMacro.extra})`;
-                if (cleanMicro.extra) finalDesc = `${finalDesc} (${cleanMicro.extra})`;
+                let finalDesc = loc.description ? loc.description.trim() : "";
+
+                if (cleanMacro.extra) {
+                    finalDesc = finalDesc ? `${finalDesc} (${cleanMacro.extra})` : cleanMacro.extra;
+                }
+                if (cleanMicro.extra) {
+                    finalDesc = finalDesc ? `${finalDesc} (${cleanMicro.extra})` : cleanMicro.extra;
+                }
+
+                // If completely empty after cleaning, skip
+                if (!finalDesc && !cleanMacro.extra && !cleanMicro.extra) {
+                    // Only skip if there's truly no info. 
+                    // However, we might want to register the location even without description?
+                    // Legacy behavior seemed to require description. 
+                    // Let's at least log it or provide a placeholder if it's a new location.
+                    // For now, if we have NO description and NO extra info, we can't really "update" much besides existence.
+                    // But if it's a NEW location, we want it in the atlas?
+                    // The prompt says "scrivi una descrizione". 
+                    // If we have nothing, let's skip to avoid "nessuna descrizione" spam unless we want placeholders.
+                    // But user asked to fix "nessuna descrizione". 
+                    // So if we have nothing, we probably shouldn't overwrite existing description with empty string.
+                    if (!finalDesc) continue;
+                }
 
                 const reconciled = await reconcileLocationName(campaignId, finalMacro, finalMicro, finalDesc);
 

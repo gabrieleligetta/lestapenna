@@ -385,6 +385,9 @@ CRITERI DI GIUDIZIO:
 1. **Fonetica:** Se suonano simili (Siri/Ciri), è un forte indizio.
 2. **Contesto (RAG):** Se la "Memoria Storica" di ${candidateName} descrive fatti identici a quelli del nuovo NPC, SONO la stessa persona.
 3. **Logica:** Se uno è "Ostaggio dei banditi" e l'altro è "Prigioniera dei briganti", SONO la stessa persona.
+4. **Link Semantico:** Se il Contesto RAG menziona che "${newName}" è un titolo/soprannome di "${candidateName}", RISPONDI SI.
+
+Se c'è anche solo un vago ma plausibile collegamento nel contesto, **FAVORISCI IL SI** per evitare duplicati.
 
 Rispondi SOLO: SI oppure NO`;
 
@@ -414,6 +417,9 @@ CRITERI DI GIUDIZIO:
 1. **Fonetica:** Se i nomi suonano simili o sono traduzioni/sinonimi (es. "Torre Nera" vs "Torre Oscura").
 2. **Contesto (RAG):** Se la "Memoria Storica" descrive eventi accaduti nel luogo candidato che coincidono con la descrizione del nuovo luogo.
 3. **Gerarchia:** Se uno è chiaramente un sotto-luogo dell'altro ma usato come nome principale.
+4. **Link Semantico:** Se il Contesto RAG o la descrizione suggeriscono che sono lo stesso posto (es. "Torre Nera" che è descritta come "Oscura"), RISPONDI SI.
+
+Se c'è anche solo un vago ma plausibile collegamento nel contesto, **FAVORISCI IL SI** per evitare duplicati.
 
 Rispondi SOLO: SI oppure NO`;
 

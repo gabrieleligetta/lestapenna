@@ -196,6 +196,31 @@ export async function reconcileLocationName(
         }
     }
 
+    // 5. NEW: Semantic/RAG Candidate Discovery (If string matching is weak)
+    if (candidates.filter(c => c.similarity > 0.8).length === 0) {
+        console.log(`[Location Reconcile] 🧠 Ricerca candidati semantici (RAG) per "${newMacro} - ${newMicro}"...`);
+        try {
+            const ragQuery = `Cosa sappiamo di ${newMacro} - ${newMicro}? ${newDescription}`;
+            const ragContext = await searchKnowledge(campaignId, ragQuery, 3);
+
+            for (const entry of existingLocations) {
+                // Skip if already a candidate
+                if (candidates.some(c => c.entry.id === entry.id)) continue;
+
+                const fullPath = `${entry.macro_location} ${entry.micro_location}`.toLowerCase();
+                // Check if this Location is mentioned in the retrieved context
+                const foundInContext = ragContext.some(chunk => chunk.toLowerCase().includes(entry.micro_location.toLowerCase()) || chunk.toLowerCase().includes(entry.macro_location.toLowerCase()));
+
+                if (foundInContext) {
+                    // Lower confidence than direct match, but enough to trigger AI check
+                    candidates.push({ entry, similarity: 0.7, reason: 'rag_context_match' });
+                }
+            }
+        } catch (e) {
+            console.error(`[Location Reconcile] ⚠️ Error during RAG candidate search:`, e);
+        }
+    }
+
     if (candidates.length === 0) return null;
 
     candidates.sort((a, b) => b.similarity - a.similarity);

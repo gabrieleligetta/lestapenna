@@ -14,6 +14,10 @@ jest.mock('../../../src/db', () => ({
     listAllQuests: jest.fn(),
 }));
 
+jest.mock('../../../src/bard/rag', () => ({
+    searchKnowledge: jest.fn().mockResolvedValue([])
+}));
+
 // 2. Mock AI client
 jest.mock('../../../src/bard/config', () => ({
     metadataClient: {

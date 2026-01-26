@@ -137,6 +137,33 @@ export async function reconcileNpcName(
         }
     }
 
+    // 4. NEW: Semantic/RAG Candidate Discovery (If string matching is weak)
+    // If we have very few high-quality candidates, use RAG to find who this description talks about
+    if (candidates.filter(c => c.similarity > 0.8).length === 0) {
+        console.log(`[Reconcile] 🧠 Ricerca candidati semantici (RAG) per "${newName}"...`);
+        try {
+            // Search for context about this new person
+            const ragQuery = `Chi è ${newName}? ${newDescription}`;
+            const ragContext = await searchKnowledge(campaignId, ragQuery, 3); // Get top 3 chunks
+
+            // Extract potential names from RAG chunks by checking our known NPC list against the found text
+            // This is "inverse search" - check if any KNOWN npc is mentioned in the RAG text
+            for (const npc of existingNpcs) {
+                // Skip if already in candidates
+                if (candidates.some(c => c.npc.name === npc.name)) continue;
+
+                // Check if this NPC is mentioned in the retrieved context
+                const foundInContext = ragContext.some(chunk => chunk.toLowerCase().includes(npc.name.toLowerCase()));
+
+                if (foundInContext) {
+                    candidates.push({ npc, similarity: 0.75, reason: 'rag_context_match' });
+                }
+            }
+        } catch (e) {
+            console.error(`[Reconcile] ⚠️ Error during RAG candidate search:`, e);
+        }
+    }
+
     if (candidates.length === 0) return null;
 
     // Sort by similarity descending

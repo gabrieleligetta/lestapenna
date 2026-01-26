@@ -61,6 +61,10 @@ export const locationRepository = {
         // Sanitize
         const safeDesc = (typeof newDescription === 'object') ? JSON.stringify(newDescription) : String(newDescription);
 
+        if (!safeDesc || safeDesc.trim().length === 0) {
+            console.warn(`[Atlas] ⚠️ Attenzione: Aggiornamento voce ${macro} - ${micro} con descrizione vuota.`);
+        }
+
         // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
             INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed)

@@ -81,14 +81,27 @@ export async function validateBatch(
 
         const result = JSON.parse(response.choices[0].message.content || "{}");
 
-        // Normalize Quests in result
-        const normalizedQuests = {
-            keep: (result.quests?.keep || []).map((q: any) => {
-                if (typeof q === 'string') return { title: q, description: '', status: 'OPEN' };
-                return q;
-            }),
-            skip: result.quests?.skip || []
-        };
+        // Normalize Quests with robust fallback logic
+        let normalizedQuests;
+        if (result.quests && result.quests.keep) {
+            normalizedQuests = {
+                keep: result.quests.keep.map((q: any) => (typeof q === 'string' ? { title: q, description: '', status: 'OPEN' } : q)),
+                skip: result.quests.skip || []
+            };
+        } else if (Array.isArray(result.quests)) {
+            // Fallback if AI returns flat array instead of {keep, skip}
+            normalizedQuests = {
+                keep: result.quests.map((q: any) => (typeof q === 'string' ? { title: q, description: '', status: 'OPEN' } : q)),
+                skip: []
+            };
+        } else {
+            // Fallback if AI omits field or returns unknown format: Keep everything from input
+            normalizedQuests = {
+                keep: (input.quests || []).map((q: any) => (typeof q === 'string' ? { title: q, description: '', status: 'OPEN' } : q)),
+                skip: []
+            };
+            console.log(`[Validator] ⚠️ Campo 'quests' mancante o malformato nella risposta IA. Applicato fallback conservativo.`);
+        }
 
         return {
             npc_events: result.npc_events || { keep: input.npc_events || [], skip: [] },

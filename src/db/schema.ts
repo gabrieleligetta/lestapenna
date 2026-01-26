@@ -81,6 +81,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC'
         description TEXT NOT NULL,
         year INTEGER,
+        timestamp INTEGER,
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
@@ -449,7 +450,8 @@ export const initDatabase = () => {
         "ALTER TABLE bestiary ADD COLUMN short_id TEXT",
         "ALTER TABLE inventory ADD COLUMN short_id TEXT",
         "ALTER TABLE location_history ADD COLUMN short_id TEXT",
-        "ALTER TABLE world_history ADD COLUMN short_id TEXT"
+        "ALTER TABLE world_history ADD COLUMN short_id TEXT",
+        "ALTER TABLE world_history ADD COLUMN timestamp INTEGER"
     ];
 
     for (const m of migrations) {

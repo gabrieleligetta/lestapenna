@@ -14,6 +14,61 @@ export const aiutoCommand: Command = {
         const arg = ctx.args[0]?.toLowerCase();
         const isAdvanced = arg === 'advanced' || arg === 'avanzato' || arg === 'admin';
 
+        if (arg && !['advanced', 'avanzato', 'admin', 'dev'].includes(arg)) {
+            // --- AIUTO DETTAGLIATO COMANDO ---
+            const embed = new EmbedBuilder().setColor("#D4AF37");
+
+            if (['npc', 'quest', 'atlante', 'loot', 'bestiario', 'atlas'].includes(arg)) {
+                embed.setTitle(`🧩 Entità Unificata: $${arg}`)
+                    .setDescription(`Interfaccia comune per la gestione di entità come NPC, Missioni, Luoghi, Oggetti e Mostri.`)
+                    .addFields(
+                        { name: "📋 Lista", value: `\`$${arg} list\`: Vede tutti gli elementi (paginati).\n\`$${arg} #ID\`: Visualizza i dettagli di un'entità specifica.` },
+                        { name: "📝 Aggiornamento Narrativo", value: `\`$${arg} update <ID> | <Nota>\`\nAggiunge un aggiornamento o un'osservazione. Innesca la rigenerazione bio via IA.` },
+                        { name: "⚙️ Aggiornamento Metadati", value: `\`$${arg} update <ID> field:<chiave> <valore>\`\nModifica direttamente i campi (es. \`field:status SCONFITTO\`).` },
+                        { name: "🔀 Unione (Merge)", value: `\`$${arg} merge <VecchioID/Nome> | <NuovoID/Nome>\`\nUnisce i duplicati in un unico record.` },
+                        { name: "🗑️ Eliminazione", value: `\`$${arg} delete <ID>\`\nRimuove permanentemente l'entità.` }
+                    );
+            } else if (arg === 'timeline' || arg === 'cronologia') {
+                embed.setTitle(`⏳ Comando: $timeline`)
+                    .setDescription(`Gestisci gli eventi storici del tuo mondo.`)
+                    .addFields(
+                        { name: "📜 Mostra Cronologia", value: `\`$timeline\`: Visualizza la storia cronologica.` },
+                        { name: "➕ Aggiungi Evento", value: `\`$timeline add <Anno> | <Tipo> | <Descrizione>\`\nAggiungi una pietra miliare storica.` },
+                        { name: "🏷️ Tipi di Evento", value: `Tipi validi: \`WAR\` (Guerra), \`POLITICS\` (Politica), \`DISCOVERY\` (Scoperta), \`CALAMITY\` (Calamità), \`SUPERNATURAL\` (Sovrannaturale), \`GENERIC\` (Generico).` },
+                        { name: "🗑️ Elimina", value: `\`$timeline delete #ID\`: Rimuove un evento usando il suo Short ID.` }
+                    );
+            } else if (arg === 'data' || arg === 'date' || arg === 'anno0' || arg === 'year0') {
+                embed.setTitle(`📅 Comandi Calendario`)
+                    .addFields(
+                        { name: "$data <Anno>", value: `Imposta l'anno corrente della campagna. Influenza la timeline e le registrazioni.` },
+                        { name: "$anno0 <Descrizione>", value: `Definisce il punto di svolta della storia (Anno 0) e resetta l'anno corrente a 0.` }
+                    );
+            } else if (arg === 'npc') {
+                // Special case for npc alias
+                embed.setTitle(`👥 Speciale NPC: $npc alias`)
+                    .addFields(
+                        { name: "Gestione Soprannomi", value: `\`$npc alias <ID> add <Alias>\`: Aggiunge un nome riconosciuto.\n\`$npc alias <ID> remove <Alias>\`: Rimuove un alias.` }
+                    );
+            } else if (arg === 'loot' || arg === 'unisciitem' || arg === 'mergeitem') {
+                embed.setTitle(`📦 Speciale Inventario`)
+                    .addFields(
+                        { name: "$loot use <ID>", value: `Consuma un oggetto (decrementa il numero o lo rimuove).` },
+                        { name: "$unisciitem <ID1> | <ID2>", value: `Comando legacy per unire oggetti (usa \`$loot merge\` invece).` }
+                    );
+            } else if (arg === 'viaggi' || arg === 'travels') {
+                embed.setTitle(`🗺️ Registro Viaggi: $viaggi fix`)
+                    .addFields(
+                        { name: "Correggi Storico", value: `\`$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>\`\nCorregge un errore nel registro degli spostamenti.` }
+                    );
+            } else {
+                await ctx.message.reply(`❌ Aiuto dettagliato per \`$${arg}\` non trovato. Usa \`$aiuto\` o \`$aiuto avanzato\`.`);
+                return;
+            }
+
+            await ctx.message.reply({ embeds: [embed] });
+            return;
+        }
+
         const embed = new EmbedBuilder()
             .setColor("#D4AF37")
             .setFooter({ text: "🇬🇧 For English version: $help" })
@@ -30,30 +85,27 @@ export const aiutoCommand: Command = {
                     value:
                         "`$listacampagne`: Lista campagne.\n" +
                         "`$creacampagna <Nome>`: Nuova campagna.\n" +
-                        "`$selezionacampagna <Nome>`: Attiva campagna.\n" +
-                        "`$eliminacampagna <Nome>`: Cancella campagna."
+                        "`$selezionacampagna <Nome>`: Attiva campagna."
                 },
                 {
                     name: "🧩 Interfaccia Unificata Entità",
                     value:
                         "**Entità:** `$npc`, `$quest`, `$atlante`, `$loot`, `$bestiario`\n" +
-                        "**Sintassi:**\n" +
-                        "• `$cmd list` / `$cmd #ID`\n" +
-                        "• `$cmd update <ID> | <Nota>` (Narrativa)\n" +
-                        "• `$cmd update <ID> field:<key> <val>` (Metadati)\n" +
-                        "• `$cmd merge <Old> | <New>`\n" +
-                        "• `$cmd delete <ID>`"
+                        "• `$cmd list` / `$cmd #ID`: Gestione record.\n" +
+                        "• `$cmd update`: Aggiornamenti narrativi o tecnici.\n" +
+                        "• `$cmd merge` / `$cmd delete`: Manutenzione.\n" +
+                        "💡 *Scrivi `$aiuto <entità>` (es. `$aiuto npc`) per i dettagli.*"
                 },
                 {
                     name: "👥 Comandi Specifici",
                     value:
                         "`$npc alias`: Gestione soprannomi.\n" +
                         "`$loot use`: Consuma oggetto.\n" +
-                        "`$unisciitem`: Unisci oggetti doppi.\n" +
                         "`$quest done`: Completa missione.\n" +
                         "`$viaggi fix`: Correggi storico.\n" +
-                        "`$timeline add <Anno> | <Tipo> | <Desc>`\n" +
-                        "`$data <Anno>` / `$anno0 <Desc>`"
+                        "`$timeline add`: Crea la storia.\n" +
+                        "`$data` / `$anno0`: Gestione calendario.\n" +
+                        "💡 *Scrivi `$aiuto <comando>` per i dettagli.*"
                 },
                 {
                     name: "🔧 Admin & Config",
@@ -61,18 +113,7 @@ export const aiutoCommand: Command = {
                         "`$setcmd`: Imposta canale comandi.\n" +
                         "`$impostasessione <N>`: Forza num sessione.\n" +
                         "`$autoaggiorna on/off`: Bio PG auto.\n" +
-                        "`$scarica <ID>`: Download audio master.\n" +
-                        "`$memorizza <ID>`: Import manuale.\n" +
                         "`$presenze <ID>`: Lista NPC sessione."
-                },
-                {
-                    name: "⚠️ Area Pericolo",
-                    value:
-                        "`$recover <ID>`: Riprova sessione bloccata.\n" +
-                        "`$riprocessa <ID>`: Rigenera dati (No trascrizione).\n" +
-                        "`$reset <ID>`: Reset Totale (Audio orig.).\n" +
-                        "`$recover regenerate-all`: **Time Travel** (Full Regen).\n" +
-                        "`$wipe`: Reset dati."
                 }
             );
         } else if (arg === 'dev') {

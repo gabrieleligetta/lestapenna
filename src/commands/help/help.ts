@@ -11,7 +11,63 @@ export const helpCommand: Command = {
     requiresCampaign: false,
 
     async execute(ctx: CommandContext): Promise<void> {
-        const isAdvanced = ctx.args[0]?.toLowerCase() === 'advanced';
+        const arg = ctx.args[0]?.toLowerCase();
+        const isAdvanced = arg === 'advanced';
+
+        if (arg && !['advanced', 'dev'].includes(arg)) {
+            // --- DETAILED COMMAND HELP ---
+            const embed = new EmbedBuilder().setColor("#D4AF37");
+
+            if (['npc', 'quest', 'atlas', 'loot', 'bestiary'].includes(arg)) {
+                embed.setTitle(`🧩 Unified Entity: $${arg}`)
+                    .setDescription(`Common interface for managing campaign entities like NPCs, Quests, Locations, Items, and Monsters.`)
+                    .addFields(
+                        { name: "📋 Listing", value: `\`$${arg} list\`: See all items (paginated).\n\`$${arg} #ID\`: View details for a specific entity.` },
+                        { name: "📝 Narrative Update", value: `\`$${arg} update <ID> | <Note>\`\nAdd a story update or observation. This triggers an AI bio regeneration.` },
+                        { name: "⚙️ Metadata Update", value: `\`$${arg} update <ID> field:<key> <val>\`\nDirectly edit fields (e.g., \`field:status DEFEATED\`).` },
+                        { name: "🔀 Merge", value: `\`$${arg} merge <OldID/Name> | <NewID/Name>\`\nCombine duplicates into one record.` },
+                        { name: "🗑️ Delete", value: `\`$${arg} delete <ID>\`\nPermanently remove the entity.` }
+                    );
+            } else if (arg === 'timeline') {
+                embed.setTitle(`⏳ Command: $timeline`)
+                    .setDescription(`Manage the historical events of your world.`)
+                    .addFields(
+                        { name: "📜 Show Timeline", value: `\`$timeline\`: Displays the chronological history.` },
+                        { name: "➕ Add Event", value: `\`$timeline add <Year> | <Type> | <Description>\`\nAdd a significant historical milestone.` },
+                        { name: "🏷️ Event Types", value: `Valid types: \`WAR\`, \`POLITICS\`, \`DISCOVERY\`, \`CALAMITY\`, \`SUPERNATURAL\`, \`GENERIC\`.` },
+                        { name: "🗑️ Delete", value: `\`$timeline delete #ID\`: Remove an event using its Short ID.` }
+                    );
+            } else if (arg === 'date' || arg === 'year0') {
+                embed.setTitle(`📅 Calendar Commands`)
+                    .addFields(
+                        { name: "$date <Year>", value: `Sets the current campaign year. Affects timeline and recording timestamps.` },
+                        { name: "$year0 <Description>", value: `Defines the pivot point of history (Year 0) and resets current year to 0.` }
+                    );
+            } else if (arg === 'npc') {
+                // Special case for npc alias
+                embed.setTitle(`👥 NPC Special: $npc alias`)
+                    .addFields(
+                        { name: "Manage Nicknames", value: `\`$npc alias <ID> add <Nickname>\`: Add a recognized name.\n\`$npc alias <ID> remove <Nickname>\`: Remove a nickname.` }
+                    );
+            } else if (arg === 'loot' || arg === 'mergeitem') {
+                embed.setTitle(`📦 Inventory Special`)
+                    .addFields(
+                        { name: "$loot use <ID>", value: `Consume an item (decrements count or removes it).` },
+                        { name: "$mergeitem <ID1> | <ID2>", value: `Legacy command to merge items (use \`$loot merge\` instead).` }
+                    );
+            } else if (arg === 'travels' || arg === 'viaggi') {
+                embed.setTitle(`🗺️ Travel Log: $travels fix`)
+                    .addFields(
+                        { name: "Fix Location History", value: `\`$travels fix #ID | <NewRegion> | <NewPlace>\`\nCorrect a mistake in the journey log.` }
+                    );
+            } else {
+                await ctx.message.reply(`❌ Detailed help for \`$${arg}\` not found. Use \`$help\` or \`$help advanced\`.`);
+                return;
+            }
+
+            await ctx.message.reply({ embeds: [embed] });
+            return;
+        }
 
         const embed = new EmbedBuilder()
             .setColor("#D4AF37")
@@ -29,30 +85,27 @@ export const helpCommand: Command = {
                     value:
                         "`$listcampaigns`: List all campaigns.\n" +
                         "`$createcampaign <Name>`: Create new campaign.\n" +
-                        "`$selectcampaign <Name>`: Switch active campaign.\n" +
-                        "`$deletecampaign <Name>`: Delete a campaign."
+                        "`$selectcampaign <Name>`: Switch active campaign."
                 },
                 {
                     name: "🧩 Unified Entity Interface",
                     value:
                         "**Entities:** `$npc`, `$quest`, `$atlas`, `$loot`, `$bestiary`\n" +
-                        "**Syntaxes:**\n" +
-                        "• `$cmd list` / `$cmd #ID`\n" +
-                        "• `$cmd update <ID> | <Note>` (Narrative)\n" +
-                        "• `$cmd update <ID> field:<key> <val>` (Metadata)\n" +
-                        "• `$cmd merge <Old> | <New>`\n" +
-                        "• `$cmd delete <ID>`"
+                        "• `$cmd list` / `$cmd #ID`: Manage records.\n" +
+                        "• `$cmd update`: Narrative or field updates.\n" +
+                        "• `$cmd merge` / `$cmd delete`: Maintenance.\n" +
+                        "💡 *Type `$help <entity>` (e.g. `$help npc`) for details.*"
                 },
                 {
                     name: "👥 Specific Commands",
                     value:
                         "`$npc alias`: Manage nicknames.\n" +
                         "`$loot use`: Consume item.\n" +
-                        "`$mergeitem`: Merge duplicate items.\n" +
                         "`$quest done`: Complete quest.\n" +
                         "`$travels fix`: Fix location history.\n" +
-                        "`$timeline add <Year> | <Type> | <Desc>`\n" +
-                        "`$date <Year>` / `$year0 <Desc>`"
+                        "`$timeline add`: Create history.\n" +
+                        "`$date` / `$year0`: Manage calendar.\n" +
+                        "💡 *Type `$help <command>` for details.*"
                 },
                 {
                     name: "🔧 Admin & Config",
@@ -60,18 +113,7 @@ export const helpCommand: Command = {
                         "`$setcmd`: Set command channel.\n" +
                         "`$setsession <N>`: Force session number.\n" +
                         "`$autoupdate on/off`: Auto-update bios.\n" +
-                        "`$download <ID>`: Download master audio.\n" +
-                        "`$ingest <ID>`: Manual import.\n" +
                         "`$presenze <ID>`: Session NPC list."
-                },
-                {
-                    name: "⚠️ Danger Zone",
-                    value:
-                        "`$recover <ID>`: Retry stuck session.\n" +
-                        "`$reprocess <ID>`: Regen data (No transcribe).\n" +
-                        "`$reset <ID>`: Full Reset (From Audio).\n" +
-                        "`$recover regenerate-all`: **Time Travel** (Full Regen).\n" +
-                        "`$wipe`: Reset data."
                 }
             );
         } else if (ctx.args[0]?.toLowerCase() === 'dev') {

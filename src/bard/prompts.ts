@@ -99,6 +99,7 @@ ${memoryContext}
 4. **MONSTERS**: Se il testo cita "Ricordarono il drago ucciso ieri", NON estrarre il drago. Estrai solo mostri combattuti ORA.
 5. **QUEST**: Estrai solo se c'è un progresso attivo.
 6. **GLOSSARIO**: Usa i nomi esatti del Contesto di Riferimento se corrispondesi.
+7. **CONFLICT RESOLUTION**: Se il "Testo da Analizzare" CONTRADDICE il "Contesto" (es. il contesto dice che X è "Affidabile" ma nel testo X "Tradisce" o "Attacca"), IL TESTO VINCE SEMPRE. Registra il cambiamento in npc_events e npc_dossier_updates.
 
 ## 3. OUTPUT JSON RICHIESTO
 {
@@ -136,9 +137,13 @@ ${memoryContext}
             "weaknesses": ["Debolezze scoperte (es. 'vulnerabile al fuoco')"],
             "resistances": ["Resistenze osservate (es. 'immune al veleno')"]
         }
-        // AVVISO AI: NON INCLUDERE creature menzionate solo nel "Contesto".
-        // ESEMPIO NEGATIVO: Se il testo dice "Ti ricordi il Troll di ieri?", ARRAY VUOTO [].
-        // ESEMPIO POSITIVO: Se il testo dice "Un Troll esce dalla grotta!", AGGIUNGI Troll.
+        }
+        // AVVISO AI:
+        // 1. NON INCLUDERE creature menzionate solo nel "Contesto".
+        // 2. NON INCLUDERE ALLEATI, FAMIGLI o PET (es. il cane del ranger, un drago cavalcato dai PG).
+        // 3. INCLUDI SOLO NEMICI OSTILI che partecipano a un combattimento.
+        // ESEMPIO NEGATIVO: Se un drago amico aiuta il party, ARRAY VUOTO [].
+        // ESEMPIO POSITIVO: Se un drago attacca il party, AGGIUNGI Drago.
     ],
     "npc_dossier_updates": [
         {
@@ -148,6 +153,8 @@ ${memoryContext}
             "status": "ALIVE|DEAD|MISSING"
         }
     ],
+    // AVVISO AI: Includi qui anche CREATURE NON UMANOIDI (es. Draghi, Ent, Bestie intelligenti) 
+    // SE hanno un NOME PROPRIO e interagiscono socialmente (parlano o aiutano).
 
     "location_updates": [
         {
@@ -196,7 +203,9 @@ ${memoryContext}
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dove sono stati fisicamente. location_updates = SOLO per l'Atlante. **CRITICO ATLANTE**: EVITA GRANULARITÀ ECCESSIVA. Se i PG visitano "Castello - Ingresso", "Castello - Cucine", "Castello - Prigioni", crea UN SOLO location_update: "Castello" e metti i dettagli nella descrizione. Solo se un luogo è davvero distinto e distante (es. "Città" vs "Foresta fuori città") crea entry separate.
 - **LOG**: Deve essere una sequenza di fatti oggettivi.
 - **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG.
-- **NPC EVENTS**: Includi eventi che cambiano lo status quo degli NPC.
+- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). Se un NPC ritenuto fidato attacca o tradisce, DEVI registrarlo qui.
+- **MONSTER vs NPC**: Se una creatura ha un NOME PROPRIO ed è AMICHEVOLE/ALLEATA (es. "Scagliagrigia il Drago"), mettila in NPC, NON in MONSTERS.
+
 
 **TESTO DA ANALIZZARE**:
 ${narrativeText.substring(0, 320000)}

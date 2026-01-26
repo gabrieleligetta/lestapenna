@@ -139,7 +139,7 @@ export const bestiaryCommand: Command = {
         }
 
         // VIEW: Show specific monster details (ID or Name)
-        if (arg && !arg.includes('|')) {
+        if (arg && arg.toLowerCase() !== 'list' && !arg.includes('|')) {
             let search = arg;
 
             // ID Resolution

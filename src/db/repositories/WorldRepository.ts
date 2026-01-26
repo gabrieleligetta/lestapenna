@@ -1,4 +1,5 @@
 import { db } from '../client';
+import { generateShortId } from '../utils/idGenerator';
 
 export const worldRepository = {
     addWorldEvent: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number, isManual: boolean = false, timestamp?: number) => {
@@ -28,10 +29,12 @@ export const worldRepository = {
             }
         }
 
+        const shortId = generateShortId('world_history');
+
         db.prepare(`
-            INSERT INTO world_history (campaign_id, session_id, description, event_type, timestamp, year, rag_sync_needed, is_manual)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-        `).run(campaignId, sessionId, description, type, timestamp || Date.now(), effectiveYear, isManual ? 1 : 0);
+            INSERT INTO world_history (campaign_id, session_id, description, event_type, timestamp, year, rag_sync_needed, is_manual, short_id)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+        `).run(campaignId, sessionId, description, type, timestamp || Date.now(), effectiveYear, isManual ? 1 : 0, shortId);
     },
 
     getWorldTimeline: (campaignId: number): any[] => {

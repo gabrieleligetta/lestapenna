@@ -241,7 +241,10 @@ export const questCommand: Command = {
             }).join('\n');
 
             const statusHeader = statusFilter === 'ACTIVE' ? 'Attive' : statusFilter === 'ALL' ? 'Totali' : `[${statusFilter}]`;
-            let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;
+            let footer = `\n\n**Comandi:** \`add\`, \`update\`, \`done\`, \`delete\`, \`list [stato]\``;
+            footer += `\n**Filtri:** \`open\`, \`completed\`, \`failed\`, \`all\``;
+            footer += `\n\n💡 Usa \`$quest update #ID | Nota\`, \`$quest done #ID\` o \`$quest list all\`.`;
+
             if (totalPages > 1) {
                 const nextCmd = statusFilter === 'ACTIVE' ? `$quest list ${page + 1}` : `$quest list ${statusFilter.toLowerCase()} ${page + 1}`;
                 footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`${nextCmd}\` per la prossima)` + footer;
@@ -270,7 +273,10 @@ export const questCommand: Command = {
                 return `\`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
-            let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;
+            let footer = `\n\n**Comandi:** \`add\`, \`update\`, \`done\`, \`delete\`, \`list [stato]\``;
+            footer += `\n**Filtri:** \`open\`, \`completed\`, \`failed\`, \`all\``;
+            footer += `\n\n💡 Usa \`$quest update #ID | Nota\`, \`$quest done #ID\` o \`$quest list all\`.`;
+
             if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$quest list 2\` per la prossima)` + footer;
 
             await ctx.message.reply(`**🗺️ Quest Attive (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);

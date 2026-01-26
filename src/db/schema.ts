@@ -184,6 +184,7 @@ export const initDatabase = () => {
         first_session_id TEXT, -- 🆕 Tracciamento origine
         last_updated_session_id TEXT, -- 🆕 Tracciamento ultima modifica
         is_manual INTEGER DEFAULT 0,
+        short_id TEXT, -- 🆕 Stable ID
         UNIQUE(campaign_id, macro_location, micro_location)
     )`);
 
@@ -217,6 +218,7 @@ export const initDatabase = () => {
         aliases TEXT,
         first_session_id TEXT, -- 🆕 Tracciamento origine
         is_manual INTEGER DEFAULT 0,
+        short_id TEXT, -- 🆕 Stable ID
         UNIQUE(campaign_id, name)
     )`);
 
@@ -245,6 +247,7 @@ export const initDatabase = () => {
         session_id TEXT, -- Sessione in cui è stato incontrato
         last_seen INTEGER, -- Timestamp ultimo avvistamento
         is_manual INTEGER DEFAULT 0,
+        short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_bestiary_campaign ON bestiary (campaign_id)`);
@@ -261,6 +264,7 @@ export const initDatabase = () => {
         last_updated INTEGER,
         session_id TEXT,
         is_manual INTEGER DEFAULT 0,
+        short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -434,7 +438,13 @@ export const initDatabase = () => {
         "ALTER TABLE bestiary ADD COLUMN is_manual INTEGER DEFAULT 0",
         "ALTER TABLE bestiary_history ADD COLUMN is_manual INTEGER DEFAULT 0",
         "ALTER TABLE inventory ADD COLUMN is_manual INTEGER DEFAULT 0",
-        "ALTER TABLE inventory_history ADD COLUMN is_manual INTEGER DEFAULT 0"
+        "ALTER TABLE inventory_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        // 🆕 UNIVERSAL STABLE IDs (Short IDs)
+        "ALTER TABLE npc_dossier ADD COLUMN short_id TEXT",
+        "ALTER TABLE location_atlas ADD COLUMN short_id TEXT",
+        "ALTER TABLE quests ADD COLUMN short_id TEXT",
+        "ALTER TABLE bestiary ADD COLUMN short_id TEXT",
+        "ALTER TABLE inventory ADD COLUMN short_id TEXT"
     ];
 
     for (const m of migrations) {

@@ -1,6 +1,7 @@
 import { db } from '../client';
 import { AtlasEntryFull } from '../types';
 import { campaignRepository } from './CampaignRepository';
+import { generateShortId } from '../utils/idGenerator';
 
 export const locationRepository = {
     updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string, timestamp?: number): void => {
@@ -69,15 +70,19 @@ export const locationRepository = {
             console.warn(`[Atlas] ⚠️ Attenzione: Aggiornamento voce ${macro} - ${micro} con descrizione vuota.`);
         }
 
+        // Check if exists to determine if we need a new short_id
+        const existing = locationRepository.getAtlasEntryFull(campaignId, macro, micro);
+        const shortId = existing?.short_id || generateShortId('location_atlas');
+
         // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual)
-            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual)
+            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id)
+            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId)
             ON CONFLICT(campaign_id, macro_location, micro_location)
             DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP, last_updated_session_id = $sessionId, rag_sync_needed = 1, is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
-        `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null, isManual: isManual ? 1 : 0 });
+        `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null, isManual: isManual ? 1 : 0, shortId });
 
-        console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
+        console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro} [#${shortId}]`);
     },
 
     listAtlasEntries: (campaignId: number, limit: number = 15, offset: number = 0): any[] => {
@@ -129,14 +134,22 @@ export const locationRepository = {
         return result.changes > 0;
     },
 
-    getAtlasEntryFull: (campaignId: number, macro: string, micro: string): any | null => {
+    getAtlasEntryFull: (campaignId: number, macro: string, micro: string): AtlasEntryFull | null => {
         return db.prepare(`
-            SELECT id, macro_location, micro_location, description, last_updated
+            SELECT *
             FROM location_atlas
             WHERE campaign_id = ?
               AND lower(macro_location) = lower(?)
               AND lower(micro_location) = lower(?)
-        `).get(campaignId, macro, micro) || null;
+        `).get(campaignId, macro, micro) as AtlasEntryFull || null;
+    },
+
+    getAtlasEntryByShortId: (campaignId: number, shortId: string): AtlasEntryFull | null => {
+        const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
+        return db.prepare(`
+            SELECT * FROM location_atlas 
+            WHERE campaign_id = ? AND short_id = ?
+        `).get(campaignId, cleanId) as AtlasEntryFull || null;
     },
 
     renameAtlasEntry: (

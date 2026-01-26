@@ -21,7 +21,8 @@ import {
     db,
     addNpcEvent, // 🆕
     deleteNpcRagSummary,
-    deleteNpcHistory
+    deleteNpcHistory,
+    getNpcByShortId
 } from '../../db';
 import {
     smartMergeBios,
@@ -71,7 +72,7 @@ export const npcCommand: Command = {
 
             const list = npcs.map((n: any, i: number) => {
                 const absoluteIndex = offset + i + 1;
-                return `\`${absoluteIndex}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`;
+                return `\`${absoluteIndex}\` \`#${n.short_id}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`;
@@ -83,22 +84,30 @@ export const npcCommand: Command = {
             return;
         }
 
-        // --- SELECTION BY NUMERIC ID: $npc 1, $npc #2 ---
+        // --- SELECTION BY ID: $npc #abcde, $npc 1 ---
+        const sidMatch = argsStr.match(/^#([a-z0-9]{5})$/i);
         const numericMatch = argsStr.match(/^#?(\d+)$/);
-        if (numericMatch) {
-            const absoluteIdx = parseInt(numericMatch[1]); // 1-based index
 
-            // We need to fetch the specific NPC at that offset
-            // listNpcs(limit=1, offset=absoluteIdx-1)
-            const npcs = listNpcs(ctx.activeCampaign!.id, 1, absoluteIdx - 1);
+        if (sidMatch || numericMatch) {
+            let npc: any = null;
 
-            if (npcs.length === 0) {
-                const total = countNpcs(ctx.activeCampaign!.id);
-                await ctx.message.reply(`❌ ID non valido. Usa un numero da 1 a ${total}.`);
-                return;
+            if (sidMatch) {
+                npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+            } else if (numericMatch) {
+                const absoluteIdx = parseInt(numericMatch[1]);
+                const npcs = listNpcs(ctx.activeCampaign!.id, 1, absoluteIdx - 1);
+                if (npcs.length > 0) npc = npcs[0];
             }
 
-            const npc = npcs[0];
+            if (!npc) {
+                if (numericMatch) {
+                    const total = countNpcs(ctx.activeCampaign!.id);
+                    await ctx.message.reply(`❌ ID non valido. Usa un numero da 1 a ${total}.`);
+                } else {
+                    await ctx.message.reply(`❌ ID \`#${sidMatch![1]}\` non trovato.`);
+                }
+                return;
+            }
             const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
             let response = `${statusIcon} **${npc.name}**\n`;
             response += `🎭 **Ruolo:** ${npc.role || 'Sconosciuto'}\n`;
@@ -178,16 +187,26 @@ export const npcCommand: Command = {
             let targetName = parts[1];
 
             // Resolve Source ID
+            const sourceSidMatch = sourceName.match(/^#([a-z0-9]{5})$/i);
             const sourceIdMatch = sourceName.match(/^#?(\d+)$/);
-            if (sourceIdMatch) {
+
+            if (sourceSidMatch) {
+                const npc = getNpcByShortId(ctx.activeCampaign!.id, sourceSidMatch[1]);
+                if (npc) sourceName = npc.name;
+            } else if (sourceIdMatch) {
                 const idx = parseInt(sourceIdMatch[1]) - 1;
                 const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
                 if (npcs.length > 0) sourceName = npcs[0].name;
             }
 
             // Resolve Target ID
+            const targetSidMatch = targetName.match(/^#([a-z0-9]{5})$/i);
             const targetIdMatch = targetName.match(/^#?(\d+)$/);
-            if (targetIdMatch) {
+
+            if (targetSidMatch) {
+                const npc = getNpcByShortId(ctx.activeCampaign!.id, targetSidMatch[1]);
+                if (npc) targetName = npc.name;
+            } else if (targetIdMatch) {
                 const idx = parseInt(targetIdMatch[1]) - 1;
                 const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
                 if (npcs.length > 0) targetName = npcs[0].name;
@@ -228,10 +247,14 @@ export const npcCommand: Command = {
             let name = argsStr.substring(7).trim();
 
             // ID Resolution
+            const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
             const idMatch = name.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (npc) name = npc.name;
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                // We need to find the name from the ID (absolute index)
                 const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
                 if (npcs.length > 0) name = npcs[0].name;
             }
@@ -349,9 +372,14 @@ export const npcCommand: Command = {
                 const note = parts.slice(1).join('|').trim();
 
                 // ID Resolution
-                const idMatch = name.match(/^#?(\d+)$/);
-                if (idMatch) {
-                    const idx = parseInt(idMatch[1]) - 1;
+                const sidMatchArea = name.match(/^#([a-z0-9]{5})$/i);
+                const idMatchArea = name.match(/^#?(\d+)$/);
+
+                if (sidMatchArea) {
+                    const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchArea[1]);
+                    if (npc) name = npc.name;
+                } else if (idMatchArea) {
+                    const idx = parseInt(idMatchArea[1]) - 1;
                     const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
                     if (npcs.length > 0) name = npcs[0].name;
                 }
@@ -390,9 +418,14 @@ export const npcCommand: Command = {
                 const remainder = content.substring(fieldIndex); // field:status DEAD
 
                 // ID Resolution
-                const idMatch = name.match(/^#?(\d+)$/);
-                if (idMatch) {
-                    const idx = parseInt(idMatch[1]) - 1;
+                const sidMatchMeta = name.match(/^#([a-z0-9]{5})$/i);
+                const idMatchMeta = name.match(/^#?(\d+)$/);
+
+                if (sidMatchMeta) {
+                    const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchMeta[1]);
+                    if (npc) name = npc.name;
+                } else if (idMatchMeta) {
+                    const idx = parseInt(idMatchMeta[1]) - 1;
                     const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
                     if (npcs.length > 0) name = npcs[0].name;
                 }
@@ -510,8 +543,15 @@ export const npcCommand: Command = {
             return;
         }
 
-        // GETTER: $npc Nome
-        const npc = getNpcEntry(ctx.activeCampaign!.id, argsStr);
+        // GETTER: $npc Nome / #abcde
+        let searchName = argsStr;
+        const sidMatchFinal = argsStr.match(/^#([a-z0-9]{5})$/i);
+        if (sidMatchFinal) {
+            const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchFinal[1]);
+            if (npc) searchName = npc.name;
+        }
+
+        const npc = getNpcEntry(ctx.activeCampaign!.id, searchName);
         if (!npc) {
             await ctx.message.reply("NPC non trovato.");
             return;

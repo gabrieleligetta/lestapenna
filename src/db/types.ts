@@ -102,6 +102,7 @@ export interface NpcEntry {
     last_updated: string;
     aliases?: string | null; // 🆕 Sistema Ibrido RAG (soprannomi, titoli)
     first_session_id?: string | null; // 🆕 Tracciamento origine
+    short_id?: string; // 🆕 Stable ID
 }
 
 export enum QuestStatus {
@@ -121,6 +122,7 @@ export interface Quest {
     created_at: number;
     last_updated: number;
     session_id?: string;
+    short_id?: string; // 🆕 Stable ID
 }
 
 export interface InventoryItem {
@@ -133,6 +135,7 @@ export interface InventoryItem {
     session_id?: string;
     description?: string;
     notes?: string;
+    short_id?: string; // 🆕 Stable ID
 }
 
 export interface PendingMerge {
@@ -172,6 +175,7 @@ export interface BestiaryEntry {
     resistances: string | null;
     notes: string | null;
     first_session_id: string | null;
+    short_id?: string; // 🆕 Stable ID
 }
 
 export interface MonsterDetails {
@@ -204,4 +208,5 @@ export interface AtlasEntryFull {
     description: string | null;
     last_updated: string;
     rag_sync_needed?: number;
+    short_id?: string; // 🆕 Stable ID
 }

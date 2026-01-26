@@ -9,7 +9,8 @@ import {
     // New imports
     addBestiaryEvent,
     getMonsterByName,
-    getBestiaryHistory
+    getBestiaryHistory,
+    getMonsterByShortId
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
@@ -45,8 +46,13 @@ export const bestiaryCommand: Command = {
             const note = parts.slice(1).join('|').trim();
 
             // ID Resolution
+            const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
             const idMatch = name.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (monster) name = monster.name;
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
                 const all = listAllMonsters(ctx.activeCampaign!.id);
                 if (all[idx]) name = all[idx].name;
@@ -91,8 +97,13 @@ export const bestiaryCommand: Command = {
             let search = arg;
 
             // ID Resolution
+            const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
             const idMatch = search.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (monster) search = monster.name;
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
                 const all = listAllMonsters(ctx.activeCampaign!.id);
                 if (all[idx]) search = all[idx].name;
@@ -141,13 +152,13 @@ export const bestiaryCommand: Command = {
         let response = `**👹 Bestiario (${ctx.activeCampaign?.name})**\n\n`;
 
         if (alive.length > 0) {
-            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `\`${m.idx}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `\`${m.idx}\` \`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
         if (defeated.length > 0) {
-            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `\`${m.idx}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `\`${m.idx}\` \`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
         if (fled.length > 0) {
-            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `\`${m.idx}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `\`${m.idx}\` \`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
 
         response += `💡 Usa \`$bestiario <ID>\` per dettagli o \`$bestiario update <ID> | <Nota>\`.`;

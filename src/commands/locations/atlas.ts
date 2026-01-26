@@ -18,7 +18,8 @@ import {
     getSessionTravelLog,
     addAtlasEvent, // 🆕
     deleteAtlasHistory,
-    deleteAtlasRagSummary
+    deleteAtlasRagSummary,
+    getAtlasEntryByShortId
 } from '../../db';
 import {
     smartMergeBios,
@@ -86,7 +87,7 @@ export const atlasCommand: Command = {
                 }
 
                 const list = entries.map((e: any, i: number) =>
-                    `\`${i + 1}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
+                    `\`${i + 1}\` \`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
                 ).join('\n');
 
                 let footer = `\n\n💡 Usa \`$atlante <ID>\` o \`$atlante <Regione> | <Luogo>\` per dettagli.`;
@@ -134,7 +135,7 @@ export const atlasCommand: Command = {
                 const descPreview = (e.description && e.description.trim().length > 0)
                     ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '')
                     : '*nessuna descrizione*';
-                return `\`${absoluteIndex}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
+                return `\`${absoluteIndex}\` \`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
             }).join('\n');
 
             let footer = `\n💡 Usa \`$atlante <ID>\` o \`$atlante update <ID> | <Nota>\``;
@@ -157,9 +158,21 @@ export const atlasCommand: Command = {
             let micro = '';
             let note = '';
 
-            // Check ID in first part
+            // ID Resolution
+            const sidMatch = parts[0].match(/^#([a-z0-9]{5})$/i);
             const idMatch = parts[0].match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (entry) {
+                    macro = entry.macro_location;
+                    micro = entry.micro_location;
+                    note = parts.slice(1).join('|').trim();
+                } else {
+                    await ctx.message.reply(`❌ ID \`#${sidMatch[1]}\` non trovato.`);
+                    return;
+                }
+            } else if (idMatch) {
                 // ID Mode
                 if (parts.length < 2) {
                     await ctx.message.reply('Uso: `$atlante update <ID> | <Nota>`');
@@ -204,8 +217,19 @@ export const atlasCommand: Command = {
             let macro = '';
             let micro = '';
 
+            const sidMatch = deleteArgs.match(/^#([a-z0-9]{5})$/i);
             const idMatch = deleteArgs.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (entry) {
+                    macro = entry.macro_location;
+                    micro = entry.micro_location;
+                } else {
+                    await ctx.message.reply(`❌ ID \`#${sidMatch[1]}\` non trovato.`);
+                    return;
+                }
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
                 const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
                 if (entries.length === 0) {
@@ -247,13 +271,22 @@ export const atlasCommand: Command = {
         // --- PARSE PIPE-SEPARATED ARGS or ID ---
         const parts = argsStr.split('|').map(s => s.trim());
 
-        // ID View: $atlante 1
-        const idMatch = parts[0].match(/^#?(\d+)$/);
-        if (parts.length === 1 && idMatch) {
-            const idx = parseInt(idMatch[1]) - 1;
-            const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
-            if (entries.length > 0) {
-                const entry = entries[0];
+        // ID View: $atlante 1 or $atlante #abcde
+        const sidMatchDetail = parts[0].match(/^#([a-z0-9]{5})$/i);
+        const idMatchDetail = parts[0].match(/^#?(\d+)$/);
+
+        if (parts.length === 1 && (sidMatchDetail || idMatchDetail)) {
+            let entry: any = null;
+
+            if (sidMatchDetail) {
+                entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
+            } else if (idMatchDetail) {
+                const idx = parseInt(idMatchDetail[1]) - 1;
+                const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
+                if (entries.length > 0) entry = entries[0];
+            }
+
+            if (entry) {
                 const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
                 await ctx.message.reply(
                     `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
@@ -261,7 +294,11 @@ export const atlasCommand: Command = {
                     `${(entry.description && entry.description.trim().length > 0) ? entry.description : '*Nessuna descrizione*'}`
                 );
             } else {
-                await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
+                if (sidMatchDetail) {
+                    await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
+                } else {
+                    await ctx.message.reply(`❌ ID #${idMatchDetail![1]} non valido.`);
+                }
             }
             return;
         }

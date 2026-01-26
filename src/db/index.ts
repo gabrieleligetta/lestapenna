@@ -3,9 +3,11 @@ export { db };
 
 import { initDatabase } from './schema';
 import { alignQuestStatuses } from './maintenance/questStatusAlignment';
+import { alignEntityShortIds } from './maintenance/idAlignment';
 try {
     initDatabase();
     alignQuestStatuses();
+    alignEntityShortIds();
 } catch (e) {
     console.error("[DB] Failed to initialize database schema or alignment:", e);
 }
@@ -97,6 +99,7 @@ export const getSessionTravelLog = locationRepository.getSessionTravelLog;
 export const clearSessionLocationHistory = locationRepository.clearSessionLocationHistory;
 export const addAtlasEvent = locationRepository.addAtlasEvent;
 export const getAtlasHistory = locationRepository.getAtlasHistory;
+export const getAtlasEntryByShortId = locationRepository.getAtlasEntryByShortId;
 
 // NPC
 // NPC
@@ -124,6 +127,7 @@ export const getNpcHistory = npcRepository.getNpcHistory;
 export const findNpcDossierByName = npcRepository.findNpcDossierByName;
 export const getNpcIdByName = npcRepository.getNpcIdByName;
 export const getNpcNameById = npcRepository.getNpcNameById;
+export const getNpcByShortId = npcRepository.getNpcByShortId;
 
 // Bestiary
 export const upsertMonster = bestiaryRepository.upsertMonster;
@@ -136,6 +140,7 @@ export const addBestiaryEvent = bestiaryRepository.addBestiaryEvent;
 export const getBestiaryHistory = bestiaryRepository.getBestiaryHistory;
 export const getDirtyBestiaryEntries = bestiaryRepository.getDirtyBestiaryEntries;
 export const clearBestiaryDirtyFlag = bestiaryRepository.clearBestiaryDirtyFlag;
+export const getMonsterByShortId = bestiaryRepository.getMonsterByShortId;
 
 // Quest
 export const addQuest = questRepository.addQuest;
@@ -151,6 +156,7 @@ export const addQuestEvent = questRepository.addQuestEvent;
 export const getQuestHistory = questRepository.getQuestHistory;
 export const getDirtyQuests = questRepository.getDirtyQuests;
 export const clearQuestDirtyFlag = questRepository.clearQuestDirtyFlag;
+export const getQuestByShortId = questRepository.getQuestByShortId;
 
 // Inventory
 export const addLoot = inventoryRepository.addLoot;
@@ -164,6 +170,7 @@ export const addInventoryEvent = inventoryRepository.addInventoryEvent;
 export const getInventoryHistory = inventoryRepository.getInventoryHistory;
 export const getDirtyInventoryItems = inventoryRepository.getDirtyInventoryItems;
 export const clearInventoryDirtyFlag = inventoryRepository.clearInventoryDirtyFlag;
+export const getInventoryItemByShortId = inventoryRepository.getInventoryItemByShortId;
 export const deleteInventoryHistory = inventoryRepository.deleteInventoryHistory;
 
 // Character

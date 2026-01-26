@@ -1,15 +1,20 @@
 import { db } from '../client';
 import { NpcEntry } from '../types';
+import { generateShortId } from '../utils/idGenerator';
 
 export const npcRepository = {
     updateNpcEntry: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual: boolean = false) => {
         // Sanitize
         const safeDesc = (typeof description === 'object') ? JSON.stringify(description) : String(description);
 
+        // Check if exists to determine if we need a new short_id
+        const existing = npcRepository.getNpcEntry(campaignId, name);
+        const shortId = existing?.short_id || generateShortId('npc_dossier');
+
         // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual)
-            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual)
+            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id)
+            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId)
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET
                 description = $description,
@@ -26,10 +31,11 @@ export const npcRepository = {
             role: role || null,
             status: status || 'ALIVE',
             sessionId: sessionId || null,
-            isManual: isManual ? 1 : 0
+            isManual: isManual ? 1 : 0,
+            shortId
         });
 
-        console.log(`[NPC] 👤 Aggiornato dossier per: ${name}`);
+        console.log(`[NPC] 👤 Aggiornato dossier per: ${name} [#${shortId}]`);
     },
 
     updateNpcFields: (campaignId: number, name: string, fields: Partial<NpcEntry>, isManual: boolean = true): boolean => {
@@ -273,5 +279,10 @@ export const npcRepository = {
             AND (lower(name) LIKE lower(?) OR lower(aliases) LIKE lower(?))
             LIMIT 5
         `).all(campaignId, `%${query}%`, `%${query}%`);
+    },
+
+    getNpcByShortId: (campaignId: number, shortId: string): NpcEntry | null => {
+        const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
+        return db.prepare(`SELECT * FROM npc_dossier WHERE campaign_id = ? AND short_id = ?`).get(campaignId, cleanId) as NpcEntry | null;
     }
 };

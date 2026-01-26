@@ -16,7 +16,8 @@ import {
     getQuestHistory,
     getQuestByTitle,
     deleteQuestHistory,
-    deleteQuestRagSummary
+    deleteQuestRagSummary,
+    getQuestByShortId
 } from '../../db';
 import { QuestStatus, Quest } from '../../db/types';
 import { questRepository } from '../../db/repositories/QuestRepository';
@@ -102,10 +103,14 @@ export const questCommand: Command = {
             const note = parts.slice(1).join('|').trim();
 
             // ID Resolution
-            const idMatch = title.match(/^#?(\d+)$/);
-            if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                // Fetch specific quest by offset
+            const sidMatch = title.match(/^#([a-z0-9]{5})$/i);
+            const numericMatch = title.match(/^#?(\d+)$/);
+
+            if (sidMatch) {
+                const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (quest) title = quest.title;
+            } else if (numericMatch) {
+                const idx = parseInt(numericMatch[1]) - 1;
                 const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
                 if (active.length > 0) title = active[0].title;
             }
@@ -130,9 +135,14 @@ export const questCommand: Command = {
             let search = arg.split(' ').slice(1).join(' ');
 
             // ID Resolution
-            const idMatch = search.match(/^#?(\d+)$/);
-            if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
+            const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
+            const numericMatch = search.match(/^#?(\d+)$/);
+
+            if (sidMatch) {
+                const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (quest) search = quest.title;
+            } else if (numericMatch) {
+                const idx = parseInt(numericMatch[1]) - 1;
                 const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
                 if (active.length > 0) search = active[0].title;
             }
@@ -158,9 +168,14 @@ export const questCommand: Command = {
             let search = arg.split(' ').slice(1).join(' ');
 
             // ID Resolution
-            const idMatch = search.match(/^#?(\d+)$/);
-            if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
+            const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
+            const numericMatch = search.match(/^#?(\d+)$/);
+
+            if (sidMatch) {
+                const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (quest) search = quest.title;
+            } else if (numericMatch) {
+                const idx = parseInt(numericMatch[1]) - 1;
                 const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
                 if (active.length > 0) search = active[0].title;
             }
@@ -235,7 +250,7 @@ export const questCommand: Command = {
                         (q.status === QuestStatus.FAILED) ? '❌ ' : '';
 
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${absoluteIndex}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
+                return `\`${absoluteIndex}\` \`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
             const statusHeader = statusFilter === 'ACTIVE' ? 'Attive' : statusFilter === 'ALL' ? 'Totali' : `[${statusFilter}]`;
@@ -265,7 +280,7 @@ export const questCommand: Command = {
                 const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 const statusIcon = (q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO') ? '⏳ ' : '';
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${i + 1}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
+                return `\`${i + 1}\` \`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;

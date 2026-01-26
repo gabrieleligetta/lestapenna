@@ -1,5 +1,6 @@
 import { db } from '../client';
 import { BestiaryEntry, MonsterDetails } from '../types';
+import { generateShortId } from '../utils/idGenerator';
 
 // Helper per unire JSON arrays
 const mergeJsonArrays = (json1: string | null, json2: string | null): string | null => {
@@ -42,18 +43,18 @@ export const bestiaryRepository = {
             variantsJson = JSON.stringify([originalName]);
         }
 
-        // Logic Upsert Globale:
-        // Index: idx_bestiary_unique_global (campaign_id, name)
-        // Se esiste, aggiorniamo last_seen, session_id (ultimo incontro), e mergiamo le varianti.
+        // Check if exists to determine if we need a new short_id
+        const existing = bestiaryRepository.getMonsterByName(campaignId, name);
+        const shortId = existing?.short_id || generateShortId('bestiary');
 
         db.prepare(`
             INSERT INTO bestiary (
                 campaign_id, name, status, count, session_id, last_seen,
-                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed, is_manual
+                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed, is_manual, short_id
             )
             VALUES (
                 $campaignId, $name, $status, $count, $sessionId, $timestamp,
-                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1, $isManual
+                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1, $isManual, $shortId
             )
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET 
@@ -94,10 +95,11 @@ export const bestiaryRepository = {
             res: safeResistances,
             notes: safeNotes,
             variants: variantsJson,
-            isManual: isManual ? 1 : 0
+            isManual: isManual ? 1 : 0,
+            shortId
         });
 
-        console.log(`[Bestiary] 👹 Mostro tracciato/aggiornato: ${name} (Var: ${originalName || '-'})`);
+        console.log(`[Bestiary] 👹 Mostro tracciato/aggiornato: ${name} (Var: ${originalName || '-'}) [#${shortId}]`);
     },
 
     listAllMonsters: (campaignId: number): BestiaryEntry[] => {
@@ -116,6 +118,16 @@ export const bestiaryRepository = {
             ORDER BY last_seen DESC
             LIMIT 1
         `).get(campaignId, name) as BestiaryEntry | null;
+    },
+
+    getMonsterByShortId: (campaignId: number, shortId: string): BestiaryEntry | null => {
+        const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
+        return db.prepare(`
+            SELECT * FROM bestiary 
+            WHERE campaign_id = ? AND short_id = ?
+            ORDER BY last_seen DESC
+            LIMIT 1
+        `).get(campaignId, cleanId) as BestiaryEntry | null;
     },
 
     mergeMonsters: (
@@ -246,5 +258,14 @@ export const bestiaryRepository = {
 
     clearBestiaryDirtyFlag: (campaignId: number, name: string) => {
         db.prepare('UPDATE bestiary SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+    },
+
+    deleteMonster: (campaignId: number, name: string): boolean => {
+        const res = db.prepare('DELETE FROM bestiary WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+        // Also delete history?
+        if (res.changes > 0) {
+            db.prepare('DELETE FROM bestiary_history WHERE campaign_id = ? AND lower(monster_name) = lower(?)').run(campaignId, name);
+        }
+        return res.changes > 0;
     }
 };

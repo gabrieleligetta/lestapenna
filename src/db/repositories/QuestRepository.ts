@@ -1,5 +1,6 @@
 import { db } from '../client';
 import { Quest, QuestStatus } from '../types';
+import { generateShortId } from '../utils/idGenerator';
 
 // Helper per calcolare la distanza di Levenshtein (Fuzzy Match)
 const levenshteinDistance = (a: string, b: string): number => {
@@ -111,11 +112,12 @@ export const questRepository = {
             console.log(`[Quest] 🔄 Aggiornata Quest: ${cleanedTitle} (Status: ${currentStatus} -> ${finalStatus})`);
         } else {
             // Insert new quest
+            const shortId = generateShortId('quests');
             db.prepare(`
-                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed, is_manual) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, timestamp || Date.now(), timestamp || Date.now(), isManual ? 1 : 0);
-            console.log(`[Quest] 🆕 Nuova Quest (${type}): ${cleanedTitle}`);
+                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed, is_manual, short_id) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, timestamp || Date.now(), timestamp || Date.now(), isManual ? 1 : 0, shortId);
+            console.log(`[Quest] 🆕 Nuova Quest (${type}): ${cleanedTitle} [#${shortId}]`);
         }
     },
 
@@ -123,7 +125,7 @@ export const questRepository = {
         return db.prepare('SELECT * FROM quests WHERE session_id = ?').all(sessionId);
     },
 
-    updateQuestStatus: (campaignId: number, titlePart: string, status: 'COMPLETED' | 'FAILED' | 'OPEN') => {
+    updateQuestStatus: (campaignId: number, titlePart: string, status: string) => {
         // Find match with LIKE
         const result = db.prepare(`
             UPDATE quests 
@@ -186,6 +188,11 @@ export const questRepository = {
 
     getQuestByTitle: (campaignId: number, title: string): Quest | null => {
         return db.prepare('SELECT * FROM quests WHERE campaign_id = ? AND lower(title) = lower(?)').get(campaignId, title) as Quest | null;
+    },
+
+    getQuestByShortId: (campaignId: number, shortId: string): Quest | null => {
+        const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
+        return db.prepare('SELECT * FROM quests WHERE campaign_id = ? AND short_id = ?').get(campaignId, cleanId) as Quest | null;
     },
 
     mergeQuests: (

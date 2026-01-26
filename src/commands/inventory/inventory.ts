@@ -14,7 +14,8 @@ import {
     getInventoryItemByName,
     getInventoryHistory,
     deleteInventoryHistory,
-    deleteInventoryRagSummary
+    deleteInventoryRagSummary,
+    getInventoryItemByShortId
 } from '../../db';
 import { inventoryRepository } from '../../db/repositories/InventoryRepository';
 import { guildSessions } from '../../state/sessionState';
@@ -89,10 +90,14 @@ export const inventoryCommand: Command = {
             const note = parts.slice(1).join('|').trim();
 
             // ID Resolution
+            const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
             const idMatch = item.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (i) item = i.item_name;
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
-                // Fetch specific item by offset
                 const all = getInventory(ctx.activeCampaign!.id, 1, idx);
                 if (all.length > 0) item = all[0].item_name;
             }
@@ -119,14 +124,17 @@ export const inventoryCommand: Command = {
             let item = arg.substring(prefix.length).trim();
 
             // ID Resolution
+            const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
             const idMatch = item.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (i) item = i.item_name;
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
                 const all = getInventory(ctx.activeCampaign!.id, 1, idx);
                 if (all.length > 0) item = all[0].item_name;
             }
-            // We should arguably parse better but sticking to legacy behavior:
-            // The split is `arg.split(' ').slice(1).join(' ')` which basically takes everything after "use".
 
             const removed = removeLoot(ctx.activeCampaign!.id, item, 1);
             if (removed) {
@@ -144,8 +152,13 @@ export const inventoryCommand: Command = {
             let item = arg.split(' ').slice(1).join(' ');
 
             // ID Resolution
+            const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
             const idMatch = item.match(/^#?(\d+)$/);
-            if (idMatch) {
+
+            if (sidMatch) {
+                const i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (i) item = i.item_name;
+            } else if (idMatch) {
                 const idx = parseInt(idMatch[1]) - 1;
                 const all = getInventory(ctx.activeCampaign!.id, 1, idx);
                 if (all.length > 0) item = all[0].item_name;
@@ -197,7 +210,7 @@ export const inventoryCommand: Command = {
             const list = items.map((i: any, idx: number) => {
                 const absoluteIndex = offset + idx + 1;
                 const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-                return `\`${absoluteIndex}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+                return `\`${absoluteIndex}\` \`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
@@ -221,7 +234,7 @@ export const inventoryCommand: Command = {
 
             const list = items.map((i: any, idx: number) => {
                 const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-                return `\`${idx + 1}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+                return `\`${idx + 1}\` \`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
@@ -231,19 +244,31 @@ export const inventoryCommand: Command = {
             return;
         }
 
-        // VIEW SPECIFIC ITEM: $loot <ID> or $loot <Name>
-        // If arg is numeric, it's ID. If not, it's name.
-        const idMatch = arg.match(/^#?(\d+)$/);
-        if (idMatch) {
-            const idx = parseInt(idMatch[1]) - 1;
-            const items = getInventory(ctx.activeCampaign!.id, 1, idx);
-            if (items.length > 0) {
-                const i = items[0];
+        // VIEW SPECIFIC ITEM: $loot <ID> or $loot #abcde or $loot <Name>
+        const sidMatchDetail = arg.match(/^#([a-z0-9]{5})$/i);
+        const idMatchDetail = arg.match(/^#?(\d+)$/);
+
+        if (sidMatchDetail || idMatchDetail) {
+            let i: any = null;
+
+            if (sidMatchDetail) {
+                i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
+            } else if (idMatchDetail) {
+                const idx = parseInt(idMatchDetail[1]) - 1;
+                const items = getInventory(ctx.activeCampaign!.id, 1, idx);
+                if (items.length > 0) i = items[0];
+            }
+
+            if (i) {
                 const desc = i.description ? `\n\n📜 **Descrizione:**\n${i.description}` : '';
                 const notes = i.notes ? `\n\n📝 **Note:**\n${i.notes}` : '';
                 await ctx.message.reply(`📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}${notes}`);
             } else {
-                await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
+                if (sidMatchDetail) {
+                    await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
+                } else {
+                    await ctx.message.reply(`❌ ID #${idMatchDetail![1]} non valido.`);
+                }
             }
             return;
         }
@@ -270,11 +295,36 @@ export const mergeItemCommand: Command = {
         const parts = arg.split('|').map(s => s.trim());
 
         if (parts.length !== 2) {
-            await ctx.message.reply("Uso: `$unisciitem <nome vecchio> | <nome nuovo>`\nEsempio: `$unisciitem Pozione Cura | Pozione di cura`");
+            await ctx.message.reply("Uso: `$unisciitem <nome vecchio/ID> | <nome nuovo/ID>`");
             return;
         }
 
-        const [oldName, newName] = parts;
+        let [oldName, newName] = parts;
+
+        // Resolve Old Name
+        const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
+        const oldIdMatch = oldName.match(/^#?(\d+)$/);
+        if (oldSidMatch) {
+            const i = getInventoryItemByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
+            if (i) oldName = i.item_name;
+        } else if (oldIdMatch) {
+            const idx = parseInt(oldIdMatch[1]) - 1;
+            const items = getInventory(ctx.activeCampaign!.id, 1, idx);
+            if (items.length > 0) oldName = items[0].item_name;
+        }
+
+        // Resolve New Name
+        const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
+        const newIdMatch = newName.match(/^#?(\d+)$/);
+        if (newSidMatch) {
+            const i = getInventoryItemByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
+            if (i) newName = i.item_name;
+        } else if (newIdMatch) {
+            const idx = parseInt(newIdMatch[1]) - 1;
+            const items = getInventory(ctx.activeCampaign!.id, 1, idx);
+            if (items.length > 0) newName = items[0].item_name;
+        }
+
         const success = mergeInventoryItems(ctx.activeCampaign!.id, oldName, newName);
         if (success) {
             await ctx.message.reply(`✅ **Oggetti uniti!**\n💰 **${oldName}** è stato integrato in **${newName}**\nLe quantità sono state sommate.`);

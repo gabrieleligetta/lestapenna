@@ -1,5 +1,6 @@
 import { db } from '../client';
 import { InventoryItem } from '../types';
+import { generateShortId } from '../utils/idGenerator';
 
 export const inventoryRepository = {
     addLoot: (campaignId: number, itemName: string, qty: number = 1, sessionId?: string, description?: string, isManual: boolean = false, timestamp?: number) => {
@@ -32,9 +33,10 @@ export const inventoryRepository = {
                 isManual: isManual ? 1 : 0
             });
         } else {
+            const shortId = generateShortId('inventory');
             db.prepare(`
-                INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed, is_manual) 
-                VALUES ($campaignId, $name, $qty, $timestamp, $timestamp, $sessionId, $desc, 1, $isManual)
+                INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed, is_manual, short_id) 
+                VALUES ($campaignId, $name, $qty, $timestamp, $timestamp, $sessionId, $desc, 1, $isManual, $shortId)
             `).run({
                 campaignId,
                 name: cleanName,
@@ -42,8 +44,10 @@ export const inventoryRepository = {
                 timestamp: timestamp || Date.now(),
                 sessionId: sessionId || null,
                 desc: description || null,
-                isManual: isManual ? 1 : 0
+                isManual: isManual ? 1 : 0,
+                shortId
             });
+            console.log(`[Inventory] 📦 Nuovo oggetto: ${cleanName} [#${shortId}]`);
         }
     },
 
@@ -89,6 +93,11 @@ export const inventoryRepository = {
 
     getInventoryItemByName: (campaignId: number, itemName: string): InventoryItem | null => {
         return db.prepare('SELECT * FROM inventory WHERE campaign_id = ? AND lower(item_name) = lower(?)').get(campaignId, itemName) as InventoryItem | null;
+    },
+
+    getInventoryItemByShortId: (campaignId: number, shortId: string): InventoryItem | null => {
+        const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
+        return db.prepare('SELECT * FROM inventory WHERE campaign_id = ? AND short_id = ?').get(campaignId, cleanId) as InventoryItem | null;
     },
 
     mergeInventoryItems: (

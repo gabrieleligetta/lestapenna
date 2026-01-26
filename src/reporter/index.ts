@@ -20,7 +20,8 @@ export async function sendSessionRecap(
     lootRemoved?: Array<{ name: string; quantity?: number; description?: string }>,
     narrativeBrief?: string,
     fullNarrative?: string,
-    monsters?: Array<{ name: string; status: string; count?: string }>
+    monsters?: Array<{ name: string; status: string; count?: string }>,
+    quests?: Array<{ title: string; description?: string; status?: string }>
 ): Promise<boolean> {
 
     // 1. Generazione e Archiviazione (Sempre, anche se email disabilitata)
@@ -101,11 +102,23 @@ export async function sendSessionRecap(
     ` : ''}
 
     <h2>📝 Riassunto Eventi (Log)</h2>
-    <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px;">
         <ul style="margin: 0; padding-left: 20px;">
             ${log && log.length > 0 ? log.map(entry => `<li>${entry}</li>`).join('\n            ') : '<li>Nessun evento registrato</li>'}
         </ul>
     </div>
+
+    <!-- 🗺️ Missioni (Quests) -->
+    ${quests && quests.length > 0 ? `
+    <h3>🗺️ Missioni</h3>
+    <div style="background-color: #f4ecf7; padding: 10px; border-radius: 5px; border-left: 4px solid #9b59b6;">
+        <ul style="margin: 0; padding-left: 20px;">
+            ${quests.map(q => {
+            const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '⚔️';
+            return `<li><strong>${statusIcon} ${q.title}</strong>${q.description ? ` - <em>${q.description}</em>` : ''}</li>`;
+        }).join('\n')}
+        </ul>
+    </div>
+    ` : ''}
 
     <!-- 🗺️ Cronologia Luoghi -->
     ${travels && travels.length > 0 ? `

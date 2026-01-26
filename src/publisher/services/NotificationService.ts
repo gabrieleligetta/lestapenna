@@ -48,7 +48,8 @@ export class NotificationService {
             summary.loot_removed,
             summary.narrativeBrief,
             summary.narrative,
-            summary.monsters
+            summary.monsters,
+            summary.quests
         );
     }
 

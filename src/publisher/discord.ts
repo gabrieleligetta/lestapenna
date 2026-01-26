@@ -18,7 +18,7 @@ import { config } from '../config';
 
 const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || config.discord.summaryChannelId;
 
-export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: Array<{ name: string; quantity?: number; description?: string }>, quests?: string[], narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>, narrativeBriefs?: string[]) {
+export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: Array<{ name: string; quantity?: number; description?: string }>, quests?: Array<{ title: string; description?: string; status?: string }>, narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>, narrativeBriefs?: string[]) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);
     let targetChannel: TextChannel = defaultChannel;
     let discordSummaryChannel: TextChannel | null = null;
@@ -131,7 +131,13 @@ export async function publishSummary(client: Client, sessionId: string, log: str
     }).join('\n') : "Nessun bottino recuperato";
     embed.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText) });
 
-    const questText = (quests && quests.length > 0) ? quests.map(q => `• ${q}`).join('\n') : "Nessuna missione attiva";
+    const questText = (quests && quests.length > 0) ? quests.map(q => {
+        if (typeof q === 'string') return `• ${q}`;
+        const statusEmoji = q.status === 'COMPLETED' ? '✅' :
+            q.status === 'FAILED' ? '❌' :
+                q.status === 'DROPPED' ? '🗑️' : '⚔️';
+        return `${statusEmoji} **${q.title}**${q.description ? ` - ${q.description}` : ''}`;
+    }).join('\n') : "Nessuna missione attiva";
     embed.addFields({ name: "🗺️ Missioni (Quests)", value: truncate(questText) });
 
     let monsterText = "Nessun mostro combattuto";

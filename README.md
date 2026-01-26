@@ -78,7 +78,7 @@ docker-compose up -d
     *   Es: `$luogo Neverwinter | I Quartieri Alti`
 
 #### 📜 Narrazione e Storia
-*   `$racconta <ID> [tono]`: Rigenera il riassunto di una sessione passata.
+*   `$racconta <ID> [tono] [force]`: Rigenera il riassunto di una sessione passata. Aggiungi `force` per rigenerare anche il testo AI.
     *   Toni: `DM`, `EPIC`, `DARK`, `COMIC`.
 *   `$chiedialbardo <Domanda>`: Chiedi qualsiasi cosa sulla storia della campagna (Il Bardo cercherà nella sua memoria).
 *   `$wiki <Termine>`: Cerca informazioni specifiche negli archivi.
@@ -161,7 +161,8 @@ Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri**) condividono gli stessi coma
 
 *   `$debug teststream <URL>`: Simula una sessione scaricando un file audio da URL.
 *   `$debug testmail`: Invia un report di test via email.
-*   `$rebuild CONFIRM`: **[CRITICO]** Re-indicizza l'intero database e rigenera tutte le entità dai log (irreversibile).
+*   `$rebuild CONFIRM [FORCE]`: **[CRITICO]** Re-indicizza l'intero database e rigenera tutte le entità dai log. Aggiungi `FORCE` per rigenerare anche i riassunti AI.
+*   `$riprocessa <ID> [FORCE]`: Rigenera i dati di una singola sessione (RAG, eventi) preservando la trascrizione. Aggiungi `FORCE` per rigenerare anche il riassunto AI.
 *   `$resetpg` (o `$clearchara`): Cancella definitivamente la scheda del PG dell'utente.
 *   `$wipe softwipe`: Pulisce solo i dati derivati (RAG, bio PG) mantenendo sessioni e anagrafiche.
 

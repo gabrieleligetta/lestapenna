@@ -164,6 +164,15 @@ export async function reconcileLocationName(
             { macro: entryMacroClean, micro: entryMicroClean }
         );
 
+        // NEW: Prioritize EXACT MACRO match.
+        // If "Waterdeep" == "Waterdeep", we MUST check with AI if "Mura" vs "Mura sicure" are the same.
+        if (newMacroClean === entryMacroClean && newMacroClean.length > 2) {
+            if (score < 0.75) {
+                score = 0.75;
+                reason = 'same_macro_exact_forced_check';
+            }
+        }
+
         // Boost scoring slightly for clean matches or fallback to raw
         if (score < 0.6) {
             const rawSim = locationSimilarity(

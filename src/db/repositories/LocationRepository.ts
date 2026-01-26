@@ -3,7 +3,7 @@ import { AtlasEntryFull } from '../types';
 import { campaignRepository } from './CampaignRepository';
 
 export const locationRepository = {
-    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string): void => {
+    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string, timestamp?: number): void => {
         // 1. Aggiorna lo stato corrente della campagna
         const current = campaignRepository.getCampaignLocationById(campaignId);
 
@@ -25,20 +25,24 @@ export const locationRepository = {
         else if (macro) legacyLocation = macro;
         else if (micro) legacyLocation = micro;
 
+        const effectiveTimestamp = timestamp || Date.now();
+        const sessionDateString = new Date(effectiveTimestamp).toISOString().split('T')[0];
+
         const historyStmt = db.prepare(`
             INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_id, reason, timestamp, session_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, date('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, Date.now());
+        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, effectiveTimestamp, sessionDateString);
 
         console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
     },
 
     getLocationHistory: (guildId: string) => {
         return db.prepare(`
-            SELECT h.macro_location, h.micro_location, h.timestamp, h.session_date 
+            SELECT h.macro_location, h.micro_location, h.timestamp, h.session_date, s.session_number 
             FROM location_history h
             JOIN campaigns c ON h.campaign_id = c.id
+            LEFT JOIN sessions s ON h.session_id = s.session_id
             WHERE c.guild_id = ? AND c.is_active = 1
             ORDER BY h.timestamp DESC
             LIMIT 20
@@ -57,7 +61,7 @@ export const locationRepository = {
         return row ? row.description : null;
     },
 
-    updateAtlasEntry: (campaignId: number, macro: string, micro: string, newDescription: string, sessionId?: string) => {
+    updateAtlasEntry: (campaignId: number, macro: string, micro: string, newDescription: string, sessionId?: string, isManual: boolean = false) => {
         // Sanitize
         const safeDesc = (typeof newDescription === 'object') ? JSON.stringify(newDescription) : String(newDescription);
 
@@ -67,11 +71,11 @@ export const locationRepository = {
 
         // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed)
-            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1)
+            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual)
+            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual)
             ON CONFLICT(campaign_id, macro_location, micro_location)
-            DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP, last_updated_session_id = $sessionId, rag_sync_needed = 1
-        `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null });
+            DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP, last_updated_session_id = $sessionId, rag_sync_needed = 1, is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+        `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null, isManual: isManual ? 1 : 0 });
 
         console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro}`);
     },
@@ -213,10 +217,11 @@ export const locationRepository = {
 
     getLocationHistoryWithIds: (campaignId: number, limit: number = 20): any[] => {
         return db.prepare(`
-            SELECT id, macro_location, micro_location, timestamp, session_date, session_id
-            FROM location_history
-            WHERE campaign_id = ?
-            ORDER BY timestamp DESC
+            SELECT h.id, h.macro_location, h.micro_location, h.timestamp, h.session_date, h.session_id, s.session_number
+            FROM location_history h
+            LEFT JOIN sessions s ON h.session_id = s.session_id
+            WHERE h.campaign_id = ?
+            ORDER BY h.timestamp DESC
             LIMIT ?
         `).all(campaignId, limit);
     },
@@ -277,11 +282,11 @@ export const locationRepository = {
     },
 
     // 🆕 UNIFIED BIO FLOW
-    addAtlasEvent: (campaignId: number, macro: string, micro: string, sessionId: string | null, description: string, type: string) => {
+    addAtlasEvent: (campaignId: number, macro: string, micro: string, sessionId: string | null, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
         db.prepare(`
-            INSERT INTO atlas_history (campaign_id, macro_location, micro_location, session_id, description, event_type, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(campaignId, macro, micro, sessionId, description, type, Date.now());
+            INSERT INTO atlas_history (campaign_id, macro_location, micro_location, session_id, description, event_type, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, macro, micro, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
     },
 
     getAtlasHistory: (campaignId: number, macro: string, micro: string): { description: string, event_type: string, session_id: string }[] => {

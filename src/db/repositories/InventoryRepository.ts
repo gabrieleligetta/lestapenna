@@ -2,7 +2,7 @@ import { db } from '../client';
 import { InventoryItem } from '../types';
 
 export const inventoryRepository = {
-    addLoot: (campaignId: number, itemName: string, qty: number = 1, sessionId?: string, description?: string) => {
+    addLoot: (campaignId: number, itemName: string, qty: number = 1, sessionId?: string, description?: string, isManual: boolean = false, timestamp?: number) => {
         // Normalizing name
         const cleanName = itemName.trim();
 
@@ -12,14 +12,38 @@ export const inventoryRepository = {
 
         if (existing) {
             const finalDesc = description ? (existing.description ? existing.description + '\n' + description : description) : existing.description;
-            // Legacy Parity: Update session_id to current one if provided (or keep existing if null, but usually we want to track latest touch or first? Legacy used COALESCE(session_id, ?), implying keep original if set? Or set if null?)
-            // Legacy: session_id = COALESCE(session_id, ?)
-            // This means: if session_id is NULL, set it to new one. If it IS set, KEEP it (track origin).
-            db.prepare('UPDATE inventory SET quantity = quantity + ?, last_updated = ?, description = ?, session_id = COALESCE(session_id, ?), rag_sync_needed = 1 WHERE id = ?')
-                .run(qty, Date.now(), finalDesc, sessionId || null, existing.id);
+            // Legacy Parity: Update session_id to current one if provided
+            // Use named params for cleaner update of is_manual
+            db.prepare(`
+                UPDATE inventory 
+                SET quantity = quantity + $qty, 
+                    last_updated = $timestamp, 
+                    description = $desc, 
+                    session_id = COALESCE(session_id, $sessionId), 
+                    rag_sync_needed = 1,
+                    is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                WHERE id = $id
+            `).run({
+                qty,
+                timestamp: timestamp || Date.now(),
+                desc: finalDesc,
+                sessionId: sessionId || null,
+                id: existing.id,
+                isManual: isManual ? 1 : 0
+            });
         } else {
-            db.prepare('INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed) VALUES (?, ?, ?, ?, ?, ?, ?, 1)')
-                .run(campaignId, cleanName, qty, Date.now(), Date.now(), sessionId || null, description || null);
+            db.prepare(`
+                INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed, is_manual) 
+                VALUES ($campaignId, $name, $qty, $timestamp, $timestamp, $sessionId, $desc, 1, $isManual)
+            `).run({
+                campaignId,
+                name: cleanName,
+                qty,
+                timestamp: timestamp || Date.now(),
+                sessionId: sessionId || null,
+                desc: description || null,
+                isManual: isManual ? 1 : 0
+            });
         }
     },
 
@@ -102,11 +126,11 @@ export const inventoryRepository = {
         return true;
     },
 
-    addInventoryEvent: (campaignId: number, itemName: string, sessionId: string, description: string, type: string) => {
+    addInventoryEvent: (campaignId: number, itemName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
         db.prepare(`
-            INSERT INTO inventory_history (campaign_id, item_name, session_id, description, event_type, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(campaignId, itemName, sessionId, description, type, Date.now());
+            INSERT INTO inventory_history (campaign_id, item_name, session_id, description, event_type, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, itemName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
     },
 
     getInventoryHistory: (campaignId: number, itemName: string): any[] => {

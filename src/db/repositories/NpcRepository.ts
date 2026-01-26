@@ -2,14 +2,14 @@ import { db } from '../client';
 import { NpcEntry } from '../types';
 
 export const npcRepository = {
-    updateNpcEntry: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string) => {
+    updateNpcEntry: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual: boolean = false) => {
         // Sanitize
         const safeDesc = (typeof description === 'object') ? JSON.stringify(description) : String(description);
 
         // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed)
-            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1)
+            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual)
+            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual)
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET
                 description = $description,
@@ -17,20 +17,22 @@ export const npcRepository = {
                 status = COALESCE($status, status),
                 last_updated = CURRENT_TIMESTAMP,
                 last_updated_session_id = $sessionId,
-                rag_sync_needed = 1
+                rag_sync_needed = 1,
+                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
         `).run({
             campaignId,
             name,
             description: safeDesc,
             role: role || null,
             status: status || 'ALIVE',
-            sessionId: sessionId || null
+            sessionId: sessionId || null,
+            isManual: isManual ? 1 : 0
         });
 
         console.log(`[NPC] 👤 Aggiornato dossier per: ${name}`);
     },
 
-    updateNpcFields: (campaignId: number, name: string, fields: Partial<NpcEntry>): boolean => {
+    updateNpcFields: (campaignId: number, name: string, fields: Partial<NpcEntry>, isManual: boolean = true): boolean => {
         // Build dynamic update query
         const sets: string[] = [];
         const params: any = { campaignId, name };
@@ -43,7 +45,9 @@ export const npcRepository = {
         if (sets.length === 0) return false;
 
         sets.push('last_updated = CURRENT_TIMESTAMP');
-        sets.push('rag_sync_needed = 1');
+        if (isManual) {
+            sets.push('is_manual = 1');
+        }
 
         const res = db.prepare(`
             UPDATE npc_dossier 
@@ -67,11 +71,11 @@ export const npcRepository = {
         return result.count;
     },
 
-    addNpcEvent: (campaignId: number, npcName: string, sessionId: string, description: string, type: string) => {
+    addNpcEvent: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
         db.prepare(`
-            INSERT INTO npc_history (campaign_id, npc_name, session_id, description, event_type, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(campaignId, npcName, sessionId, description, type, Date.now());
+            INSERT INTO npc_history (campaign_id, npc_name, session_id, description, event_type, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, npcName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
     },
 
     getNpcHistory: (campaignId: number, npcName: string): any[] => {

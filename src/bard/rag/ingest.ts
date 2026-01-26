@@ -30,7 +30,8 @@ export async function ingestGenericEvent(
     sessionId: string,
     content: string,
     npcs: string[],
-    microLoc: string
+    microLoc: string,
+    timestamp?: number
 ): Promise<void> {
     const promises: any[] = [];
     const startAI = Date.now();
@@ -82,7 +83,7 @@ export async function ingestGenericEvent(
                     content,
                     val.data,
                     val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
-                    Date.now(),
+                    timestamp || Date.now(),
                     null,
                     microLoc,
                     npcs
@@ -102,10 +103,11 @@ export async function ingestBioEvent(
     sessionId: string,
     charName: string,
     event: string,
-    type: string
+    type: string,
+    timestamp?: number
 ) {
     const content = `[BIOGRAFIA ${charName}] [${type}] ${event}`;
-    await ingestGenericEvent(campaignId, sessionId, content, [charName], 'BIOGRAPHY');
+    await ingestGenericEvent(campaignId, sessionId, content, [charName], 'BIOGRAPHY', timestamp);
 }
 
 /**
@@ -115,10 +117,11 @@ export async function ingestWorldEvent(
     campaignId: number,
     sessionId: string,
     event: string,
-    type: string
+    type: string,
+    timestamp?: number
 ) {
     const content = `[CRONACA MONDIALE] [${type}] ${event}`;
-    await ingestGenericEvent(campaignId, sessionId, content, [], 'WORLD');
+    await ingestGenericEvent(campaignId, sessionId, content, [], 'WORLD', timestamp);
 }
 
 /**
@@ -127,7 +130,8 @@ export async function ingestWorldEvent(
 export async function ingestLootEvent(
     campaignId: number,
     sessionId: string,
-    item: string | { name: string; quantity?: number; description?: string }
+    item: string | { name: string; quantity?: number; description?: string },
+    timestamp?: number
 ) {
     let content: string;
     if (typeof item === 'string') {
@@ -137,7 +141,7 @@ export async function ingestLootEvent(
         if (item.quantity && item.quantity > 1) content += ` (x${item.quantity})`;
         if (item.description) content += `: ${item.description}`;
     }
-    await ingestGenericEvent(campaignId, sessionId, content, [], 'LOOT');
+    await ingestGenericEvent(campaignId, sessionId, content, [], 'LOOT', timestamp);
 }
 
 /**

@@ -87,7 +87,7 @@ export const npcCommand: Command = {
         const numericMatch = argsStr.match(/^#?(\d+)$/);
         if (numericMatch) {
             const absoluteIdx = parseInt(numericMatch[1]); // 1-based index
-            
+
             // We need to fetch the specific NPC at that offset
             // listNpcs(limit=1, offset=absoluteIdx-1)
             const npcs = listNpcs(ctx.activeCampaign!.id, 1, absoluteIdx - 1);
@@ -161,7 +161,7 @@ export const npcCommand: Command = {
                 return;
             }
 
-            updateNpcEntry(ctx.activeCampaign!.id, name, description, role, 'ALIVE');
+            updateNpcEntry(ctx.activeCampaign!.id, name, description, role, 'ALIVE', undefined, true);
             await ctx.message.reply(`✅ **Nuovo NPC Creato!**\n👤 **${name}**\n🎭 Ruolo: ${role}\n📜 ${description}`);
             return;
         }
@@ -174,8 +174,24 @@ export const npcCommand: Command = {
                 return;
             }
 
-            const sourceName = parts[0];
-            const targetName = parts[1];
+            let sourceName = parts[0];
+            let targetName = parts[1];
+
+            // Resolve Source ID
+            const sourceIdMatch = sourceName.match(/^#?(\d+)$/);
+            if (sourceIdMatch) {
+                const idx = parseInt(sourceIdMatch[1]) - 1;
+                const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
+                if (npcs.length > 0) sourceName = npcs[0].name;
+            }
+
+            // Resolve Target ID
+            const targetIdMatch = targetName.match(/^#?(\d+)$/);
+            if (targetIdMatch) {
+                const idx = parseInt(targetIdMatch[1]) - 1;
+                const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
+                if (npcs.length > 0) targetName = npcs[0].name;
+            }
 
             const sourceNpc = getNpcEntry(ctx.activeCampaign!.id, sourceName);
             const targetNpc = getNpcEntry(ctx.activeCampaign!.id, targetName);
@@ -349,7 +365,7 @@ export const npcCommand: Command = {
                 const loadingMsg = await ctx.message.reply(`⚙️ Aggiungo nota al dossier di **${name}**...`);
 
                 const eventDesc = `[NOTA DM] ${note}`;
-                addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'DM_NOTE');
+                addNpcEvent(ctx.activeCampaign!.id, npc.name, 'MANUAL', eventDesc, 'DM_NOTE', true);
 
                 // Trigger regen
                 const newDesc = await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, npc.name, true);
@@ -489,7 +505,7 @@ export const npcCommand: Command = {
         // SETTER: $npc Nome | Descrizione
         if (argsStr.includes('|')) {
             const [name, desc] = argsStr.split('|').map(s => s.trim());
-            updateNpcEntry(ctx.activeCampaign!.id, name, desc);
+            updateNpcEntry(ctx.activeCampaign!.id, name, desc, undefined, undefined, undefined, true);
             await ctx.message.reply(`👤 Scheda di **${name}** aggiornata.`);
             return;
         }

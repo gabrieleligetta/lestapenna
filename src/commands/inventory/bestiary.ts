@@ -59,7 +59,7 @@ export const bestiaryCommand: Command = {
             }
 
             const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            addBestiaryEvent(ctx.activeCampaign!.id, name, currentSession, note, "MANUAL_UPDATE");
+            addBestiaryEvent(ctx.activeCampaign!.id, name, currentSession, note, "MANUAL_UPDATE", true);
             await ctx.message.reply(`📝 Nota aggiunta a **${name}**. Aggiornamento dossier...`);
 
             await regenerateMonsterBio(ctx.activeCampaign!.id, name);

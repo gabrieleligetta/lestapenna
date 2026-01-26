@@ -1,7 +1,7 @@
 import { db } from '../client';
 
 export const worldRepository = {
-    addWorldEvent: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number) => {
+    addWorldEvent: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number, isManual: boolean = false, timestamp?: number) => {
         // Fallback year? Current year from campaign?
         // Let's make year optional and fetch from campaign if not provided, or default to 0
         let effectiveYear = year;
@@ -29,9 +29,9 @@ export const worldRepository = {
         }
 
         db.prepare(`
-            INSERT INTO world_history (campaign_id, session_id, description, event_type, timestamp, year, rag_sync_needed)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
-        `).run(campaignId, sessionId, description, type, Date.now(), effectiveYear);
+            INSERT INTO world_history (campaign_id, session_id, description, event_type, timestamp, year, rag_sync_needed, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+        `).run(campaignId, sessionId, description, type, timestamp || Date.now(), effectiveYear, isManual ? 1 : 0);
     },
 
     getWorldTimeline: (campaignId: number): any[] => {

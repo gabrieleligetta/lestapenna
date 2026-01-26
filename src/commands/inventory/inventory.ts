@@ -65,11 +65,11 @@ export const inventoryCommand: Command = {
         if (arg.toLowerCase().startsWith('add ')) {
             const item = arg.substring(4).trim();
             const currentSession = guildSessions.get(ctx.guildId);
-            addLoot(ctx.activeCampaign!.id, item, 1, currentSession);
+            addLoot(ctx.activeCampaign!.id, item, 1, currentSession, undefined, true);
 
             // Add Event
             if (currentSession) {
-                addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto acquisito.", "LOOT");
+                addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto acquisito.", "LOOT", true);
                 regenerateItemBio(ctx.activeCampaign!.id, item);
             }
 
@@ -104,7 +104,7 @@ export const inventoryCommand: Command = {
             }
 
             const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, note, "MANUAL_UPDATE");
+            addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, note, "MANUAL_UPDATE", true);
             await ctx.message.reply(`📝 Nota aggiunta a **${item}**. Aggiornamento leggenda...`);
 
             await regenerateItemBio(ctx.activeCampaign!.id, item);
@@ -131,7 +131,7 @@ export const inventoryCommand: Command = {
             const removed = removeLoot(ctx.activeCampaign!.id, item, 1);
             if (removed) {
                 const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-                addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto utilizzato/rimosso.", "USE");
+                addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto utilizzato/rimosso.", "USE", true);
                 regenerateItemBio(ctx.activeCampaign!.id, item);
                 await ctx.message.reply(`📉 Rimosso/Usato: **${item}**`);
             }

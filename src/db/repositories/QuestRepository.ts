@@ -35,7 +35,7 @@ const cleanQuestTitle = (title: string): string => {
 };
 
 export const questRepository = {
-    addQuest: (campaignId: number, title: string, sessionId?: string, description?: string, status: string = 'OPEN', type: string = 'MAJOR') => {
+    addQuest: (campaignId: number, title: string, sessionId?: string, description?: string, status: string = 'OPEN', type: string = 'MAJOR', isManual: boolean = false, timestamp?: number) => {
         // 0. Guard against undefined/null title
         if (!title) {
             console.warn(`[Quest] ⚠️ Tentativo di aggiungere quest senza titolo. Ignoro.`);
@@ -92,19 +92,26 @@ export const questRepository = {
 
             db.prepare(`
                 UPDATE quests 
-                SET description = ?, 
-                    status = ?, 
-                    last_updated = ?, 
-                    rag_sync_needed = 1 
-                WHERE id = ?
-            `).run(finalDesc, finalStatus, Date.now(), existingId);
+                SET description = $description, 
+                    status = $status, 
+                    last_updated = $timestamp, 
+                    rag_sync_needed = 1,
+                    is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                WHERE id = $id
+            `).run({
+                description: finalDesc,
+                status: finalStatus,
+                timestamp: timestamp || Date.now(),
+                id: existingId,
+                isManual: isManual ? 1 : 0
+            });
             console.log(`[Quest] 🔄 Aggiornata Quest: ${cleanedTitle} (Status: ${currentStatus} -> ${finalStatus})`);
         } else {
             // Insert new quest
             db.prepare(`
-                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, Date.now(), Date.now());
+                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed, is_manual) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, timestamp || Date.now(), timestamp || Date.now(), isManual ? 1 : 0);
             console.log(`[Quest] 🆕 Nuova Quest (${type}): ${cleanedTitle}`);
         }
     },
@@ -186,11 +193,11 @@ export const questRepository = {
         console.log(`[Quest] 🔀 Merge/Rename: ${oldTitle} -> ${newTitle}`);
         return true;
     },
-    addQuestEvent: (campaignId: number, title: string, sessionId: string, description: string, type: string) => {
+    addQuestEvent: (campaignId: number, title: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
         db.prepare(`
-            INSERT INTO quest_history (campaign_id, quest_title, session_id, description, event_type, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(campaignId, title, sessionId, description, type, Date.now());
+            INSERT INTO quest_history (campaign_id, quest_title, session_id, description, event_type, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, title, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
     },
 
     getQuestHistory: (campaignId: number, title: string): any[] => {

@@ -27,7 +27,7 @@ export const knowledgeRepository = {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             campaignId, sessionId, content, embeddingJson, model,
-            embedding.length, startTimestamp, Date.now(),
+            embedding.length, startTimestamp, startTimestamp || Date.now(),
             macro, micro, npcsJson, entityRefsStr
         );
     },

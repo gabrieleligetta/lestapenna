@@ -72,11 +72,11 @@ export const questCommand: Command = {
         if (arg.toLowerCase().startsWith('add ')) {
             const title = arg.substring(4);
             const currentSession = guildSessions.get(ctx.guildId);
-            addQuest(ctx.activeCampaign!.id, title, currentSession);
+            addQuest(ctx.activeCampaign!.id, title, currentSession, undefined, 'OPEN', 'MAJOR', true);
 
             // Add initial history event?
             if (currentSession) {
-                addQuestEvent(ctx.activeCampaign!.id, title, currentSession, "Quest iniziata.", "CREATION");
+                addQuestEvent(ctx.activeCampaign!.id, title, currentSession, "Quest iniziata.", "CREATION", true);
                 regenerateQuestBio(ctx.activeCampaign!.id, title, "OPEN"); // Async
             }
 
@@ -112,7 +112,7 @@ export const questCommand: Command = {
             }
 
             const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            addQuestEvent(ctx.activeCampaign!.id, title, currentSession, note, "PROGRESS");
+            addQuestEvent(ctx.activeCampaign!.id, title, currentSession, note, "PROGRESS", true);
             await ctx.message.reply(`📝 Nota aggiunta a **${title}**. Rigenerazione diario...`);
 
             // Trigger Regen
@@ -167,7 +167,7 @@ export const questCommand: Command = {
             // We need exact title for event. 
             const quest = getQuestByTitle(ctx.activeCampaign!.id, search); // Fuzzy might fail if search is partial
             if (quest) {
-                addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, "La quest è stata completata con successo.", "COMPLETION");
+                addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, "La quest è stata completata con successo.", "COMPLETION", true);
                 regenerateQuestBio(ctx.activeCampaign!.id, quest.title, "COMPLETED");
             }
 

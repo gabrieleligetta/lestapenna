@@ -34,7 +34,8 @@ export const travelsCommand: Command = {
             let msg = `**📜 Viaggi della Sessione \`${sessionId}\`:**\n`;
             travelLog.forEach((h: any) => {
                 const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-                msg += `\`${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+                const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
+                msg += `\`${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
             });
 
             await ctx.message.reply(msg);
@@ -52,7 +53,8 @@ export const travelsCommand: Command = {
             let msg = "**📜 Diario di Viaggio (con ID per correzione):**\n";
             history.forEach((h: any) => {
                 const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-                msg += `\`#${h.id}\` \`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+                const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
+                msg += `\`#${h.id}\` \`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
             });
             msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.\n💡 Usa \`$viaggi delete #ID\` per eliminare.`;
 
@@ -141,7 +143,8 @@ export const travelsCommand: Command = {
         let msg = "**📜 Diario di Viaggio (Ultimi spostamenti):**\n";
         history.forEach((h: any) => {
             const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-            msg += `\`${h.session_date} ${time}\` 🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+            const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
+            msg += `\`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
         });
         msg += `\n💡 Usa \`$viaggi list\` per vedere gli ID e correggere voci.`;
 

@@ -21,7 +21,9 @@ export const bestiaryRepository = {
         count?: string,
         sessionId?: string,
         details?: MonsterDetails,
-        originalName?: string
+        originalName?: string,
+        isManual: boolean = false,
+        timestamp?: number
     ): void => {
         // Sanitize
         const safeDesc = details?.description ?
@@ -47,11 +49,11 @@ export const bestiaryRepository = {
         db.prepare(`
             INSERT INTO bestiary (
                 campaign_id, name, status, count, session_id, last_seen,
-                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed
+                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed, is_manual
             )
             VALUES (
                 $campaignId, $name, $status, $count, $sessionId, $timestamp,
-                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1
+                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1, $isManual
             )
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET 
@@ -77,20 +79,22 @@ export const bestiaryRepository = {
                         )
                     ELSE variants
                 END,
-                rag_sync_needed = 1
+                rag_sync_needed = 1,
+                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
         `).run({
             campaignId,
             name,
             status,
             count: count || null,
             sessionId: sessionId || null,
-            timestamp: Date.now(),
+            timestamp: timestamp || Date.now(),
             desc: safeDesc,
             abil: safeAbilities,
             weak: safeWeaknesses,
             res: safeResistances,
             notes: safeNotes,
-            variants: variantsJson
+            variants: variantsJson,
+            isManual: isManual ? 1 : 0
         });
 
         console.log(`[Bestiary] 👹 Mostro tracciato/aggiornato: ${name} (Var: ${originalName || '-'})`);
@@ -191,11 +195,11 @@ export const bestiaryRepository = {
         `).all(sessionId) as BestiaryEntry[];
     },
 
-    addBestiaryEvent: (campaignId: number, name: string, sessionId: string, description: string, type: string) => {
+    addBestiaryEvent: (campaignId: number, name: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
         db.prepare(`
-            INSERT INTO bestiary_history (campaign_id, monster_name, session_id, description, event_type, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(campaignId, name, sessionId, description, type, Date.now());
+            INSERT INTO bestiary_history (campaign_id, monster_name, session_id, description, event_type, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, name, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
     },
 
     getBestiaryHistory: (campaignId: number, name: string): any[] => {

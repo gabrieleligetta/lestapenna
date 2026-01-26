@@ -37,6 +37,7 @@ export const initDatabase = () => {
         description TEXT,
         rag_sync_needed INTEGER DEFAULT 0,
         last_synced_history_id INTEGER DEFAULT 0,
+        is_manual INTEGER DEFAULT 0,
         PRIMARY KEY (user_id, campaign_id),
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
@@ -55,6 +56,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'BACKGROUND', 'TRAUMA', 'RELATIONSHIP', 'ACHIEVEMENT', 'GOAL_CHANGE'
         description TEXT NOT NULL,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -67,6 +69,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'REVELATION', 'BETRAYAL', 'DEATH', 'ALLIANCE', 'STATUS_CHANGE'
         description TEXT NOT NULL,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -77,9 +80,9 @@ export const initDatabase = () => {
         session_id TEXT,
         event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC'
         description TEXT NOT NULL,
-        timestamp INTEGER,
         year INTEGER,
         rag_sync_needed INTEGER DEFAULT 0,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -165,6 +168,7 @@ export const initDatabase = () => {
         session_date TEXT,
         session_id TEXT,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -179,6 +183,7 @@ export const initDatabase = () => {
         rag_sync_needed INTEGER DEFAULT 0,
         first_session_id TEXT, -- 🆕 Tracciamento origine
         last_updated_session_id TEXT, -- 🆕 Tracciamento ultima modifica
+        is_manual INTEGER DEFAULT 0,
         UNIQUE(campaign_id, macro_location, micro_location)
     )`);
 
@@ -192,6 +197,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'OBSERVATION', 'EVENT', 'MANUAL_UPDATE'
         session_id TEXT,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_atlas_history_loc ON atlas_history (campaign_id, macro_location, micro_location)`);
@@ -208,7 +214,9 @@ export const initDatabase = () => {
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         aliases TEXT,
+        aliases TEXT,
         first_session_id TEXT, -- 🆕 Tracciamento origine
+        is_manual INTEGER DEFAULT 0,
         UNIQUE(campaign_id, name)
     )`);
 
@@ -223,6 +231,7 @@ export const initDatabase = () => {
         created_at INTEGER,
         last_updated INTEGER,
         session_id TEXT,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -235,6 +244,7 @@ export const initDatabase = () => {
         count TEXT, -- Es. "3", "molti", "un branco"
         session_id TEXT, -- Sessione in cui è stato incontrato
         last_seen INTEGER, -- Timestamp ultimo avvistamento
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_bestiary_campaign ON bestiary (campaign_id)`);
@@ -250,6 +260,7 @@ export const initDatabase = () => {
         acquired_at INTEGER,
         last_updated INTEGER,
         session_id TEXT,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -273,6 +284,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'PROGRESS', 'COMPLETION', 'FAILURE', 'MANUAL_UPDATE'
         description TEXT NOT NULL,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_quest_history_title ON quest_history (campaign_id, quest_title)`);
@@ -286,6 +298,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'ENCOUNTER', 'OBSERVATION', 'AUTOPSY', 'MANUAL_UPDATE'
         description TEXT NOT NULL,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_bestiary_history_name ON bestiary_history (campaign_id, monster_name)`);
@@ -299,6 +312,7 @@ export const initDatabase = () => {
         event_type TEXT, -- 'LOOT', 'USE', 'DAMAGE', 'SALE', 'MANUAL_UPDATE'
         description TEXT NOT NULL,
         timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_history_name ON inventory_history (campaign_id, item_name)`);
@@ -405,7 +419,22 @@ export const initDatabase = () => {
         // 🆕 BESTIARIO: Supporto per varianti e deduplicazione
         "ALTER TABLE bestiary ADD COLUMN variants TEXT",      // JSON array di nomi varianti es. ["Goblin Arciere", "Goblin Sciamano"]
         // 🆕 QUEST TYPE: Granularità
-        "ALTER TABLE quests ADD COLUMN type TEXT DEFAULT 'MAJOR'"
+        "ALTER TABLE quests ADD COLUMN type TEXT DEFAULT 'MAJOR'",
+        // 🆕 USER INPUT PROTECTION
+        "ALTER TABLE characters ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE character_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE npc_dossier ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE npc_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE location_atlas ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE location_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE atlas_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE world_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE quests ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE quest_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE bestiary ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE bestiary_history ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE inventory ADD COLUMN is_manual INTEGER DEFAULT 0",
+        "ALTER TABLE inventory_history ADD COLUMN is_manual INTEGER DEFAULT 0"
     ];
 
     for (const m of migrations) {

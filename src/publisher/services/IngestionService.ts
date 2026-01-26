@@ -25,7 +25,8 @@ import {
     addSessionLog,
     addInventoryEvent,
     addQuestEvent,
-    addBestiaryEvent
+    addBestiaryEvent,
+    addAtlasEvent
 } from '../../db';
 import {
     ingestSessionComplete,
@@ -87,6 +88,10 @@ export class IngestionService {
         // Prepare batch input
         const batchInput: any = {};
 
+        // Fetch session timestamp for history records
+        const { getSessionStartTime } = await import('../../db');
+        const sessionStartTime = getSessionStartTime(sessionId) || Date.now();
+
         if (result.character_growth?.length) batchInput.character_events = result.character_growth;
         if (result.npc_events?.length) batchInput.npc_events = result.npc_events;
         if (result.world_events?.length) batchInput.world_events = result.world_events;
@@ -129,7 +134,7 @@ export class IngestionService {
 
         // Process validated events
         if (validated) {
-            await this.processValidatedEvents(campaignId, sessionId, validated);
+            await this.processValidatedEvents(campaignId, sessionId, validated, sessionStartTime);
         }
 
         // Process NPC dossier updates (metadata)
@@ -139,11 +144,11 @@ export class IngestionService {
 
         // Process location updates (metadata)
         if (result.location_updates?.length) {
-            await this.processLocationUpdates(campaignId, sessionId, result.location_updates);
+            await this.processLocationUpdates(campaignId, sessionId, result.location_updates, sessionStartTime);
         }
 
         // Process monsters
-        await this.processMonsters(campaignId, sessionId, result.monsters);
+        await this.processMonsters(campaignId, sessionId, result.monsters, sessionStartTime);
 
         // Process present NPCs
         if (result.present_npcs?.length) {
@@ -156,7 +161,7 @@ export class IngestionService {
             for (const entry of result.log) {
                 addSessionLog(sessionId, entry);
                 // Also ingest in RAG for better semantic search of specific actions
-                await ingestGenericEvent(campaignId, sessionId, `[LOG AZIONE] ${entry}`, [], 'SESSION_LOG');
+                await ingestGenericEvent(campaignId, sessionId, `[LOG AZIONE] ${entry}`, [], 'SESSION_LOG', sessionStartTime);
             }
         }
 
@@ -164,7 +169,7 @@ export class IngestionService {
         if (result.travel_sequence?.length) {
             console.log(`[Ingestion] 🗺️ Salvataggio ${result.travel_sequence.length} spostamenti...`);
             for (const travel of result.travel_sequence) {
-                updateLocation(campaignId, travel.macro, travel.micro, sessionId, travel.reason);
+                updateLocation(campaignId, travel.macro, travel.micro, sessionId, travel.reason, sessionStartTime);
             }
         }
 
@@ -178,15 +183,15 @@ export class IngestionService {
     /**
      * Processes validated events
      */
-    private async processValidatedEvents(campaignId: number, sessionId: string, validated: any): Promise<void> {
+    private async processValidatedEvents(campaignId: number, sessionId: string, validated: any, timestamp: number): Promise<void> {
         // Character events
         for (const evt of validated.character_events.keep) {
             const safeDesc = evt.event || "Evento significativo registrato.";
             console.log(`[PG] ➕ ${evt.name}: ${safeDesc}`);
-            // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string)
-            addCharacterEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'GROWTH');
-            // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string)
-            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG');
+            // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual, timestamp)
+            addCharacterEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'GROWTH', false, timestamp);
+            // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
+            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG', timestamp);
             markCharacterDirtyByName(campaignId, evt.name);
         }
 
@@ -194,10 +199,10 @@ export class IngestionService {
         for (const evt of validated.npc_events.keep) {
             const safeDesc = evt.event || "Interazione rilevante registrata.";
             console.log(`[NPC] ➕ ${evt.name}: ${safeDesc}`);
-            // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string)
-            addNpcEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'EVENT');
-            // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string)
-            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'NPC');
+            // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, island, timestamp)
+            addNpcEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'EVENT', false, timestamp);
+            // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
+            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'NPC', timestamp);
             markNpcDirty(campaignId, evt.name);
         }
 
@@ -214,10 +219,10 @@ export class IngestionService {
             const safeDesc = clean.extra ? `${clean.name} (${clean.extra})` : clean.name || "Evento mondiale registrato.";
 
             console.log(`[World] ➕ ${safeDesc}`);
-            // Signature: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number)
-            addWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT');
-            // Signature: (campaignId: number, sessionId: string, event: string, type: string)
-            await ingestWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT');
+            // Signature: (campaignId: number, sessionId: string | null, description: string, type: string, year?: number, manual, timestamp)
+            addWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT', undefined, false, timestamp);
+            // Signature: (campaignId: number, sessionId: string, event: string, type: string, timestamp)
+            await ingestWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT', timestamp);
         }
 
         // Loot (with reconciliation)
@@ -233,10 +238,10 @@ export class IngestionService {
                 const finalName = reconciled ? reconciled.canonicalName : itemName;
                 if (reconciled) console.log(`[Loot] 🔄 Riconciliato: "${item.name}" → "${finalName}"`);
 
-                addLoot(campaignId, finalName, item.quantity || 1, sessionId, itemDesc);
+                addLoot(campaignId, finalName, item.quantity || 1, sessionId, itemDesc, false, timestamp);
 
                 // 🆕 History Tracking
-                addInventoryEvent(campaignId, finalName, sessionId, `Acquisito: ${itemDesc || 'Nessuna descrizione'}`, 'LOOT');
+                addInventoryEvent(campaignId, finalName, sessionId, `Acquisito: ${itemDesc || 'Nessuna descrizione'}`, 'LOOT', false, timestamp);
 
                 // Skip simple currency from RAG
                 const isSimpleCurrency = /^[\d\s]+(mo|monete?|oro|argent|ram|pezz)/i.test(finalName) && finalName.length < 30;
@@ -244,7 +249,7 @@ export class IngestionService {
                     await ingestLootEvent(campaignId, sessionId, {
                         ...item,
                         name: finalName
-                    });
+                    }, timestamp);
                 }
             }
         }
@@ -260,13 +265,13 @@ export class IngestionService {
                 removeLoot(campaignId, finalName, item.quantity || 1);
 
                 // 🆕 History Tracking
-                addInventoryEvent(campaignId, finalName, sessionId, `Rimosso/Usato: ${item.description || 'Nessuna descrizione'}`, 'USE');
+                addInventoryEvent(campaignId, finalName, sessionId, `Rimosso/Usato: ${item.description || 'Nessuna descrizione'}`, 'USE', false, timestamp);
 
                 // Also ingest in RAG to track WHY it was removed
                 await ingestLootEvent(campaignId, sessionId, {
                     ...item,
                     name: `[RIMOSSO/USATO] ${finalName}`
-                });
+                }, timestamp);
             }
         }
 
@@ -287,11 +292,11 @@ export class IngestionService {
 
             console.log(`[Quest] ➕ ${title} (${status})`);
 
-            // Signature: (campaignId: number, title: string, sessionId?: string, description?: string, status?: string, type?: string)
-            addQuest(campaignId, title, sessionId, description, status, quest.type || 'MAJOR');
+            // Signature: (campaignId: number, title: string, sessionId?: string, description?: string, status?: string, type?: string, manual, timestamp)
+            addQuest(campaignId, title, sessionId, description, status, quest.type || 'MAJOR', false, timestamp);
 
             // 🆕 History Tracking
-            addQuestEvent(campaignId, title, sessionId, description || `Quest aggiornata: ${status}`, status === 'OPEN' ? 'PROGRESS' : status);
+            addQuestEvent(campaignId, title, sessionId, description || `Quest aggiornata: ${status}`, status === 'OPEN' ? 'PROGRESS' : status, false, timestamp);
         }
     }
 
@@ -330,7 +335,7 @@ export class IngestionService {
     /**
      * Processes location updates
      */
-    private async processLocationUpdates(campaignId: number, sessionId: string, locationUpdates: any[]): Promise<void> {
+    private async processLocationUpdates(campaignId: number, sessionId: string, locationUpdates: any[], timestamp: number): Promise<void> {
         if (!locationUpdates?.length) return;
 
         console.log(`[Atlas] 🗺️ Aggiornamento ${locationUpdates.length} luoghi...`);
@@ -376,9 +381,11 @@ export class IngestionService {
                 if (reconciled) {
                     console.log(`[Atlas] 🔄 Riconciliato: "${loc.macro}" / "${loc.micro}" → "${reconciled.canonicalMacro}" / "${reconciled.canonicalMicro}"`);
                     updateAtlasEntry(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, finalDesc, sessionId);
+                    addAtlasEvent(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro, sessionId, finalDesc, 'RECONCILED', false, timestamp);
                     markAtlasDirty(campaignId, reconciled.canonicalMacro, reconciled.canonicalMicro);
                 } else {
                     updateAtlasEntry(campaignId, finalMacro, finalMicro, finalDesc, sessionId);
+                    addAtlasEvent(campaignId, finalMacro, finalMicro, sessionId, finalDesc, 'UPDATE', false, timestamp);
                     markAtlasDirty(campaignId, finalMacro, finalMicro);
                 }
             }
@@ -388,7 +395,7 @@ export class IngestionService {
     /**
      * Processes monster encounters
      */
-    private async processMonsters(campaignId: number, sessionId: string, monsters: any[]): Promise<void> {
+    private async processMonsters(campaignId: number, sessionId: string, monsters: any[], timestamp: number): Promise<void> {
         if (!monsters?.length) return;
 
         console.log(`[Bestiario] 👹 Registrazione ${monsters.length} creature...`);
@@ -422,11 +429,13 @@ export class IngestionService {
                     // Pass original cleaned name as "originalName" to treat it as variant if different
                     // ALSO: If we extracted "extra" info (e.g. "Archer"), treating "Goblin (Archer)" as originalName
                     // automagically works because "Goblin (Archer)" != "Goblin".
-                    monster.name
+                    monster.name,
+                    false,
+                    timestamp
                 );
 
                 // 🆕 History Tracking
-                addBestiaryEvent(campaignId, finalName, sessionId, `Incontro: ${monsterDesc || 'Nessuna descrizione'}`, 'ENCOUNTER');
+                addBestiaryEvent(campaignId, finalName, sessionId, `Incontro: ${monsterDesc || 'Nessuna descrizione'}`, 'ENCOUNTER', false, timestamp);
             }
         }
     }

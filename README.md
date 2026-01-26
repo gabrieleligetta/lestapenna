@@ -168,6 +168,25 @@ Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri**) condividono gli stessi coma
 
 ---
 
+## 🛡️ Protezione Dati Manuali
+
+Il sistema distingue tra dati generati dall'AI (sacrificabili) e dati inseriti manualmente (protetti). Le modifiche manuali non vengono mai cancellate durante un `$rebuild`.
+
+### 👤 NPC & Personaggi
+*   **Nota Storica**: `$npc update <Nome> | <Tua Nota>` (Aggiunge un evento alla cronologia, l'AI lo integrerà nella bio).
+*   **Biografia Fissa**: `$npc <Nome> | <Descrizione Completa>` (Marca l'intero NPC come "Manuale", l'AI non lo toccherà più).
+
+### 🗺️ Altre Entità
+*   **Luoghi**: `$atlante update <Macro> - <Micro> | <Nota>` o `$atlante <Macro> - <Micro> | <Descrizione>`.
+*   **Quest**: `$quest update <Titolo> | <Progresso>` o `$quest add <Titolo>`.
+*   **Loot**: `$loot add <Oggetto>` o `$loot update <Oggetto> | <Nota>`.
+*   **Timeline**: Ogni evento aggiunto con `$timeline add` è protetto di default.
+
+> [!IMPORTANT]
+> La protezione si applica solo ai dati inseriti o modificati dopo l'aggiornamento del sistema. Per proteggere note vecchie, esegui un piccolo aggiornamento manuale sulla scheda.
+
+---
+
 ## 📂 Struttura del Progetto
 
 *   `src/commands`: Definizioni dei comandi.

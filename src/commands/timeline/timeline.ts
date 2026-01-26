@@ -32,7 +32,7 @@ export const timelineCommand: Command = {
                 return;
             }
 
-            addWorldEvent(ctx.activeCampaign!.id, null, desc, type, year);
+            addWorldEvent(ctx.activeCampaign!.id, null, desc, type, year, true);
             await ctx.message.reply(`📜 Evento storico aggiunto nell'anno **${year}**.`);
             return;
         }

@@ -350,6 +350,7 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
                 role: npc.role,
                 status: validStatuses.includes(npc.status) ? npc.status as 'ALIVE' | 'DEAD' | 'MISSING' : undefined
             }))
+                .filter((npc: any) => npc.description && npc.description.length > 5 && !npc.description.toLowerCase().includes('nessuna nota'))
             : [];
 
         const normalizedLocationUpdates = (Array.isArray(parsed?.location_updates) ? parsed.location_updates : []).map((loc: any) => {
@@ -358,7 +359,7 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
                 return { ...loc, macro: normalized.macro, micro: normalized.micro };
             }
             return loc;
-        });
+        }).filter((loc: any) => loc.description && loc.description.trim().length > 10 && !loc.description.toLowerCase().includes("nessuna descrizione"));
 
         const normalizedTravelSequence = (Array.isArray(parsed?.travel_sequence) ? parsed.travel_sequence : []).map((step: any) => {
             if (step.macro && step.micro) {

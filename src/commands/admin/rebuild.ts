@@ -138,6 +138,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number } {
         SET description = NULL,
             rag_sync_needed = 1,
             first_session_id = NULL
+        WHERE COALESCE(is_manual, 0) = 0
     `).run();
 
     // Reset location descriptions but keep macro/micro names
@@ -146,6 +147,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number } {
         SET description = NULL,
             rag_sync_needed = 1,
             first_session_id = NULL
+        WHERE COALESCE(is_manual, 0) = 0
     `).run();
 
     return {
@@ -160,7 +162,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number } {
 function purgeAllDerivedData(): Record<string, number> {
     const results: Record<string, number> = {};
 
-    const tables = [
+    const tablesWithManual = [
         'character_history',
         'npc_history',
         'world_history',
@@ -168,23 +170,59 @@ function purgeAllDerivedData(): Record<string, number> {
         'quests',
         'inventory',
         'bestiary',
-        'knowledge_fragments'
+        'atlas_history',
+        'quest_history',
+        'bestiary_history',
+        'inventory_history'
     ];
 
-    for (const table of tables) {
-        const result = db.prepare(`DELETE FROM ${table}`).run();
+    for (const table of tablesWithManual) {
+        // Only delete entries NOT marked as manual
+        const result = db.prepare(`DELETE FROM ${table} WHERE COALESCE(is_manual, 0) = 0`).run();
         results[table] = result.changes;
     }
 
-    // Also reset character sync state
+    // Always full wipe RAG fragments (they will be regenerated from source)
+    const ragResult = db.prepare('DELETE FROM knowledge_fragments').run();
+    results['knowledge_fragments'] = ragResult.changes;
+
+    // Also reset character sync state but preserve manual descriptions
     db.prepare(`
         UPDATE characters
-        SET description = '',
+        SET description = CASE WHEN COALESCE(is_manual, 0) = 1 THEN description ELSE '' END,
             last_synced_history_id = 0,
             rag_sync_needed = 1
     `).run();
 
     return results;
+}
+
+/**
+ * Prune "zombie" entities: deletes NPCs/Locations that remained without description after rebuild
+ */
+function pruneEmptyEntities(): { npcs: number; locations: number } {
+    // Delete NPCs with null or too short description
+    const npcResult = db.prepare(`
+        DELETE FROM npc_dossier
+        WHERE (description IS NULL 
+            OR length(description) < 5
+            OR description LIKE 'Nessuna descrizione%')
+            AND COALESCE(is_manual, 0) = 0
+    `).run();
+
+    // Delete Locations with null or too short description
+    const locationResult = db.prepare(`
+        DELETE FROM location_atlas
+        WHERE (description IS NULL 
+            OR length(description) < 10
+            OR description LIKE 'Nessuna descrizione%')
+            AND COALESCE(is_manual, 0) = 0
+    `).run();
+
+    return {
+        npcs: npcResult.changes,
+        locations: locationResult.changes
+    };
 }
 
 export const rebuildCommand: Command = {
@@ -435,6 +473,18 @@ Il processo:
                 }
             }
 
+            // Phase 4: Final Pruning
+            await statusMsg.edit(
+                `🔄 **REBUILD IN CORSO**\n\n` +
+                `✅ Fase 1/4: Anagrafiche resettate\n` +
+                `✅ Fase 2/4: Dati storici cancellati\n` +
+                `✅ Fase 3/4: Rigenerazione completata (${successCount} sessioni)\n` +
+                `⏳ Fase 4/4: Pulizia entità vuote...`
+            );
+
+            const pruneStats = pruneEmptyEntities();
+            console.log(`[Rebuild] 🧹 Pruned ${pruneStats.npcs} NPCs and ${pruneStats.locations} Locations.`);
+
             // Final report
             const finalStats = getDiagnostics();
             let finalMessage = `✅ **REBUILD COMPLETATO**\n\n` +
@@ -442,6 +492,8 @@ Il processo:
                 `- Sessioni processate: ${successCount}/${sessions.length}\n` +
                 `- Errori: ${errorCount}\n\n` +
                 `**Nuovo stato database:**\n` +
+                `- NPC Rimossi (Vuoti): ${pruneStats.npcs}\n` +
+                `- Luoghi Rimossi (Vuoti): ${pruneStats.locations}\n` +
                 `- Eventi NPC: ${finalStats.npcEvents}\n` +
                 `- Eventi Mondo: ${finalStats.worldEvents}\n` +
                 `- Eventi PG: ${finalStats.characterEvents}\n` +

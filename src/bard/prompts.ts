@@ -153,7 +153,7 @@ ${memoryContext}
         {
             "macro": "Città/Regione (es. 'Waterdeep')",
             "micro": "Luogo PRINCIPALE (es. 'Castello di Waterdeep'). NON creare sub-luoghi per singole stanze (es. 'Cucine', 'Sala trono') ma AGGREGA nel luogo principale.",
-            "description": "Descrizione atmosferica del luogo. Se vengono visitate più stanze, descrivile qui in un unico blocco."
+            "description": "Descrizione atmosferica del luogo. Se vengono visitate più stanze, descrivile qui in un unico blocco. IGNORA SE VUOTO (Non creare l'entry)."
         }
     ],
     "travel_sequence": [

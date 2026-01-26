@@ -166,8 +166,18 @@ export async function reconcileLocationName(
 
         // NEW: Prioritize EXACT MACRO match.
         // If "Waterdeep" == "Waterdeep", we MUST check with AI if "Mura" vs "Mura sicure" are the same.
-        if (newMacroClean === entryMacroClean && newMacroClean.length > 2) {
-            if (score < 0.75) {
+        if (newMacroClean === entryMacroClean) {
+            // AUTO-MERGE: If similarity is very high (e.g. "Sala del Trono" vs "Sala con Trono"), accept immediately.
+            if (score > 0.82) {
+                console.log(`[Location Reconcile] ⚡ AUTO-MERGE (High Sim): "${newMacro} - ${newMicro}" → "${entry.macro_location} - ${entry.micro_location}"`);
+                return {
+                    canonicalMacro: entry.macro_location,
+                    canonicalMicro: entry.micro_location,
+                    existingEntry: entry
+                };
+            }
+
+            if (score < 0.75 && newMacroClean.length > 2) {
                 score = 0.75;
                 reason = 'same_macro_exact_forced_check';
             }

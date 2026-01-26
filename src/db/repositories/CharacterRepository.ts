@@ -2,11 +2,11 @@ import { db } from '../client';
 import { UserProfile } from '../types';
 
 export const characterRepository = {
-    addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string) => {
+    addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
         db.prepare(`
-            INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(campaignId, charName, sessionId, description, type, Date.now());
+            INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, charName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
     },
 
     getCharacterHistory: (campaignId: number, charName: string): { description: string, event_type: string, session_id: string }[] => {
@@ -64,15 +64,18 @@ export const characterRepository = {
         return db.prepare('SELECT user_id, character_name, race, class, description FROM characters WHERE campaign_id = ?').all(campaignId) as any[];
     },
 
-    updateUserCharacter: (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description', value: string): void => {
+    updateUserCharacter: (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description', value: string, isManual: boolean = true): void => {
         // Upsert character profile
         const exists = db.prepare('SELECT 1 FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId);
 
         if (exists) {
-            db.prepare(`UPDATE characters SET ${field} = ?, rag_sync_needed = 1 WHERE user_id = ? AND campaign_id = ?`).run(value, userId, campaignId);
+            let sql = `UPDATE characters SET ${field} = ?, rag_sync_needed = 1`;
+            if (isManual) sql += `, is_manual = 1`;
+            sql += ` WHERE user_id = ? AND campaign_id = ?`;
+            db.prepare(sql).run(value, userId, campaignId);
         } else {
             // Create new with just this field populated
-            db.prepare(`INSERT INTO characters (user_id, campaign_id, ${field}, rag_sync_needed) VALUES (?, ?, ?, 1)`).run(userId, campaignId, value);
+            db.prepare(`INSERT INTO characters (user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES (?, ?, ?, 1, ?)`).run(userId, campaignId, value, isManual ? 1 : 0);
         }
     },
 

@@ -191,7 +191,7 @@ export const atlasCommand: Command = {
             // Logic in existing code registers event even if not exists?
             // "addAtlasEvent" takes macro/micro.
 
-            addAtlasEvent(ctx.activeCampaign!.id, macro, micro, null, note, "MANUAL_UPDATE");
+            addAtlasEvent(ctx.activeCampaign!.id, macro, micro, null, note, "MANUAL_UPDATE", true);
             await ctx.message.reply(`📝 Nota aggiunta a **${macro} - ${micro}**. Aggiornamento atmosfera...`);
 
             await syncAtlasEntryIfNeeded(ctx.activeCampaign!.id, macro, micro, true);

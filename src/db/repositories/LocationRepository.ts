@@ -30,17 +30,18 @@ export const locationRepository = {
         const sessionDateString = new Date(effectiveTimestamp).toISOString().split('T')[0];
 
         const historyStmt = db.prepare(`
-            INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_id, reason, timestamp, session_date, is_manual)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_id, reason, timestamp, session_date, is_manual, short_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, effectiveTimestamp, sessionDateString, isManual ? 1 : 0);
+        const shortId = generateShortId('location_history');
+        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, effectiveTimestamp, sessionDateString, isManual ? 1 : 0, shortId);
 
         console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
     },
 
     getLocationHistory: (guildId: string) => {
         return db.prepare(`
-            SELECT h.macro_location, h.micro_location, h.timestamp, h.session_date, s.session_number 
+            SELECT h.short_id, h.macro_location, h.micro_location, h.timestamp, h.session_date, s.session_number 
             FROM location_history h
             JOIN campaigns c ON h.campaign_id = c.id
             LEFT JOIN sessions s ON h.session_id = s.session_id
@@ -87,7 +88,7 @@ export const locationRepository = {
 
     listAtlasEntries: (campaignId: number, limit: number = 15, offset: number = 0): any[] => {
         return db.prepare(`
-            SELECT id, macro_location, micro_location, description, last_updated
+            SELECT id, short_id, macro_location, micro_location, description, last_updated
             FROM location_atlas
             WHERE campaign_id = ?
             ORDER BY last_updated DESC
@@ -102,7 +103,7 @@ export const locationRepository = {
 
     listAllAtlasEntries: (campaignId: number): any[] => {
         return db.prepare(`
-            SELECT id, macro_location, micro_location, description, last_updated
+            SELECT id, short_id, macro_location, micro_location, description, last_updated
             FROM location_atlas
             WHERE campaign_id = ?
             ORDER BY last_updated DESC
@@ -230,7 +231,7 @@ export const locationRepository = {
 
     getLocationHistoryWithIds: (campaignId: number, limit: number = 20): any[] => {
         return db.prepare(`
-            SELECT h.id, h.macro_location, h.micro_location, h.timestamp, h.session_date, h.session_id, s.session_number
+            SELECT h.id, h.short_id, h.macro_location, h.micro_location, h.timestamp, h.session_date, h.session_id, s.session_number
             FROM location_history h
             LEFT JOIN sessions s ON h.session_id = s.session_id
             WHERE h.campaign_id = ?

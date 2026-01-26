@@ -109,10 +109,6 @@ export const questCommand: Command = {
             if (sidMatch) {
                 const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (quest) title = quest.title;
-            } else if (numericMatch) {
-                const idx = parseInt(numericMatch[1]) - 1;
-                const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
-                if (active.length > 0) title = active[0].title;
             }
 
             const quest = getQuestByTitle(ctx.activeCampaign!.id, title);
@@ -141,10 +137,6 @@ export const questCommand: Command = {
             if (sidMatch) {
                 const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (quest) search = quest.title;
-            } else if (numericMatch) {
-                const idx = parseInt(numericMatch[1]) - 1;
-                const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
-                if (active.length > 0) search = active[0].title;
             }
 
             const quest = getQuestByTitle(ctx.activeCampaign!.id, search);
@@ -174,10 +166,6 @@ export const questCommand: Command = {
             if (sidMatch) {
                 const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (quest) search = quest.title;
-            } else if (numericMatch) {
-                const idx = parseInt(numericMatch[1]) - 1;
-                const active = questRepository.getOpenQuests(ctx.activeCampaign!.id, 1, idx);
-                if (active.length > 0) search = active[0].title;
             }
 
             updateQuestStatus(ctx.activeCampaign!.id, search, 'COMPLETED');
@@ -242,15 +230,14 @@ export const questCommand: Command = {
                 return;
             }
 
-            const list = quests.map((q: any, i: number) => {
-                const absoluteIndex = offset + i + 1;
+            const list = quests.map((q: any) => {
                 const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 const statusIcon = (q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO') ? '⏳ ' :
                     (q.status === QuestStatus.COMPLETED || q.status === 'DONE') ? '✅ ' :
                         (q.status === QuestStatus.FAILED) ? '❌ ' : '';
 
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${absoluteIndex}\` \`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
+                return `\`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
             const statusHeader = statusFilter === 'ACTIVE' ? 'Attive' : statusFilter === 'ALL' ? 'Totali' : `[${statusFilter}]`;
@@ -276,11 +263,11 @@ export const questCommand: Command = {
                 return;
             }
 
-            const list = quests.map((q: any, i: number) => {
+            const list = quests.map((q: any) => {
                 const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 const statusIcon = (q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO') ? '⏳ ' : '';
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${i + 1}\` \`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
+                return `\`#${q.short_id}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;

@@ -81,8 +81,10 @@ export const initDatabase = () => {
         event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC'
         description TEXT NOT NULL,
         year INTEGER,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
+        short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -169,6 +171,7 @@ export const initDatabase = () => {
         session_id TEXT,
         timestamp INTEGER,
         is_manual INTEGER DEFAULT 0,
+        short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -444,7 +447,9 @@ export const initDatabase = () => {
         "ALTER TABLE location_atlas ADD COLUMN short_id TEXT",
         "ALTER TABLE quests ADD COLUMN short_id TEXT",
         "ALTER TABLE bestiary ADD COLUMN short_id TEXT",
-        "ALTER TABLE inventory ADD COLUMN short_id TEXT"
+        "ALTER TABLE inventory ADD COLUMN short_id TEXT",
+        "ALTER TABLE location_history ADD COLUMN short_id TEXT",
+        "ALTER TABLE world_history ADD COLUMN short_id TEXT"
     ];
 
     for (const m of migrations) {

@@ -99,7 +99,10 @@ export const bestiaryRepository = {
             shortId
         });
 
-        console.log(`[Bestiary] 👹 Mostro tracciato/aggiornato: ${name} (Var: ${originalName || '-'}) [#${shortId}]`);
+        const variantInfo = (originalName && originalName.toLowerCase() !== name.toLowerCase())
+            ? ` (Var: ${originalName})`
+            : '';
+        console.log(`[Bestiary] 👹 Mostro tracciato/aggiornato: ${name}${variantInfo} [#${shortId}]`);
     },
 
     listAllMonsters: (campaignId: number): BestiaryEntry[] => {
@@ -192,7 +195,7 @@ export const bestiaryRepository = {
     listMonsters: (campaignId: number, limit: number = 20): BestiaryEntry[] => {
         // Ritorna le entrate uniche (per nome), prendendo la più recente
         return db.prepare(`
-            SELECT id, name, status, count, MAX(last_seen) as last_seen, session_id
+            SELECT id, short_id, name, status, count, MAX(last_seen) as last_seen, session_id
             FROM bestiary
             WHERE campaign_id = ?
             GROUP BY name

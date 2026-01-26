@@ -9,7 +9,8 @@ import {
     getSessionTravelLog,
     fixLocationHistoryEntry,
     deleteLocationHistoryEntry,
-    fixCurrentLocation
+    fixCurrentLocation,
+    db
 } from '../../db';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 
@@ -54,7 +55,7 @@ export const travelsCommand: Command = {
             history.forEach((h: any) => {
                 const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
                 const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
-                msg += `\`#${h.id}\` \`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+                msg += `\`#${h.short_id}\` \`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
             });
             msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.\n💡 Usa \`$viaggi delete #ID\` per eliminare.`;
 
@@ -76,39 +77,37 @@ export const travelsCommand: Command = {
                 return;
             }
 
-            const idStr = parts[0].replace('#', '').trim();
-            const entryId = parseInt(idStr);
+            const shortId = parts[0].replace('#', '').trim();
             const [, newMacro, newMicro] = parts;
 
-            if (isNaN(entryId)) {
-                await ctx.message.reply('❌ ID non valido. Usa `$viaggi list` per vedere gli ID.');
-                return;
-            }
-
-            const success = fixLocationHistoryEntry(entryId, newMacro, newMicro);
-            if (success) {
-                await ctx.message.reply(`✅ **Voce #${entryId} corretta!**\n📍 ${newMacro} - ${newMicro}`);
+            const entry = db.prepare('SELECT id FROM location_history WHERE short_id = ?').get(shortId) as any;
+            if (entry) {
+                const success = fixLocationHistoryEntry(entry.id, newMacro, newMicro);
+                if (success) {
+                    await ctx.message.reply(`✅ **Voce #${shortId} corretta!**\n📍 ${newMacro} - ${newMicro}`);
+                } else {
+                    await ctx.message.reply(`❌ Errore durante la correzione della voce #${shortId}.`);
+                }
             } else {
-                await ctx.message.reply(`❌ Voce #${entryId} non trovata.`);
+                await ctx.message.reply(`❌ Voce #${shortId} non trovata.`);
             }
             return;
         }
 
         // --- SUBCOMMAND: delete (delete entry) ---
         if (argsStr.toLowerCase().startsWith('delete ') || argsStr.toLowerCase().startsWith('del ') || argsStr.toLowerCase().startsWith('remove ')) {
-            const idStr = argsStr.split(' ')[1].replace('#', '').trim();
-            const entryId = parseInt(idStr);
+            const shortId = argsStr.split(' ')[1].replace('#', '').trim();
 
-            if (isNaN(entryId)) {
-                await ctx.message.reply('❌ ID non valido. Usa `$viaggi list` per vedere gli ID.');
-                return;
-            }
-
-            const success = deleteLocationHistoryEntry(entryId);
-            if (success) {
-                await ctx.message.reply(`🗑️ Voce #${entryId} eliminata dalla cronologia viaggi.`);
+            const entry = db.prepare('SELECT id FROM location_history WHERE short_id = ?').get(shortId) as any;
+            if (entry) {
+                const success = deleteLocationHistoryEntry(entry.id);
+                if (success) {
+                    await ctx.message.reply(`🗑️ Voce #${shortId} eliminata dalla cronologia viaggi.`);
+                } else {
+                    await ctx.message.reply(`❌ Errore durante l'eliminazione della voce #${shortId}.`);
+                }
             } else {
-                await ctx.message.reply(`❌ Voce #${entryId} non trovata.`);
+                await ctx.message.reply(`❌ Voce #${shortId} non trovata.`);
             }
             return;
         }

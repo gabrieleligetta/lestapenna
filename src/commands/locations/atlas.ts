@@ -86,8 +86,8 @@ export const atlasCommand: Command = {
                     return;
                 }
 
-                const list = entries.map((e: any, i: number) =>
-                    `\`${i + 1}\` \`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
+                const list = entries.map((e: any) =>
+                    `\`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
                 ).join('\n');
 
                 let footer = `\n\n💡 Usa \`$atlante <ID>\` o \`$atlante <Regione> | <Luogo>\` per dettagli.`;
@@ -130,12 +130,11 @@ export const atlasCommand: Command = {
                 return;
             }
 
-            const list = entries.map((e: any, i: number) => {
-                const absoluteIndex = offset + i + 1;
+            const list = entries.map((e: any) => {
                 const descPreview = (e.description && e.description.trim().length > 0)
                     ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '')
                     : '*nessuna descrizione*';
-                return `\`${absoluteIndex}\` \`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
+                return `\`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
             }).join('\n');
 
             let footer = `\n💡 Usa \`$atlante <ID>\` o \`$atlante update <ID> | <Nota>\``;
@@ -160,7 +159,6 @@ export const atlasCommand: Command = {
 
             // ID Resolution
             const sidMatch = parts[0].match(/^#([a-z0-9]{5})$/i);
-            const idMatch = parts[0].match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -172,22 +170,6 @@ export const atlasCommand: Command = {
                     await ctx.message.reply(`❌ ID \`#${sidMatch[1]}\` non trovato.`);
                     return;
                 }
-            } else if (idMatch) {
-                // ID Mode
-                if (parts.length < 2) {
-                    await ctx.message.reply('Uso: `$atlante update <ID> | <Nota>`');
-                    return;
-                }
-                const idx = parseInt(idMatch[1]) - 1;
-                // Fetch specific entry by offset
-                const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
-                if (entries.length === 0) {
-                    await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
-                    return;
-                }
-                macro = entries[0].macro_location;
-                micro = entries[0].micro_location;
-                note = parts.slice(1).join('|').trim();
             } else {
                 // Name Mode: Region | Place | Note
                 if (parts.length < 3) {
@@ -218,7 +200,6 @@ export const atlasCommand: Command = {
             let micro = '';
 
             const sidMatch = deleteArgs.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = deleteArgs.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -229,15 +210,6 @@ export const atlasCommand: Command = {
                     await ctx.message.reply(`❌ ID \`#${sidMatch[1]}\` non trovato.`);
                     return;
                 }
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
-                if (entries.length === 0) {
-                    await ctx.message.reply(`❌ ID #${idMatch[1]} non valido.`);
-                    return;
-                }
-                macro = entries[0].macro_location;
-                micro = entries[0].micro_location;
             } else {
                 const parts = deleteArgs.split('|').map(s => s.trim());
                 if (parts.length !== 2) {
@@ -270,20 +242,14 @@ export const atlasCommand: Command = {
 
         // --- PARSE PIPE-SEPARATED ARGS or ID ---
         const parts = argsStr.split('|').map(s => s.trim());
+        const sidMatchDetail = parts[0].match(/^#([a-z0-9]{5})$/i);
 
         // ID View: $atlante 1 or $atlante #abcde
-        const sidMatchDetail = parts[0].match(/^#([a-z0-9]{5})$/i);
-        const idMatchDetail = parts[0].match(/^#?(\d+)$/);
-
-        if (parts.length === 1 && (sidMatchDetail || idMatchDetail)) {
+        if (parts.length === 1 && sidMatchDetail) {
             let entry: any = null;
 
             if (sidMatchDetail) {
                 entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
-            } else if (idMatchDetail) {
-                const idx = parseInt(idMatchDetail[1]) - 1;
-                const entries = listAtlasEntries(ctx.activeCampaign!.id, 1, idx);
-                if (entries.length > 0) entry = entries[0];
             }
 
             if (entry) {
@@ -296,8 +262,6 @@ export const atlasCommand: Command = {
             } else {
                 if (sidMatchDetail) {
                     await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
-                } else {
-                    await ctx.message.reply(`❌ ID #${idMatchDetail![1]} non valido.`);
                 }
             }
             return;

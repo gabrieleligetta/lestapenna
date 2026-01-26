@@ -94,12 +94,8 @@ export const inventoryCommand: Command = {
             const idMatch = item.match(/^#?(\d+)$/);
 
             if (sidMatch) {
-                const i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (i) item = i.item_name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const all = getInventory(ctx.activeCampaign!.id, 1, idx);
-                if (all.length > 0) item = all[0].item_name;
+                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (itemEntry) item = itemEntry.item_name;
             }
 
             const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
@@ -128,12 +124,8 @@ export const inventoryCommand: Command = {
             const idMatch = item.match(/^#?(\d+)$/);
 
             if (sidMatch) {
-                const i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (i) item = i.item_name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const all = getInventory(ctx.activeCampaign!.id, 1, idx);
-                if (all.length > 0) item = all[0].item_name;
+                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (itemEntry) item = itemEntry.item_name;
             }
 
             const removed = removeLoot(ctx.activeCampaign!.id, item, 1);
@@ -156,12 +148,8 @@ export const inventoryCommand: Command = {
             const idMatch = item.match(/^#?(\d+)$/);
 
             if (sidMatch) {
-                const i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (i) item = i.item_name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const all = getInventory(ctx.activeCampaign!.id, 1, idx);
-                if (all.length > 0) item = all[0].item_name;
+                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (itemEntry) item = itemEntry.item_name;
             }
 
             const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
@@ -207,10 +195,9 @@ export const inventoryCommand: Command = {
                 return;
             }
 
-            const list = items.map((i: any, idx: number) => {
-                const absoluteIndex = offset + idx + 1;
+            const list = items.map((i: any) => {
                 const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-                return `\`${absoluteIndex}\` \`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+                return `\`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
@@ -232,9 +219,9 @@ export const inventoryCommand: Command = {
                 return;
             }
 
-            const list = items.map((i: any, idx: number) => {
+            const list = items.map((i: any) => {
                 const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-                return `\`${idx + 1}\` \`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+                return `\`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
@@ -249,25 +236,19 @@ export const inventoryCommand: Command = {
         const idMatchDetail = arg.match(/^#?(\d+)$/);
 
         if (sidMatchDetail || idMatchDetail) {
-            let i: any = null;
+            let itemDetail: any = null;
 
             if (sidMatchDetail) {
-                i = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
-            } else if (idMatchDetail) {
-                const idx = parseInt(idMatchDetail[1]) - 1;
-                const items = getInventory(ctx.activeCampaign!.id, 1, idx);
-                if (items.length > 0) i = items[0];
+                itemDetail = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
             }
 
-            if (i) {
-                const desc = i.description ? `\n\n📜 **Descrizione:**\n${i.description}` : '';
-                const notes = i.notes ? `\n\n📝 **Note:**\n${i.notes}` : '';
-                await ctx.message.reply(`📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}${notes}`);
+            if (itemDetail) {
+                const desc = itemDetail.description ? `\n\n📜 **Descrizione:**\n${itemDetail.description}` : '';
+                const notes = itemDetail.notes ? `\n\n📝 **Note:**\n${itemDetail.notes}` : '';
+                await ctx.message.reply(`📦 **${itemDetail.item_name}** ${itemDetail.quantity > 1 ? `(x${itemDetail.quantity})` : ''}${desc}${notes}`);
             } else {
                 if (sidMatchDetail) {
                     await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
-                } else {
-                    await ctx.message.reply(`❌ ID #${idMatchDetail![1]} non valido.`);
                 }
             }
             return;
@@ -305,24 +286,16 @@ export const mergeItemCommand: Command = {
         const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
         const oldIdMatch = oldName.match(/^#?(\d+)$/);
         if (oldSidMatch) {
-            const i = getInventoryItemByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
-            if (i) oldName = i.item_name;
-        } else if (oldIdMatch) {
-            const idx = parseInt(oldIdMatch[1]) - 1;
-            const items = getInventory(ctx.activeCampaign!.id, 1, idx);
-            if (items.length > 0) oldName = items[0].item_name;
+            const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
+            if (itemEntry) oldName = itemEntry.item_name;
         }
 
         // Resolve New Name
         const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
         const newIdMatch = newName.match(/^#?(\d+)$/);
         if (newSidMatch) {
-            const i = getInventoryItemByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
-            if (i) newName = i.item_name;
-        } else if (newIdMatch) {
-            const idx = parseInt(newIdMatch[1]) - 1;
-            const items = getInventory(ctx.activeCampaign!.id, 1, idx);
-            if (items.length > 0) newName = items[0].item_name;
+            const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
+            if (itemEntry) newName = itemEntry.item_name;
         }
 
         const success = mergeInventoryItems(ctx.activeCampaign!.id, oldName, newName);

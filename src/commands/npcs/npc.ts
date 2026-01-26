@@ -70,12 +70,11 @@ export const npcCommand: Command = {
                 return;
             }
 
-            const list = npcs.map((n: any, i: number) => {
-                const absoluteIndex = offset + i + 1;
-                return `\`${absoluteIndex}\` \`#${n.short_id}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`;
+            const list = npcs.map((n: any) => {
+                return `\`#${n.short_id}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`;
             }).join('\n');
 
-            let footer = `\n\n💡 Usa \`$npc <numero>\` o \`$npc <Nome>\` per dettagli.`;
+            let footer = `\n\n💡 Usa \`$npc #ID\` o \`$npc <Nome>\` per dettagli.`;
             if (totalPages > 1) {
                 footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$npc list ${page + 1}\` per la prossima)` + footer;
             }
@@ -84,28 +83,14 @@ export const npcCommand: Command = {
             return;
         }
 
-        // --- SELECTION BY ID: $npc #abcde, $npc 1 ---
+        // --- SELECTION BY ID: $npc #abcde ---
         const sidMatch = argsStr.match(/^#([a-z0-9]{5})$/i);
-        const numericMatch = argsStr.match(/^#?(\d+)$/);
 
-        if (sidMatch || numericMatch) {
-            let npc: any = null;
-
-            if (sidMatch) {
-                npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-            } else if (numericMatch) {
-                const absoluteIdx = parseInt(numericMatch[1]);
-                const npcs = listNpcs(ctx.activeCampaign!.id, 1, absoluteIdx - 1);
-                if (npcs.length > 0) npc = npcs[0];
-            }
+        if (sidMatch) {
+            const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
 
             if (!npc) {
-                if (numericMatch) {
-                    const total = countNpcs(ctx.activeCampaign!.id);
-                    await ctx.message.reply(`❌ ID non valido. Usa un numero da 1 a ${total}.`);
-                } else {
-                    await ctx.message.reply(`❌ ID \`#${sidMatch![1]}\` non trovato.`);
-                }
+                await ctx.message.reply(`❌ ID \`#${sidMatch[1]}\` non trovato.`);
                 return;
             }
             const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
@@ -188,28 +173,18 @@ export const npcCommand: Command = {
 
             // Resolve Source ID
             const sourceSidMatch = sourceName.match(/^#([a-z0-9]{5})$/i);
-            const sourceIdMatch = sourceName.match(/^#?(\d+)$/);
 
             if (sourceSidMatch) {
                 const npc = getNpcByShortId(ctx.activeCampaign!.id, sourceSidMatch[1]);
                 if (npc) sourceName = npc.name;
-            } else if (sourceIdMatch) {
-                const idx = parseInt(sourceIdMatch[1]) - 1;
-                const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
-                if (npcs.length > 0) sourceName = npcs[0].name;
             }
 
             // Resolve Target ID
             const targetSidMatch = targetName.match(/^#([a-z0-9]{5})$/i);
-            const targetIdMatch = targetName.match(/^#?(\d+)$/);
 
             if (targetSidMatch) {
                 const npc = getNpcByShortId(ctx.activeCampaign!.id, targetSidMatch[1]);
                 if (npc) targetName = npc.name;
-            } else if (targetIdMatch) {
-                const idx = parseInt(targetIdMatch[1]) - 1;
-                const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
-                if (npcs.length > 0) targetName = npcs[0].name;
             }
 
             const sourceNpc = getNpcEntry(ctx.activeCampaign!.id, sourceName);
@@ -248,15 +223,10 @@ export const npcCommand: Command = {
 
             // ID Resolution
             const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = name.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (npc) name = npc.name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
-                if (npcs.length > 0) name = npcs[0].name;
             }
 
             // Full Wipe: RAG + History + Dossier
@@ -373,15 +343,10 @@ export const npcCommand: Command = {
 
                 // ID Resolution
                 const sidMatchArea = name.match(/^#([a-z0-9]{5})$/i);
-                const idMatchArea = name.match(/^#?(\d+)$/);
 
                 if (sidMatchArea) {
                     const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchArea[1]);
                     if (npc) name = npc.name;
-                } else if (idMatchArea) {
-                    const idx = parseInt(idMatchArea[1]) - 1;
-                    const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
-                    if (npcs.length > 0) name = npcs[0].name;
                 }
 
                 const npc = getNpcEntry(ctx.activeCampaign!.id, name);
@@ -419,15 +384,10 @@ export const npcCommand: Command = {
 
                 // ID Resolution
                 const sidMatchMeta = name.match(/^#([a-z0-9]{5})$/i);
-                const idMatchMeta = name.match(/^#?(\d+)$/);
 
                 if (sidMatchMeta) {
                     const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchMeta[1]);
                     if (npc) name = npc.name;
-                } else if (idMatchMeta) {
-                    const idx = parseInt(idMatchMeta[1]) - 1;
-                    const npcs = listNpcs(ctx.activeCampaign!.id, 1, idx);
-                    if (npcs.length > 0) name = npcs[0].name;
                 }
 
                 const firstSpace = remainder.indexOf(' ');

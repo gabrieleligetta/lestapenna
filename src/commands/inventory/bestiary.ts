@@ -53,10 +53,6 @@ export const bestiaryCommand: Command = {
             if (sidMatch) {
                 const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (monster) name = monster.name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const all = listAllMonsters(ctx.activeCampaign!.id);
-                if (all[idx]) name = all[idx].name;
             }
 
             const monster = getMonsterByName(ctx.activeCampaign!.id, name);
@@ -84,10 +80,6 @@ export const bestiaryCommand: Command = {
             if (sidMatch) {
                 const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (monster) name = monster.name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const all = listAllMonsters(ctx.activeCampaign!.id);
-                if (all[idx]) name = all[idx].name;
             }
 
             const existing = getMonsterByName(ctx.activeCampaign!.id, name);
@@ -124,10 +116,6 @@ export const bestiaryCommand: Command = {
             if (oldSidMatch) {
                 const m = getMonsterByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
                 if (m) oldName = m.name;
-            } else if (oldIdMatch) {
-                const idx = parseInt(oldIdMatch[1]) - 1;
-                const all = listAllMonsters(ctx.activeCampaign!.id);
-                if (all[idx]) oldName = all[idx].name;
             }
 
             // Resolve New Name
@@ -136,10 +124,6 @@ export const bestiaryCommand: Command = {
             if (newSidMatch) {
                 const m = getMonsterByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
                 if (m) newName = m.name;
-            } else if (newIdMatch) {
-                const idx = parseInt(newIdMatch[1]) - 1;
-                const all = listAllMonsters(ctx.activeCampaign!.id);
-                if (all[idx]) newName = all[idx].name;
             }
 
             const success = mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
@@ -165,10 +149,6 @@ export const bestiaryCommand: Command = {
             if (sidMatch) {
                 const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (monster) search = monster.name;
-            } else if (idMatch) {
-                const idx = parseInt(idMatch[1]) - 1;
-                const all = listAllMonsters(ctx.activeCampaign!.id);
-                if (all[idx]) search = all[idx].name;
             }
 
             const monster = listAllMonsters(ctx.activeCampaign!.id).find((m: any) =>
@@ -204,9 +184,9 @@ export const bestiaryCommand: Command = {
             return;
         }
 
-        const defeated = monsters.map((m: any, i: number) => ({ ...m, idx: i + 1 })).filter((m: any) => m.status === 'DEFEATED');
-        const alive = monsters.map((m: any, i: number) => ({ ...m, idx: i + 1 })).filter((m: any) => m.status === 'ALIVE');
-        const fled = monsters.map((m: any, i: number) => ({ ...m, idx: i + 1 })).filter((m: any) => m.status === 'FLED');
+        const defeated = monsters.filter((m: any) => m.status === 'DEFEATED');
+        const alive = monsters.filter((m: any) => m.status === 'ALIVE');
+        const fled = monsters.filter((m: any) => m.status === 'FLED');
 
         // Only show top 20 or summary if too many?
         // Current logic shows all. 
@@ -214,13 +194,13 @@ export const bestiaryCommand: Command = {
         let response = `**👹 Bestiario (${ctx.activeCampaign?.name})**\n\n`;
 
         if (alive.length > 0) {
-            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `\`${m.idx}\` \`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `\`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
         if (defeated.length > 0) {
-            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `\`${m.idx}\` \`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `\`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
         if (fled.length > 0) {
-            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `\`${m.idx}\` \`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `\`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
         }
 
         response += `💡 Usa \`$bestiario <ID>\` per dettagli o \`$bestiario update <ID> | <Nota>\`.`;

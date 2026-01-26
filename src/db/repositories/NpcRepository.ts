@@ -273,7 +273,7 @@ export const npcRepository = {
 
     findNpcDossierByName: (campaignId: number, query: string): any[] => {
         return db.prepare(`
-            SELECT name, role, status, description 
+            SELECT short_id, name, role, status, description 
             FROM npc_dossier
             WHERE campaign_id = ? 
             AND (lower(name) LIKE lower(?) OR lower(aliases) LIKE lower(?))

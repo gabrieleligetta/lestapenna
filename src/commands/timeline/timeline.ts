@@ -4,7 +4,7 @@
 
 import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { addWorldEvent, deleteWorldEvent, getWorldTimeline } from '../../db';
+import { addWorldEvent, deleteWorldEvent, getWorldTimeline, db } from '../../db';
 import { safeSend } from '../../utils/discordHelper';
 
 export const timelineCommand: Command = {
@@ -37,21 +37,21 @@ export const timelineCommand: Command = {
             return;
         }
 
-        // Subcommand: $timeline delete <ID>
+        // Subcommand: $timeline delete <#ID>
         if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('remove ')) {
-            const idStr = arg.split(' ')[1];
-            const eventId = parseInt(idStr);
+            const shortId = arg.split(' ')[1].replace('#', '').trim();
 
-            if (isNaN(eventId)) {
-                await ctx.message.reply("Uso: `$timeline delete <ID>` (L'ID deve essere un numero)");
+            const event = db.prepare('SELECT id FROM world_history WHERE short_id = ?').get(shortId) as any;
+            if (!event) {
+                await ctx.message.reply(`❌ Evento \`#${shortId}\` non trovato.`);
                 return;
             }
 
-            const success = deleteWorldEvent(eventId);
+            const success = deleteWorldEvent(event.id);
             if (success) {
-                await ctx.message.reply(`🗑️ Evento #${eventId} eliminato dalla cronologia.`);
+                await ctx.message.reply(`🗑️ Evento \`#${shortId}\` eliminato dalla cronologia.`);
             } else {
-                await ctx.message.reply(`❌ Evento #${eventId} non trovato.`);
+                await ctx.message.reply(`❌ Errore durante l'eliminazione dell'evento \`#${shortId}\`.`);
             }
             return;
         }
@@ -78,10 +78,10 @@ export const timelineCommand: Command = {
         events.forEach((e: any) => {
             const icon = icons[e.event_type] || '🔹';
             const yearLabel = e.year === 0 ? "**[Anno 0]**" : (e.year > 0 ? `**[${e.year} D.E.]**` : `**[${Math.abs(e.year)} P.E.]**`);
-            msg += `\`#${e.id}\` ${yearLabel} ${icon} ${e.description}\n`;
+            msg += `\`#${e.short_id}\` ${yearLabel} ${icon} ${e.description}\n`;
         });
 
-        msg += `\n💡 Usa \`$timeline delete <ID>\` per eliminare un evento.`;
+        msg += `\n💡 Usa \`$timeline delete <#ID>\` per eliminare un evento.`;
 
         // Handle message length (split if necessary)
         await safeSend(ctx.message.channel as TextChannel, msg);

@@ -13,7 +13,9 @@ export function alignEntityShortIds() {
         { name: 'location_atlas', label: 'Atlas' },
         { name: 'quests', label: 'Quests' },
         { name: 'bestiary', label: 'Bestiary' },
-        { name: 'inventory', label: 'Inventory' }
+        { name: 'inventory', label: 'Inventory' },
+        { name: 'location_history', label: 'Travel Log' },
+        { name: 'world_history', label: 'Timeline' }
     ];
 
     db.transaction(() => {

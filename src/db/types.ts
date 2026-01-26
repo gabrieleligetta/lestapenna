@@ -104,12 +104,19 @@ export interface NpcEntry {
     first_session_id?: string | null; // 🆕 Tracciamento origine
 }
 
+export enum QuestStatus {
+    OPEN = 'OPEN',
+    IN_PROGRESS = 'IN_PROGRESS',
+    COMPLETED = 'COMPLETED',
+    FAILED = 'FAILED'
+}
+
 export interface Quest {
     id: number;
     campaign_id: number;
     title: string;
     description?: string;
-    status: 'OPEN' | 'COMPLETED' | 'FAILED';
+    status: QuestStatus;
     type?: 'MAJOR' | 'MINOR';
     created_at: number;
     last_updated: number;

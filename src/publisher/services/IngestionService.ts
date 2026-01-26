@@ -308,7 +308,7 @@ export class IngestionService {
 
         const dedupedNpcs = await deduplicateNpcBatch(npcUpdates);
         for (const npc of dedupedNpcs) {
-            if (npc.name && npc.description) {
+            if (npc.name && (npc.description || npc.role || npc.status)) {
                 // Name Cleaning
                 const clean = cleanEntityName(npc.name);
                 const npcName = clean.name;

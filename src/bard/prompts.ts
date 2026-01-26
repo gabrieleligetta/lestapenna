@@ -122,7 +122,7 @@ ${memoryContext}
             "description": "Descrizione del progresso o aggiornamento (es. 'Il gruppo ha trovato la chiave della cella')",
             "title": "Titolo breve della missione (es. 'Salvare il Fabbro')",
             "description": "Descrizione del progresso o aggiornamento (es. 'Il gruppo ha trovato la chiave della cella')",
-            "status": "OPEN|COMPLETED|FAILED",
+            "status": "OPEN|IN_PROGRESS|COMPLETED|FAILED",
             "type": "MAJOR|MINOR"
         }
     ],
@@ -619,9 +619,7 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
 **Quest:**
 - **CRITICO**: Confronta OGNI quest di input con la lista "Quest Attive" nel contesto.
 - Se esiste già una quest con significato simile (es. "Uccidere Drago" vs "Sconfiggere il Drago"), **SKIP** a meno che non ci sia un aggiornamento di stato o descrizione.
-- Se l'input include stati come "(Completata)", "(In corso)", usali per aggiornare lo status.
-- Mantieni SOLO le quest che sono *veramente* nuove (mai viste prima) o che hanno un aggiornamento significativo.
-- Normalizza: rimuovi prefissi come "Quest:", "TODO:", capitalizza correttamente
+- **QUEST STATUS**: "OPEN" = Nuova quest o non ancora iniziata. "IN_PROGRESS" = Obiettivi parziali raggiunti, attivita' in corso. "COMPLETED" = Finita con successo. "FAILED" = Fallita.
 - MANTIENI STRUTTURA: Restituisci oggetti JSON { title, description, status, type }
 - CLASSIFICAZIONE: Se la quest è "Comprare pane" -> SKIP o MINOR. Se è "Salvare il Regno" -> MAJOR.
 
@@ -651,7 +649,7 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     "skip": ["frecce rotte - valore <10mo"]
   },
   "quests": {
-    "keep": [{"title": "Recuperare la Spada", "description": "Trovata nella grotta", "status": "OPEN", "type": "MAJOR"}],
+    "keep": [{"title": "Recuperare la Spada", "description": "Trovata nella grotta", "status": "IN_PROGRESS", "type": "MAJOR"}],
     "skip": ["parlare con oste - micro-task", "duplicato di quest attiva"]
   },
   "atlas": {

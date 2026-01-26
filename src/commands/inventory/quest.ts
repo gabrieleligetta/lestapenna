@@ -18,6 +18,7 @@ import {
     deleteQuestHistory,
     deleteQuestRagSummary
 } from '../../db';
+import { QuestStatus, Quest } from '../../db/types';
 import { questRepository } from '../../db/repositories/QuestRepository';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
@@ -56,7 +57,11 @@ export const questCommand: Command = {
             }
 
             const list = sessionQuests.map((q: any) => {
-                const statusIcon = q.status === 'COMPLETED' ? '✅' : q.status === 'FAILED' ? '❌' : '🔹';
+                const isCompleted = q.status === QuestStatus.COMPLETED || q.status === 'DONE';
+                const isFailed = q.status === QuestStatus.FAILED;
+                const isInProgress = q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO';
+
+                const statusIcon = isCompleted ? '✅' : isFailed ? '❌' : isInProgress ? '⏳' : '🔹';
                 const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
                 // Show description snippet if available
                 const snippet = q.description ? `\n> *${q.description.substring(0, 100)}${q.description.length > 100 ? '...' : ''}*` : '';
@@ -72,7 +77,7 @@ export const questCommand: Command = {
         if (arg.toLowerCase().startsWith('add ')) {
             const title = arg.substring(4);
             const currentSession = guildSessions.get(ctx.guildId);
-            addQuest(ctx.activeCampaign!.id, title, currentSession, undefined, 'OPEN', 'MAJOR', true);
+            addQuest(ctx.activeCampaign!.id, title, currentSession, undefined, QuestStatus.OPEN, 'MAJOR', true);
 
             // Add initial history event?
             if (currentSession) {
@@ -175,41 +180,72 @@ export const questCommand: Command = {
             return;
         }
 
-        // SUBCOMMAND: list [page]
+        // SUBCOMMAND: list [status|page] [page]
+        // Examples: $quest list, $quest list completed, $quest list completed 2, $quest list 2
         if (arg.toLowerCase().startsWith('list') || arg.toLowerCase().startsWith('lista')) {
+            const parts = arg.split(' ').slice(1);
+            let statusFilter = 'ACTIVE'; // Default to active quests
             let page = 1;
-            const parts = arg.split(' ');
-            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
-                page = parseInt(parts[1]);
+
+            if (parts.length > 0) {
+                // Check if first part is a status or a number
+                const firstPart = parts[0].toUpperCase();
+                if (!isNaN(parseInt(firstPart))) {
+                    page = parseInt(firstPart);
+                } else {
+                    statusFilter = firstPart;
+                    if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                        page = parseInt(parts[1]);
+                    }
+                }
             }
 
             const pageSize = 10;
             const offset = (page - 1) * pageSize;
-            const total = questRepository.countOpenQuests(ctx.activeCampaign!.id);
+
+            let quests: Quest[];
+            let total: number;
+
+            if (statusFilter === 'ACTIVE' || statusFilter === 'APERTE') {
+                quests = questRepository.getOpenQuests(ctx.activeCampaign!.id, pageSize, offset);
+                total = questRepository.countOpenQuests(ctx.activeCampaign!.id);
+            } else {
+                quests = questRepository.getQuestsByStatus(ctx.activeCampaign!.id, statusFilter, pageSize, offset);
+                total = questRepository.countQuestsByStatus(ctx.activeCampaign!.id, statusFilter);
+            }
+
             const totalPages = Math.ceil(total / pageSize);
+
+            if (total === 0) {
+                const statusName = statusFilter === 'ACTIVE' ? 'attiva' : `con stato **${statusFilter}**`;
+                await ctx.message.reply(`Nessuna quest ${statusName} al momento.`);
+                return;
+            }
 
             if (page < 1 || (totalPages > 0 && page > totalPages)) {
                 await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
                 return;
             }
 
-            const quests = questRepository.getOpenQuests(ctx.activeCampaign!.id, pageSize, offset);
-            if (quests.length === 0) {
-                await ctx.message.reply("Nessuna quest attiva al momento.");
-                return;
-            }
-
             const list = quests.map((q: any, i: number) => {
                 const absoluteIndex = offset + i + 1;
                 const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
+                const statusIcon = (q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO') ? '⏳ ' :
+                    (q.status === QuestStatus.COMPLETED || q.status === 'DONE') ? '✅ ' :
+                        (q.status === QuestStatus.FAILED) ? '❌ ' : '';
+
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${absoluteIndex}\` ${typeIcon} **${q.title}**${desc}`;
+                return `\`${absoluteIndex}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
+            const statusHeader = statusFilter === 'ACTIVE' ? 'Attive' : statusFilter === 'ALL' ? 'Totali' : `[${statusFilter}]`;
             let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;
-            if (totalPages > 1) footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$quest list ${page + 1}\` per la prossima)` + footer;
+            if (totalPages > 1) {
+                const nextCmd = statusFilter === 'ACTIVE' ? `$quest list ${page + 1}` : `$quest list ${statusFilter.toLowerCase()} ${page + 1}`;
+                footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`${nextCmd}\` per la prossima)` + footer;
+            }
 
-            await ctx.message.reply(`**🗺️ Quest Attive (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
+            await ctx.message.reply(`**🗺️ Quest ${statusHeader} (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
             return;
         }
 
@@ -227,8 +263,9 @@ export const questCommand: Command = {
 
             const list = quests.map((q: any, i: number) => {
                 const typeIcon = q.type === 'MAJOR' ? '👑' : '📜';
+                const statusIcon = (q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO') ? '⏳ ' : '';
                 const desc = q.description ? `\n   > *${q.description.substring(0, 150)}${q.description.length > 150 ? '...' : ''}*` : '';
-                return `\`${i + 1}\` ${typeIcon} **${q.title}**${desc}`;
+                return `\`${i + 1}\` ${typeIcon} ${statusIcon}**${q.title}**${desc}`;
             }).join('\n');
 
             let footer = `\n\n💡 Usa \`$quest update <Titolo> | <Nota>\` per aggiornare.`;

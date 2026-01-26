@@ -1,5 +1,5 @@
 import { db } from '../client';
-import { Quest } from '../types';
+import { Quest, QuestStatus } from '../types';
 
 // Helper per calcolare la distanza di Levenshtein (Fuzzy Match)
 const levenshteinDistance = (a: string, b: string): number => {
@@ -75,20 +75,23 @@ export const questRepository = {
             }
 
             // Determine new status based on precedence
-            // Precedence: (COMPLETED | FAILED | SUCCEEDED | DONE) > (IN_PROGRESS) > (OPEN)
-            // If current is Final, don't revert to OPEN.
-            const isFinal = (s: string) => ['COMPLETED', 'FAILED', 'SUCCEEDED', 'DONE'].includes(s.toUpperCase());
-            const currentStatus = current.status || 'OPEN';
-            const newStatus = status || 'OPEN';
+            // Precedence: (COMPLETED | FAILED) > (IN_PROGRESS) > (OPEN)
+            // If current is Final, don't revert to active.
+            const isFinal = (s: string) => [QuestStatus.COMPLETED, QuestStatus.FAILED, 'SUCCEEDED', 'DONE'].includes(s.toUpperCase());
+            const currentStatus = current.status || QuestStatus.OPEN;
+            const newStatus = status || QuestStatus.OPEN;
 
             let finalStatus = currentStatus;
 
             if (isFinal(newStatus)) {
                 finalStatus = newStatus; // Always accept new Final status
             } else if (!isFinal(currentStatus)) {
-                finalStatus = newStatus; // Update if current is NOT final (e.g. Open -> In Progress)
+                // Precedence among non-final: IN_PROGRESS > OPEN
+                if (newStatus === QuestStatus.IN_PROGRESS || currentStatus === QuestStatus.OPEN) {
+                    finalStatus = newStatus;
+                }
             }
-            // Else: Current is Final, New is Open/InProgress -> Keep Current (Final)
+            // Else: Current is Final, New is active -> Keep Current (Final)
 
             db.prepare(`
                 UPDATE quests 
@@ -153,11 +156,27 @@ export const questRepository = {
     },
 
     getOpenQuests: (campaignId: number, limit: number = 20, offset: number = 0): Quest[] => {
-        return db.prepare("SELECT * FROM quests WHERE campaign_id = ? AND status = 'OPEN' LIMIT ? OFFSET ?").all(campaignId, limit, offset) as Quest[];
+        return db.prepare(`SELECT * FROM quests WHERE campaign_id = ? AND status IN ('OPEN', 'IN_PROGRESS', 'IN CORSO') LIMIT ? OFFSET ?`).all(campaignId, limit, offset) as Quest[];
     },
 
     countOpenQuests: (campaignId: number): number => {
-        const result = db.prepare("SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status = 'OPEN'").get(campaignId) as { count: number };
+        const result = db.prepare(`SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status IN ('OPEN', 'IN_PROGRESS', 'IN CORSO')`).get(campaignId) as { count: number };
+        return result.count;
+    },
+
+    getQuestsByStatus: (campaignId: number, status: string, limit: number = 20, offset: number = 0): Quest[] => {
+        if (status.toUpperCase() === 'ALL') {
+            return db.prepare('SELECT * FROM quests WHERE campaign_id = ? ORDER BY last_updated DESC LIMIT ? OFFSET ?').all(campaignId, limit, offset) as Quest[];
+        }
+        return db.prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = ? ORDER BY last_updated DESC LIMIT ? OFFSET ?').all(campaignId, status.toUpperCase(), limit, offset) as Quest[];
+    },
+
+    countQuestsByStatus: (campaignId: number, status: string): number => {
+        if (status.toUpperCase() === 'ALL') {
+            const result = db.prepare('SELECT COUNT(*) as count FROM quests WHERE campaign_id = ?').get(campaignId) as { count: number };
+            return result.count;
+        }
+        const result = db.prepare('SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status = ?').get(campaignId, status.toUpperCase()) as { count: number };
         return result.count;
     },
 

@@ -2,10 +2,12 @@ import { db } from './client';
 export { db };
 
 import { initDatabase } from './schema';
+import { alignQuestStatuses } from './maintenance/questStatusAlignment';
 try {
     initDatabase();
+    alignQuestStatuses();
 } catch (e) {
-    console.error("[DB] Failed to initialize database schema:", e);
+    console.error("[DB] Failed to initialize database schema or alignment:", e);
 }
 
 // Re-export types

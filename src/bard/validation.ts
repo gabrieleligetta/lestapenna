@@ -6,6 +6,7 @@ import { ValidationBatchInput, ValidationBatchOutput } from './types';
 import { metadataClient, METADATA_PROVIDER, METADATA_MODEL } from './config';
 import { monitor } from '../monitor';
 import { getNpcHistory, getCharacterHistory, getOpenQuests } from '../db';
+import { QuestStatus } from '../db/types';
 import { VALIDATION_PROMPT } from './prompts';
 
 /**
@@ -82,22 +83,40 @@ export async function validateBatch(
         const result = JSON.parse(response.choices[0].message.content || "{}");
 
         // Normalize Quests with robust fallback logic
+        const normalizeStatus = (s?: string): QuestStatus => {
+            if (!s) return QuestStatus.OPEN;
+            const upper = s.toUpperCase();
+            if (['IN CORSO', 'IN_PROGRESS', 'PROGRESS'].includes(upper)) return QuestStatus.IN_PROGRESS;
+            if (['COMPLETED', 'DONE', 'COMPLETATA', 'SUCCEEDED'].includes(upper)) return QuestStatus.COMPLETED;
+            if (['FAILED', 'FALLITA'].includes(upper)) return QuestStatus.FAILED;
+            return QuestStatus.OPEN;
+        };
+
         let normalizedQuests;
         if (result.quests && result.quests.keep) {
             normalizedQuests = {
-                keep: result.quests.keep.map((q: any) => (typeof q === 'string' ? { title: q, description: '', status: 'OPEN' } : q)),
+                keep: result.quests.keep.map((q: any) => {
+                    if (typeof q === 'string') return { title: q, description: '', status: QuestStatus.OPEN };
+                    return { ...q, status: normalizeStatus(q.status) };
+                }),
                 skip: result.quests.skip || []
             };
         } else if (Array.isArray(result.quests)) {
             // Fallback if AI returns flat array instead of {keep, skip}
             normalizedQuests = {
-                keep: result.quests.map((q: any) => (typeof q === 'string' ? { title: q, description: '', status: 'OPEN' } : q)),
+                keep: result.quests.map((q: any) => {
+                    if (typeof q === 'string') return { title: q, description: '', status: QuestStatus.OPEN };
+                    return { ...q, status: normalizeStatus(q.status) };
+                }),
                 skip: []
             };
         } else {
             // Fallback if AI omits field or returns unknown format: Keep everything from input
             normalizedQuests = {
-                keep: (input.quests || []).map((q: any) => (typeof q === 'string' ? { title: q, description: '', status: 'OPEN' } : q)),
+                keep: (input.quests || []).map((q: any) => {
+                    if (typeof q === 'string') return { title: q, description: '', status: QuestStatus.OPEN };
+                    return { ...q, status: normalizeStatus(q.status) };
+                }),
                 skip: []
             };
             console.log(`[Validator] ⚠️ Campo 'quests' mancante o malformato nella risposta IA. Applicato fallback conservativo.`);

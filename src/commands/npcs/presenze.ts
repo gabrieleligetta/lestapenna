@@ -42,7 +42,8 @@ export const presenzeCommand: Command = {
         let msg = `👥 **NPC Incontrati in ${sessionLabel}:**\n`;
         encounteredNPCs.forEach((npc: any) => {
             const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
-            msg += `${statusIcon} **${npc.name}** (${npc.role || '?'}) [${npc.status}]\n`;
+            const sid = npc.short_id ? `\`#${npc.short_id}\` ` : '';
+            msg += `${statusIcon} ${sid}**${npc.name}** (${npc.role || '?'}) [${npc.status}]\n`;
         });
 
         await ctx.message.reply(msg);

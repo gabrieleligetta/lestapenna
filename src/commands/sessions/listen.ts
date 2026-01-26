@@ -13,13 +13,14 @@ import { audioQueue } from '../../services/queue';
 import { connectToChannel } from '../../services/recorder';
 import { v4 as uuidv4 } from 'uuid';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
-// @ts-ignore
-import { guildSessions, checkAutoLeave } from '../../index'; // Accessing global state/functions from index for now. TODO: refactor to state module or separate utils.
+import { checkAutoLeave } from '../../bootstrap/voiceState';
+import { guildSessions } from '../../state/sessionState';
+import { ensureTestEnvironment } from './testEnv';
 
 export const listenCommand: Command = {
     name: 'listen',
     aliases: ['ascolta', 'testascolta'],
-    requiresCampaign: true,
+    requiresCampaign: false, // Changed to false to allow test setup within the command
 
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args, activeCampaign, client } = ctx;
@@ -27,19 +28,19 @@ export const listenCommand: Command = {
         const isTestMode = commandName === 'testascolta';
 
         if (isTestMode) {
-            // ensureTestEnvironment logic needed. 
-            // Importing it from index or duplicating logic? 
-            // For now, let's assume we can't easily migrate test logic yet or replicate it roughly.
-            // Or skip test mode support in this file and leave it in admin/debug?
-            // The prompt asked to migrate from index.ts.
-            // index.ts: ensureTestEnvironment is local function.
-            // I'll skip testascolta special logic for now or implement ensureTestEnvironment in ../../utils/testUtils.ts? 
-            // Given complexities, I'll notify user about test mode limitation or implement basic version.
-            // Actually, I should probably implement ensureTestEnvironment if I want full parity.
+            const setupCamp = await ensureTestEnvironment(message.guild!.id, message.author.id, message);
+            if (setupCamp) ctx.activeCampaign = setupCamp;
+            else return;
+        }
+
+        // Manual check for non-test mode since we disabled dispatcher check
+        if (!ctx.activeCampaign) {
+            await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
+            return;
         }
 
         // --- CHECK ANNO CAMPAGNA ---
-        if (activeCampaign!.current_year === undefined || activeCampaign!.current_year === null) {
+        if (ctx.activeCampaign!.current_year === undefined || ctx.activeCampaign!.current_year === null) {
             await message.reply(
                 `🛑 **Configurazione Temporale Mancante!**\n` +
                 `Prima di iniziare la prima sessione, devi stabilire l'Anno 0 e la data attuale.\n\n` +
@@ -71,7 +72,7 @@ export const listenCommand: Command = {
                 newMicro = locationArg.trim();
             }
 
-            updateLocation(activeCampaign!.id, newMacro, newMicro, sessionId);
+            updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId);
             await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
         } else {
             const currentLoc = getCampaignLocation(message.guild!.id);
@@ -93,7 +94,7 @@ export const listenCommand: Command = {
         if (!isTestMode) {
             const missingNames: string[] = [];
             humanMembers.forEach(m => {
-                const profile = getUserProfile(m.id, activeCampaign!.id);
+                const profile = getUserProfile(m.id, ctx.activeCampaign!.id);
                 if (!profile.character_name) {
                     missingNames.push(m.displayName);
                 }
@@ -101,7 +102,7 @@ export const listenCommand: Command = {
 
             if (missingNames.length > 0) {
                 await message.reply(
-                    `🛑 **ALT!** Non posso iniziare la cronaca per **${activeCampaign!.name}**.\n` +
+                    `🛑 **ALT!** Non posso iniziare la cronaca per **${ctx.activeCampaign!.name}**.\n` +
                     `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
                     missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
                 );
@@ -115,7 +116,7 @@ export const listenCommand: Command = {
         }
 
         guildSessions.set(message.guild!.id, sessionId);
-        createSession(sessionId, message.guild!.id, activeCampaign!.id);
+        createSession(sessionId, message.guild!.id, ctx.activeCampaign!.id);
 
         // 📍 Set session phase to RECORDING
         sessionPhaseManager.setPhase(sessionId, 'RECORDING');
@@ -126,13 +127,8 @@ export const listenCommand: Command = {
         console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
 
         await connectToChannel(voiceChannel, sessionId);
-        await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+        await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${ctx.activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
 
-        // checkAutoLeave is in index.ts. I imported it?
-        // I need to export checkAutoLeave from index.ts or move it.
-        // Assuming I can't modify index.ts exports easily unless I do it.
-        // I'll call it if I can, or replicate logic? 
-        // Replicating logic involves timers.
-        if (checkAutoLeave) checkAutoLeave(voiceChannel);
+        if (checkAutoLeave) checkAutoLeave(voiceChannel, client);
     }
 };

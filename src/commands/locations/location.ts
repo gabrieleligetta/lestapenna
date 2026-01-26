@@ -42,7 +42,7 @@ export const locationCommand: Command = {
             newMicro = argsStr.trim();
         }
 
-        updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId);
+        updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId, undefined, undefined, true);
 
         await ctx.message.reply(`📍 **Aggiornamento Manuale**\nImpostato su: ${newMacro || '-'} | ${newMicro || '-'}`);
     }

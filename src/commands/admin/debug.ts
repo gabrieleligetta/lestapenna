@@ -22,22 +22,24 @@ import { uploadToOracle } from '../../services/backup';
 import { waitForCompletionAndSummarize } from '../../publisher';
 import { safeSend } from '../../utils/discordHelper';
 
+import { ensureTestEnvironment } from '../sessions/testEnv';
+
 // Helper for test environment (copied/adapted from index.ts)
-async function ensureTestEnvironment(guildId: string, authorId: string, message: Message) {
-    let campaigns = getCampaigns(guildId);
-    let testCamp = campaigns.find(c => c.name === "Campagna di Test");
-
-    if (!testCamp) {
-        await message.reply("⚙️ Creazione campagna di test automatica...");
-        const newId = createCampaign(guildId, "Campagna di Test");
-        testCamp = { id: newId, guild_id: guildId, name: "Campagna di Test", description: "Campagna per debug e test stream", role: "game-master" } as any;
-    }
-
-    // Set active locally for this context? 
-    // The command context activeCampaign might be null if not set global.
-    // We should return it.
-    return testCamp;
-}
+// async function ensureTestEnvironment(guildId: string, authorId: string, message: Message) {
+//     let campaigns = getCampaigns(guildId);
+//     let testCamp = campaigns.find(c => c.name === "Campagna di Test");
+// 
+//     if (!testCamp) {
+//         await message.reply("⚙️ Creazione campagna di test automatica...");
+//         const newId = createCampaign(guildId, "Campagna di Test");
+//         testCamp = { id: newId, guild_id: guildId, name: "Campagna di Test", description: "Campagna per debug e test stream", role: "game-master" } as any;
+//     }
+// 
+//     // Set active locally for this context? 
+//     // The command context activeCampaign might be null if not set global.
+//     // We should return it.
+//     return testCamp;
+// }
 
 export const debugCommand: Command = {
     name: 'debug',
@@ -54,7 +56,7 @@ export const debugCommand: Command = {
             if (!currentCampaign) {
                 const setupCamp = await ensureTestEnvironment(message.guild!.id, message.author.id, message);
                 if (setupCamp) currentCampaign = setupCamp;
-                else return;
+                else return; // ensureTestEnvironment handles errors/replies
             }
 
             const url = args[0];

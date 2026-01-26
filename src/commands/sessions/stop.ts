@@ -3,8 +3,7 @@ import { Command, CommandContext } from '../types';
 import { disconnect } from '../../services/recorder';
 import { audioQueue } from '../../services/queue';
 import { waitForCompletionAndSummarize } from '../../publisher';
-// @ts-ignore
-import { guildSessions } from '../../index'; // Accessing global state
+import { guildSessions } from '../../state/sessionState';
 
 export const stopCommand: Command = {
     name: 'stop',

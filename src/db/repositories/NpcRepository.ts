@@ -14,7 +14,7 @@ export const npcRepository = {
         // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
             INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id)
-            VALUES ($campaignId, $name, $description, $role, $status, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId)
+            VALUES ($campaignId, $name, $description, $role, COALESCE($status, 'ALIVE'), CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId)
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET
                 description = $description,
@@ -29,7 +29,7 @@ export const npcRepository = {
             name,
             description: safeDesc,
             role: role || null,
-            status: status || 'ALIVE',
+            status: status || null, // Pass null to let SQL handle COALESCE
             sessionId: sessionId || null,
             isManual: isManual ? 1 : 0,
             shortId

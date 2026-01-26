@@ -1,7 +1,7 @@
+
 import { Command, CommandContext } from '../types';
 import { addSessionNote } from '../../db';
-// @ts-ignore
-import { guildSessions } from '../../index';
+import { guildSessions } from '../../state/sessionState';
 
 export const noteCommand: Command = {
     name: 'note',
@@ -19,7 +19,7 @@ export const noteCommand: Command = {
 
         const noteContent = args.join(' ');
         if (!noteContent) {
-            await message.reply("Uso: `$nota <Testo della nota>`");
+            await message.reply("Uso: `$nota < Testo della nota > `");
             return;
         }
 

@@ -10,7 +10,8 @@ import {
     addBestiaryEvent,
     getMonsterByName,
     getBestiaryHistory,
-    getMonsterByShortId
+    getMonsterByShortId,
+    deleteMonster
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
@@ -72,14 +73,75 @@ export const bestiaryCommand: Command = {
             return;
         }
 
+        // SUBCOMMAND: $bestiario delete <Name>
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
+            let name = arg.split(' ').slice(1).join(' ');
+
+            // ID Resolution
+            const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
+            const idMatch = name.match(/^#?(\d+)$/);
+
+            if (sidMatch) {
+                const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (monster) name = monster.name;
+            } else if (idMatch) {
+                const idx = parseInt(idMatch[1]) - 1;
+                const all = listAllMonsters(ctx.activeCampaign!.id);
+                if (all[idx]) name = all[idx].name;
+            }
+
+            const existing = getMonsterByName(ctx.activeCampaign!.id, name);
+            if (!existing) {
+                await ctx.message.reply(`❌ Mostro "${name}" non trovato.`);
+                return;
+            }
+
+            // Delete
+            const success = deleteMonster(ctx.activeCampaign!.id, name);
+            if (success) {
+                await ctx.message.reply(`🗑️ Mostro **${name}** eliminato dal bestiario.`);
+                // Clean up Knowledge RAG? Not strictly necessary unless we want perfection.
+                // Assuming deleteMonster handles DB cascade if set, otherwise manual.
+                // The repository handles history delete. 
+            } else {
+                await ctx.message.reply(`❌ Impossibile eliminare **${name}**.`);
+            }
+            return;
+        }
+
         // SUBCOMMAND: $bestiario merge <old> | <new>
         if (arg.toLowerCase().startsWith('merge ')) {
             const parts = arg.substring(6).split('|').map(s => s.trim());
             if (parts.length !== 2) {
-                await ctx.message.reply("Uso: `$bestiario merge <nome vecchio> | <nome nuovo>`");
+                await ctx.message.reply("Uso: `$bestiario merge <nome vecchio/ID> | <nome nuovo/ID>`");
                 return;
             }
-            const [oldName, newName] = parts;
+            let [oldName, newName] = parts;
+
+            // Resolve Old Name
+            const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
+            const oldIdMatch = oldName.match(/^#?(\d+)$/);
+            if (oldSidMatch) {
+                const m = getMonsterByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
+                if (m) oldName = m.name;
+            } else if (oldIdMatch) {
+                const idx = parseInt(oldIdMatch[1]) - 1;
+                const all = listAllMonsters(ctx.activeCampaign!.id);
+                if (all[idx]) oldName = all[idx].name;
+            }
+
+            // Resolve New Name
+            const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
+            const newIdMatch = newName.match(/^#?(\d+)$/);
+            if (newSidMatch) {
+                const m = getMonsterByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
+                if (m) newName = m.name;
+            } else if (newIdMatch) {
+                const idx = parseInt(newIdMatch[1]) - 1;
+                const all = listAllMonsters(ctx.activeCampaign!.id);
+                if (all[idx]) newName = all[idx].name;
+            }
+
             const success = mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
             if (success) {
                 await ctx.message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);

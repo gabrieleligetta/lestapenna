@@ -4,7 +4,7 @@ import { campaignRepository } from './CampaignRepository';
 import { generateShortId } from '../utils/idGenerator';
 
 export const locationRepository = {
-    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string, timestamp?: number): void => {
+    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string, timestamp?: number, isManual: boolean = false): void => {
         // 1. Aggiorna lo stato corrente della campagna
         const current = campaignRepository.getCampaignLocationById(campaignId);
 
@@ -30,10 +30,10 @@ export const locationRepository = {
         const sessionDateString = new Date(effectiveTimestamp).toISOString().split('T')[0];
 
         const historyStmt = db.prepare(`
-            INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_id, reason, timestamp, session_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO location_history (campaign_id, location, macro_location, micro_location, session_id, reason, timestamp, session_date, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, effectiveTimestamp, sessionDateString);
+        historyStmt.run(campaignId, legacyLocation, macro, micro, sessionId || null, reason || null, effectiveTimestamp, sessionDateString, isManual ? 1 : 0);
 
         console.log(`[DB] 🗺️ Luogo aggiornato: [${macro}] - (${micro})`);
     },

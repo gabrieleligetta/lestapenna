@@ -141,6 +141,7 @@ export const getBestiaryHistory = bestiaryRepository.getBestiaryHistory;
 export const getDirtyBestiaryEntries = bestiaryRepository.getDirtyBestiaryEntries;
 export const clearBestiaryDirtyFlag = bestiaryRepository.clearBestiaryDirtyFlag;
 export const getMonsterByShortId = bestiaryRepository.getMonsterByShortId;
+export const deleteMonster = bestiaryRepository.deleteMonster;
 
 // Quest
 export const addQuest = questRepository.addQuest;

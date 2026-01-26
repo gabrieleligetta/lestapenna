@@ -18,7 +18,7 @@ export const year0Command: Command = {
         }
 
         setCampaignYear(ctx.activeCampaign!.id, 0);
-        addWorldEvent(ctx.activeCampaign!.id, null, desc, 'GENERIC', 0);
+        addWorldEvent(ctx.activeCampaign!.id, null, desc, 'GENERIC', 0, true);
 
         await ctx.message.reply(`📅 **Anno 0 Stabilito!**\nEvento: *${desc}*\nOra puoi usare \`$data <Anno>\` per impostare la data corrente.`);
     }

@@ -5,8 +5,7 @@ import { mixSessionAudio } from '../../services/sessionMixer';
 import { audioQueue } from '../../services/queue';
 import * as fs from 'fs';
 import * as path from 'path';
-// @ts-ignore
-import { guildSessions } from '../../index'; // Global state
+import { guildSessions } from '../../state/sessionState';
 
 export const downloadCommand: Command = {
     name: 'download',

@@ -12,12 +12,15 @@ export function registerVoiceStateHandler(client: Client) {
         if (!guild) return;
         const botMember = guild.members.cache.get(client.user!.id);
         if (!botMember?.voice.channel) return;
-        handleAutoLeave(botMember.voice.channel, client);
+        checkAutoLeave(botMember.voice.channel, client);
+
     });
 }
 
-async function handleAutoLeave(channel: VoiceBasedChannel, client: Client) {
+// Export as checkAutoLeave for compatibility/external usage
+export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client) {
     const humans = channel.members.filter(member => !member.user.bot).size;
+
     const guildId = channel.guild.id;
 
     if (humans === 0) {

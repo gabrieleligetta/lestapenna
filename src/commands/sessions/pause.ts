@@ -1,7 +1,6 @@
 import { Command, CommandContext } from '../types';
 import { isRecordingPaused, pauseRecording, resumeRecording } from '../../services/recorder';
-// @ts-ignore
-import { guildSessions } from '../../index';
+import { guildSessions } from '../../state/sessionState';
 
 export const pauseCommand: Command = {
     name: 'pause',

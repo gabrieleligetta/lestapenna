@@ -320,66 +320,87 @@ export async function wipeBucket(): Promise<number> {
 /**
  * Controlla lo spazio utilizzato su tutti i bucket OCI e lo confronta con il Free Tier (10GB).
  */
-export async function checkStorageUsage(): Promise<void> {
+export interface StorageStats {
+    totalBytes: number;
+    totalGB: number;
+    freeTierLimitGB: number;
+    percentUsed: number;
+    bucketCount: number;
+}
+
+/**
+ * Controlla lo spazio utilizzato su tutti i bucket OCI e lo confronta con il Free Tier (10GB).
+ * Ritorna le statistiche per uso programmatico.
+ */
+export async function checkStorageUsage(silent: boolean = false): Promise<StorageStats> {
     try {
         const client = getS3Client();
         const bucketsResponse = await client.send(new ListBucketsCommand({}));
-
-        if (!bucketsResponse.Buckets || bucketsResponse.Buckets.length === 0) {
-            console.log("[Oracle] ☁️ Nessun bucket trovato.");
-            return;
-        }
 
         let totalBytes = 0;
         let bucketCount = 0;
         const bucketDetails: string[] = [];
 
-        for (const bucket of bucketsResponse.Buckets) {
-            const bucketName = bucket.Name;
-            if (!bucketName) continue;
+        if (bucketsResponse.Buckets) {
+            for (const bucket of bucketsResponse.Buckets) {
+                const bucketName = bucket.Name;
+                if (!bucketName) continue;
 
-            bucketCount++;
-            let bucketBytes = 0;
-            let continuationToken: string | undefined = undefined;
+                bucketCount++;
+                let bucketBytes = 0;
+                let continuationToken: string | undefined = undefined;
 
-            do {
-                const listCmd: ListObjectsV2Command = new ListObjectsV2Command({
-                    Bucket: bucketName,
-                    ContinuationToken: continuationToken
-                });
+                do {
+                    const listCmd: ListObjectsV2Command = new ListObjectsV2Command({
+                        Bucket: bucketName,
+                        ContinuationToken: continuationToken
+                    });
 
-                const response: ListObjectsV2CommandOutput = await client.send(listCmd);
+                    const response: ListObjectsV2CommandOutput = await client.send(listCmd);
 
-                if (response.Contents) {
-                    for (const obj of response.Contents) {
-                        bucketBytes += obj.Size || 0;
+                    if (response.Contents) {
+                        for (const obj of response.Contents) {
+                            bucketBytes += obj.Size || 0;
+                        }
                     }
-                }
 
-                continuationToken = response.NextContinuationToken;
-            } while (continuationToken);
+                    continuationToken = response.NextContinuationToken;
+                } while (continuationToken);
 
-            totalBytes += bucketBytes;
-            const bucketGB = bucketBytes / (1024 * 1024 * 1024);
-            bucketDetails.push(`   - ${bucketName}: ${bucketGB.toFixed(2)} GB`);
+                totalBytes += bucketBytes;
+                const bucketGB = bucketBytes / (1024 * 1024 * 1024);
+                bucketDetails.push(`   - ${bucketName}: ${bucketGB.toFixed(2)} GB`);
+            }
         }
 
         const totalGB = totalBytes / (1024 * 1024 * 1024);
         const freeTierLimit = 10.0; // 10 GB Free Tier
         const percentUsed = (totalGB / freeTierLimit) * 100;
 
-        // Colore log in base alla percentuale
-        let icon = '🟢';
-        if (percentUsed > 75) icon = '🟡';
-        if (percentUsed > 90) icon = '🔴';
+        if (!silent) {
+            // Colore log in base alla percentuale
+            let icon = '🟢';
+            if (percentUsed > 75) icon = '🟡';
+            if (percentUsed > 90) icon = '🔴';
 
-        console.log(`[Oracle] ${icon} Storage Usage (${bucketCount} buckets): ${totalGB.toFixed(2)} GB / ${freeTierLimit.toFixed(2)} GB (${percentUsed.toFixed(1)}%)`);
-        if (bucketDetails.length > 0) {
-            console.log(bucketDetails.join('\n'));
+            console.log(`[Oracle] ${icon} Storage Usage (${bucketCount} buckets): ${totalGB.toFixed(2)} GB / ${freeTierLimit.toFixed(2)} GB (${percentUsed.toFixed(1)}%)`);
+            if (bucketDetails.length > 0) {
+                console.log(bucketDetails.join('\n'));
+            }
         }
+
+        return {
+            totalBytes,
+            totalGB,
+            freeTierLimitGB: freeTierLimit,
+            percentUsed,
+            bucketCount
+        };
 
     } catch (err: any) {
         console.error(`[Oracle] ❌ Errore controllo spazio storage: ${err.message}`);
+        // Return zero stats on error to be safe
+        return { totalBytes: 0, totalGB: 0, freeTierLimitGB: 10, percentUsed: 0, bucketCount: 0 };
     }
 }
 

@@ -215,7 +215,7 @@ export const initDatabase = () => {
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         aliases TEXT,
-        aliases TEXT,
+
         first_session_id TEXT, -- 🆕 Tracciamento origine
         is_manual INTEGER DEFAULT 0,
         short_id TEXT, -- 🆕 Stable ID

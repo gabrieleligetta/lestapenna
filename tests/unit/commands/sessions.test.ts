@@ -24,13 +24,17 @@ jest.mock('../../../src/services/SessionPhaseManager', () => ({
     sessionPhaseManager: { setPhase: jest.fn() }
 }));
 
-jest.mock('../../../src/index', () => ({
+jest.mock('../../../src/state/sessionState', () => ({
     guildSessions: new Map(),
+    autoLeaveTimers: new Map(),
+}));
+
+jest.mock('../../../src/bootstrap/voiceState', () => ({
     checkAutoLeave: jest.fn()
 }));
 
 // @ts-ignore
-import { guildSessions } from '../../../src/index';
+import { guildSessions } from '../../../src/state/sessionState';
 const mockGuildSessions = guildSessions as Map<string, string>;
 
 import * as db from '../../../src/db';
@@ -54,7 +58,13 @@ describe('Session Commands', () => {
         memberMock = {
             id: 'user-1',
             displayName: 'User',
-            voice: { channel: { id: 'vc-1', members: new Collection() } }
+            voice: {
+                channel: {
+                    id: 'vc-1',
+                    members: new Collection(),
+                    guild: { id: 'guild-1' }
+                }
+            }
         };
         // Add self to voice members
         (memberMock.voice.channel.members as Collection<any, any>).set('user-1', { user: { bot: false }, displayName: 'User', id: 'user-1' });

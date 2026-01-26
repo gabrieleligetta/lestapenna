@@ -1,7 +1,6 @@
 import { Command, CommandContext } from '../types';
 import { setSessionNumber } from '../../db';
-// @ts-ignore
-import { guildSessions } from '../../index';
+import { guildSessions } from '../../state/sessionState';
 
 export const manageCommand: Command = {
     name: 'manage',

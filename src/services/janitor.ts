@@ -1,6 +1,6 @@
 import * as cron from 'node-cron';
 import { ListObjectsV2Command, ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
-import { deleteRawSessionFiles, getS3Client, getBucketName } from './backup';
+import { deleteRawSessionFiles, getS3Client, getBucketName, checkStorageUsage } from './backup';
 import { db } from '../db';
 
 // Configurazione
@@ -18,21 +18,31 @@ export function startJanitor() {
 }
 
 async function runJanitorCycle() {
-    const client = getS3Client(); // Assumiamo che getS3Client sia esportata o accessibile, altrimenti importala
+    console.log(`[Janitor] 🧹 Inizio ciclo di pulizia intelligente...`);
+    const client = getS3Client();
     const bucket = getBucketName();
 
-    // 1. Lista tutte le cartelle sessione in recordings/
-    // S3 non ha cartelle reali, quindi listiamo con delimitatore '/'
-    // Ma recordings/sessionId/file è la struttura.
-    // Possiamo listare tutto recordings/ e raggruppare per sessione, o iterare sui prefissi se S3 lo supporta bene.
-    // Per semplicità e robustezza, scansioniamo tutto recordings/ e identifichiamo i master file.
-
     try {
-        let continuationToken: string | undefined = undefined;
-        const sessionsToCheck = new Set<string>();
+        // 1. Check Space Usage First
+        const stats = await checkStorageUsage(true); // silent check
+        console.log(`[Janitor] 📊 Storage attuale: ${stats.totalGB.toFixed(2)} GB / ${stats.freeTierLimitGB} GB (${stats.percentUsed.toFixed(1)}%)`);
 
-        // Step 1: Trova tutte le sessioni che hanno un file Master
-        console.log(`[Janitor] 🔍 Scansione bucket per trovare sessioni masterizzate...`);
+        // THRESHOLDS
+        const TRIGGER_THRESHOLD_GB = 8.0; // Start cleaning if > 8GB
+        const TARGET_THRESHOLD_GB = 7.0;  // Stop cleaning when < 7GB
+
+        if (stats.totalGB < TRIGGER_THRESHOLD_GB) {
+            console.log(`[Janitor] 🟢 Spazio sufficiente (sotto soglia ${TRIGGER_THRESHOLD_GB} GB). Nessuna pulizia necessaria.`);
+            return;
+        }
+
+        console.log(`[Janitor] ⚠️ Spazio critico! Avvio procedura di pulizia fino a raggiungere ${TARGET_THRESHOLD_GB} GB.`);
+
+        // 2. We need to clear space. List ALL sessions with their Master File Date.
+        let sessions: { id: string, date: Date }[] = [];
+        let continuationToken: string | undefined = undefined;
+
+        console.log(`[Janitor] 🔍 Indicizzazione sessioni masterizzate...`);
 
         do {
             const listCmd: ListObjectsV2Command = new ListObjectsV2Command({
@@ -45,19 +55,13 @@ async function runJanitorCycle() {
 
             if (response.Contents) {
                 for (const obj of response.Contents) {
+                    // Check for master file to valid session existence and get date
                     if (obj.Key && obj.Key.endsWith('_master.mp3')) {
-                        // Key format: recordings/SESSION_ID/session_SESSION_ID_master.mp3
                         const parts = obj.Key.split('/');
                         if (parts.length >= 3) {
                             const sessionId = parts[1];
-
-                            // Check età del file Master
-                            const lastModified = obj.LastModified;
-                            if (lastModified) {
-                                const ageHours = (Date.now() - lastModified.getTime()) / (1000 * 60 * 60);
-                                if (ageHours > RETENTION_HOURS) {
-                                    sessionsToCheck.add(sessionId);
-                                }
+                            if (obj.LastModified) {
+                                sessions.push({ id: sessionId, date: obj.LastModified });
                             }
                         }
                     }
@@ -66,13 +70,47 @@ async function runJanitorCycle() {
             continuationToken = response.NextContinuationToken;
         } while (continuationToken);
 
-        console.log(`[Janitor] 🎯 Trovate ${sessionsToCheck.size} sessioni candidabili per la pulizia.`);
+        // Sort sessions by date ASC (Oldest first)
+        sessions.sort((a, b) => a.date.getTime() - b.date.getTime());
+        console.log(`[Janitor] 📋 Trovate ${sessions.length} sessioni archiviate.`);
 
-        // Step 2: Esegui pulizia per ogni sessione candidata
-        for (const sessionId of sessionsToCheck) {
-            await deleteRawSessionFiles(sessionId);
-            console.log(`[Janitor] ✅ Sessione ${sessionId} pulita.`);
+        // 3. Start Pruning Loop
+        let currentUsageGB = stats.totalGB;
+        let deletedSessionsCount = 0;
+
+        for (const session of sessions) {
+            if (currentUsageGB <= TARGET_THRESHOLD_GB) {
+                console.log(`[Janitor] 🏁 Obiettivo raggiunto (${currentUsageGB.toFixed(2)} GB). Interruzione pulizia.`);
+                break;
+            }
+
+            console.log(`[Janitor] 🗑️ Pulizia sessione del ${session.date.toISOString()} (ID: ${session.id})...`);
+
+            // Delete RAW files only (keep Master/Live/Transcript)
+            // Note: deleteRawSessionFiles returns number of files, not bytes freed unfortunately.
+            // We'll trust that deleting files frees space. We could estimate size but it's slow.
+            // We just proceed aggressively session by session.
+            const deletedCount = await deleteRawSessionFiles(session.id);
+
+            if (deletedCount > 0) {
+                deletedSessionsCount++;
+                // ESTIMATION: average raw session might be 100-200MB? 
+                // Since we can't query size constantly without cost/latency, we just clean one by one.
+                // Re-checking storage every single session is too API heavy.
+                // Let's re-check storage every 3 sessions cleaned.
+                if (deletedSessionsCount % 3 === 0) {
+                    const updatedStats = await checkStorageUsage(true);
+                    currentUsageGB = updatedStats.totalGB;
+                    console.log(`[Janitor] 📉 Storage aggiornato: ${currentUsageGB.toFixed(2)} GB`);
+                }
+            } else {
+                console.log(`[Janitor] ⏩ Sessione già pulita o vuota.`);
+            }
         }
+
+        // Final report
+        const finalStats = await checkStorageUsage(true);
+        console.log(`[Janitor] ✅ Ciclo terminato. Storage finale: ${finalStats.totalGB.toFixed(2)} GB. Pulite ${deletedSessionsCount} sessioni.`);
 
     } catch (err) {
         console.error(`[Janitor] ❌ Errore critico durante il ciclo:`, err);

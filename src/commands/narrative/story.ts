@@ -1,6 +1,6 @@
 import { TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { db, getNpcEntry, setCampaignYear, addWorldEvent } from '../../db';
+import { db, getNpcEntry, setCampaignYear, addWorldEvent, getNpcByShortId } from '../../db';
 import {
     syncAllDirtyCharacters,
     syncCharacterIfNeeded,
@@ -96,7 +96,16 @@ export const storyCommand: Command = {
             }
 
             // 2. Se non è un PG, cerca tra gli NPC (Dossier)
-            const targetNPC = getNpcEntry(campaignId, targetName);
+            let targetNPC = getNpcEntry(campaignId, targetName);
+
+            // SID Lookup
+            if (!targetNPC) {
+                const sidMatch = targetName.match(/^#([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    const result = getNpcByShortId(campaignId, sidMatch[1]);
+                    if (result) targetNPC = result;
+                }
+            }
 
             if (targetNPC) {
                 await message.reply(`📂 **Dossier NPC: ${targetNPC.name}**\nConsultazione archivi...`);

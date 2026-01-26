@@ -203,7 +203,11 @@ ${memoryContext}
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dove sono stati fisicamente. location_updates = SOLO per l'Atlante. **CRITICO ATLANTE**: EVITA GRANULARITÀ ECCESSIVA. Se i PG visitano "Castello - Ingresso", "Castello - Cucine", "Castello - Prigioni", crea UN SOLO location_update: "Castello" e metti i dettagli nella descrizione. Solo se un luogo è davvero distinto e distante (es. "Città" vs "Foresta fuori città") crea entry separate.
 - **LOG**: Deve essere una sequenza di fatti oggettivi.
 - **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG.
-- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). Se un NPC ritenuto fidato attacca o tradisce, DEVI registrarlo qui.
+- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG.
+- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). 
+    - Se un NPC ritenuto fidato attacca o tradisce, DEVI registrarlo qui.
+    - Se un NPC viene ACCUSATO o RIVELATO come traditore da qualcun altro (e il fatto sembra vero), REGISTRA UN EVENTO "REVELATION" ANCHE PER L'NPC ACCUSATO.
+    - **ECCEZIONE**: Se un NPC alleato (es. Scaglia grigia) attacca un altro NPC (es. Leosin) perché *quest'ultimo* è un traditore, l'attaccante NON è un traditore. È un evento di "REVELATION" per la vittima (Leosin) e "ALLIANCE" o "HEROIC" per l'attaccante.
 - **MONSTER vs NPC**: Se una creatura ha un NOME PROPRIO ed è AMICHEVOLE/ALLEATA (es. "Scagliagrigia il Drago"), mettila in NPC, NON in MONSTERS.
 
 

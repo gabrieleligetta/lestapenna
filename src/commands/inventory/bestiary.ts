@@ -2,11 +2,11 @@
  * $bestiario / $bestiary command - Monster bestiary
  */
 
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     listAllMonsters,
     mergeMonsters,
-    // New imports
     addBestiaryEvent,
     getMonsterByName,
     getBestiaryHistory,
@@ -48,7 +48,6 @@ export const bestiaryCommand: Command = {
 
             // ID Resolution
             const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = name.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -75,7 +74,6 @@ export const bestiaryCommand: Command = {
 
             // ID Resolution
             const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = name.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -92,9 +90,6 @@ export const bestiaryCommand: Command = {
             const success = deleteMonster(ctx.activeCampaign!.id, name);
             if (success) {
                 await ctx.message.reply(`🗑️ Mostro **${name}** eliminato dal bestiario.`);
-                // Clean up Knowledge RAG? Not strictly necessary unless we want perfection.
-                // Assuming deleteMonster handles DB cascade if set, otherwise manual.
-                // The repository handles history delete. 
             } else {
                 await ctx.message.reply(`❌ Impossibile eliminare **${name}**.`);
             }
@@ -112,7 +107,6 @@ export const bestiaryCommand: Command = {
 
             // Resolve Old Name
             const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
-            const oldIdMatch = oldName.match(/^#?(\d+)$/);
             if (oldSidMatch) {
                 const m = getMonsterByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
                 if (m) oldName = m.name;
@@ -120,7 +114,6 @@ export const bestiaryCommand: Command = {
 
             // Resolve New Name
             const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
-            const newIdMatch = newName.match(/^#?(\d+)$/);
             if (newSidMatch) {
                 const m = getMonsterByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
                 if (m) newName = m.name;
@@ -129,9 +122,6 @@ export const bestiaryCommand: Command = {
             const success = mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
             if (success) {
                 await ctx.message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);
-                // Trigger regen for new name?
-                // Maybe yes, but complicated logic with merged history.
-                // For now leave as is.
             } else {
                 await ctx.message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nel bestiario.`);
             }
@@ -144,7 +134,6 @@ export const bestiaryCommand: Command = {
 
             // ID Resolution
             const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = search.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -159,51 +148,140 @@ export const bestiaryCommand: Command = {
                 return;
             }
 
-            let details = `**👹 ${monster.name}**\n`;
-            details += `**Status:** ${monster.status}\n`;
-            if (monster.count) details += `**Numero:** ${monster.count}\n`;
-            if (monster.description) details += `\n**Descrizione:** ${monster.description}\n`;
+            // Helper for formatting count
+            const formatCount = (c: string) => {
+                const n = Number(c);
+                return !isNaN(n) ? n.toString() : c;
+            };
+
+            const statusColor = monster.status === 'ALIVE' ? "#00FF00" :
+                monster.status === 'DEFEATED' ? "#FF0000" :
+                    monster.status === 'FLED' ? "#FFFF00" : "#7289DA";
+
+            const statusIcon = monster.status === 'ALIVE' ? '⚔️' :
+                monster.status === 'DEFEATED' ? '💀' :
+                    monster.status === 'FLED' ? '🏃' : '👹';
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${statusIcon} ${monster.name}`)
+                .setColor(statusColor)
+                .setDescription(monster.description || "*Nessuna descrizione.*")
+                .addFields(
+                    { name: "Stato", value: monster.status, inline: true },
+                    { name: "ID", value: `\`#${monster.short_id}\``, inline: true }
+                );
+
+            if (monster.count) embed.addFields({ name: "Numero", value: formatCount(monster.count), inline: true });
 
             const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
             const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
             const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
 
-            if (abilities.length > 0) details += `\n⚔️ **Abilità:** ${abilities.join(', ')}\n`;
-            if (weaknesses.length > 0) details += `🎯 **Debolezze:** ${weaknesses.join(', ')}\n`;
-            if (resistances.length > 0) details += `🛡️ **Resistenze:** ${resistances.join(', ')}\n`;
-            if (monster.notes) details += `\n📝 **Note:** ${monster.notes}\n`;
+            if (abilities.length > 0) embed.addFields({ name: "⚔️ Abilità", value: abilities.join(', ') });
+            if (weaknesses.length > 0) embed.addFields({ name: "🎯 Debolezze", value: weaknesses.join(', ') });
+            if (resistances.length > 0) embed.addFields({ name: "🛡️ Resistenze", value: resistances.join(', ') });
+            if (monster.notes) embed.addFields({ name: "📝 Note", value: monster.notes });
 
-            await ctx.message.reply(`${details}\n\n💡 Usa \`$bestiario update <Nome> | <Nota>\` per aggiungere osservazioni.`);
+            embed.setFooter({ text: `Usa $bestiario update ${monster.short_id} | <Nota> per aggiornare.` });
+
+            await ctx.message.reply({ embeds: [embed] });
             return;
         }
 
-        // VIEW: Show all monsters grouped by status
+        // VIEW: List all monsters (Paginated)
         const monsters = listAllMonsters(ctx.activeCampaign!.id);
         if (monsters.length === 0) {
             await ctx.message.reply("👹 Nessun mostro incontrato in questa campagna.");
             return;
         }
 
-        const defeated = monsters.filter((m: any) => m.status === 'DEFEATED');
-        const alive = monsters.filter((m: any) => m.status === 'ALIVE');
-        const fled = monsters.filter((m: any) => m.status === 'FLED');
+        // Sort: ALIVE first, then FLED, then DEFEATED
+        const statusOrder: Record<string, number> = { 'ALIVE': 0, 'FLED': 1, 'DEFEATED': 2 };
+        monsters.sort((a: any, b: any) => {
+            const sA = statusOrder[a.status] ?? 99;
+            const sB = statusOrder[b.status] ?? 99;
+            return sA - sB;
+        });
 
-        // Only show top 20 or summary if too many?
-        // Current logic shows all. 
+        const ITEMS_PER_PAGE = 5;
+        let currentPage = 0;
 
-        let response = `**👹 Bestiario (${ctx.activeCampaign?.name})**\n\n`;
+        const generateEmbed = (page: number) => {
+            const offset = page * ITEMS_PER_PAGE;
+            const currentItems = monsters.slice(offset, offset + ITEMS_PER_PAGE);
+            const totalPages = Math.ceil(monsters.length / ITEMS_PER_PAGE);
 
-        if (alive.length > 0) {
-            response += `⚔️ **Ancora in Vita:**\n${alive.map((m: any) => `\`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
+            const list = currentItems.map((m: any) => {
+                const statusIcon = m.status === 'ALIVE' ? '⚔️' :
+                    m.status === 'DEFEATED' ? '💀' :
+                        m.status === 'FLED' ? '🏃' : '👹';
+                
+                const countStr = m.count ? ` (x${m.count})` : '';
+                const desc = m.description ? `\n> *${m.description.substring(0, 80)}${m.description.length > 80 ? '...' : ''}*` : '';
+                
+                return `\`#${m.short_id}\` ${statusIcon} **${m.name}**${countStr} [${m.status}]${desc}`;
+            }).join('\n\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle(`👹 Bestiario (${ctx.activeCampaign?.name})`)
+                .setColor("#7289DA")
+                .setDescription(list)
+                .setFooter({ text: `Pagina ${page + 1} di ${totalPages} • Totale: ${monsters.length}` });
+
+            return { embed, totalPages };
+        };
+
+        const generateButtons = (page: number, totalPages: number) => {
+            const row = new ActionRowBuilder<ButtonBuilder>();
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_page')
+                    .setLabel('⬅️ Precedente')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('next_page')
+                    .setLabel('Successivo ➡️')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            return row;
+        };
+
+        const initialData = generateEmbed(currentPage);
+        const reply = await ctx.message.reply({
+            embeds: [initialData.embed],
+            components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+        });
+
+        if (initialData.totalPages > 1) {
+            const collector = reply.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000 * 5 // 5 minutes
+            });
+
+            collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                if (interaction.user.id !== ctx.message.author.id) {
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    return;
+                }
+
+                if (interaction.customId === 'prev_page') {
+                    currentPage = Math.max(0, currentPage - 1);
+                } else if (interaction.customId === 'next_page') {
+                    currentPage++;
+                }
+
+                const newData = generateEmbed(currentPage);
+                await interaction.update({
+                    embeds: [newData.embed],
+                    components: [generateButtons(currentPage, newData.totalPages)]
+                });
+            });
+
+            collector.on('end', () => {
+                reply.edit({ components: [] }).catch(() => { });
+            });
         }
-        if (defeated.length > 0) {
-            response += `💀 **Sconfitti:**\n${defeated.map((m: any) => `\`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
-        }
-        if (fled.length > 0) {
-            response += `🏃 **Fuggiti:**\n${fled.map((m: any) => `\`#${m.short_id}\` ${m.name}${m.count ? ` (${m.count})` : ''}`).join('\n')}\n\n`;
-        }
-
-        response += `💡 Usa \`$bestiario <ID>\` per dettagli o \`$bestiario update <ID> | <Nota>\`.`;
-        await ctx.message.reply(response);
     }
 };

@@ -2,6 +2,7 @@
  * $atlante / $atlas command - Location atlas management
  */
 
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     getCampaignLocation,
@@ -16,7 +17,7 @@ import {
     markAtlasDirty,
     getDirtyAtlasEntries,
     getSessionTravelLog,
-    addAtlasEvent, // 🆕
+    addAtlasEvent,
     deleteAtlasHistory,
     deleteAtlasRagSummary,
     getAtlasEntryByShortId
@@ -71,79 +72,6 @@ export const atlasCommand: Command = {
             return;
         }
 
-        // --- NO ARGS: Show current location ---
-        if (!argsStr) {
-            const loc = getCampaignLocation(ctx.guildId);
-            if (!loc || !loc.macro || !loc.micro) {
-                // No current position, show list (Page 1)
-                const pageSize = 10;
-                const entries = listAtlasEntries(ctx.activeCampaign!.id, pageSize, 0);
-                const total = countAtlasEntries(ctx.activeCampaign!.id);
-                const totalPages = Math.ceil(total / pageSize);
-
-                if (entries.length === 0) {
-                    await ctx.message.reply("📖 L'Atlante è vuoto. Usa `$atlante <Regione> | <Luogo> | <Descrizione>` per aggiungere voci.");
-                    return;
-                }
-
-                const list = entries.map((e: any) =>
-                    `\`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*`
-                ).join('\n');
-
-                let footer = `\n\n💡 Usa \`$atlante <ID>\` o \`$atlante <Regione> | <Luogo>\` per dettagli.`;
-                if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$atlante list 2\` per la prossima)` + footer;
-
-                await ctx.message.reply(`**📖 Atlante (Luoghi Recenti)**\n${list}${footer}`);
-                return;
-            }
-
-            const lore = getAtlasEntry(ctx.activeCampaign!.id, loc.macro, loc.micro);
-            if (lore) {
-                await ctx.message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n_${lore}_`);
-            } else {
-                await ctx.message.reply(`📖 **Atlante: ${loc.macro} - ${loc.micro}**\n\n*Nessuna memoria registrata per questo luogo.*\n💡 Usa \`$atlante ${loc.macro} | ${loc.micro} | <descrizione>\` per aggiungerne una.`);
-            }
-            return;
-        }
-
-        // --- SUBCOMMAND: list [page] ---
-        if (argsStr.toLowerCase().startsWith('list') || argsStr.toLowerCase().startsWith('lista')) {
-            let page = 1;
-            const parts = argsStr.split(' ');
-            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
-                page = parseInt(parts[1]);
-            }
-
-            const pageSize = 15;
-            const offset = (page - 1) * pageSize;
-            const total = countAtlasEntries(ctx.activeCampaign!.id);
-            const totalPages = Math.ceil(total / pageSize);
-
-            if (page < 1 || (totalPages > 0 && page > totalPages)) {
-                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
-                return;
-            }
-
-            const entries = listAtlasEntries(ctx.activeCampaign!.id, pageSize, offset);
-            if (entries.length === 0) {
-                await ctx.message.reply("📖 L'Atlante è vuoto.");
-                return;
-            }
-
-            const list = entries.map((e: any) => {
-                const descPreview = (e.description && e.description.trim().length > 0)
-                    ? e.description.substring(0, 50) + (e.description.length > 50 ? '...' : '')
-                    : '*nessuna descrizione*';
-                return `\`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*\n   └ ${descPreview}`;
-            }).join('\n');
-
-            let footer = `\n💡 Usa \`$atlante <ID>\` o \`$atlante update <ID> | <Nota>\``;
-            if (totalPages > 1) footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$atlante list ${page + 1}\` per la prossima)` + footer;
-
-            await ctx.message.reply(`**📖 Atlante Completo**\n${list}${footer}`);
-            return;
-        }
-
         // --- SUBCOMMAND: update ---
         if (argsStr.toLowerCase().startsWith('update')) {
             const content = argsStr.substring(7).trim();
@@ -180,11 +108,6 @@ export const atlasCommand: Command = {
                 micro = parts[1];
                 note = parts.slice(2).join('|').trim();
             }
-
-            // Check existence?
-            // Since we use ID or explicit names from list, it should exist. 
-            // Logic in existing code registers event even if not exists?
-            // "addAtlasEvent" takes macro/micro.
 
             addAtlasEvent(ctx.activeCampaign!.id, macro, micro, null, note, "MANUAL_UPDATE", true);
             await ctx.message.reply(`📝 Nota aggiunta a **${macro} - ${micro}**. Aggiornamento atmosfera...`);
@@ -240,60 +163,153 @@ export const atlasCommand: Command = {
             return;
         }
 
-        // --- PARSE PIPE-SEPARATED ARGS or ID ---
+        // --- VIEW SPECIFIC LOCATION (ID or Macro|Micro) ---
         const parts = argsStr.split('|').map(s => s.trim());
         const sidMatchDetail = parts[0].match(/^#([a-z0-9]{5})$/i);
 
-        // ID View: $atlante 1 or $atlante #abcde
-        if (parts.length === 1 && sidMatchDetail) {
+        if ((parts.length === 1 && sidMatchDetail) || parts.length === 2) {
             let entry: any = null;
 
             if (sidMatchDetail) {
                 entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
+            } else if (parts.length === 2) {
+                const [macro, micro] = parts;
+                entry = getAtlasEntryFull(ctx.activeCampaign!.id, macro, micro);
             }
 
             if (entry) {
                 const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
-                await ctx.message.reply(
-                    `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
-                    `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
-                    `${(entry.description && entry.description.trim().length > 0) ? entry.description : '*Nessuna descrizione*'}`
-                );
+                const embed = new EmbedBuilder()
+                    .setTitle(`🌍 ${entry.macro_location} - 🏠 ${entry.micro_location}`)
+                    .setColor("#0099FF")
+                    .setDescription(entry.description || "*Nessuna descrizione.*")
+                    .addFields(
+                        { name: "ID", value: `\`#${entry.short_id}\``, inline: true },
+                        { name: "Ultimo Aggiornamento", value: lastUpdate, inline: true }
+                    )
+                    .setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
+
+                await ctx.message.reply({ embeds: [embed] });
             } else {
                 if (sidMatchDetail) {
                     await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
+                } else {
+                    await ctx.message.reply(
+                        `📖 **${parts[0]} - ${parts[1]}** non è ancora nell'Atlante.\n` +
+                        `💡 Usa \`$atlante update ${parts[0]} | ${parts[1]} | <descrizione>\` per aggiungerlo.`
+                    );
                 }
             }
             return;
         }
 
-        // --- VIEW SPECIFIC LOCATION: $atlante <Macro> | <Micro> ---
-        if (parts.length === 2) {
-            const [macro, micro] = parts;
-            const entry = getAtlasEntryFull(ctx.activeCampaign!.id, macro, micro);
+        // --- LIST / PAGINATION ---
+        // Default view or explicit list command
+        if (!argsStr || argsStr.toLowerCase().startsWith('list') || argsStr.toLowerCase().startsWith('lista')) {
+            let initialPage = 1;
+            if (argsStr) {
+                const listParts = argsStr.split(' ');
+                if (listParts.length > 1 && !isNaN(parseInt(listParts[1]))) {
+                    initialPage = parseInt(listParts[1]);
+                }
+            }
 
-            if (entry) {
-                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
-                await ctx.message.reply(
-                    `📖 **Atlante: ${entry.macro_location} - ${entry.micro_location}**\n` +
-                    `*Ultimo aggiornamento: ${lastUpdate}*\n\n` +
-                    `${(entry.description && entry.description.trim().length > 0) ? entry.description : '*Nessuna descrizione*'}`
+            const ITEMS_PER_PAGE = 5;
+            let currentPage = Math.max(0, initialPage - 1);
+
+            const generateEmbed = (page: number) => {
+                const offset = page * ITEMS_PER_PAGE;
+                const entries = listAtlasEntries(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+                const total = countAtlasEntries(ctx.activeCampaign!.id);
+                const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+
+                if (entries.length === 0 && total > 0 && page > 0) {
+                     return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
+                }
+
+                if (total === 0) {
+                    return { embed: new EmbedBuilder().setDescription("📖 L'Atlante è vuoto."), totalPages: 0 };
+                }
+
+                const list = entries.map((e: any) => {
+                    const descPreview = (e.description && e.description.trim().length > 0)
+                        ? `\n> *${e.description.substring(0, 80)}${e.description.length > 80 ? '...' : ''}*`
+                        : '';
+                    return `\`#${e.short_id}\` 🗺️ **${e.macro_location}** - *${e.micro_location}*${descPreview}`;
+                }).join('\n\n');
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`📖 Atlante (${ctx.activeCampaign?.name})`)
+                    .setColor("#0099FF")
+                    .setDescription(list)
+                    .setFooter({ text: `Pagina ${page + 1} di ${totalPages} • Totale: ${total}` });
+
+                return { embed, totalPages };
+            };
+
+            const generateButtons = (page: number, totalPages: number) => {
+                const row = new ActionRowBuilder<ButtonBuilder>();
+                row.addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('prev_page')
+                        .setLabel('⬅️ Precedente')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === 0),
+                    new ButtonBuilder()
+                        .setCustomId('next_page')
+                        .setLabel('Successivo ➡️')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === totalPages - 1)
                 );
-            } else {
-                await ctx.message.reply(
-                    `📖 **${macro} - ${micro}** non è ancora nell'Atlante.\n` +
-                    `💡 Usa \`$atlante update ${macro} | ${micro} | <descrizione>\` per aggiungerlo.`
-                );
+                return row;
+            };
+
+            const initialData = generateEmbed(currentPage);
+            
+            // If empty or error
+            if (initialData.totalPages === 0 || !initialData.embed.data.title) {
+                 await ctx.message.reply({ embeds: [initialData.embed] });
+                 return;
+            }
+
+            const reply = await ctx.message.reply({
+                embeds: [initialData.embed],
+                components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+            });
+
+            if (initialData.totalPages > 1) {
+                const collector = reply.createMessageComponentCollector({
+                    componentType: ComponentType.Button,
+                    time: 60000 * 5 // 5 minutes
+                });
+
+                collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                    if (interaction.user.id !== ctx.message.author.id) {
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        return;
+                    }
+
+                    if (interaction.customId === 'prev_page') {
+                        currentPage = Math.max(0, currentPage - 1);
+                    } else if (interaction.customId === 'next_page') {
+                        currentPage++;
+                    }
+
+                    const newData = generateEmbed(currentPage);
+                    await interaction.update({
+                        embeds: [newData.embed],
+                        components: [generateButtons(currentPage, newData.totalPages)]
+                    });
+                });
+
+                collector.on('end', () => {
+                    reply.edit({ components: [] }).catch(() => { });
+                });
             }
             return;
         }
 
-        // --- LEGACY/FALLBACK ---
-        if (parts.length >= 3) {
-            await ctx.message.reply("⚠️ Sintassi aggiornata. Usa: `$atlante update <Regione> | <Luogo> | <Nota>`");
-            return;
-        }
-
+        // --- FALLBACK ---
         // --- FALLBACK: Help ---
         await ctx.message.reply(
             `**📖 Uso del comando $atlante:**\n` +

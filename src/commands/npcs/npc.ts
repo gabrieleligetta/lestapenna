@@ -2,7 +2,7 @@
  * $npc / $dossier command - NPC management with many subcommands
  */
 
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     listNpcs,
@@ -19,7 +19,7 @@ import {
     addNpcAlias,
     removeNpcAlias,
     db,
-    addNpcEvent, // 🆕
+    addNpcEvent,
     deleteNpcRagSummary,
     deleteNpcHistory,
     getNpcByShortId
@@ -39,78 +39,6 @@ export const npcCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const argsStr = ctx.args.join(' ');
-
-        // --- LIST / PAGINATION: $npc list [page] or $npc [page] ---
-        // Check if argsStr is empty, "list", "list <n>", or just "<n>" (where n is page if > 10 items?)
-        // Actually, "$npc <n>" is currently used for SELECTION.
-        // We need to distinguish between "Select NPC #2" and "Show Page 2".
-        // Convention: "$npc list <n>" for page. "$npc <n>" for selection.
-        // If "$npc" alone -> Page 1.
-
-        if (!argsStr || argsStr.toLowerCase().startsWith('list')) {
-            let page = 1;
-            const parts = argsStr.split(' ');
-            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
-                page = parseInt(parts[1]);
-            }
-
-            const pageSize = 10;
-            const offset = (page - 1) * pageSize;
-            const totalNpcs = countNpcs(ctx.activeCampaign!.id);
-            const totalPages = Math.ceil(totalNpcs / pageSize);
-
-            if (page < 1 || (totalPages > 0 && page > totalPages)) {
-                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
-                return;
-            }
-
-            const npcs = listNpcs(ctx.activeCampaign!.id, pageSize, offset);
-            if (npcs.length === 0) {
-                await ctx.message.reply("L'archivio NPC è vuoto.");
-                return;
-            }
-
-            const list = npcs.map((n: any) => {
-                return `\`#${n.short_id}\` 👤 **${n.name}** (${n.role || '?'}) [${n.status}]`;
-            }).join('\n');
-
-            let footer = `\n\n💡 Usa \`$npc #ID\` o \`$npc <Nome>\` per dettagli.`;
-            if (totalPages > 1) {
-                footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$npc list ${page + 1}\` per la prossima)` + footer;
-            }
-
-            await safeReply(ctx.message, `**📂 Dossier NPC Recenti**\n${list}${footer}`);
-            return;
-        }
-
-        // --- SELECTION BY ID: $npc #abcde ---
-        const sidMatch = argsStr.match(/^#([a-z0-9]{5})$/i);
-
-        if (sidMatch) {
-            const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-
-            if (!npc) {
-                await ctx.message.reply(`❌ ID \`#${sidMatch[1]}\` non trovato.`);
-                return;
-            }
-            const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
-            let response = `${statusIcon} **${npc.name}**\n`;
-            response += `🎭 **Ruolo:** ${npc.role || 'Sconosciuto'}\n`;
-            response += `📊 **Stato:** ${npc.status}\n`;
-            response += `📜 **Note:**\n> ${npc.description || '_Nessuna nota_'}`;
-
-            const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-5);
-            if (history.length > 0) {
-                response += `\n\n📖 **Cronologia Recente:**\n`;
-                history.forEach((h: any) => {
-                    const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
-                    response += `${typeIcon} ${h.description}\n`;
-                });
-            }
-
-            await safeReply(ctx.message, response);
-            return;
-        }
 
         // --- SESSION SPECIFIC: $npc <session_id> ---
         if (isSessionId(argsStr)) {
@@ -317,19 +245,8 @@ export const npcCommand: Command = {
         }
 
         // SUBCOMMAND: update
-        // Unified Syntax:
-        // 1. Narrative: $npc update <Name> | <Note>
-        // 2. Metadata:  $npc update <Name> field:<Field> <Value>
         if (argsStr.toLowerCase().startsWith('update')) {
-            const content = argsStr.substring(7).trim(); // Remove 'update '
-
-            // Pattern 2: Metadata Update (field:...)
-            // check if second token is field:something
-            // We need to parse strict tokens for this, or split by pipe?
-            // If it contains pipe, it's likely Type 1 (unless name has pipe... unlikely).
-
-            // Let's rely on pipe separation for Narrative, and non-pipe for Metadata?
-            // "Garlon field:status DEAD"
+            const content = argsStr.substring(7).trim();
 
             if (content.includes('|')) {
                 // Type 1: Narrative Update
@@ -367,12 +284,6 @@ export const npcCommand: Command = {
                 return;
             } else {
                 // Type 2: Metadata Update
-                // Expect: Name field:status Value
-                // This is tricky if Name has spaces.
-                // Alternative: $npc update Name | field:status Value ?
-                // Guide says: "$npc update Garlon field:status DEAD"
-                // Parse strategy: Name is everything before "field:".
-
                 const fieldIndex = content.indexOf('field:');
                 if (fieldIndex === -1) {
                     await ctx.message.reply('Uso:\n1. `$npc update <Nome> | <Nota>` (Narrativo)\n2. `$npc update <Nome> field:<campo> <valore>` (Metadati)');
@@ -396,7 +307,6 @@ export const npcCommand: Command = {
                 let value = '';
 
                 if (firstSpace === -1) {
-                    // "field:status" (missing value?)
                     await ctx.message.reply('❌ Valore mancante.');
                     return;
                 }
@@ -418,7 +328,6 @@ export const npcCommand: Command = {
                 } else if (fieldKey === 'status') {
                     updates.status = value;
                 } else if (fieldKey === 'desc' || fieldKey === 'description') {
-                    // Legacy fallback manual overwrite
                     updates.description = value;
                 } else {
                     await ctx.message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`');
@@ -503,7 +412,113 @@ export const npcCommand: Command = {
             return;
         }
 
-        // GETTER: $npc Nome / #abcde
+        // --- GETTER: $npc Nome / #abcde ---
+        // Check if it's a list command first
+        if (!argsStr || argsStr.toLowerCase().startsWith('list')) {
+            let initialPage = 1;
+            if (argsStr) {
+                const listParts = argsStr.split(' ');
+                if (listParts.length > 1 && !isNaN(parseInt(listParts[1]))) {
+                    initialPage = parseInt(listParts[1]);
+                }
+            }
+
+            const ITEMS_PER_PAGE = 5;
+            let currentPage = Math.max(0, initialPage - 1);
+
+            const generateEmbed = (page: number) => {
+                const offset = page * ITEMS_PER_PAGE;
+                const npcs = listNpcs(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+                const total = countNpcs(ctx.activeCampaign!.id);
+                const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+
+                if (npcs.length === 0 && total > 0 && page > 0) {
+                    return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
+                }
+
+                if (total === 0) {
+                    return { embed: new EmbedBuilder().setDescription("L'archivio NPC è vuoto."), totalPages: 0 };
+                }
+
+                const list = npcs.map((n: any) => {
+                    const statusIcon = n.status === 'DEAD' ? '💀' : n.status === 'MISSING' ? '❓' : '👤';
+                    const descPreview = (n.description && n.description.trim().length > 0)
+                        ? `\n> *${n.description.substring(0, 80)}${n.description.length > 80 ? '...' : ''}*`
+                        : '';
+                    return `\`#${n.short_id}\` ${statusIcon} **${n.name}** (${n.role || '?'}) [${n.status}]${descPreview}`;
+                }).join('\n\n');
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`📂 Dossier NPC (${ctx.activeCampaign?.name})`)
+                    .setColor("#E67E22")
+                    .setDescription(list)
+                    .setFooter({ text: `Pagina ${page + 1} di ${totalPages} • Totale: ${total}` });
+
+                return { embed, totalPages };
+            };
+
+            const generateButtons = (page: number, totalPages: number) => {
+                const row = new ActionRowBuilder<ButtonBuilder>();
+                row.addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('prev_page')
+                        .setLabel('⬅️ Precedente')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === 0),
+                    new ButtonBuilder()
+                        .setCustomId('next_page')
+                        .setLabel('Successivo ➡️')
+                        .setStyle(ButtonStyle.Primary)
+                        .setDisabled(page === totalPages - 1)
+                );
+                return row;
+            };
+
+            const initialData = generateEmbed(currentPage);
+            
+            if (initialData.totalPages === 0 || !initialData.embed.data.title) {
+                await ctx.message.reply({ embeds: [initialData.embed] });
+                return;
+            }
+
+            const reply = await ctx.message.reply({
+                embeds: [initialData.embed],
+                components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+            });
+
+            if (initialData.totalPages > 1) {
+                const collector = reply.createMessageComponentCollector({
+                    componentType: ComponentType.Button,
+                    time: 60000 * 5 // 5 minutes
+                });
+
+                collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                    if (interaction.user.id !== ctx.message.author.id) {
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        return;
+                    }
+
+                    if (interaction.customId === 'prev_page') {
+                        currentPage = Math.max(0, currentPage - 1);
+                    } else if (interaction.customId === 'next_page') {
+                        currentPage++;
+                    }
+
+                    const newData = generateEmbed(currentPage);
+                    await interaction.update({
+                        embeds: [newData.embed],
+                        components: [generateButtons(currentPage, newData.totalPages)]
+                    });
+                });
+
+                collector.on('end', () => {
+                    reply.edit({ components: [] }).catch(() => { });
+                });
+            }
+            return;
+        }
+
+        // Specific NPC View
         let searchName = argsStr;
         const sidMatchFinal = argsStr.match(/^#([a-z0-9]{5})$/i);
         if (sidMatchFinal) {
@@ -517,15 +532,33 @@ export const npcCommand: Command = {
             return;
         }
 
+        const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+        const statusColor = npc.status === 'DEAD' ? "#FF0000" : npc.status === 'MISSING' ? "#FFFF00" : "#00FF00";
+
         const embed = new EmbedBuilder()
-            .setTitle(`👤 Dossier: ${npc.name}`)
-            .setColor(npc.status === 'DEAD' ? "#FF0000" : "#00FF00")
+            .setTitle(`${statusIcon} ${npc.name}`)
+            .setColor(statusColor)
+            .setDescription(npc.description || "*Nessuna nota.*")
             .addFields(
                 { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
                 { name: "Stato", value: npc.status || "Vivo", inline: true },
-                { name: "Note", value: npc.description || "Nessuna nota." }
-            )
-            .setFooter({ text: `Ultimo avvistamento: ${npc.last_updated}` });
+                { name: "ID", value: `\`#${npc.short_id}\``, inline: true }
+            );
+
+        if (npc.aliases) {
+            embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
+        }
+
+        const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-3);
+        if (history.length > 0) {
+            const historyText = history.map((h: any) => {
+                const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
+                return `${typeIcon} ${h.description}`;
+            }).join('\n');
+            embed.addFields({ name: "Cronologia Recente", value: historyText });
+        }
+
+        embed.setFooter({ text: `Usa $npc update ${npc.short_id} | <Nota> per aggiornare.` });
 
         await ctx.message.reply({ embeds: [embed] });
     }

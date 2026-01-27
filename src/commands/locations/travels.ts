@@ -2,6 +2,7 @@
  * $viaggi / $travels command - Travel history management
  */
 
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     getLocationHistory,
@@ -38,26 +39,6 @@ export const travelsCommand: Command = {
                 const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
                 msg += `\`${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
             });
-
-            await ctx.message.reply(msg);
-            return;
-        }
-
-        // --- SUBCOMMAND: list (with ID for edit) ---
-        if (argsStr.toLowerCase() === 'list' || argsStr.toLowerCase() === 'lista') {
-            const history = getLocationHistoryWithIds(ctx.activeCampaign!.id);
-            if (history.length === 0) {
-                await ctx.message.reply("Il diario di viaggio è vuoto.");
-                return;
-            }
-
-            let msg = "**📜 Diario di Viaggio (con ID per correzione):**\n";
-            history.forEach((h: any) => {
-                const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-                const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
-                msg += `\`#${h.short_id}\` \`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
-            });
-            msg += `\n💡 Usa \`$viaggi fix #ID | NuovaRegione | NuovoLuogo\` per correggere.\n💡 Usa \`$viaggi delete #ID\` per eliminare.`;
 
             await ctx.message.reply(msg);
             return;
@@ -132,21 +113,112 @@ export const travelsCommand: Command = {
             return;
         }
 
-        // --- DEFAULT: Show simple history ---
-        const history = getLocationHistory(ctx.guildId);
-        if (history.length === 0) {
-            await ctx.message.reply("Il diario di viaggio è vuoto.");
+        // --- LIST / PAGINATION ---
+        // Default view or explicit list command
+        // $viaggi list [page]
+        let initialPage = 1;
+        if (argsStr.toLowerCase().startsWith('list') || argsStr.toLowerCase().startsWith('lista')) {
+            const parts = argsStr.split(' ');
+            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                initialPage = parseInt(parts[1]);
+            }
+        }
+
+        const ITEMS_PER_PAGE = 10;
+        let currentPage = Math.max(0, initialPage - 1);
+
+        // We need a paginated fetcher for history. 
+        // Existing `getLocationHistoryWithIds` fetches ALL.
+        // We can slice it in memory for now since history isn't massive yet, 
+        // or we should add pagination to DB. For consistency with other commands, let's slice.
+        const fullHistory = getLocationHistoryWithIds(ctx.activeCampaign!.id);
+
+        const generateEmbed = (page: number) => {
+            const offset = page * ITEMS_PER_PAGE;
+            const items = fullHistory.slice(offset, offset + ITEMS_PER_PAGE);
+            const total = fullHistory.length;
+            const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+
+            if (items.length === 0 && total > 0 && page > 0) {
+                return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
+            }
+
+            if (total === 0) {
+                return { embed: new EmbedBuilder().setDescription("Il diario di viaggio è vuoto."), totalPages: 0 };
+            }
+
+            const list = items.map((h: any) => {
+                const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
+                return `\`#${h.short_id}\` \`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}`;
+            }).join('\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle(`📜 Diario di Viaggio (${ctx.activeCampaign?.name})`)
+                .setColor("#95A5A6")
+                .setDescription(list)
+                .setFooter({ text: `Pagina ${page + 1} di ${totalPages} • Totale: ${total}` });
+
+            return { embed, totalPages };
+        };
+
+        const generateButtons = (page: number, totalPages: number) => {
+            const row = new ActionRowBuilder<ButtonBuilder>();
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_page')
+                    .setLabel('⬅️ Precedente')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('next_page')
+                    .setLabel('Successivo ➡️')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            return row;
+        };
+
+        const initialData = generateEmbed(currentPage);
+
+        if (initialData.totalPages === 0 || !initialData.embed.data.title) {
+            await ctx.message.reply({ embeds: [initialData.embed] });
             return;
         }
 
-        let msg = "**📜 Diario di Viaggio (Ultimi spostamenti):**\n";
-        history.forEach((h: any) => {
-            const time = new Date(h.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-            const sessionNum = h.session_number ? `**[S${h.session_number}]** ` : '';
-            msg += `\`${h.session_date} ${time}\` ${sessionNum}🌍 **${h.macro_location || '-'}** 👉 🏠 ${h.micro_location || 'Esterno'}\n`;
+        const reply = await ctx.message.reply({
+            embeds: [initialData.embed],
+            components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
         });
-        msg += `\n💡 Usa \`$viaggi list\` per vedere gli ID e correggere voci.`;
 
-        await ctx.message.reply(msg);
+        if (initialData.totalPages > 1) {
+            const collector = reply.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000 * 5 // 5 minutes
+            });
+
+            collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                if (interaction.user.id !== ctx.message.author.id) {
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    return;
+                }
+
+                if (interaction.customId === 'prev_page') {
+                    currentPage = Math.max(0, currentPage - 1);
+                } else if (interaction.customId === 'next_page') {
+                    currentPage++;
+                }
+
+                const newData = generateEmbed(currentPage);
+                await interaction.update({
+                    embeds: [newData.embed],
+                    components: [generateButtons(currentPage, newData.totalPages)]
+                });
+            });
+
+            collector.on('end', () => {
+                reply.edit({ components: [] }).catch(() => { });
+            });
+        }
     }
 };

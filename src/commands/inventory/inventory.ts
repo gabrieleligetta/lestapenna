@@ -2,6 +2,7 @@
  * $inventario / $inventory / $loot command - Inventory management
  */
 
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     addLoot,
@@ -9,7 +10,6 @@ import {
     getInventory,
     getSessionInventory,
     mergeInventoryItems,
-    // New imports
     addInventoryEvent,
     getInventoryItemByName,
     getInventoryHistory,
@@ -91,7 +91,6 @@ export const inventoryCommand: Command = {
 
             // ID Resolution
             const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = item.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -121,7 +120,6 @@ export const inventoryCommand: Command = {
 
             // ID Resolution
             const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = item.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -145,7 +143,6 @@ export const inventoryCommand: Command = {
 
             // ID Resolution
             const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
-            const idMatch = item.match(/^#?(\d+)$/);
 
             if (sidMatch) {
                 const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
@@ -162,106 +159,152 @@ export const inventoryCommand: Command = {
             await ctx.message.reply(`🗑️ Eliminazione completa per **${item}** in corso...`);
             deleteInventoryRagSummary(ctx.activeCampaign!.id, item);
             deleteInventoryHistory(ctx.activeCampaign!.id, item);
-            // removeLoot can delete if qty matches, but we want force delete. 
-            // We'll use removeLoot(all qty) or just directly delete?
-            // Existing `removeLoot` deletes if qty is 0. 
             removeLoot(ctx.activeCampaign!.id, item, 999999);
 
             await ctx.message.reply(`✅ Oggetto **${item}** eliminato definitivamente (RAG, Storia, Inventario).`);
             return;
         }
 
-        // SUBCOMMAND: list [page]
-        if (arg.toLowerCase().startsWith('list') || arg.toLowerCase().startsWith('lista')) {
-            let page = 1;
-            const parts = arg.split(' ');
-            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
-                page = parseInt(parts[1]);
-            }
-
-            const pageSize = 20;
-            const offset = (page - 1) * pageSize;
-            const total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
-            const totalPages = Math.ceil(total / pageSize);
-
-            if (page < 1 || (totalPages > 0 && page > totalPages)) {
-                await ctx.message.reply(`❌ Pagina ${page} non valida. Totale pagine: ${totalPages || 1}.`);
-                return;
-            }
-
-            const items = getInventory(ctx.activeCampaign!.id, pageSize, offset);
-            if (items.length === 0) {
-                await ctx.message.reply("Lo zaino è vuoto.");
-                return;
-            }
-
-            const list = items.map((i: any) => {
-                const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-                return `\`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
-            }).join('\n');
-
-            let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
-            if (totalPages > 1) footer = `\n\n📄 **Pagina ${page}/${totalPages}** (Usa \`$loot list ${page + 1}\` per la prossima)` + footer;
-
-            await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
-            return;
-        }
-
-        // VIEW: Show inventory (Page 1)
-        if (!arg) {
-            const pageSize = 20;
-            const items = getInventory(ctx.activeCampaign!.id, pageSize, 0);
-            const total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
-            const totalPages = Math.ceil(total / pageSize);
-
-            if (items.length === 0) {
-                await ctx.message.reply("Lo zaino è vuoto.");
-                return;
-            }
-
-            const list = items.map((i: any) => {
-                const desc = i.description ? `\n> *${i.description.substring(0, 100)}${i.description.length > 100 ? '...' : ''}*` : '';
-                return `\`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
-            }).join('\n');
-
-            let footer = `\n\n💡 Usa \`$loot <ID>\` o \`$loot update <ID> | <Nota>\` per interagire.`;
-            if (totalPages > 1) footer = `\n\n📄 **Pagina 1/${totalPages}** (Usa \`$loot list 2\` per la prossima)` + footer;
-
-            await ctx.message.reply(`**💰 Inventario di Gruppo (${ctx.activeCampaign?.name})**\n\n${list}${footer}`);
-            return;
-        }
-
         // VIEW SPECIFIC ITEM: $loot <ID> or $loot #abcde or $loot <Name>
-        const sidMatchDetail = arg.match(/^#([a-z0-9]{5})$/i);
-        const idMatchDetail = arg.match(/^#?(\d+)$/);
-
-        if (sidMatchDetail || idMatchDetail) {
+        // Check if it's NOT a list command
+        if (arg && !arg.toLowerCase().startsWith('list') && !arg.toLowerCase().startsWith('lista')) {
             let itemDetail: any = null;
+            const sidMatchDetail = arg.match(/^#([a-z0-9]{5})$/i);
 
             if (sidMatchDetail) {
                 itemDetail = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatchDetail[1]);
+            } else {
+                itemDetail = getInventoryItemByName(ctx.activeCampaign!.id, arg);
             }
 
             if (itemDetail) {
-                const desc = itemDetail.description ? `\n\n📜 **Descrizione:**\n${itemDetail.description}` : '';
-                const notes = itemDetail.notes ? `\n\n📝 **Note:**\n${itemDetail.notes}` : '';
-                await ctx.message.reply(`📦 **${itemDetail.item_name}** ${itemDetail.quantity > 1 ? `(x${itemDetail.quantity})` : ''}${desc}${notes}`);
+                const embed = new EmbedBuilder()
+                    .setTitle(`📦 ${itemDetail.item_name}`)
+                    .setColor("#F1C40F")
+                    .setDescription(itemDetail.description || "*Nessuna descrizione.*")
+                    .addFields(
+                        { name: "Quantità", value: itemDetail.quantity.toString(), inline: true },
+                        { name: "ID", value: `\`#${itemDetail.short_id}\``, inline: true }
+                    );
+
+                if (itemDetail.notes) {
+                    embed.addFields({ name: "📝 Note", value: itemDetail.notes });
+                }
+
+                embed.setFooter({ text: `Usa $loot update ${itemDetail.short_id} | <Nota> per aggiornare.` });
+
+                await ctx.message.reply({ embeds: [embed] });
+                return;
             } else {
+                // Only error if it looked like an ID search
                 if (sidMatchDetail) {
                     await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
+                    return;
                 }
+                // If name search failed, fallthrough to list? Or error?
+                // Usually specific search should error if not found.
+                await ctx.message.reply(`❌ Oggetto "${arg}" non trovato.`);
+                return;
             }
+        }
+
+        // VIEW: List (Paginated)
+        let initialPage = 1;
+        if (arg) {
+            const parts = arg.split(' ');
+            if (parts.length > 1 && !isNaN(parseInt(parts[1]))) {
+                initialPage = parseInt(parts[1]);
+            }
+        }
+
+        const ITEMS_PER_PAGE = 10;
+        let currentPage = Math.max(0, initialPage - 1);
+
+        const generateEmbed = (page: number) => {
+            const offset = page * ITEMS_PER_PAGE;
+            const items = getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+            const total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
+            const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+
+            if (items.length === 0 && total > 0 && page > 0) {
+                return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
+            }
+
+            if (total === 0) {
+                return { embed: new EmbedBuilder().setDescription("Lo zaino è vuoto."), totalPages: 0 };
+            }
+
+            const list = items.map((i: any) => {
+                const desc = i.description ? `\n> *${i.description.substring(0, 80)}${i.description.length > 80 ? '...' : ''}*` : '';
+                return `\`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+            }).join('\n\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle(`💰 Inventario di Gruppo (${ctx.activeCampaign?.name})`)
+                .setColor("#F1C40F")
+                .setDescription(list)
+                .setFooter({ text: `Pagina ${page + 1} di ${totalPages} • Totale: ${total}` });
+
+            return { embed, totalPages };
+        };
+
+        const generateButtons = (page: number, totalPages: number) => {
+            const row = new ActionRowBuilder<ButtonBuilder>();
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_page')
+                    .setLabel('⬅️ Precedente')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('next_page')
+                    .setLabel('Successivo ➡️')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            return row;
+        };
+
+        const initialData = generateEmbed(currentPage);
+
+        if (initialData.totalPages === 0 || !initialData.embed.data.title) {
+            await ctx.message.reply({ embeds: [initialData.embed] });
             return;
         }
 
-        // Name search
-        const item = getInventoryItemByName(ctx.activeCampaign!.id, arg);
-        if (item) {
-            const desc = item.description ? `\n\n📜 **Descrizione:**\n${item.description}` : '';
-            const notes = item.notes ? `\n\n📝 **Note:**\n${item.notes}` : '';
-            await ctx.message.reply(`📦 **${item.item_name}** ${item.quantity > 1 ? `(x${item.quantity})` : ''}${desc}${notes}`);
-        } else {
-            await ctx.message.reply(`❌ Oggetto "${arg}" non trovato.`);
+        const reply = await ctx.message.reply({
+            embeds: [initialData.embed],
+            components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+        });
+
+        if (initialData.totalPages > 1) {
+            const collector = reply.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000 * 5 // 5 minutes
+            });
+
+            collector.on('collect', async (interaction: MessageComponentInteraction) => {
+                if (interaction.user.id !== ctx.message.author.id) {
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    return;
+                }
+
+                if (interaction.customId === 'prev_page') {
+                    currentPage = Math.max(0, currentPage - 1);
+                } else if (interaction.customId === 'next_page') {
+                    currentPage++;
+                }
+
+                const newData = generateEmbed(currentPage);
+                await interaction.update({
+                    embeds: [newData.embed],
+                    components: [generateButtons(currentPage, newData.totalPages)]
+                });
+            });
+
+            collector.on('end', () => {
+                reply.edit({ components: [] }).catch(() => { });
+            });
         }
     }
 };
@@ -284,7 +327,6 @@ export const mergeItemCommand: Command = {
 
         // Resolve Old Name
         const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
-        const oldIdMatch = oldName.match(/^#?(\d+)$/);
         if (oldSidMatch) {
             const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
             if (itemEntry) oldName = itemEntry.item_name;
@@ -292,7 +334,6 @@ export const mergeItemCommand: Command = {
 
         // Resolve New Name
         const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
-        const newIdMatch = newName.match(/^#?(\d+)$/);
         if (newSidMatch) {
             const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
             if (itemEntry) newName = itemEntry.item_name;

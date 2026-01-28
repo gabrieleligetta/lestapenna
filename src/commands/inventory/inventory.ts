@@ -41,6 +41,24 @@ export const inventoryCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const arg = ctx.args.join(' ');
 
+        const generateItemDetailEmbed = (item: any) => {
+            const embed = new EmbedBuilder()
+                .setTitle(`📦 ${item.item_name}`)
+                .setColor("#F1C40F")
+                .setDescription(item.description || "*Nessuna descrizione.*")
+                .addFields(
+                    { name: "Quantità", value: item.quantity.toString(), inline: true },
+                    { name: "ID", value: `\`#${item.short_id}\``, inline: true }
+                );
+
+            if (item.notes) {
+                embed.addFields({ name: "📝 Note", value: item.notes });
+            }
+
+            embed.setFooter({ text: `Usa $loot update ${item.short_id} | <Nota> per aggiornare.` });
+            return embed;
+        };
+
         // --- SESSION SPECIFIC: $inventario <session_id> ---
         if (arg && isSessionId(arg)) {
             const sessionId = extractSessionId(arg);
@@ -178,22 +196,7 @@ export const inventoryCommand: Command = {
             }
 
             if (itemDetail) {
-                const embed = new EmbedBuilder()
-                    .setTitle(`📦 ${itemDetail.item_name}`)
-                    .setColor("#F1C40F")
-                    .setDescription(itemDetail.description || "*Nessuna descrizione.*")
-                    .addFields(
-                        { name: "Quantità", value: itemDetail.quantity.toString(), inline: true },
-                        { name: "ID", value: `\`#${itemDetail.short_id}\``, inline: true }
-                    );
-
-                if (itemDetail.notes) {
-                    embed.addFields({ name: "📝 Note", value: itemDetail.notes });
-                }
-
-                embed.setFooter({ text: `Usa $loot update ${itemDetail.short_id} | <Nota> per aggiornare.` });
-
-                await ctx.message.reply({ embeds: [embed] });
+                await ctx.message.reply({ embeds: [generateItemDetailEmbed(itemDetail)] });
                 return;
             } else {
                 // Only error if it looked like an ID search
@@ -282,24 +285,6 @@ export const inventoryCommand: Command = {
                 );
 
             return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-        };
-
-        const generateItemDetailEmbed = (item: any) => {
-            const embed = new EmbedBuilder()
-                .setTitle(`📦 ${item.item_name}`)
-                .setColor("#F1C40F")
-                .setDescription(item.description || "*Nessuna descrizione.*")
-                .addFields(
-                    { name: "Quantità", value: item.quantity.toString(), inline: true },
-                    { name: "ID", value: `\`#${item.short_id}\``, inline: true }
-                );
-
-            if (item.notes) {
-                embed.addFields({ name: "📝 Note", value: item.notes });
-            }
-
-            embed.setFooter({ text: `Usa $loot update ${item.short_id} | <Nota> per aggiornare.` });
-            return embed;
         };
 
         const initialData = generateEmbed(currentPage);

@@ -35,6 +35,44 @@ export const bestiaryCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const arg = ctx.args.join(' ');
 
+        const generateMonsterDetailEmbed = (monster: any) => {
+            const formatCount = (c: string) => {
+                const n = Number(c);
+                return !isNaN(n) ? n.toString() : c;
+            };
+
+            const statusColor = monster.status === 'ALIVE' ? "#00FF00" :
+                monster.status === 'DEFEATED' ? "#FF0000" :
+                    monster.status === 'FLED' ? "#FFFF00" : "#7289DA";
+
+            const statusIcon = monster.status === 'ALIVE' ? '⚔️' :
+                monster.status === 'DEFEATED' ? '💀' :
+                    monster.status === 'FLED' ? '🏃' : '👹';
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${statusIcon} ${monster.name}`)
+                .setColor(statusColor)
+                .setDescription(monster.description || "*Nessuna descrizione.*")
+                .addFields(
+                    { name: "Stato", value: monster.status, inline: true },
+                    { name: "ID", value: `\`#${monster.short_id}\``, inline: true }
+                );
+
+            if (monster.count) embed.addFields({ name: "Numero", value: formatCount(monster.count), inline: true });
+
+            const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
+            const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
+            const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
+
+            if (abilities.length > 0) embed.addFields({ name: "⚔️ Abilità", value: abilities.join(', ') });
+            if (weaknesses.length > 0) embed.addFields({ name: "🎯 Debolezze", value: weaknesses.join(', ') });
+            if (resistances.length > 0) embed.addFields({ name: "🛡️ Resistenze", value: resistances.join(', ') });
+            if (monster.notes) embed.addFields({ name: "📝 Note", value: monster.notes });
+
+            embed.setFooter({ text: `Usa $bestiario update ${monster.short_id} | <Nota> per aggiornare.` });
+            return embed;
+        };
+
         // SUBCOMMAND: $bestiario update <Name> | <Note>
         if (arg.toLowerCase().startsWith('update ')) {
             const content = arg.substring(7);
@@ -148,43 +186,7 @@ export const bestiaryCommand: Command = {
                 return;
             }
 
-            // Helper for formatting count
-            const formatCount = (c: string) => {
-                const n = Number(c);
-                return !isNaN(n) ? n.toString() : c;
-            };
-
-            const statusColor = monster.status === 'ALIVE' ? "#00FF00" :
-                monster.status === 'DEFEATED' ? "#FF0000" :
-                    monster.status === 'FLED' ? "#FFFF00" : "#7289DA";
-
-            const statusIcon = monster.status === 'ALIVE' ? '⚔️' :
-                monster.status === 'DEFEATED' ? '💀' :
-                    monster.status === 'FLED' ? '🏃' : '👹';
-
-            const embed = new EmbedBuilder()
-                .setTitle(`${statusIcon} ${monster.name}`)
-                .setColor(statusColor)
-                .setDescription(monster.description || "*Nessuna descrizione.*")
-                .addFields(
-                    { name: "Stato", value: monster.status, inline: true },
-                    { name: "ID", value: `\`#${monster.short_id}\``, inline: true }
-                );
-
-            if (monster.count) embed.addFields({ name: "Numero", value: formatCount(monster.count), inline: true });
-
-            const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
-            const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
-            const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
-
-            if (abilities.length > 0) embed.addFields({ name: "⚔️ Abilità", value: abilities.join(', ') });
-            if (weaknesses.length > 0) embed.addFields({ name: "🎯 Debolezze", value: weaknesses.join(', ') });
-            if (resistances.length > 0) embed.addFields({ name: "🛡️ Resistenze", value: resistances.join(', ') });
-            if (monster.notes) embed.addFields({ name: "📝 Note", value: monster.notes });
-
-            embed.setFooter({ text: `Usa $bestiario update ${monster.short_id} | <Nota> per aggiornare.` });
-
-            await ctx.message.reply({ embeds: [embed] });
+            await ctx.message.reply({ embeds: [generateMonsterDetailEmbed(monster)] });
             return;
         }
 
@@ -269,45 +271,6 @@ export const bestiaryCommand: Command = {
                 );
 
             return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-        };
-
-        const generateMonsterDetailEmbed = (monster: any) => {
-            // Helper for formatting count
-            const formatCount = (c: string) => {
-                const n = Number(c);
-                return !isNaN(n) ? n.toString() : c;
-            };
-
-            const statusColor = monster.status === 'ALIVE' ? "#00FF00" :
-                monster.status === 'DEFEATED' ? "#FF0000" :
-                    monster.status === 'FLED' ? "#FFFF00" : "#7289DA";
-
-            const statusIcon = monster.status === 'ALIVE' ? '⚔️' :
-                monster.status === 'DEFEATED' ? '💀' :
-                    monster.status === 'FLED' ? '🏃' : '👹';
-
-            const embed = new EmbedBuilder()
-                .setTitle(`${statusIcon} ${monster.name}`)
-                .setColor(statusColor)
-                .setDescription(monster.description || "*Nessuna descrizione.*")
-                .addFields(
-                    { name: "Stato", value: monster.status, inline: true },
-                    { name: "ID", value: `\`#${monster.short_id}\``, inline: true }
-                );
-
-            if (monster.count) embed.addFields({ name: "Numero", value: formatCount(monster.count), inline: true });
-
-            const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
-            const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
-            const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
-
-            if (abilities.length > 0) embed.addFields({ name: "⚔️ Abilità", value: abilities.join(', ') });
-            if (weaknesses.length > 0) embed.addFields({ name: "🎯 Debolezze", value: weaknesses.join(', ') });
-            if (resistances.length > 0) embed.addFields({ name: "🛡️ Resistenze", value: resistances.join(', ') });
-            if (monster.notes) embed.addFields({ name: "📝 Note", value: monster.notes });
-
-            embed.setFooter({ text: `Usa $bestiario update ${monster.short_id} | <Nota> per aggiornare.` });
-            return embed;
         };
 
         const initialData = generateEmbed(currentPage);

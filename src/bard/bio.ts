@@ -66,6 +66,7 @@ function generatePrompt(type: BioEntityType, ctx: BioContext, historyText: strin
     1. **Atmosfera:** Mantieni lo stile evocativo.
     2. **Integrazione:** Se la cronologia dice "la locanda è bruciata", la descrizione DEVE riflettere lo stato di rovina.
     3. **Formato:** Testo descrittivo unico, niente elenchi puntati.
+    4. **Limiti:** Massimo 3500 caratteri.
     
     Restituisci SOLO il testo della nuova descrizione.`;
 
@@ -82,7 +83,7 @@ Scrivi un riassunto narrativo della missione che integri gli eventi accaduti.
 - Includi gli obiettivi raggiunti e quelli falliti.
 - Se la quest è conclusa, scrivi un epilogo.
 - NO liste puntate, usa paragrafi fluidi.
-- Lunghezza: Massimo 200 parole.`;
+- Lunghezza: Massimo 3000 caratteri.`;
 
         case 'MONSTER':
             return `Sei uno Studioso di Mostri. Scrivi il **Dossier Ecologico** per: "${ctx.name}".
@@ -96,7 +97,8 @@ Compila una descrizione tecnica ma narrativa della creatura basata SOLO su ciò 
 - Descrivi aspetto, comportamento e abilità viste.
 - Evidenzia debolezze o resistenze scoperte (es. "Sembra temere il fuoco").
 - Non inventare fatti non supportati dalla storia.
-- Stile: Accademico ma pratico (Manuale di Sopravvivenza).`;
+- Stile: Accademico ma pratico (Manuale di Sopravvivenza).
+- Lunghezza: Massimo 3500 caratteri.`;
 
         case 'ITEM':
             return `Sei un Antiquario Arcano. Scrivi la **Leggenda** dell'oggetto: "${ctx.name}".
@@ -110,7 +112,8 @@ Scrivi la storia dell'oggetto basandoti sui suoi passaggi di mano e utilizzi.
 - Chi lo ha trovato? Chi lo ha usato?
 - Ha mostrato poteri particolari?
 - Si è danneggiato o modificato nel tempo?
-- Stile: Descrizione da catalogo d'asta magica o leggenda sussurrata.`;
+- Stile: Descrizione da catalogo d'asta magica o leggenda sussurrata.
+- Lunghezza: Massimo 3000 caratteri.`;
 
         default:
             return `Aggiorna la descrizione di ${ctx.name} basandoti su: ${historyText}`;
@@ -153,10 +156,10 @@ export async function generateBio(
         const response = await metadataClient.chat.completions.create({
             model: METADATA_MODEL,
             messages: [
-                { role: "system", content: "Sei un esperto biografo e archivista fantasy." },
+                { role: "system", content: "Sei un esperto biografo e archivista fantasy. Rispondi in italiano. Sii conciso se necessario per non superare i limiti di spazio." },
                 { role: "user", content: prompt }
             ],
-            // max_completion_tokens: type === 'CHARACTER' ? 400 : 800 // PC bios are kept shorter
+            max_completion_tokens: 1000 // Ensure output is well within Discord's 4096 char limit for descriptions
         });
 
         const latency = Date.now() - startAI;

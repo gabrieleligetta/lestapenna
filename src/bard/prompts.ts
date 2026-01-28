@@ -343,7 +343,7 @@ La biografia NON deve essere un elenco di fatti, ma una narrazione che mostri co
 3. **Personalità:** Mantieni il tono definito dalla Fondazione (es. se è "fiero", le sue azioni devono trasudare orgoglio).
 4. **Evoluzione:** Se la cronologia contiene eventi di tipo [TRAUMA] o [ACHIEVEMENT], dai loro peso psicologico.
 5. **Formato:** Prosa fluida in terza persona. NO elenchi puntati. Linguaggio evocativo ma chiaro.
-6. **Lunghezza:** Massimo 1200 caratteri. Dovrebbe sentirsi come una pagina di un diario leggendario o una ballata.
+6. **Lunghezza:** Massimo 3500 caratteri. Dovrebbe sentirsi come una pagina di un diario leggendario o una ballata.
 
 Restituisci SOLO il testo della biografia.`;
 
@@ -378,13 +378,14 @@ export const REGENERATE_NPC_NOTES_PROMPT = (npcName: string, role: string, stati
     ISTRUZIONI DI SCRITTURA:
     1. **Lunghezza Adattiva:** La lunghezza del testo DEVE essere proporzionale alla quantità di eventi nella cronologia. 
        - Se ci sono pochi eventi, sii breve.
-       - Se ci sono molti eventi, scrivi una storia ricca e dettagliata. NON RIASSUMERE ECCESSIVAMENTE.
+            - Se ci sono molti eventi, scrivi una storia ricca e dettagliata. NON RIASSUMERE ECCESSIVAMENTE.
     2. **Struttura:**
        - Inizia con l'aspetto fisico e la personalità (presi dalla Descrizione Precedente).
        - Prosegui con la narrazione delle sue gesta in ordine cronologico (prese dalla Cronologia).
        - Concludi con la sua situazione attuale.
-    3. **Preservazione:** Non inventare fatti non presenti, ma collegali in modo logico.
+    3. **Preservazione:** Non inventare fatti non supportati, ma collegali in modo logico.
     4. **Stile:** ${complexityLevel === "DETTAGLIATO" ? "Epico, narrativo e approfondito." : "Diretto e informativo."}
+    5. **Limiti:** Massimo 3500 caratteri.
     
     Restituisci SOLO il testo della nuova biografia.`;
 
@@ -405,6 +406,7 @@ export const SMART_MERGE_PROMPT = (bio1: string, bio2: string) => `Sei un archiv
     2. Elimini le ripetizioni (es. se entrambi dicono "è ferito", dillo una volta sola).
     3. Mantenga lo stile conciso da dossier.
     4. Aggiorni lo stato fisico se le nuove info sono più recenti.
+    5. **Lunghezza:** Massimo 3500 caratteri.
     
     Restituisci SOLO il testo della nuova descrizione, niente altro.`;
 
@@ -543,7 +545,8 @@ export const BARD_ATMOSPHERE_PROMPT = (atmosphere: string, socialContext: string
     1. La cronologia serve SOLO per il contesto.
     2. NON ripetere mai le risposte già date.
     3. Rispondi in modo diretto.
-    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.`;
+    4. Se la risposta non è nelle trascrizioni, ammetti di non ricordare.
+    5. **Lunghezza:** Massimo 1500 caratteri.`;
 
 // --- VALIDATION ---
 

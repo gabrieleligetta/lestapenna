@@ -44,9 +44,24 @@ export const questCommand: Command = {
         const arg = ctx.args.join(' ');
         const firstArg = ctx.args[0];
 
+        const generateQuestDetailEmbed = (quest: any) => {
+            const typeIcon = quest.type === 'MAJOR' ? '👑' : '📜';
+            const s = quest.status as string;
+            const statusIcon = (s === QuestStatus.IN_PROGRESS || s === 'IN CORSO') ? '⏳' :
+                (s === QuestStatus.COMPLETED || s === 'DONE') ? '✅' :
+                    (s === QuestStatus.FAILED) ? '❌' : '🔹';
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${typeIcon} ${quest.title}`)
+                .setColor("#7289DA")
+                .setDescription(`**Stato:** ${statusIcon} ${quest.status}\n**ID:** \`#${quest.short_id}\`\n\n${quest.description || "*Nessuna descrizione.*"}`)
+                .setFooter({ text: `Quest del ${ctx.activeCampaign?.name}` });
+
+            return embed;
+        };
+
         // --- SESSION SPECIFIC: $quest <session_id> [all] ---
         if (firstArg && isSessionId(firstArg)) {
-            // ... (Keep existing logic)
             const sessionId = extractSessionId(firstArg);
             const showAll = ctx.args.includes('all') || ctx.args.includes('-a');
             const sessionQuests = getSessionQuests(sessionId);
@@ -246,21 +261,7 @@ export const questCommand: Command = {
             }
 
             // Show Details
-            const typeIcon = quest.type === 'MAJOR' ? '👑' : '📜';
-            const s = quest.status as string;
-            const statusIcon = (s === QuestStatus.IN_PROGRESS || s === 'IN CORSO') ? '⏳' :
-                (s === QuestStatus.COMPLETED || s === 'DONE') ? '✅' :
-                    (s === QuestStatus.FAILED) ? '❌' : '🔹';
-
-            let desc = quest.description || "*Nessuna descrizione.*";
-
-            const embed = new EmbedBuilder()
-                .setTitle(`${typeIcon} ${quest.title}`)
-                .setColor("#7289DA")
-                .setDescription(`**Stato:** ${statusIcon} ${quest.status}\n**ID:** \`#${quest.short_id}\`\n\n${desc}`)
-                .setFooter({ text: `Quest del ${ctx.activeCampaign?.name}` });
-
-            await ctx.message.reply({ embeds: [embed] });
+            await ctx.message.reply({ embeds: [generateQuestDetailEmbed(quest)] });
             return;
         }
 

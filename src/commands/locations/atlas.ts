@@ -35,7 +35,23 @@ export const atlasCommand: Command = {
     requiresCampaign: true,
 
     async execute(ctx: CommandContext): Promise<void> {
+        const firstArg = ctx.args[0];
         const argsStr = ctx.args.join(' ');
+
+        const generateLocationDetailEmbed = (entry: any) => {
+            const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
+            const embed = new EmbedBuilder()
+                .setTitle(`🌍 ${entry.macro_location} - 🏠 ${entry.micro_location}`)
+                .setColor("#0099FF")
+                .setDescription(entry.description || "*Nessuna descrizione.*")
+                .addFields(
+                    { name: "ID", value: `\`#${entry.short_id}\``, inline: true },
+                    { name: "Ultimo Aggiornamento", value: lastUpdate, inline: true }
+                )
+                .setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
+
+            return embed;
+        };
 
         // --- SESSION SPECIFIC: $atlante <session_id> ---
         if (argsStr && isSessionId(argsStr)) {
@@ -178,18 +194,7 @@ export const atlasCommand: Command = {
             }
 
             if (entry) {
-                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
-                const embed = new EmbedBuilder()
-                    .setTitle(`🌍 ${entry.macro_location} - 🏠 ${entry.micro_location}`)
-                    .setColor("#0099FF")
-                    .setDescription(entry.description || "*Nessuna descrizione.*")
-                    .addFields(
-                        { name: "ID", value: `\`#${entry.short_id}\``, inline: true },
-                        { name: "Ultimo Aggiornamento", value: lastUpdate, inline: true }
-                    )
-                    .setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
-
-                await ctx.message.reply({ embeds: [embed] });
+                await ctx.message.reply({ embeds: [generateLocationDetailEmbed(entry)] });
             } else {
                 if (sidMatchDetail) {
                     await ctx.message.reply(`❌ ID \`#${sidMatchDetail[1]}\` non trovato.`);
@@ -281,21 +286,6 @@ export const atlasCommand: Command = {
                     );
 
                 return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-            };
-
-            const generateLocationDetailEmbed = (entry: any) => {
-                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
-                const embed = new EmbedBuilder()
-                    .setTitle(`🌍 ${entry.macro_location} - 🏠 ${entry.micro_location}`)
-                    .setColor("#0099FF")
-                    .setDescription(entry.description || "*Nessuna descrizione.*")
-                    .addFields(
-                        { name: "ID", value: `\`#${entry.short_id}\``, inline: true },
-                        { name: "Ultimo Aggiornamento", value: lastUpdate, inline: true }
-                    )
-                    .setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
-
-                return embed;
             };
 
             const initialData = generateEmbed(currentPage);

@@ -38,7 +38,39 @@ export const npcCommand: Command = {
     requiresCampaign: true,
 
     async execute(ctx: CommandContext): Promise<void> {
+        const firstArg = ctx.args[0];
         const argsStr = ctx.args.join(' ');
+
+        const generateDossierEmbed = (npc: any) => {
+            const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+            const statusColor = npc.status === 'DEAD' ? "#FF0000" : npc.status === 'MISSING' ? "#FFFF00" : "#00FF00";
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${statusIcon} ${npc.name}`)
+                .setColor(statusColor)
+                .setDescription(npc.description || "*Nessuna nota.*")
+                .addFields(
+                    { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
+                    { name: "Stato", value: npc.status || "Vivo", inline: true },
+                    { name: "ID", value: `\`#${npc.short_id}\``, inline: true }
+                );
+
+            if (npc.aliases) {
+                embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
+            }
+
+            const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-3);
+            if (history.length > 0) {
+                const historyText = history.map((h: any) => {
+                    const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
+                    return `${typeIcon} ${h.description}`;
+                }).join('\n');
+                embed.addFields({ name: "Cronologia Recente", value: historyText });
+            }
+
+            embed.setFooter({ text: `Usa $npc update ${npc.short_id} | <Nota> per aggiornare.` });
+            return embed;
+        };
 
         // --- SESSION SPECIFIC: $npc <session_id> ---
         if (isSessionId(argsStr)) {
@@ -414,7 +446,7 @@ export const npcCommand: Command = {
 
         // --- GETTER: $npc Nome / #abcde ---
         // Check if it's a list command first
-        if (!argsStr || argsStr.toLowerCase().startsWith('list')) {
+        if (firstArg === 'list' || firstArg === 'lista') {
             let initialPage = 1;
             if (argsStr) {
                 const listParts = argsStr.split(' ');
@@ -493,41 +525,10 @@ export const npcCommand: Command = {
                 return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
             };
 
-            const generateDossierEmbed = (npc: any) => {
-                const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
-                const statusColor = npc.status === 'DEAD' ? "#FF0000" : npc.status === 'MISSING' ? "#FFFF00" : "#00FF00";
-
-                const embed = new EmbedBuilder()
-                    .setTitle(`${statusIcon} ${npc.name}`)
-                    .setColor(statusColor)
-                    .setDescription(npc.description || "*Nessuna nota.*")
-                    .addFields(
-                        { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
-                        { name: "Stato", value: npc.status || "Vivo", inline: true },
-                        { name: "ID", value: `\`#${npc.short_id}\``, inline: true }
-                    );
-
-                if (npc.aliases) {
-                    embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
-                }
-
-                const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-3);
-                if (history.length > 0) {
-                    const historyText = history.map((h: any) => {
-                        const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
-                        return `${typeIcon} ${h.description}`;
-                    }).join('\n');
-                    embed.addFields({ name: "Cronologia Recente", value: historyText });
-                }
-
-                embed.setFooter({ text: `Usa $npc update ${npc.short_id} | <Nota> per aggiornare.` });
-                return embed;
-            };
-
             const initialData = generateEmbed(currentPage);
             const offset = currentPage * ITEMS_PER_PAGE;
             const currentNpcs = listNpcs(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
-            
+
             if (initialData.totalPages === 0 || !initialData.embed.data.title) {
                 await ctx.message.reply({ embeds: [initialData.embed] });
                 return;
@@ -564,7 +565,7 @@ export const npcCommand: Command = {
                         const newData = generateEmbed(currentPage);
                         const newOffset = currentPage * ITEMS_PER_PAGE;
                         const newNpcs = listNpcs(ctx.activeCampaign!.id, ITEMS_PER_PAGE, newOffset);
-                        
+
                         const newComponents: any[] = [];
                         if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));
                         const newSelectRow = generateSelectMenu(newNpcs);
@@ -609,34 +610,7 @@ export const npcCommand: Command = {
             return;
         }
 
-        const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
-        const statusColor = npc.status === 'DEAD' ? "#FF0000" : npc.status === 'MISSING' ? "#FFFF00" : "#00FF00";
-
-        const embed = new EmbedBuilder()
-            .setTitle(`${statusIcon} ${npc.name}`)
-            .setColor(statusColor)
-            .setDescription(npc.description || "*Nessuna nota.*")
-            .addFields(
-                { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
-                { name: "Stato", value: npc.status || "Vivo", inline: true },
-                { name: "ID", value: `\`#${npc.short_id}\``, inline: true }
-            );
-
-        if (npc.aliases) {
-            embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
-        }
-
-        const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-3);
-        if (history.length > 0) {
-            const historyText = history.map((h: any) => {
-                const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
-                return `${typeIcon} ${h.description}`;
-            }).join('\n');
-            embed.addFields({ name: "Cronologia Recente", value: historyText });
-        }
-
-        embed.setFooter({ text: `Usa $npc update ${npc.short_id} | <Nota> per aggiornare.` });
-
-        await ctx.message.reply({ embeds: [embed] });
+        const dossierEmbed = generateDossierEmbed(npc);
+        await ctx.message.reply({ embeds: [dossierEmbed] });
     }
 };

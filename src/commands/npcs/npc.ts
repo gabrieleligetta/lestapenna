@@ -2,7 +2,7 @@
  * $npc / $dossier command - NPC management with many subcommands
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     listNpcs,
@@ -474,41 +474,118 @@ export const npcCommand: Command = {
                 return row;
             };
 
+            const generateSelectMenu = (npcs: any[]) => {
+                if (npcs.length === 0) return null;
+
+                const selectMenu = new StringSelectMenuBuilder()
+                    .setCustomId('select_npc')
+                    .setPlaceholder('🔍 Seleziona un NPC per i dettagli...')
+                    .addOptions(
+                        npcs.map((n: any) =>
+                            new StringSelectMenuOptionBuilder()
+                                .setLabel(n.name)
+                                .setDescription(n.role || 'Senza ruolo')
+                                .setValue(n.name)
+                                .setEmoji(n.status === 'DEAD' ? '💀' : n.status === 'MISSING' ? '❓' : '👤')
+                        )
+                    );
+
+                return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+            };
+
+            const generateDossierEmbed = (npc: any) => {
+                const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
+                const statusColor = npc.status === 'DEAD' ? "#FF0000" : npc.status === 'MISSING' ? "#FFFF00" : "#00FF00";
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`${statusIcon} ${npc.name}`)
+                    .setColor(statusColor)
+                    .setDescription(npc.description || "*Nessuna nota.*")
+                    .addFields(
+                        { name: "Ruolo", value: npc.role || "Sconosciuto", inline: true },
+                        { name: "Stato", value: npc.status || "Vivo", inline: true },
+                        { name: "ID", value: `\`#${npc.short_id}\``, inline: true }
+                    );
+
+                if (npc.aliases) {
+                    embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
+                }
+
+                const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-3);
+                if (history.length > 0) {
+                    const historyText = history.map((h: any) => {
+                        const typeIcon = h.event_type === 'ALLIANCE' ? '🤝' : h.event_type === 'BETRAYAL' ? '🗡️' : h.event_type === 'DEATH' ? '💀' : '📝';
+                        return `${typeIcon} ${h.description}`;
+                    }).join('\n');
+                    embed.addFields({ name: "Cronologia Recente", value: historyText });
+                }
+
+                embed.setFooter({ text: `Usa $npc update ${npc.short_id} | <Nota> per aggiornare.` });
+                return embed;
+            };
+
             const initialData = generateEmbed(currentPage);
+            const offset = currentPage * ITEMS_PER_PAGE;
+            const currentNpcs = listNpcs(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
             
             if (initialData.totalPages === 0 || !initialData.embed.data.title) {
                 await ctx.message.reply({ embeds: [initialData.embed] });
                 return;
             }
 
+            const components: any[] = [];
+            if (initialData.totalPages > 1) components.push(generateButtons(currentPage, initialData.totalPages));
+            const selectMenuRow = generateSelectMenu(currentNpcs);
+            if (selectMenuRow) components.push(selectMenuRow);
+
             const reply = await ctx.message.reply({
                 embeds: [initialData.embed],
-                components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+                components
             });
 
-            if (initialData.totalPages > 1) {
+            if (initialData.totalPages > 1 || currentNpcs.length > 0) {
                 const collector = reply.createMessageComponentCollector({
-                    componentType: ComponentType.Button,
                     time: 60000 * 5 // 5 minutes
                 });
 
                 collector.on('collect', async (interaction: MessageComponentInteraction) => {
                     if (interaction.user.id !== ctx.message.author.id) {
-                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
                         return;
                     }
 
-                    if (interaction.customId === 'prev_page') {
-                        currentPage = Math.max(0, currentPage - 1);
-                    } else if (interaction.customId === 'next_page') {
-                        currentPage++;
-                    }
+                    if (interaction.isButton()) {
+                        if (interaction.customId === 'prev_page') {
+                            currentPage = Math.max(0, currentPage - 1);
+                        } else if (interaction.customId === 'next_page') {
+                            currentPage++;
+                        }
 
-                    const newData = generateEmbed(currentPage);
-                    await interaction.update({
-                        embeds: [newData.embed],
-                        components: [generateButtons(currentPage, newData.totalPages)]
-                    });
+                        const newData = generateEmbed(currentPage);
+                        const newOffset = currentPage * ITEMS_PER_PAGE;
+                        const newNpcs = listNpcs(ctx.activeCampaign!.id, ITEMS_PER_PAGE, newOffset);
+                        
+                        const newComponents: any[] = [];
+                        if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));
+                        const newSelectRow = generateSelectMenu(newNpcs);
+                        if (newSelectRow) newComponents.push(newSelectRow);
+
+                        await interaction.update({
+                            embeds: [newData.embed],
+                            components: newComponents
+                        });
+                    } else if (interaction.isStringSelectMenu()) {
+                        if (interaction.customId === 'select_npc') {
+                            const selectedName = interaction.values[0];
+                            const npc = getNpcEntry(ctx.activeCampaign!.id, selectedName);
+                            if (npc) {
+                                const dossierEmbed = generateDossierEmbed(npc);
+                                await interaction.reply({ embeds: [dossierEmbed] });
+                            } else {
+                                await interaction.reply({ content: "NPC non trovato.", ephemeral: true });
+                            }
+                        }
+                    }
                 });
 
                 collector.on('end', () => {

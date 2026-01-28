@@ -2,9 +2,9 @@
  * $party / $compagni command - Show all party members
  */
 
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { getCampaignCharacters } from '../../db';
+import { getCampaignCharacters, getUserProfile, getCharacterUserId } from '../../db';
 
 export const partyCommand: Command = {
     name: 'party',
@@ -30,6 +30,76 @@ export const partyCommand: Command = {
             .setColor("#9B59B6")
             .setDescription(list);
 
-        await ctx.message.reply({ embeds: [embed] });
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('select_party_member')
+            .setPlaceholder('🔍 Seleziona un compagno per il profilo...')
+            .addOptions(
+                characters.map(c =>
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel(c.character_name || "Sconosciuto")
+                        .setDescription([c.race, c.class].filter(Boolean).join(' - ') || 'Nessun dettaglio')
+                        .setValue(c.character_name || "Sconosciuto")
+                        .setEmoji('👤')
+                )
+            );
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        const reply = await ctx.message.reply({
+            embeds: [embed],
+            components: [row]
+        });
+
+        const collector = reply.createMessageComponentCollector({
+            componentType: ComponentType.StringSelect,
+            time: 60000 * 5 // 5 minutes
+        });
+
+        collector.on('collect', async (interaction: MessageComponentInteraction) => {
+            if (interaction.user.id !== ctx.message.author.id) {
+                await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
+                return;
+            }
+
+            if (interaction.isStringSelectMenu() && interaction.customId === 'select_party_member') {
+                const selectedName = interaction.values[0];
+                const userId = getCharacterUserId(ctx.activeCampaign!.id, selectedName);
+
+                if (userId) {
+                    const p = getUserProfile(userId, ctx.activeCampaign!.id);
+
+                    const truncate = (text: string, max: number = 1020) => {
+                        if (!text || text.length === 0) return "Nessuna descrizione.";
+                        return text.length > max ? text.slice(0, max - 3) + '...' : text;
+                    };
+
+                    const profileEmbed = new EmbedBuilder()
+                        .setTitle(`👤 Profilo di ${p.character_name}`)
+                        .setDescription(`Campagna: **${ctx.activeCampaign!.name}**`)
+                        .setColor("#3498DB")
+                        .addFields(
+                            { name: "⚔️ Nome", value: p.character_name || "Non impostato", inline: true },
+                            { name: "🛡️ Classe", value: p.class || "Sconosciuta", inline: true },
+                            { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
+                            { name: "📜 Biografia", value: truncate(p.description || "") }
+                        );
+
+                    try {
+                        const targetUser = await ctx.client.users.fetch(userId);
+                        if (targetUser) {
+                            profileEmbed.setThumbnail(targetUser.displayAvatarURL());
+                        }
+                    } catch (e) { }
+
+                    await interaction.reply({ embeds: [profileEmbed] });
+                } else {
+                    await interaction.reply({ content: "Personaggio non trovato.", ephemeral: true });
+                }
+            }
+        });
+
+        collector.on('end', () => {
+            reply.edit({ components: [] }).catch(() => { });
+        });
     }
 };

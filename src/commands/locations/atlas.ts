@@ -2,7 +2,7 @@
  * $atlante / $atlas command - Location atlas management
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     getCampaignLocation,
@@ -224,7 +224,7 @@ export const atlasCommand: Command = {
                 const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
                 if (entries.length === 0 && total > 0 && page > 0) {
-                     return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
+                    return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
                 }
 
                 if (total === 0) {
@@ -264,42 +264,103 @@ export const atlasCommand: Command = {
                 return row;
             };
 
+            const generateSelectMenu = (entries: any[]) => {
+                if (entries.length === 0) return null;
+
+                const selectMenu = new StringSelectMenuBuilder()
+                    .setCustomId('select_location')
+                    .setPlaceholder('🔍 Seleziona un luogo per i dettagli...')
+                    .addOptions(
+                        entries.map((e: any) =>
+                            new StringSelectMenuOptionBuilder()
+                                .setLabel(`${e.macro_location} - ${e.micro_location}`.substring(0, 100))
+                                .setDescription(`ID: #${e.short_id}`)
+                                .setValue(`${e.macro_location}|${e.micro_location}`)
+                                .setEmoji('🌍')
+                        )
+                    );
+
+                return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+            };
+
+            const generateLocationDetailEmbed = (entry: any) => {
+                const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');
+                const embed = new EmbedBuilder()
+                    .setTitle(`🌍 ${entry.macro_location} - 🏠 ${entry.micro_location}`)
+                    .setColor("#0099FF")
+                    .setDescription(entry.description || "*Nessuna descrizione.*")
+                    .addFields(
+                        { name: "ID", value: `\`#${entry.short_id}\``, inline: true },
+                        { name: "Ultimo Aggiornamento", value: lastUpdate, inline: true }
+                    )
+                    .setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
+
+                return embed;
+            };
+
             const initialData = generateEmbed(currentPage);
-            
+            const offset = currentPage * ITEMS_PER_PAGE;
+            const currentEntries = listAtlasEntries(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+
             // If empty or error
             if (initialData.totalPages === 0 || !initialData.embed.data.title) {
-                 await ctx.message.reply({ embeds: [initialData.embed] });
-                 return;
+                await ctx.message.reply({ embeds: [initialData.embed] });
+                return;
             }
+
+            const components: any[] = [];
+            if (initialData.totalPages > 1) components.push(generateButtons(currentPage, initialData.totalPages));
+            const selectRow = generateSelectMenu(currentEntries);
+            if (selectRow) components.push(selectRow);
 
             const reply = await ctx.message.reply({
                 embeds: [initialData.embed],
-                components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+                components
             });
 
-            if (initialData.totalPages > 1) {
+            if (initialData.totalPages > 1 || currentEntries.length > 0) {
                 const collector = reply.createMessageComponentCollector({
-                    componentType: ComponentType.Button,
                     time: 60000 * 5 // 5 minutes
                 });
 
                 collector.on('collect', async (interaction: MessageComponentInteraction) => {
                     if (interaction.user.id !== ctx.message.author.id) {
-                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
                         return;
                     }
 
-                    if (interaction.customId === 'prev_page') {
-                        currentPage = Math.max(0, currentPage - 1);
-                    } else if (interaction.customId === 'next_page') {
-                        currentPage++;
-                    }
+                    if (interaction.isButton()) {
+                        if (interaction.customId === 'prev_page') {
+                            currentPage = Math.max(0, currentPage - 1);
+                        } else if (interaction.customId === 'next_page') {
+                            currentPage++;
+                        }
 
-                    const newData = generateEmbed(currentPage);
-                    await interaction.update({
-                        embeds: [newData.embed],
-                        components: [generateButtons(currentPage, newData.totalPages)]
-                    });
+                        const newData = generateEmbed(currentPage);
+                        const newOffset = currentPage * ITEMS_PER_PAGE;
+                        const newEntries = listAtlasEntries(ctx.activeCampaign!.id, ITEMS_PER_PAGE, newOffset);
+
+                        const newComponents: any[] = [];
+                        if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));
+                        const newSelectRow = generateSelectMenu(newEntries);
+                        if (newSelectRow) newComponents.push(newSelectRow);
+
+                        await interaction.update({
+                            embeds: [newData.embed],
+                            components: newComponents
+                        });
+                    } else if (interaction.isStringSelectMenu()) {
+                        if (interaction.customId === 'select_location') {
+                            const [macro, micro] = interaction.values[0].split('|');
+                            const entry = getAtlasEntryFull(ctx.activeCampaign!.id, macro, micro);
+                            if (entry) {
+                                const detailEmbed = generateLocationDetailEmbed(entry);
+                                await interaction.reply({ embeds: [detailEmbed] });
+                            } else {
+                                await interaction.reply({ content: "Luogo non trovato.", ephemeral: true });
+                            }
+                        }
+                    }
                 });
 
                 collector.on('end', () => {

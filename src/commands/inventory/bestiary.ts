@@ -2,7 +2,7 @@
  * $bestiario / $bestiary command - Monster bestiary
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     listAllMonsters,
@@ -215,10 +215,10 @@ export const bestiaryCommand: Command = {
                 const statusIcon = m.status === 'ALIVE' ? '⚔️' :
                     m.status === 'DEFEATED' ? '💀' :
                         m.status === 'FLED' ? '🏃' : '👹';
-                
+
                 const countStr = m.count ? ` (x${m.count})` : '';
                 const desc = m.description ? `\n> *${m.description.substring(0, 80)}${m.description.length > 80 ? '...' : ''}*` : '';
-                
+
                 return `\`#${m.short_id}\` ${statusIcon} **${m.name}**${countStr} [${m.status}]${desc}`;
             }).join('\n\n');
 
@@ -248,35 +248,125 @@ export const bestiaryCommand: Command = {
             return row;
         };
 
+        const generateSelectMenu = (monsters: any[]) => {
+            if (monsters.length === 0) return null;
+
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_monster')
+                .setPlaceholder('🔍 Seleziona un mostro per i dettagli...')
+                .addOptions(
+                    monsters.map((m: any) => {
+                        const statusIcon = m.status === 'ALIVE' ? '⚔️' :
+                            m.status === 'DEFEATED' ? '💀' :
+                                m.status === 'FLED' ? '🏃' : '👹';
+
+                        return new StringSelectMenuOptionBuilder()
+                            .setLabel(m.name.substring(0, 100))
+                            .setDescription(`ID: #${m.short_id} | ${m.status}`)
+                            .setValue(m.name)
+                            .setEmoji(statusIcon);
+                    })
+                );
+
+            return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+        };
+
+        const generateMonsterDetailEmbed = (monster: any) => {
+            // Helper for formatting count
+            const formatCount = (c: string) => {
+                const n = Number(c);
+                return !isNaN(n) ? n.toString() : c;
+            };
+
+            const statusColor = monster.status === 'ALIVE' ? "#00FF00" :
+                monster.status === 'DEFEATED' ? "#FF0000" :
+                    monster.status === 'FLED' ? "#FFFF00" : "#7289DA";
+
+            const statusIcon = monster.status === 'ALIVE' ? '⚔️' :
+                monster.status === 'DEFEATED' ? '💀' :
+                    monster.status === 'FLED' ? '🏃' : '👹';
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${statusIcon} ${monster.name}`)
+                .setColor(statusColor)
+                .setDescription(monster.description || "*Nessuna descrizione.*")
+                .addFields(
+                    { name: "Stato", value: monster.status, inline: true },
+                    { name: "ID", value: `\`#${monster.short_id}\``, inline: true }
+                );
+
+            if (monster.count) embed.addFields({ name: "Numero", value: formatCount(monster.count), inline: true });
+
+            const abilities = monster.abilities ? JSON.parse(monster.abilities) : [];
+            const weaknesses = monster.weaknesses ? JSON.parse(monster.weaknesses) : [];
+            const resistances = monster.resistances ? JSON.parse(monster.resistances) : [];
+
+            if (abilities.length > 0) embed.addFields({ name: "⚔️ Abilità", value: abilities.join(', ') });
+            if (weaknesses.length > 0) embed.addFields({ name: "🎯 Debolezze", value: weaknesses.join(', ') });
+            if (resistances.length > 0) embed.addFields({ name: "🛡️ Resistenze", value: resistances.join(', ') });
+            if (monster.notes) embed.addFields({ name: "📝 Note", value: monster.notes });
+
+            embed.setFooter({ text: `Usa $bestiario update ${monster.short_id} | <Nota> per aggiornare.` });
+            return embed;
+        };
+
         const initialData = generateEmbed(currentPage);
+        const offset = currentPage * ITEMS_PER_PAGE;
+        const currentMonsters = monsters.slice(offset, offset + ITEMS_PER_PAGE);
+
+        const components: any[] = [];
+        if (initialData.totalPages > 1) components.push(generateButtons(currentPage, initialData.totalPages));
+        const selectRow = generateSelectMenu(currentMonsters);
+        if (selectRow) components.push(selectRow);
+
         const reply = await ctx.message.reply({
             embeds: [initialData.embed],
-            components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+            components
         });
 
-        if (initialData.totalPages > 1) {
+        if (initialData.totalPages > 1 || monsters.length > 0) {
             const collector = reply.createMessageComponentCollector({
-                componentType: ComponentType.Button,
                 time: 60000 * 5 // 5 minutes
             });
 
             collector.on('collect', async (interaction: MessageComponentInteraction) => {
                 if (interaction.user.id !== ctx.message.author.id) {
-                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
                     return;
                 }
 
-                if (interaction.customId === 'prev_page') {
-                    currentPage = Math.max(0, currentPage - 1);
-                } else if (interaction.customId === 'next_page') {
-                    currentPage++;
-                }
+                if (interaction.isButton()) {
+                    if (interaction.customId === 'prev_page') {
+                        currentPage = Math.max(0, currentPage - 1);
+                    } else if (interaction.customId === 'next_page') {
+                        currentPage++;
+                    }
 
-                const newData = generateEmbed(currentPage);
-                await interaction.update({
-                    embeds: [newData.embed],
-                    components: [generateButtons(currentPage, newData.totalPages)]
-                });
+                    const newData = generateEmbed(currentPage);
+                    const newOffset = currentPage * ITEMS_PER_PAGE;
+                    const newMonsters = monsters.slice(newOffset, newOffset + ITEMS_PER_PAGE);
+
+                    const newComponents: any[] = [];
+                    if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));
+                    const newSelectRow = generateSelectMenu(newMonsters);
+                    if (newSelectRow) newComponents.push(newSelectRow);
+
+                    await interaction.update({
+                        embeds: [newData.embed],
+                        components: newComponents
+                    });
+                } else if (interaction.isStringSelectMenu()) {
+                    if (interaction.customId === 'select_monster') {
+                        const selectedName = interaction.values[0];
+                        const monster = monsters.find((m: any) => m.name === selectedName);
+                        if (monster) {
+                            const detailEmbed = generateMonsterDetailEmbed(monster);
+                            await interaction.reply({ embeds: [detailEmbed] });
+                        } else {
+                            await interaction.reply({ content: "Mostro non trovato.", ephemeral: true });
+                        }
+                    }
+                }
             });
 
             collector.on('end', () => {

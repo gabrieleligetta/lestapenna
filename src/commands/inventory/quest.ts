@@ -2,7 +2,7 @@
  * $quest / $obiettivi command - Quest management
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 
 import { Command, CommandContext } from '../types';
 import {
@@ -365,7 +365,55 @@ export const questCommand: Command = {
                 return row;
             };
 
+            const generateSelectMenu = (quests: any[]) => {
+                if (quests.length === 0) return null;
+
+                const selectMenu = new StringSelectMenuBuilder()
+                    .setCustomId('select_quest')
+                    .setPlaceholder('🔍 Seleziona una quest per i dettagli...')
+                    .addOptions(
+                        quests.map((q: any) => {
+                            const statusIcon = (q.status === QuestStatus.IN_PROGRESS || q.status === 'IN CORSO') ? '⏳' :
+                                (q.status === QuestStatus.COMPLETED || q.status === 'DONE') ? '✅' :
+                                    (q.status === QuestStatus.FAILED) ? '❌' : '🔹';
+
+                            return new StringSelectMenuOptionBuilder()
+                                .setLabel(q.title.substring(0, 100))
+                                .setDescription(`ID: #${q.short_id} | ${q.status}`)
+                                .setValue(q.title)
+                                .setEmoji(statusIcon);
+                        })
+                    );
+
+                return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+            };
+
+            const generateQuestDetailEmbed = (quest: any) => {
+                const typeIcon = quest.type === 'MAJOR' ? '👑' : '📜';
+                const s = quest.status as string;
+                const statusIcon = (s === QuestStatus.IN_PROGRESS || s === 'IN CORSO') ? '⏳' :
+                    (s === QuestStatus.COMPLETED || s === 'DONE') ? '✅' :
+                        (s === QuestStatus.FAILED) ? '❌' : '🔹';
+
+                let desc = quest.description || "*Nessuna descrizione.*";
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`${typeIcon} ${quest.title}`)
+                    .setColor("#7289DA")
+                    .setDescription(`**Stato:** ${statusIcon} ${quest.status}\n**ID:** \`#${quest.short_id}\`\n\n${desc}`)
+                    .setFooter({ text: `Quest del ${ctx.activeCampaign?.name}` });
+
+                return embed;
+            };
+
             const initialData = generateEmbed(currentPage);
+            const offset = currentPage * ITEMS_PER_PAGE;
+            let currentQuests: any[] = [];
+            if (statusFilter === 'ACTIVE' || statusFilter === 'APERTE') {
+                currentQuests = questRepository.getOpenQuests(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+            } else {
+                currentQuests = questRepository.getQuestsByStatus(ctx.activeCampaign!.id, statusFilter, ITEMS_PER_PAGE, offset);
+            }
 
             // If just error message or empty
             if (initialData.total === 0 || !initialData.embed.data.title) {
@@ -373,42 +421,64 @@ export const questCommand: Command = {
                 return;
             }
 
+            const components: any[] = [];
+            if (initialData.totalPages > 1) components.push(generateButtons(currentPage, initialData.totalPages));
+            const selectRow = generateSelectMenu(currentQuests);
+            if (selectRow) components.push(selectRow);
+
             const reply = await ctx.message.reply({
                 embeds: [initialData.embed],
-                components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+                components
             });
 
-            if (initialData.totalPages > 1) {
+            if (initialData.totalPages > 1 || currentQuests.length > 0) {
                 const collector = reply.createMessageComponentCollector({
-                    componentType: ComponentType.Button,
                     time: 60000 * 5 // 5 minutes
                 });
 
                 collector.on('collect', async (interaction: MessageComponentInteraction) => {
                     if (interaction.user.id !== ctx.message.author.id) {
-                        await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                        await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
                         return;
                     }
 
-                    if (interaction.customId === 'prev_page') {
-                        currentPage = Math.max(0, currentPage - 1);
-                    } else if (interaction.customId === 'next_page') {
-                        currentPage++;
+                    if (interaction.isButton()) {
+                        if (interaction.customId === 'prev_page') {
+                            currentPage = Math.max(0, currentPage - 1);
+                        } else if (interaction.customId === 'next_page') {
+                            currentPage++;
+                        }
+
+                        const newData = generateEmbed(currentPage);
+                        const newOffset = currentPage * ITEMS_PER_PAGE;
+                        let newQuests: any[] = [];
+                        if (statusFilter === 'ACTIVE' || statusFilter === 'APERTE') {
+                            newQuests = questRepository.getOpenQuests(ctx.activeCampaign!.id, ITEMS_PER_PAGE, newOffset);
+                        } else {
+                            newQuests = questRepository.getQuestsByStatus(ctx.activeCampaign!.id, statusFilter, ITEMS_PER_PAGE, newOffset);
+                        }
+
+                        const newComponents: any[] = [];
+                        if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));
+                        const newSelectRow = generateSelectMenu(newQuests);
+                        if (newSelectRow) newComponents.push(newSelectRow);
+
+                        await interaction.update({
+                            embeds: [newData.embed],
+                            components: newComponents
+                        });
+                    } else if (interaction.isStringSelectMenu()) {
+                        if (interaction.customId === 'select_quest') {
+                            const selectedTitle = interaction.values[0];
+                            const quest = getQuestByTitle(ctx.activeCampaign!.id, selectedTitle);
+                            if (quest) {
+                                const detailEmbed = generateQuestDetailEmbed(quest);
+                                await interaction.reply({ embeds: [detailEmbed] });
+                            } else {
+                                await interaction.reply({ content: "Quest non trovata.", ephemeral: true });
+                            }
+                        }
                     }
-
-                    const newData = generateEmbed(currentPage);
-
-                    // Verify page wasn't out of bounds due to race condition or stale data
-                    if (newData.totalPages > 0 && currentPage >= newData.totalPages) {
-                        currentPage = newData.totalPages - 1;
-                        // re-fetch? generateEmbed(currentPage) would need to be called again if we want perfect correctness, 
-                        // but let's assume it's fine or next update fixes it.
-                    }
-
-                    await interaction.update({
-                        embeds: [newData.embed],
-                        components: [generateButtons(currentPage, newData.totalPages)]
-                    });
                 });
 
                 collector.on('end', () => {

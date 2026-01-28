@@ -2,7 +2,7 @@
  * $inventario / $inventory / $loot command - Inventory management
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
     addLoot,
@@ -265,41 +265,105 @@ export const inventoryCommand: Command = {
             return row;
         };
 
+        const generateSelectMenu = (items: any[]) => {
+            if (items.length === 0) return null;
+
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_item')
+                .setPlaceholder('🔍 Seleziona un oggetto per i dettagli...')
+                .addOptions(
+                    items.map((i: any) =>
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel(i.item_name.substring(0, 100))
+                            .setDescription(`ID: #${i.short_id} | Quantità: ${i.quantity}`)
+                            .setValue(i.item_name)
+                            .setEmoji('📦')
+                    )
+                );
+
+            return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+        };
+
+        const generateItemDetailEmbed = (item: any) => {
+            const embed = new EmbedBuilder()
+                .setTitle(`📦 ${item.item_name}`)
+                .setColor("#F1C40F")
+                .setDescription(item.description || "*Nessuna descrizione.*")
+                .addFields(
+                    { name: "Quantità", value: item.quantity.toString(), inline: true },
+                    { name: "ID", value: `\`#${item.short_id}\``, inline: true }
+                );
+
+            if (item.notes) {
+                embed.addFields({ name: "📝 Note", value: item.notes });
+            }
+
+            embed.setFooter({ text: `Usa $loot update ${item.short_id} | <Nota> per aggiornare.` });
+            return embed;
+        };
+
         const initialData = generateEmbed(currentPage);
+        const offset = currentPage * ITEMS_PER_PAGE;
+        const currentItems = getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
 
         if (initialData.totalPages === 0 || !initialData.embed.data.title) {
             await ctx.message.reply({ embeds: [initialData.embed] });
             return;
         }
 
+        const components: any[] = [];
+        if (initialData.totalPages > 1) components.push(generateButtons(currentPage, initialData.totalPages));
+        const selectRow = generateSelectMenu(currentItems);
+        if (selectRow) components.push(selectRow);
+
         const reply = await ctx.message.reply({
             embeds: [initialData.embed],
-            components: initialData.totalPages > 1 ? [generateButtons(currentPage, initialData.totalPages)] : []
+            components
         });
 
-        if (initialData.totalPages > 1) {
+        if (initialData.totalPages > 1 || currentItems.length > 0) {
             const collector = reply.createMessageComponentCollector({
-                componentType: ComponentType.Button,
                 time: 60000 * 5 // 5 minutes
             });
 
             collector.on('collect', async (interaction: MessageComponentInteraction) => {
                 if (interaction.user.id !== ctx.message.author.id) {
-                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
                     return;
                 }
 
-                if (interaction.customId === 'prev_page') {
-                    currentPage = Math.max(0, currentPage - 1);
-                } else if (interaction.customId === 'next_page') {
-                    currentPage++;
-                }
+                if (interaction.isButton()) {
+                    if (interaction.customId === 'prev_page') {
+                        currentPage = Math.max(0, currentPage - 1);
+                    } else if (interaction.customId === 'next_page') {
+                        currentPage++;
+                    }
 
-                const newData = generateEmbed(currentPage);
-                await interaction.update({
-                    embeds: [newData.embed],
-                    components: [generateButtons(currentPage, newData.totalPages)]
-                });
+                    const newData = generateEmbed(currentPage);
+                    const newOffset = currentPage * ITEMS_PER_PAGE;
+                    const newItems = getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, newOffset);
+
+                    const newComponents: any[] = [];
+                    if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));
+                    const newSelectRow = generateSelectMenu(newItems);
+                    if (newSelectRow) newComponents.push(newSelectRow);
+
+                    await interaction.update({
+                        embeds: [newData.embed],
+                        components: newComponents
+                    });
+                } else if (interaction.isStringSelectMenu()) {
+                    if (interaction.customId === 'select_item') {
+                        const selectedName = interaction.values[0];
+                        const item = getInventoryItemByName(ctx.activeCampaign!.id, selectedName);
+                        if (item) {
+                            const detailEmbed = generateItemDetailEmbed(item);
+                            await interaction.reply({ embeds: [detailEmbed] });
+                        } else {
+                            await interaction.reply({ content: "Oggetto non trovato.", ephemeral: true });
+                        }
+                    }
+                }
             });
 
             collector.on('end', () => {

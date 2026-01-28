@@ -3,7 +3,7 @@
  */
 
 import { Command, CommandContext } from '../types';
-import { db } from '../../db';
+import { db, updateUserCharacter } from '../../db';
 import { resetAndRegenerateCharacterBio, resetAllCharacterBios } from '../../bard';
 
 export const bioCommand: Command = {
@@ -60,11 +60,44 @@ export const bioCommand: Command = {
             return;
         }
 
+        if (firstArg === 'clear' || firstArg === 'svuota' || firstArg === 'empty') {
+            const targetName = ctx.args.slice(1).join(' ');
+
+            if (!targetName) {
+                // Clear ALL characters
+                const characters = db.prepare('SELECT user_id, character_name FROM characters WHERE campaign_id = ?').all(campaignId) as any[];
+                if (characters.length === 0) {
+                    await ctx.message.reply(`ℹ️ Nessun PG da svuotare.`);
+                    return;
+                }
+
+                for (const char of characters) {
+                    updateUserCharacter(char.user_id, campaignId, 'description', '');
+                }
+
+                await ctx.message.reply(`✅ **Biografie svuotate!**\nSvuotati **${characters.length}** personaggi.`);
+                return;
+            }
+
+            // Clear specific character
+            const targetPG = db.prepare('SELECT user_id, character_name FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)').get(campaignId, targetName) as any;
+            if (!targetPG) {
+                await ctx.message.reply(`❌ Non trovo un PG chiamato "**${targetName}**".`);
+                return;
+            }
+
+            updateUserCharacter(targetPG.user_id, campaignId, 'description', '');
+            await ctx.message.reply(`✅ Biografia di **${targetPG.character_name}** svuotata.`);
+            return;
+        }
+
         // Help
         await ctx.message.reply(
             "**📜 Gestione Biografie PG**\n\n" +
-            "`$bio reset` - Rigenera da zero tutte le biografie\n" +
-            "`$bio reset <NomePG>` - Rigenera da zero la biografia di un PG\n\n" +
+            "`$bio reset` - Rigenera tutte le biografie (AI)\n" +
+            "`$bio reset <Nome>` - Rigenera una biografia (AI)\n" +
+            "`$bio clear` - Svuota tutte le biografie\n" +
+            "`$bio clear <Nome>` - Svuota una biografia\n\n" +
             "*Le biografie vengono mostrate in `$chisono`/`$whoami`*"
         );
     }

@@ -75,13 +75,12 @@ export const partyCommand: Command = {
 
                     const profileEmbed = new EmbedBuilder()
                         .setTitle(`👤 Profilo di ${p.character_name}`)
-                        .setDescription(`Campagna: **${ctx.activeCampaign!.name}**`)
+                        .setDescription(truncate(p.description || "", 4000))
                         .setColor("#3498DB")
                         .addFields(
-                            { name: "⚔️ Nome", value: p.character_name || "Non impostato", inline: true },
                             { name: "🛡️ Classe", value: p.class || "Sconosciuta", inline: true },
                             { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
-                            { name: "📜 Biografia", value: truncate(p.description || "") }
+                            { name: "🌍 Campagna", value: ctx.activeCampaign!.name || "Nessuna", inline: true }
                         );
 
                     try {

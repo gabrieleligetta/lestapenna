@@ -8,6 +8,7 @@ import { monitor } from '../monitor';
 import {
     UPDATE_CHARACTER_BIO_PROMPT,
     REGENERATE_NPC_NOTES_PROMPT,
+    CHARACTER_NARRATIVE_BIO_PROMPT
 } from './prompts';
 
 export type BioEntityType = 'CHARACTER' | 'NPC' | 'LOCATION' | 'QUEST' | 'MONSTER' | 'ITEM';
@@ -22,6 +23,7 @@ interface BioContext {
     macro?: string;      // Location
     micro?: string;      // Location
     currentDesc?: string;
+    foundationDescription?: string; // PC Foundation Bio
 }
 
 /**
@@ -32,8 +34,8 @@ function generatePrompt(type: BioEntityType, ctx: BioContext, historyText: strin
 
     switch (type) {
         case 'CHARACTER':
-            // PC: Conservative approach (Agency first)
-            return UPDATE_CHARACTER_BIO_PROMPT(ctx.name, ctx.currentDesc || '', historyText);
+            // PC: Narrative focus (Foundation + History)
+            return CHARACTER_NARRATIVE_BIO_PROMPT(ctx.name, ctx.foundationDescription || '', historyText);
 
         case 'NPC':
             // NPC: Narrative approach

@@ -35,6 +35,7 @@ export const initDatabase = () => {
         race TEXT,
         class TEXT,
         description TEXT,
+        foundation_description TEXT,
         rag_sync_needed INTEGER DEFAULT 0,
         last_synced_history_id INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
@@ -45,6 +46,10 @@ export const initDatabase = () => {
     // Migrazione: aggiungi colonna se non esiste
     try {
         db.exec(`ALTER TABLE characters ADD COLUMN last_synced_history_id INTEGER DEFAULT 0`);
+    } catch (e) { /* colonna già esistente */ }
+
+    try {
+        db.exec(`ALTER TABLE characters ADD COLUMN foundation_description TEXT`);
     } catch (e) { /* colonna già esistente */ }
 
     // --- TABELLA STORIA PERSONAGGI (BIOGRAFIA) ---
@@ -451,7 +456,8 @@ export const initDatabase = () => {
         "ALTER TABLE inventory ADD COLUMN short_id TEXT",
         "ALTER TABLE location_history ADD COLUMN short_id TEXT",
         "ALTER TABLE world_history ADD COLUMN short_id TEXT",
-        "ALTER TABLE world_history ADD COLUMN timestamp INTEGER"
+        "ALTER TABLE world_history ADD COLUMN timestamp INTEGER",
+        "ALTER TABLE characters ADD COLUMN foundation_description TEXT"
     ];
 
     for (const m of migrations) {

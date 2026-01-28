@@ -324,6 +324,29 @@ ${historyText}
 
 Restituisci SOLO il testo aggiornato della biografia (senza introduzioni o spiegazioni).`;
 
+export const CHARACTER_NARRATIVE_BIO_PROMPT = (charName: string, foundation: string, historyText: string) => `Sei un Cronista Fantasy Leggendario. 
+Il tuo compito è scrivere la biografia epica di un Eroe: **${charName}**.
+
+**DESCRIZIONE FONDANTE (L'essenza del personaggio definita dal giocatore):**
+"${foundation || 'Un avventuriero misterioso in cerca di gloria.'}"
+
+**CRONOLOGIA DEGLI EVENTI (Gesta compiute e traumi vissuti):**
+${historyText}
+
+**OBIETTIVO:**
+Crea un racconto fluido, coerente e suggestivo che unisca l'essenza del personaggio con le sue imprese. 
+La biografia NON deve essere un elenco di fatti, ma una narrazione che mostri come il personaggio sia cambiato o confermato dai suoi capitoli di vita.
+
+**ISTRUZIONI DI STILE:**
+1. **Incipit:** Parti sempre dall'essenza (la Descrizione Fondante), integrandola armoniosamente.
+2. **Narrazione:** Intreccia gli eventi storici come tappe di un viaggio. Usa i traumi per mostrare cicatrici emotive e i successi per mostrare crescita o fama.
+3. **Personalità:** Mantieni il tono definito dalla Fondazione (es. se è "fiero", le sue azioni devono trasudare orgoglio).
+4. **Evoluzione:** Se la cronologia contiene eventi di tipo [TRAUMA] o [ACHIEVEMENT], dai loro peso psicologico.
+5. **Formato:** Prosa fluida in terza persona. NO elenchi puntati. Linguaggio evocativo ma chiaro.
+6. **Lunghezza:** Massimo 1200 caratteri. Dovrebbe sentirsi come una pagina di un diario leggendario o una ballata.
+
+Restituisci SOLO il testo della biografia.`;
+
 export const NPC_BIO_PROMPT = (npcName: string, role: string, staticDesc: string, historyText: string) => `Sei un biografo fantasy.
     Scrivi la storia dell'NPC: **${npcName}**.
     

@@ -50,9 +50,9 @@ export const characterRepository = {
         return row ? row.user_id : null;
     },
 
-    getUserProfile: (userId: string, campaignId: number): UserProfile => {
-        const row = db.prepare('SELECT character_name, race, class, description FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as UserProfile | undefined;
-        return row || { character_name: null, race: null, class: null, description: null };
+    getUserProfile: (userId: string, campaignId: number): UserProfile & { foundation_description: string | null } => {
+        const row = db.prepare('SELECT character_name, race, class, description, foundation_description FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
+        return row || { character_name: null, race: null, class: null, description: null, foundation_description: null };
     },
 
     getUserName: (userId: string, campaignId: number): string | null => {
@@ -60,11 +60,11 @@ export const characterRepository = {
         return profile.character_name;
     },
 
-    getCampaignCharacters: (campaignId: number): UserProfile[] & { user_id: string }[] => {
-        return db.prepare('SELECT user_id, character_name, race, class, description FROM characters WHERE campaign_id = ?').all(campaignId) as any[];
+    getCampaignCharacters: (campaignId: number): (UserProfile & { user_id: string, foundation_description: string | null })[] => {
+        return db.prepare('SELECT user_id, character_name, race, class, description, foundation_description FROM characters WHERE campaign_id = ?').all(campaignId) as any[];
     },
 
-    updateUserCharacter: (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description', value: string, isManual: boolean = true): void => {
+    updateUserCharacter: (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description' | 'foundation_description', value: string, isManual: boolean = true): void => {
         // Upsert character profile
         const exists = db.prepare('SELECT 1 FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId);
 
@@ -77,6 +77,10 @@ export const characterRepository = {
             // Create new with just this field populated
             db.prepare(`INSERT INTO characters (user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES (?, ?, ?, 1, ?)`).run(userId, campaignId, value, isManual ? 1 : 0);
         }
+    },
+
+    updateFoundationDescription: (userId: string, campaignId: number, value: string): void => {
+        characterRepository.updateUserCharacter(userId, campaignId, 'foundation_description', value, true);
     },
 
     deleteUserCharacter: (userId: string, campaignId: number) => {

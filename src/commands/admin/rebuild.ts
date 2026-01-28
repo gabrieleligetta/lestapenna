@@ -141,6 +141,15 @@ function softResetAnagrafiche(): { npcs: number; locations: number } {
         WHERE COALESCE(is_manual, 0) = 0
     `).run();
 
+    // Reset character bios but keep foundation_description
+    db.prepare(`
+        UPDATE characters
+        SET description = foundation_description,
+            rag_sync_needed = 1,
+            last_synced_history_id = 0
+        WHERE COALESCE(is_manual, 0) = 0
+    `).run();
+
     // Reset location descriptions but keep macro/micro names
     const locationResult = db.prepare(`
         UPDATE location_atlas
@@ -186,10 +195,10 @@ function purgeAllDerivedData(): Record<string, number> {
     const ragResult = db.prepare('DELETE FROM knowledge_fragments').run();
     results['knowledge_fragments'] = ragResult.changes;
 
-    // Also reset character sync state but preserve manual descriptions
+    // Also reset character sync state but preserve manual descriptions and foundation
     db.prepare(`
         UPDATE characters
-        SET description = CASE WHEN COALESCE(is_manual, 0) = 1 THEN description ELSE '' END,
+        SET description = CASE WHEN COALESCE(is_manual, 0) = 1 THEN description ELSE COALESCE(foundation_description, '') END,
             last_synced_history_id = 0,
             rag_sync_needed = 1
     `).run();

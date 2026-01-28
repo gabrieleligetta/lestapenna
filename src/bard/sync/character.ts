@@ -24,13 +24,15 @@ import { generateBio } from '../bio';
 export async function regenerateCharacterDescription(
     charName: string,
     currentDesc: string,
-    newEvents: Array<{ description: string, event_type: string }>
+    newEvents: Array<{ description: string, event_type: string }>,
+    foundationDescription?: string
 ): Promise<string> {
 
     // Use unified service
     return generateBio('CHARACTER', {
         name: charName,
-        currentDesc: currentDesc
+        currentDesc: currentDesc,
+        foundationDescription: foundationDescription
     }, newEvents);
 }
 
@@ -43,12 +45,13 @@ export async function syncCharacterIfNeeded(
     force: boolean = false
 ): Promise<string | null> {
     const char = db.prepare(`
-        SELECT character_name, description, rag_sync_needed, last_synced_history_id
+        SELECT character_name, description, foundation_description, rag_sync_needed, last_synced_history_id
         FROM characters
         WHERE user_id = ? AND campaign_id = ?
     `).get(userId, campaignId) as {
         character_name: string,
         description: string | null,
+        foundation_description: string | null,
         rag_sync_needed: number,
         last_synced_history_id: number
     } | undefined;
@@ -81,7 +84,8 @@ export async function syncCharacterIfNeeded(
     const newDesc = await regenerateCharacterDescription(
         char.character_name,
         char.description || '',
-        newEvents
+        newEvents,
+        char.foundation_description || ''
     );
 
     db.prepare(`
@@ -123,10 +127,10 @@ export async function resetAndRegenerateCharacterBio(
     userId: string
 ): Promise<string | null> {
     const char = db.prepare(`
-        SELECT character_name, description
+        SELECT character_name, description, foundation_description
         FROM characters
         WHERE user_id = ? AND campaign_id = ?
-    `).get(userId, campaignId) as { character_name: string, description: string | null } | undefined;
+    `).get(userId, campaignId) as { character_name: string, description: string | null, foundation_description: string | null } | undefined;
 
     if (!char || !char.character_name) return null;
 
@@ -153,7 +157,8 @@ export async function resetAndRegenerateCharacterBio(
     const newDesc = await regenerateCharacterDescription(
         char.character_name,
         '',
-        allEvents
+        allEvents,
+        char.foundation_description || ''
     );
 
     db.prepare(`

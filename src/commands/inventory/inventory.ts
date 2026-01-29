@@ -184,8 +184,10 @@ export const inventoryCommand: Command = {
         }
 
         // VIEW SPECIFIC ITEM: $loot <ID> or $loot #abcde or $loot <Name>
-        // Check if it's NOT a list command
-        if (arg && !arg.toLowerCase().startsWith('list') && !arg.toLowerCase().startsWith('lista')) {
+        // Check if it's a list command or empty
+        if (!arg || arg.toLowerCase().startsWith('list') || arg.toLowerCase().startsWith('lista')) {
+            // Proceed to list below
+        } else {
             let itemDetail: any = null;
             const sidMatchDetail = arg.match(/^#([a-z0-9]{5})$/i);
 

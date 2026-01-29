@@ -446,7 +446,7 @@ export const npcCommand: Command = {
 
         // --- GETTER: $npc Nome / #abcde ---
         // Check if it's a list command first
-        if (firstArg === 'list' || firstArg === 'lista') {
+        if (!firstArg || firstArg === 'list' || firstArg === 'lista') {
             let initialPage = 1;
             if (argsStr) {
                 const listParts = argsStr.split(' ');

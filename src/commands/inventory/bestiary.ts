@@ -167,7 +167,9 @@ export const bestiaryCommand: Command = {
         }
 
         // VIEW: Show specific monster details (ID or Name)
-        if (arg && arg.toLowerCase() !== 'list' && !arg.includes('|')) {
+        if (!arg || arg.toLowerCase().startsWith('list') || arg.toLowerCase().startsWith('lista')) {
+            // Proceed to list below
+        } else if (!arg.includes('|')) {
             let search = arg;
 
             // ID Resolution
@@ -191,6 +193,13 @@ export const bestiaryCommand: Command = {
         }
 
         // VIEW: List all monsters (Paginated)
+        let initialPage = 1;
+        if (arg) {
+            const listParts = arg.split(' ');
+            if (listParts.length > 1 && !isNaN(parseInt(listParts[1]))) {
+                initialPage = parseInt(listParts[1]);
+            }
+        }
         const monsters = listAllMonsters(ctx.activeCampaign!.id);
         if (monsters.length === 0) {
             await ctx.message.reply("👹 Nessun mostro incontrato in questa campagna.");
@@ -206,7 +215,7 @@ export const bestiaryCommand: Command = {
         });
 
         const ITEMS_PER_PAGE = 5;
-        let currentPage = 0;
+        let currentPage = Math.max(0, initialPage - 1);
 
         const generateEmbed = (page: number) => {
             const offset = page * ITEMS_PER_PAGE;

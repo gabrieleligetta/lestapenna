@@ -22,7 +22,7 @@ export const helpCommand: Command = {
                 embed.setTitle(`🧩 Unified Entity: $${arg}`)
                     .setDescription(`Common interface for managing campaign entities like NPCs, Quests, Locations, Items, and Monsters.`)
                     .addFields(
-                        { name: "📋 Listing", value: `\`$${arg} list\`: See all items (paginated).\n\`$${arg} #ID\`: View details for a specific entity.` },
+                        { name: "📋 Listing", value: `\`$${arg}\`: See all items (dossier list).\n\`$${arg} list\`: Explicit listing.\n\`$${arg} #ID\`: View details for a specific entity.` },
                         { name: "📝 Narrative Update", value: `\`$${arg} update <ID> | <Note>\`\nAdd a story update or observation. This triggers an AI bio regeneration.` },
                         { name: "⚙️ Metadata Update", value: `\`$${arg} update <ID> field:<key> <val>\`\nDirectly edit fields (e.g., \`field:status DEFEATED\`).` },
                         { name: "🔀 Merge", value: `\`$${arg} merge <OldID/Name> | <NewID/Name>\`\nCombine duplicates into one record.` },
@@ -59,6 +59,13 @@ export const helpCommand: Command = {
                 embed.setTitle(`🗺️ Travel Log: $travels fix`)
                     .addFields(
                         { name: "Fix Location History", value: `\`$travels fix #ID | <NewRegion> | <NewPlace>\`\nCorrect a mistake in the journey log.` }
+                    );
+            } else if (arg === 'presenze') {
+                embed.setTitle(`👥 Session NPCs: $presenze`)
+                    .setDescription(`View which NPCs were present or interacted during a specific session.`)
+                    .addFields(
+                        { name: "Current Session", value: `\`$presenze\`: Shows NPCs from the active session.` },
+                        { name: "Specific Session", value: `\`$presenze session_xxxx\`: Shows NPCs from a past session.` }
                     );
             } else {
                 await ctx.message.reply(`❌ Detailed help for \`$${arg}\` not found. Use \`$help\` or \`$help advanced\`.`);
@@ -145,7 +152,8 @@ export const helpCommand: Command = {
                     value:
                         "`$help`: Show this list.\n" +
                         "`$status`: System health & queues.\n" +
-                        "`$metrics`: Session stats (cost, tokens)."
+                        "`$metrics`: Session stats (cost, tokens).\n" +
+                        "`$listsessions`: View all recorded sessions."
                 },
                 {
                     name: "🎙️ Session",
@@ -160,7 +168,8 @@ export const helpCommand: Command = {
                     name: "🌍 Location",
                     value:
                         "`$location`: Show current location.\n" +
-                        "`$location <Region> | <Place>`: Set location manually."
+                        "`$location <Region> | <Place>`: Set location manually.\n" +
+                        "`$travels`: View campaign travel history."
                 },
                 {
                     name: "📜 Narrative",
@@ -179,7 +188,17 @@ export const helpCommand: Command = {
                         "`$myclass <Class>` / `$myrace <Race>`: Set sheet info.\n" +
                         "`$story <Name>`: Read PC history.\n" +
                         "`$mydesc <Text>`: Set manual bio.\n" +
-                        "`$bio reset [Name]`: Regenerate PC bio."
+                        "`$bio reset [Name]`: Regenerate PC bio.\n" +
+                        "`$presenze`: NPCs encountered this session."
+                },
+                {
+                    name: "🧩 Records & Lists",
+                    value:
+                        "`$npc`: List known NPCs.\n" +
+                        "`$quest`: Show active quests.\n" +
+                        "`$loot`: group inventory.\n" +
+                        "`$atlas`: View world locations.\n" +
+                        "`$bestiary`: Encountered monsters."
                 },
                 {
                     name: "🔧 Advanced Tools",

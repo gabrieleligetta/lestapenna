@@ -22,7 +22,7 @@ export const aiutoCommand: Command = {
                 embed.setTitle(`🧩 Entità Unificata: $${arg}`)
                     .setDescription(`Interfaccia comune per la gestione di entità come NPC, Missioni, Luoghi, Oggetti e Mostri.`)
                     .addFields(
-                        { name: "📋 Lista", value: `\`$${arg} list\`: Vede tutti gli elementi (paginati).\n\`$${arg} #ID\`: Visualizza i dettagli di un'entità specifica.` },
+                        { name: "📋 Lista", value: `\`$${arg}\`: Vede tutti gli elementi (dossier).\n\`$${arg} list\`: Listing esplicito.\n\`$${arg} #ID\`: Visualizza i dettagli di un'entità specifica.` },
                         { name: "📝 Aggiornamento Narrativo", value: `\`$${arg} update <ID> | <Nota>\`\nAggiunge un aggiornamento o un'osservazione. Innesca la rigenerazione bio via IA.` },
                         { name: "⚙️ Aggiornamento Metadati", value: `\`$${arg} update <ID> field:<chiave> <valore>\`\nModifica direttamente i campi (es. \`field:status SCONFITTO\`).` },
                         { name: "🔀 Unione (Merge)", value: `\`$${arg} merge <VecchioID/Nome> | <NuovoID/Nome>\`\nUnisce i duplicati in un unico record.` },
@@ -59,6 +59,13 @@ export const aiutoCommand: Command = {
                 embed.setTitle(`🗺️ Registro Viaggi: $viaggi fix`)
                     .addFields(
                         { name: "Correggi Storico", value: `\`$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>\`\nCorregge un errore nel registro degli spostamenti.` }
+                    );
+            } else if (arg === 'presenze') {
+                embed.setTitle(`👥 NPC in Sessione: $presenze`)
+                    .setDescription(`Visualizza quali NPC erano presenti o hanno interagito durante una sessione.`)
+                    .addFields(
+                        { name: "Sessione Corrente", value: `\`$presenze\`: Mostra gli NPC della sessione attiva.` },
+                        { name: "Sessione Specifica", value: `\`$presenze session_xxxx\`: Mostra gli NPC di una sessione passata.` }
                     );
             } else {
                 await ctx.message.reply(`❌ Aiuto dettagliato per \`$${arg}\` non trovato. Usa \`$aiuto\` o \`$aiuto avanzato\`.`);
@@ -145,7 +152,8 @@ export const aiutoCommand: Command = {
                     value:
                         "`$aiuto`: Mostra questa lista.\n" +
                         "`$stato`: Salute sistema e code.\n" +
-                        "`$metriche`: Costi e token sessione."
+                        "`$metriche`: Costi e token sessione.\n" +
+                        "`$listasessioni`: Elenco di tutte le sessioni."
                 },
                 {
                     name: "🎙️ Sessione",
@@ -160,7 +168,8 @@ export const aiutoCommand: Command = {
                     name: "🌍 Luogo",
                     value:
                         "`$luogo`: Dove siamo?\n" +
-                        "`$luogo <Regione> | <Posto>`: Set manuale."
+                        "`$luogo <Regione> | <Posto>`: Set manuale.\n" +
+                        "`$viaggi`: Diario degli spostamenti."
                 },
                 {
                     name: "📜 Narrazione",
@@ -179,7 +188,17 @@ export const aiutoCommand: Command = {
                         "`$miaclasse` / `$miarazza`: Imposta scheda.\n" +
                         "`$miadesc <Testo>`: Imposta bio manuale.\n" +
                         "`$storia <Nome>`: Leggi storia PG.\n" +
-                        "`$bio reset [Nome]`: Rigenera bio PG."
+                        "`$bio reset [Name]`: Rigenera bio PG.\n" +
+                        "`$presenze`: NPC incontrati in sessione."
+                },
+                {
+                    name: "🧩 Dossier e Liste",
+                    value:
+                        "`$npc`: Elenco degli NPC.\n" +
+                        "`$quest`: Lista delle missioni.\n" +
+                        "`$loot`: Inventario di gruppo.\n" +
+                        "`$atlante`: Luoghi del mondo.\n" +
+                        "`$bestiario`: Mostri incontrati."
                 },
                 {
                     name: "🔧 Strumenti Avanzati",

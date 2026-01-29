@@ -158,7 +158,7 @@ export const npcCommand: Command = {
             if (targetNpc) {
                 await ctx.message.reply(`⏳ **Smart Merge:** Unione intelligente di "${sourceName}" in "${targetName}"...`);
 
-                const mergedDesc = await smartMergeBios(targetNpc.description || "", sourceNpc.description || "");
+                const mergedDesc = await smartMergeBios(targetName, targetNpc.description || "", sourceNpc.description || "");
 
                 db.prepare(`UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
                     .run(mergedDesc, targetNpc.id);

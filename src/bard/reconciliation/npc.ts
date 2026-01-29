@@ -259,12 +259,12 @@ export async function deduplicateNpcBatch(
 /**
  * Unisce due biografie/descrizioni in modo intelligente mantenendo i dettagli unici.
  */
-export async function smartMergeBios(bio1: string, bio2: string): Promise<string> {
+export async function smartMergeBios(targetName: string, bio1: string, bio2: string): Promise<string> {
     if (!bio1) return bio2;
     if (!bio2) return bio1;
     if (bio1 === bio2) return bio1;
 
-    const prompt = SMART_MERGE_PROMPT(bio1, bio2);
+    const prompt = SMART_MERGE_PROMPT(targetName, bio1, bio2);
 
     try {
         const response = await metadataClient.chat.completions.create({

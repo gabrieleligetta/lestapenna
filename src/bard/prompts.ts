@@ -395,8 +395,8 @@ export const REGENERATE_NPC_NOTES_PROMPT = (npcName: string, role: string, stati
 
 // --- RECONCILIATION ---
 
-export const SMART_MERGE_PROMPT = (bio1: string, bio2: string) => `Sei un archivista di D&D.
-    Devi aggiornare la scheda biografica di un NPC unendo le informazioni vecchie con quelle nuove appena scoperte.
+export const SMART_MERGE_PROMPT = (targetName: string, bio1: string, bio2: string) => `Sei un archivista di D&D.
+    Devi aggiornare la scheda biografica dell'NPC **${targetName}** unendo le informazioni vecchie con quelle nuove appena scoperte.
     
     DESCRIZIONE ESISTENTE:
     "${bio1}"
@@ -406,11 +406,12 @@ export const SMART_MERGE_PROMPT = (bio1: string, bio2: string) => `Sei un archiv
     
     COMPITO:
     Riscrivi una SINGOLA descrizione coerente in italiano che:
-    1. Integri i fatti nuovi nel testo esistente.
-    2. Elimini le ripetizioni (es. se entrambi dicono "è ferito", dillo una volta sola).
-    3. Mantenga lo stile conciso da dossier.
-    4. Aggiorni lo stato fisico se le nuove info sono più recenti.
-    5. **Lunghezza:** Massimo 3500 caratteri.
+    1. **IDENTITÀ**: Usa rigorosamente il nome **${targetName}** come nome principale del personaggio. Non usare altri nomi se non come alias passati.
+    2. Integri i fatti nuovi nel testo esistente.
+    3. Elimini le ripetizioni (es. se entrambi dicono "è ferito", dillo una volta sola).
+    4. Mantenga lo stile conciso da dossier.
+    5. Aggiorni lo stato fisico se le nuove info sono più recenti.
+    6. **Lunghezza:** Massimo 3500 caratteri.
     
     Restituisci SOLO il testo della nuova descrizione, niente altro.`;
 

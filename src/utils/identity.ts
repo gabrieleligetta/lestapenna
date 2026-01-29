@@ -21,13 +21,13 @@ export function initIdentityGuard() {
 }
 
 export async function checkAndPromptMerge(
-    campaignId: number, 
-    npc: { name: string, description: string, role: string }, 
+    campaignId: number,
+    npc: { name: string, description: string, role: string },
     channel: TextChannel
 ): Promise<boolean> {
-    
+
     const resolution = await resolveIdentityCandidate(campaignId, npc.name, npc.description);
-    
+
     // Threshold: Only ask if fairly confident it's a duplicate
     if (resolution.match && resolution.confidence > 0.6) {
         // Double check: if names are identical, skip prompt (handled by DB upsert)
@@ -56,7 +56,7 @@ export async function checkAndPromptMerge(
         // Save to DB and RAM
         addPendingMerge(data);
         pendingMergesMap.set(msg.id, data);
-        
+
         return true; // We handled it (put in pending), so stop normal flow
     }
 
@@ -67,11 +67,11 @@ export async function handleIdentityReply(message: Message) {
     // 1. Validate Reference
     if (!message.reference?.messageId) return;
     const data = pendingMergesMap.get(message.reference.messageId);
-    if (!data) return; 
+    if (!data) return;
 
     let content = message.content.trim();
     const upperContent = content.toUpperCase();
-    
+
     // --- CASE 1: CONFIRM AI (SI) ---
     if (['SI', 'SÌ', 'YES', 'Y'].includes(upperContent)) {
         const existing = getNpcEntry(data.campaign_id, data.target_name);
@@ -79,25 +79,25 @@ export async function handleIdentityReply(message: Message) {
             const loadingMsg = await message.reply('⚙️ Unione intelligente delle biografie in corso...');
 
             // 🧠 AI Merge
-            const mergedDesc = await smartMergeBios(existing.description || '', data.new_description);
+            const mergedDesc = await smartMergeBios(data.target_name, existing.description || '', data.new_description);
 
             db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
                 .run(mergedDesc, existing.id);
 
             // ✅ NUOVO: Migra riferimenti RAG
             migrateKnowledgeFragments(data.campaign_id, data.detected_name, data.target_name);
-            
+
             // ✅ NUOVO: Marca per sync lazy
             markNpcDirty(data.campaign_id, data.target_name);
-            
+
             await loadingMsg.edit(`✅ Unito! Scheda di **${data.target_name}** aggiornata.\n📌 Sync RAG programmato (verrà eseguito alla prossima query o a fine sessione).`);
         } else {
             await message.reply(`❌ Errore: ${data.target_name} non trovato nel DB.`);
         }
         cleanup(data.message_id);
         return;
-    } 
-    
+    }
+
     // --- CASE 2: CREATE NEW (NO/NUOVO) ---
     if (['NO', 'NEW', 'NUOVO', 'N'].includes(upperContent)) {
         db.prepare(`INSERT INTO npc_dossier (campaign_id, name, description, role, status) VALUES (?, ?, ?, ?, 'ALIVE')`)
@@ -116,12 +116,12 @@ export async function handleIdentityReply(message: Message) {
 
     if (manualMatch) {
         const loadingMsg = await message.reply(`⚙️ Unione intelligente con **${manualMatch.name}**...`);
-        
-        const mergedDesc = await smartMergeBios(manualMatch.description || '', data.new_description);
-        
+
+        const mergedDesc = await smartMergeBios(manualMatch.name, manualMatch.description || '', data.new_description);
+
         db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
-          .run(mergedDesc, manualMatch.id);
-        
+            .run(mergedDesc, manualMatch.id);
+
         // ✅ NUOVO
         migrateKnowledgeFragments(data.campaign_id, data.detected_name, manualMatch.name);
         markNpcDirty(data.campaign_id, manualMatch.name);

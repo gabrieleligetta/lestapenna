@@ -323,7 +323,7 @@ export class IngestionService {
                 const existing = getNpcEntry(campaignId, finalName);
                 const oldBio = existing?.description || '';
                 // Signature: (bio1: string, bio2: string)
-                const mergedBio = await smartMergeBios(oldBio, npcDesc);
+                const mergedBio = await smartMergeBios(finalName, oldBio, npcDesc);
 
                 // Signature: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string)
                 updateNpcEntry(campaignId, finalName, mergedBio, npc.role, npc.status, sessionId);

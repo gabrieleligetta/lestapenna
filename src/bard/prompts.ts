@@ -73,7 +73,8 @@ Restituisci un JSON con array di stringhe.
 - "npcs": Nomi propri di persone/creature che:
     1. PARLANO o AGISCONO direttamente.
     2. Sono FISICAMENTE PRESENTI nella scena (anche se passivi o descritti dal narratore).
-    3. IGNORA: Personaggi citati solo come ricordi, obiettivi lontani o divinità non presenti.
+    3. NOTA: Identifica l'entità anche se il nome è leggermente diverso (varianti fonetiche) o se ha cambiato forma/età (trasformazioni magiche).
+    4. IGNORA: Personaggi citati solo come ricordi, obiettivi lontani o divinità non presenti.
 - "locations": Nomi di luoghi specifici visitati o menzionati come destinazione immediata.
 - "quests": Parole chiave o titoli di missioni citate.
 

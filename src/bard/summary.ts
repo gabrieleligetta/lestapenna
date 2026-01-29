@@ -82,6 +82,8 @@ import {
 } from './prompts';
 
 import { generateBio } from './bio'; // 🆕 Unified Generator
+import { reconcileNpcName } from './reconciliation/npc';
+import { reconcileLocationName } from './reconciliation/location';
 
 // Constants
 // Constants
@@ -536,35 +538,45 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
                 // 2. Idratazione NPC
                 if (entities.npcs && Array.isArray(entities.npcs) && entities.npcs.length > 0) {
-                    const allNpcs = npcRepository.getAllNpcs(campaignId);
-                    const foundNpcs = new Set<number>();
+                    const foundNpcs = new Set<string>();
 
-                    dynamicMemoryContext += `\n👥 NPC PRESENTI:\n`;
+                    dynamicMemoryContext += `\n👥 NPC PRESENTI (Dati Storici):\n`;
 
-                    entities.npcs.forEach((name: string) => {
-                        const match = findBestMatch(name, allNpcs);
-                        if (match && !foundNpcs.has(match.id)) {
-                            foundNpcs.add(match.id);
-                            dynamicMemoryContext += `- **${match.name}** (${match.role}): ${match.description} [Status: ${match.status}]\n`;
+                    for (const name of entities.npcs) {
+                        try {
+                            const reconciled = await reconcileNpcName(campaignId, name);
+                            if (reconciled && !foundNpcs.has(reconciled.canonicalName)) {
+                                foundNpcs.add(reconciled.canonicalName);
+                                const npc = reconciled.existingNpc;
+                                dynamicMemoryContext += `- **${npc.name}** (${npc.role || 'Senza ruolo'}): ${npc.description || 'Nessuna descrizione.'} [Status: ${npc.status || 'ALIVE'}]\n`;
+                            }
+                        } catch (e) {
+                            console.error(`[Bardo] ⚠️ Errore riconciliazione NPC "${name}":`, e);
                         }
-                    });
+                    }
                 }
 
                 // 3. Idratazione Luoghi
                 if (entities.locations && Array.isArray(entities.locations) && entities.locations.length > 0) {
-                    const allLocs = locationRepository.listAllAtlasEntries(campaignId);
-                    const searchLocs = allLocs.map((l: any) => ({ ...l, name: `${l.macro_location} ${l.micro_location}` }));
-                    const foundLocs = new Set<number>();
+                    const foundLocs = new Set<string>();
 
-                    dynamicMemoryContext += `\n🗺️ LUOGHI CITATI:\n`;
+                    dynamicMemoryContext += `\n🗺️ LUOGHI CITATI (Dati Storici):\n`;
 
-                    entities.locations.forEach((name: string) => {
-                        const match = findBestMatch(name, searchLocs);
-                        if (match && !foundLocs.has(match.id)) {
-                            foundLocs.add(match.id);
-                            dynamicMemoryContext += `- **${match.macro_location} - ${match.micro_location}**: ${match.description}\n`;
+                    for (const name of entities.locations) {
+                        try {
+                            const reconciled = await reconcileLocationName(campaignId, "", name);
+                            if (reconciled) {
+                                const canonicalKey = `${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}`;
+                                if (!foundLocs.has(canonicalKey)) {
+                                    foundLocs.add(canonicalKey);
+                                    const loc = reconciled.existingEntry;
+                                    dynamicMemoryContext += `- **${canonicalKey}**: ${loc.description || 'Nessuna descrizione.'}\n`;
+                                }
+                            }
+                        } catch (e) {
+                            console.error(`[Bardo] ⚠️ Errore riconciliazione Luogo "${name}":`, e);
                         }
-                    });
+                    }
                 }
 
                 // 4. Idratazione Quest (Titoli attivi sempre)

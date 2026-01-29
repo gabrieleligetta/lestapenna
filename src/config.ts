@@ -138,8 +138,8 @@ export const config = {
         openAi: {
             apiKey: getEnv('OPENAI_API_KEY', false, 'dummy'),
             projectId: getEnv('OPENAI_PROJECT_ID'),
-            model: getEnv('OPEN_AI_MODEL', false, 'gpt-4o-mini'),
-            fallbackModel: getEnv('OPEN_AI_FALLBACK_MODEL', false, 'gpt-3.5-turbo')
+            model: getEnv('OPEN_AI_MODEL', false, 'gpt-5-mini'),
+            fallbackModel: getEnv('OPEN_AI_FALLBACK_MODEL', false, 'gpt-5-mini')
         },
         ollama: {
             baseUrl: getEnv('OLLAMA_BASE_URL', false, 'http://host.docker.internal:11434/v1'),
@@ -150,31 +150,31 @@ export const config = {
         phases: {
             transcription: {
                 provider: getPhaseProvider('transcription'),
-                model: getPhaseModel('transcription', 'gpt-5-nano')
+                model: getPhaseModel('transcription', 'gpt-5-mini')
             },
             metadata: {
                 provider: getPhaseProvider('metadata'),
-                model: getPhaseModel('metadata', 'gpt-5-nano')
+                model: getPhaseModel('metadata', 'gpt-5-mini')
             },
             map: {
                 provider: getPhaseProvider('map'),
-                model: getPhaseModel('map', 'gpt-5-nano')
+                model: getPhaseModel('map', 'gpt-5-mini')
             },
             summary: {
                 provider: getPhaseProvider('summary'),
-                model: getPhaseModel('summary', 'gpt-5.2')
+                model: getPhaseModel('summary', 'gpt-5-mini')
             },
             analyst: {
                 provider: getPhaseProvider('analyst', 'metadata'),
-                model: getPhaseModel('analyst', 'gpt-5-nano')
+                model: getPhaseModel('analyst', 'gpt-5-mini')
             },
             chat: {
                 provider: getPhaseProvider('chat'),
-                model: getPhaseModel('chat', 'gpt-5-nano')
+                model: getPhaseModel('chat', 'gpt-5-mini')
             },
             narrativeFilter: {
                 provider: getPhaseProvider('narrative_filter'),
-                model: getPhaseModel('narrative_filter', 'gpt-5-nano')
+                model: getPhaseModel('narrative_filter', 'gpt-5-mini')
             }
         }
     } as AIConfig,

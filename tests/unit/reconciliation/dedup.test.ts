@@ -8,6 +8,7 @@ import { reconcileQuestTitle } from '../../../src/bard/reconciliation/quest';
 // 1. Mock DB
 jest.mock('../../../src/db', () => ({
     listNpcs: jest.fn(),
+    getAllNpcs: jest.fn(),
     listAllInventory: jest.fn(),
     listAllAtlasEntries: jest.fn(),
     listAllMonsters: jest.fn(),
@@ -30,7 +31,7 @@ jest.mock('../../../src/bard/config', () => ({
     METADATA_MODEL: 'test-model'
 }));
 
-import { listNpcs, listAllInventory, listAllAtlasEntries, listAllMonsters, listAllQuests } from '../../../src/db';
+import { listNpcs, getAllNpcs, listAllInventory, listAllAtlasEntries, listAllMonsters, listAllQuests } from '../../../src/db';
 import { metadataClient } from '../../../src/bard/config';
 
 describe('Reconciliation Case-Sensitivity Deduplication', () => {
@@ -46,7 +47,7 @@ describe('Reconciliation Case-Sensitivity Deduplication', () => {
 
     describe('NPC Reconciliation', () => {
         it('should return existing canonical NPC when name matches case-insensitively', async () => {
-            (listNpcs as jest.Mock).mockReturnValue([
+            (getAllNpcs as jest.Mock).mockReturnValue([
                 { id: 101, name: 'Leosin Erantar', description: 'Monk' }
             ]);
 
@@ -59,7 +60,7 @@ describe('Reconciliation Case-Sensitivity Deduplication', () => {
         });
 
         it('should reconcile fuzzy matches (approximate name)', async () => {
-            (listNpcs as jest.Mock).mockReturnValue([
+            (getAllNpcs as jest.Mock).mockReturnValue([
                 { id: 101, name: 'Leosin Erantar', description: 'Monk' }
             ]);
 
@@ -73,7 +74,7 @@ describe('Reconciliation Case-Sensitivity Deduplication', () => {
         });
 
         it('should handle "Il Respiro" vs "Respiro di Ogma" even with other Ogma entities', async () => {
-            (listNpcs as jest.Mock).mockReturnValue([
+            (getAllNpcs as jest.Mock).mockReturnValue([
                 { id: 101, name: 'Pensiero di Ogma', description: 'Altro Arcangelo' },
                 { id: 102, name: 'Il Respiro', description: 'Aspetto di Ogma' }, // The correct match
                 { id: 103, name: 'Forma di Ogma', description: 'Altro Arcangelo' }
@@ -88,17 +89,33 @@ describe('Reconciliation Case-Sensitivity Deduplication', () => {
                 return { choices: [{ message: { content: 'NO' } }] };
             });
 
-            // "Respiro di Ogma" should match "Il Respiro" 
-            // BUT "Pensiero di Ogma" also matches "Ogma" part, so it might be checked first.
-            // valid candidates: 
-            // 1. Pensiero di Ogma (matches 'Ogma', 'di')
-            // 2. Il Respiro (matches 'Respiro')
-            // 3. Forma di Ogma (matches 'Ogma', 'di')
-
             const result = await reconcileNpcName(CAMPAIGN_ID, 'Respiro di Ogma', 'Arcangelo');
 
             expect(result).not.toBeNull();
             expect(result?.canonicalName).toBe('Il Respiro');
+        });
+
+        it('should reconcile Siri/Ciri based on phonetic similarity and new prompt logic', async () => {
+            // Mock existing Siri (adult)
+            (getAllNpcs as jest.Mock).mockReturnValue([
+                { id: 200, name: 'Siri', description: 'Donna adulta dallo sguardo gelido e distaccato; contenitore della Voce di Ogma.' }
+            ]);
+
+            // Mock AI to say YES for Ciri (child)
+            (metadataClient.chat.completions.create as jest.Mock).mockImplementation(async (args) => {
+                const prompt = args.messages[0].content;
+                // Verify new prompt keywords are present
+                expect(prompt.toLowerCase()).toContain('trasformazioni');
+                expect(prompt.toLowerCase()).toContain('fonetica');
+
+                if (prompt.includes('Siri')) return { choices: [{ message: { content: 'SI' } }] };
+                return { choices: [{ message: { content: 'NO' } }] };
+            });
+
+            const result = await reconcileNpcName(CAMPAIGN_ID, 'Ciri', 'bambina con tre occhi, voce di Ogma');
+
+            expect(result).not.toBeNull();
+            expect(result?.canonicalName).toBe('Siri');
         });
     });
 

@@ -289,7 +289,7 @@ async function identifyRelevantContext(
 
 
 
-export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string, partContext?: string): Promise<AnalystOutput> {
+export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string, partContext?: string): Promise<{ data: AnalystOutput, tokens: { input: number, output: number, inputChars: number, outputChars: number } }> {
     console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)${partContext ? ` [${partContext}]` : ''}...`);
 
     // Inietto il contesto della parte se presente
@@ -337,7 +337,6 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
             inputChars: prompt.length,
             outputChars: content.length
         };
-        saveDebugFile(sessionId, 'analyst_tokens.json', JSON.stringify(tokenUsage, null, 2));
         saveDebugFile(sessionId, 'analyst_response.txt', content);
         const parsed = safeJsonParse(content);
 
@@ -382,27 +381,33 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
         });
 
         return {
-            loot: normalizeLootList(parsed?.loot),
-            loot_removed: normalizeLootList(parsed?.loot_removed),
-            quests: normalizedQuests,
-            monsters: Array.isArray(parsed?.monsters) ? parsed.monsters : [],
-            npc_dossier_updates: normalizedNpcUpdates,
-            location_updates: normalizedLocationUpdates,
-            travel_sequence: normalizedTravelSequence,
-            present_npcs: normalizeStringList(parsed?.present_npcs),
-            log: normalizeStringList(parsed?.log),
-            character_growth: Array.isArray(parsed?.character_growth) ? parsed.character_growth : [],
-            npc_events: Array.isArray(parsed?.npc_events) ? parsed.npc_events : [],
-            world_events: Array.isArray(parsed?.world_events) ? parsed.world_events : []
+            data: {
+                loot: normalizeLootList(parsed?.loot),
+                loot_removed: normalizeLootList(parsed?.loot_removed),
+                quests: normalizedQuests,
+                monsters: Array.isArray(parsed?.monsters) ? parsed.monsters : [],
+                npc_dossier_updates: normalizedNpcUpdates,
+                location_updates: normalizedLocationUpdates,
+                travel_sequence: normalizedTravelSequence,
+                present_npcs: normalizeStringList(parsed?.present_npcs),
+                log: normalizeStringList(parsed?.log),
+                character_growth: Array.isArray(parsed?.character_growth) ? parsed.character_growth : [],
+                npc_events: Array.isArray(parsed?.npc_events) ? parsed.npc_events : [],
+                world_events: Array.isArray(parsed?.world_events) ? parsed.world_events : []
+            },
+            tokens: { input: inputTokens, output: outputTokens, inputChars: prompt.length, outputChars: content.length }
         };
 
     } catch (e: any) {
         console.error('[Analista] ❌ Errore estrazione dati:', e.message);
         monitor.logAIRequestWithCost('analyst', ANALYST_PROVIDER, ANALYST_MODEL, 0, 0, 0, Date.now() - startAI, true);
         return {
-            loot: [], loot_removed: [], quests: [], monsters: [],
-            npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
-            log: [], character_growth: [], npc_events: [], world_events: []
+            data: {
+                loot: [], loot_removed: [], quests: [], monsters: [],
+                npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
+                log: [], character_growth: [], npc_events: [], world_events: []
+            },
+            tokens: { input: 0, output: 0, inputChars: 0, outputChars: 0 }
         };
     }
 }
@@ -598,6 +603,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         let finalNarrative = "";
         let accumulatedTokens = 0;
 
+        // Token Accumulators for Technical Report
+        const totalAnalystTokens = { input: 0, output: 0, inputChars: 0, outputChars: 0 };
+        const totalWriterTokens = { input: 0, output: 0, inputChars: 0, outputChars: 0 };
+
         // Accumulatore dati (Analista + Scrittore)
         let aggregatedData: any = {
             title: "",
@@ -634,7 +643,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             if (!options.skipAnalysis) {
                 // Nota: Passiamo memoryContext globale e il contesto della parte
                 const partHeader = isMultiPart ? `PARTE ${actNumber} DI ${parts.length}` : undefined;
-                partialAnalystData = await extractStructuredData(sessionId, currentPart, castContext, dynamicMemoryContext, partHeader);
+                const analystResult = await extractStructuredData(sessionId, currentPart, castContext, dynamicMemoryContext, partHeader);
+                partialAnalystData = analystResult.data;
+
+                // Aggregate Analyst Tokens
+                totalAnalystTokens.input += analystResult.tokens.input;
+                totalAnalystTokens.output += analystResult.tokens.output;
+                totalAnalystTokens.inputChars += analystResult.tokens.inputChars;
+                totalAnalystTokens.outputChars += analystResult.tokens.outputChars;
             } else if (i === 0) {
                 // HYDRATION (Only on first pass to avoid duplication if we were to loop, though hydration should be global)
                 console.log(`[Bardo] ⏩ Skipping Analysis. Hydrating from DB for session ${sessionId}...`);
@@ -768,6 +784,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             const responseFileName = (!isMultiPart && i === 0) ? 'writer_response.txt' : `writer_response_act${actNumber}.txt`;
             saveDebugFile(sessionId, responseFileName, content);
 
+            // Aggregate Writer Tokens
+            totalWriterTokens.input += inputTokens;
+            totalWriterTokens.output += outputTokens;
+            totalWriterTokens.inputChars += reducePrompt.length;
+            totalWriterTokens.outputChars += content.length;
+
             // Parsing output scrittore
             let parsed = safeJsonParse(content);
             if (!parsed) {
@@ -806,6 +828,25 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             }
 
         } // FINE LOOP EPISODICO
+
+        // 🆕 Save Aggregated Token Stats for Technical Report
+        saveDebugFile(sessionId, 'analyst_tokens.json', JSON.stringify({
+            phase: 'analyst',
+            input: totalAnalystTokens.input,
+            output: totalAnalystTokens.output,
+            total: totalAnalystTokens.input + totalAnalystTokens.output,
+            inputChars: totalAnalystTokens.inputChars,
+            outputChars: totalAnalystTokens.outputChars
+        }, null, 2));
+
+        saveDebugFile(sessionId, 'writer_tokens.json', JSON.stringify({
+            phase: 'writer',
+            input: totalWriterTokens.input,
+            output: totalWriterTokens.output,
+            total: totalWriterTokens.input + totalWriterTokens.output,
+            inputChars: totalWriterTokens.inputChars,
+            outputChars: totalWriterTokens.outputChars
+        }, null, 2));
 
         console.log(`[Bardo] 🏁 generateSummary completato (Totale ${parts.length} parti).`);
 

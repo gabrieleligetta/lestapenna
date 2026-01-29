@@ -270,19 +270,19 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
                             <td><strong>Analyst</strong></td>
                             <td>${analystTokens.input.toLocaleString()} <small>(${analystTokens.inputChars?.toLocaleString() || 0} chars)</small></td>
                             <td>${analystTokens.output.toLocaleString()} <small>(${analystTokens.outputChars?.toLocaleString() || 0} chars)</small></td>
-                            <td>${analystTokens.total.toLocaleString()}</td>
+                            <td>${analystTokens.total.toLocaleString()} <br/><small>(${((analystTokens.inputChars || 0) + (analystTokens.outputChars || 0)).toLocaleString()} chars)</small></td>
                         </tr>
                         <tr>
                             <td><strong>Writer (Summary)</strong></td>
                             <td>${writerTokens.input.toLocaleString()} <small>(${writerTokens.inputChars?.toLocaleString() || 0} chars)</small></td>
                             <td>${writerTokens.output.toLocaleString()} <small>(${writerTokens.outputChars?.toLocaleString() || 0} chars)</small></td>
-                            <td>${writerTokens.total.toLocaleString()}</td>
+                            <td>${writerTokens.total.toLocaleString()} <br/><small>(${((writerTokens.inputChars || 0) + (writerTokens.outputChars || 0)).toLocaleString()} chars)</small></td>
                         </tr>
                         <tr>
                             <td><strong>TOTAL SESSION</strong></td>
-                            <td><strong>${(analystTokens.input + writerTokens.input).toLocaleString()}</strong></td>
-                            <td><strong>${(analystTokens.output + writerTokens.output).toLocaleString()}</strong></td>
-                            <td><strong>${(analystTokens.total + writerTokens.total).toLocaleString()}</strong></td>
+                            <td><strong>${(analystTokens.input + writerTokens.input).toLocaleString()}</strong> <small>(${((analystTokens.inputChars || 0) + (writerTokens.inputChars || 0)).toLocaleString()} chars)</small></td>
+                            <td><strong>${(analystTokens.output + writerTokens.output).toLocaleString()}</strong> <small>(${((analystTokens.outputChars || 0) + (writerTokens.outputChars || 0)).toLocaleString()} chars)</small></td>
+                            <td><strong>${(analystTokens.total + writerTokens.total).toLocaleString()}</strong> <br/><small>(${((analystTokens.inputChars || 0) + (writerTokens.inputChars || 0) + (analystTokens.outputChars || 0) + (writerTokens.outputChars || 0)).toLocaleString()} chars)</small></td>
                         </tr>
                     </table>
                 </div>

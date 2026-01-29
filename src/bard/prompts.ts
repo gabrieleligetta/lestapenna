@@ -62,7 +62,7 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 
 export const SCOUT_PROMPT = (text: string) => `
 Sei uno SCOUT di lettura veloce.
-Scansiona questa trascrizione di D&D e identifica le ENTITÀ SPECIFICHE citate che richiedono contesto.
+Scansiona questa trascrizione di D&D e identifica le ENTITÀ SPECIFICHE citate che sono FISICAMENTE PRESENTI o che richiedono contesto immediato.
 Analizza il testo e estrai i nomi propri.
 
 TESTO (Primi 40k caratteri):
@@ -70,8 +70,11 @@ ${text.substring(0, 40000)}...
 
 COMPITO:
 Restituisci un JSON con array di stringhe.
-- "npcs": Nomi propri di persone/creature che PARLANO o AGISCONO. (Ignora "il goblin", "la guardia" se generici).
-- "locations": Nomi di luoghi specifici visitati o menzionati.
+- "npcs": Nomi propri di persone/creature che:
+    1. PARLANO o AGISCONO direttamente.
+    2. Sono FISICAMENTE PRESENTI nella scena (anche se passivi o descritti dal narratore).
+    3. IGNORA: Personaggi citati solo come ricordi, obiettivi lontani o divinità non presenti.
+- "locations": Nomi di luoghi specifici visitati o menzionati come destinazione immediata.
 - "quests": Parole chiave o titoli di missioni citate.
 
 Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": []}
@@ -170,7 +173,7 @@ ${memoryContext}
             "reason": "Motivo spostamento (opzionale)"
         }
     ],
-    "present_npcs": ["Lista TUTTI i nomi NPC che AGISCONO o PARLANO esplicitamente nel testo. Usa i nomi dal CONTESTO PERSONAGGI o NPC PRESENTI (Scout) se disponibili."],
+    "present_npcs": ["Lista TUTTI i nomi NPC che sono FISICAMENTE PRESENTI, AGISCONO o PARLANO esplicitamente nel 'TESTO DA ANALIZZARE'. Se un NPC è nel contesto ma NON appare nel testo da analizzare, NON includerlo."],
     "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM, log azioni principali)"],
     "character_growth": [
         {
@@ -410,22 +413,22 @@ export const SMART_MERGE_PROMPT = (bio1: string, bio2: string) => `Sei un archiv
     
     Restituisci SOLO il testo della nuova descrizione, niente altro.`;
 
-export const AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT = (newName: string, newDescription: string, candidateName: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
+export const AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT = (newName: string, newDescription: string, candidateName: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D&D e narratologia fantasy. Rispondi SOLO con "SI" o "NO".
 
-Domanda: Il nuovo NPC "${newName}" è in realtà l'NPC esistente "${candidateName}" (errore di trascrizione o soprannome)?
+Domanda: Il nuovo NPC "${newName}" è in realtà l'NPC esistente "${candidateName}" (errore di trascrizione, alias, o evoluzione del personaggio)?
 
 CONFRONTO DATI:
 - NUOVO (${newName}): "${newDescription}"
 - ESISTENTE (${candidateName}): "${candidateDescription}"
 ${ragContextText}
 
-CRITERI DI GIUDIZIO:
-1. **Fonetica:** Se suonano simili (Siri/Ciri), è un forte indizio.
-2. **Contesto (RAG):** Se la "Memoria Storica" di ${candidateName} descrive fatti identici a quelli del nuovo NPC, SONO la stessa persona.
-3. **Logica:** Se uno è "Ostaggio dei banditi" e l'altro è "Prigioniera dei briganti", SONO la stessa persona.
-4. **Link Semantico:** Se il Contesto RAG menziona che "${newName}" è un titolo/soprannome di "${candidateName}", RISPONDI SI.
+CRITERI DI GIUDIZIO (In ordine di importanza):
+1. **Fonetica e Trascrizione:** Se i nomi suonano molto simili (es. Siri/Ciri, Leosin/Leo Sin), c'è un'altissima probabilità che siano la stessa persona, specialmente se il contesto non smentisce categoricamente.
+2. **Trasformazioni D&D:** In un mondo fantasy, i personaggi possono cambiare età, forma fisica o aspetto rapidamente (possessione divina, crescita magica, polimorfismo, maledizioni). NON rifiutare un match solo perché uno è "bambino" e l'altro "adulto" se i nomi coincidono.
+3. **Ruoli Semantici:** Cerca legami come "Contenitore/Ospite di X" vs "Incarnazione di X". Se entrambi sono legati alla stessa entità (es. Voce di Ogma), sono la stessa entità.
+4. **Logica di Situazione:** Se le descrizioni condividono dettagli unici (es. "tre occhi", "sguardo gelido", "legata agli Insonni"), conferma il match.
 
-Se c'è anche solo un vago ma plausibile collegamento nel contesto, **FAVORISCI IL SI** per evitare duplicati.
+Se c'è una forte somiglianza fonetica o un legame logico plausibile nel contesto/descrizione, **RISPONDI SI** per evitare la proliferazione di duplicati nel database.
 
 Rispondi SOLO: SI oppure NO`;
 

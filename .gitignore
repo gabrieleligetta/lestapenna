@@ -4,6 +4,7 @@ node_modules
 
 # Recordings
 recordings/*
+transcripts/*
 !recordings/.gitkeep
 
 # Batch Processing

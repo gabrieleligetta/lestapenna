@@ -10,11 +10,11 @@ import * as prism from 'prism-media';
 import * as path from 'path';
 import { Transform, TransformCallback } from 'stream';
 import { spawn, ChildProcess } from 'child_process';
-import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign } from '../db';
+import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign, getSessionRecordings } from '../db';
 import { audioQueue } from './queue';
 import { uploadToOracle } from './backup';
 import { monitor } from '../monitor';
-import { startStreamingMixer, addFileToStreamingMixer, stopStreamingMixer } from './streamingMixer';
+import { mixSessionAudio } from './sessionMixer';
 
 // ✅ CLASSE SILENCE INJECTOR OTTIMIZZATA (Zero-Alloc)
 class SilenceInjector extends Transform {
@@ -47,8 +47,12 @@ class SilenceInjector extends Transform {
         const timeDelta = now - this.lastPacketTime;
         const expectedBytes = timeDelta * this.bytesPerMs;
 
-        // Inietta silenzio se il gap è significativo (> 1 frame + chunk size)
-        if (expectedBytes > (chunk.length + this.frameSize)) {
+        // Inietta silenzio se il gap è significativo (> 1 chunk + tolleranza jitter)
+        // La tolleranza deve essere INFERIORE a 1 frame (20ms) per rilevare la perdita di un singolo pacchetto.
+        // Impostiamo tolleranza a mezza frame (10ms).
+        const jitterToleranceBytes = this.frameSize / 2;
+
+        if (expectedBytes > (chunk.length + jitterToleranceBytes)) {
             const missingBytes = Math.floor(expectedBytes - chunk.length);
             const alignedMissingBytes = Math.floor(missingBytes / this.frameSize) * this.frameSize;
 
@@ -91,7 +95,6 @@ interface ActiveStream {
 const activeStreams = new Map<string, ActiveStream>();
 const connectionErrors = new Map<string, number>();
 const pausedGuilds = new Set<string>();
-const sessionMixers = new Map<string, boolean>();
 const guildToSession = new Map<string, string>();
 
 // ✅ NUOVO: Tracking file in elaborazione
@@ -145,12 +148,6 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     });
 
     console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
-
-    if (!sessionMixers.has(sessionId)) {
-        startStreamingMixer(sessionId);
-        sessionMixers.set(sessionId, true);
-        console.log(`[Recorder] 🎵 Streaming mixer avviato per ${sessionId}`);
-    }
 
     connection.receiver.speaking.on('start', (userId: string) => {
         if (isStopping) return; // 🛑 BLOCCO HARDWARE NUOVI STREAM
@@ -357,24 +354,10 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         monitor.logFileUpload(fileSizeMB, 0, false);
     }
 
-    // 3. ACCODA (Il job rimarrà in 'waiting' finché non facciamo resume)
-    await audioQueue.add('transcribe-job', {
-        sessionId: sessionId,
-        fileName,
-        filePath,
-        userId
-    }, {
-        jobId: fileName, // Deduplicazione basata sul nome del file
-        attempts: 5,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-        removeOnFail: false
-    });
+    // 3. NON ACCODARE TRASCRIZIONE ORA.
+    // I file devono rimanere locali e verranno processati (mix + whisper) alla chiusura sessione.
 
-    // 4. AGGIUNGI AL MIXER (Cruciale per il podcast completo)
-    addFileToStreamingMixer(sessionId, userId, filePath, timestamp);
-
-    console.log(`[Recorder] 📥 File ${fileName} salvato, backup avviato e accodato per la sessione ${sessionId}.`);
+    console.log(`[Recorder] 📥 File ${fileName} salvato e backuppato per la sessione ${sessionId}. In attesa di elaborazione finale.`);
 }
 
 export async function disconnect(guildId: string): Promise<boolean> {
@@ -427,13 +410,45 @@ export async function disconnect(guildId: string): Promise<boolean> {
         console.log(`[Recorder] ✅ Tutti i file sono stati processati.`);
     }
 
-    // D. Ora che tutto è fermo e salvato, chiudiamo il mixer
     const sessionId = guildToSession.get(guildId);
-    if (sessionId && sessionMixers.has(sessionId)) {
-        console.log(`[Recorder] 🎵 Audio fermo. Arresto mixer...`);
-        // Questa chiamata ora sarà bloccante e sicura
-        await stopStreamingMixer(sessionId);
-        sessionMixers.delete(sessionId);
+
+    // D. FASE FINALE: Mix Audio + Coda Whisper
+    if (sessionId) {
+        console.log(`[Recorder] 📀 Avvio Mix Sessione e Fase Whisper per ${sessionId}...`);
+
+        try {
+            // 1. Session Mixer (Keep files local = true)
+            // Stiamo per usarli per Whisper, quindi non cancellarli ancora
+            await mixSessionAudio(sessionId, true);
+
+            // 2. Accoda i file per la trascrizione (Whisper)
+            // Il worker 'Scriba' gestirà sia la trascrizione che la cancellazione finale dei file
+            const recordings = getSessionRecordings(sessionId);
+
+            console.log(`[Recorder] 📥 Accodamento ${recordings.length} file per trascrizione...`);
+
+            for (const rec of recordings) {
+                // Solo file ancora pendenti/secured (evita duplicati se crash)
+                if (rec.status === 'PENDING' || rec.status === 'SECURED') {
+                    await audioQueue.add('transcribe-job', {
+                        sessionId: rec.session_id,
+                        fileName: rec.filename,
+                        filePath: rec.filepath,
+                        userId: rec.user_id
+                    }, {
+                        jobId: rec.filename, // Deduplicazione basata sul nome del file
+                        attempts: 5,
+                        backoff: { type: 'exponential', delay: 2000 },
+                        removeOnComplete: true,
+                        removeOnFail: false
+                    });
+                }
+            }
+            console.log(`[Recorder] ✅ Fase Whisper avviata per ${sessionId}.`);
+
+        } catch (e: any) {
+            console.error(`[Recorder] ❌ Errore nella fase finale Mix/Whisper:`, e);
+        }
     }
 
     guildToSession.delete(guildId);
@@ -446,8 +461,6 @@ export async function disconnect(guildId: string): Promise<boolean> {
     return true;
 }
 
-// Non serve più la rotazione manuale perché usiamo il silenzio naturale per spezzare i file
-// e li accumuliamo in coda.
 export function isFileActive(fullPath: string): boolean {
     const target = path.resolve(fullPath);
     for (const data of Array.from(activeStreams.values())) {
@@ -461,7 +474,7 @@ export function isFileActive(fullPath: string): boolean {
  */
 export function wipeLocalFiles() {
     // 1. Pulizia Recordings
-    const recordingsDir = path.join(__dirname, '..', '..', 'recordings'); // Fixed path to root recordings
+    const recordingsDir = path.join(__dirname, '..', 'recordings'); // Fixed path to src/recordings
     if (fs.existsSync(recordingsDir)) {
         try {
             const files = fs.readdirSync(recordingsDir);

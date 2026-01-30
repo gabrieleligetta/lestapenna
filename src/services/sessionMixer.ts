@@ -31,13 +31,13 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 
     // 1. Fetch & Download recordings, Validate files
     console.log(`[Mixer] 📥 Verifying/Downloading ${recordings.length} files...`);
-    
+
     const validFiles: { path: string, timestamp: number }[] = [];
     const timestamps: number[] = [];
 
     for (const rec of recordings) {
         const filePath = path.join(RECORDINGS_DIR, rec.filename);
-        
+
         if (!fs.existsSync(filePath)) {
             const success = await downloadFromOracle(rec.filename, filePath, sessionId);
             if (!success) continue;
@@ -45,15 +45,15 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 
         try {
             const stats = fs.statSync(filePath);
-            if (stats.size < 1024) { 
+            if (stats.size < 1024) {
                 // console.warn(`[Mixer] ⚠️ Skipping small/corrupt file: ${rec.filename}`);
                 continue;
             }
         } catch (e) { continue; }
 
-        validFiles.push({ 
-            path: filePath, 
-            timestamp: rec.timestamp 
+        validFiles.push({
+            path: filePath,
+            timestamp: rec.timestamp
         });
         timestamps.push(rec.timestamp);
     }
@@ -62,7 +62,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 
     // 2. Calculate Global Session Start (min timestamp)
     const sessionStart = Math.min(...timestamps);
-    
+
     const filesToProcess: AudioFile[] = validFiles.map(f => ({
         path: f.path,
         delay: Math.max(0, f.timestamp - sessionStart)
@@ -87,14 +87,14 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
         while (queue.length > 0 && activePromises.length < CONCURRENCY_LIMIT) {
             const item = queue.shift()!;
             const stemPath = path.join(TEMP_DIR, `stem_${sessionId}_${item.index}.flac`);
-            
+
             const p = createStem(item.batch, stemPath).then(() => {
                 stemPaths.push(stemPath);
             }).catch(err => {
                 console.error(`[Mixer] Error processing batch ${item.index}:`, err);
                 throw err;
             });
-            
+
             // Wrapper to remove itself from activePromises
             const wrappedP = p.finally(() => {
                 const idx = activePromises.indexOf(wrappedP);
@@ -115,7 +115,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
     // 6. Upload & Cleanup
     const finalFileName = path.basename(finalMp3Path);
     const targetKey = `recordings/${sessionId}/${finalFileName}`;
-    
+
     console.log(`[Mixer] ☁️ Uploading to Oracle: ${targetKey}`);
     // await deleteFromOracle(finalFileName, sessionId); // Non cancelliamo il vecchio master se esiste, lo sovrascriviamo
     await uploadToOracle(finalMp3Path, finalFileName, sessionId, targetKey);
@@ -147,45 +147,45 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 }
 
 async function createStem(files: AudioFile[], outputPath: string): Promise<string> {
-   return new Promise((resolve, reject) => {
-       const args: string[] = [];
-       const filterParts: string[] = [];
-       const outputTags: string[] = [];
+    return new Promise((resolve, reject) => {
+        const args: string[] = [];
+        const filterParts: string[] = [];
+        const outputTags: string[] = [];
 
-       files.forEach((f, i) => {
-           args.push('-i', f.path);
-           const delayMs = Math.floor(f.delay); 
-           // Filter: aresample=48000:async=1,adelay=DELAY|DELAY
-           filterParts.push(`[${i}]aresample=48000:async=1,adelay=${delayMs}|${delayMs}[s${i}]`);
-           outputTags.push(`[s${i}]`);
-       });
+        files.forEach((f, i) => {
+            args.push('-i', f.path);
+            const delayMs = Math.floor(f.delay);
+            // Filter: aresample=48000,adelay=DELAY|DELAY
+            filterParts.push(`[${i}]aresample=48000,adelay=${delayMs}|${delayMs}[s${i}]`);
+            outputTags.push(`[s${i}]`);
+        });
 
-       const filterComplex = filterParts.join(';') + ';' + 
-                             `${outputTags.join('')}amix=inputs=${files.length}:dropout_transition=0:normalize=0[out]`;
+        const filterComplex = filterParts.join(';') + ';' +
+            `${outputTags.join('')}amix=inputs=${files.length}:dropout_transition=0:normalize=0[out]`;
 
-       const ffmpegArgs = [
-           ...args,
-           '-filter_complex', filterComplex,
-           '-map', '[out]',
-           '-ac', '2',
-           '-ar', '48000',
-           '-c:a', 'flac',
-           outputPath,
-           '-y'
-       ];
+        const ffmpegArgs = [
+            ...args,
+            '-filter_complex', filterComplex,
+            '-map', '[out]',
+            '-ac', '2',
+            '-ar', '48000',
+            '-c:a', 'flac',
+            outputPath,
+            '-y'
+        ];
 
-       const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-       let stderr = "";
-       ffmpeg.stderr.on('data', d => stderr += d.toString());
-       ffmpeg.on('close', (code) => {
-           if (code === 0) resolve(outputPath);
-           else {
-               console.error(`[Mixer] Stem creation failed:\n${stderr.slice(-1000)}`);
-               reject(new Error(`FFmpeg stem creation failed with code ${code}`));
-           }
-       });
-       ffmpeg.on('error', reject);
-   });
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+        let stderr = "";
+        ffmpeg.stderr.on('data', d => stderr += d.toString());
+        ffmpeg.on('close', (code) => {
+            if (code === 0) resolve(outputPath);
+            else {
+                console.error(`[Mixer] Stem creation failed:\n${stderr.slice(-1000)}`);
+                reject(new Error(`FFmpeg stem creation failed with code ${code}`));
+            }
+        });
+        ffmpeg.on('error', reject);
+    });
 }
 
 async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Promise<void> {
@@ -197,7 +197,7 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
 
         // If only 1 stem, just convert it
         if (stemPaths.length === 1) {
-             const ffmpeg = spawn('ffmpeg', [
+            const ffmpeg = spawn('ffmpeg', [
                 '-i', stemPaths[0],
                 '-codec:a', 'libmp3lame',
                 '-q:a', '4', // VBR Quality 4 (~160kbps)
@@ -221,16 +221,16 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
         const args: string[] = [];
         const filterParts: string[] = [];
         const outputTags: string[] = [];
-        
+
         stemPaths.forEach((p, i) => {
             args.push('-i', p);
-            // Safety check resample
-            filterParts.push(`[${i}]aresample=48000:async=1[r${i}]`);
+            // Safety check resample (clean logic)
+            filterParts.push(`[${i}]aresample=48000[r${i}]`);
             outputTags.push(`[r${i}]`);
         });
 
-        const filterComplex = filterParts.join(';') + ';' + 
-                              `${outputTags.join('')}amix=inputs=${stemPaths.length}:dropout_transition=0:normalize=0[out]`;
+        const filterComplex = filterParts.join(';') + ';' +
+            `${outputTags.join('')}amix=inputs=${stemPaths.length}:dropout_transition=0:normalize=0[out]`;
 
         const ffmpegArgs = [
             ...args,

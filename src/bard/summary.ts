@@ -76,9 +76,6 @@ import {
     ANALYST_PROMPT,
     WRITER_DM_PROMPT,
     WRITER_BARDO_PROMPT,
-    REGENERATE_NPC_NOTES_PROMPT,
-    NPC_BIO_PROMPT,
-    CHARACTER_BIO_PROMPT
 } from './prompts';
 
 import { generateBio } from './bio'; // 🆕 Unified Generator

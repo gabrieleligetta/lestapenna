@@ -74,6 +74,8 @@ export const factionRepository = {
         if (fields.status !== undefined) { sets.push('status = $status'); params.status = fields.status; }
         if (fields.leader_npc_id !== undefined) { sets.push('leader_npc_id = $leaderNpcId'); params.leaderNpcId = fields.leader_npc_id; }
         if (fields.headquarters_location_id !== undefined) { sets.push('headquarters_location_id = $hqLocId'); params.hqLocId = fields.headquarters_location_id; }
+        if (fields.alignment_moral !== undefined) { sets.push('alignment_moral = $alignmentMoral'); params.alignmentMoral = fields.alignment_moral; }
+        if (fields.alignment_ethical !== undefined) { sets.push('alignment_ethical = $alignmentEthical'); params.alignmentEthical = fields.alignment_ethical; }
 
         if (sets.length === 0) return false;
 
@@ -179,11 +181,27 @@ export const factionRepository = {
             return existing;
         }
 
-        return factionRepository.createFaction(campaignId, name, {
+        const party = factionRepository.createFaction(campaignId, name, {
             type: 'PARTY',
             isParty: true,
             description: 'Il gruppo di avventurieri protagonista della campagna.'
         });
+
+        // Auto-affiliate all existing PCs (excluding DM)
+        if (party) {
+            const characters = db.prepare(`
+                SELECT rowid, user_id, character_name, class 
+                FROM characters 
+                WHERE campaign_id = ? AND lower(class) != 'dungeon master'
+            `).all(campaignId) as Array<{ rowid: number; user_id: string; character_name: string; class: string }>;
+
+            for (const char of characters) {
+                factionRepository.addAffiliation(party.id, 'pc', char.rowid, { role: 'MEMBER' });
+                console.log(`[Faction] 🤝 Auto-affiliato PC: ${char.character_name} -> ${name}`);
+            }
+        }
+
+        return party;
     },
 
     renamePartyFaction: (campaignId: number, newName: string): boolean => {
@@ -191,6 +209,28 @@ export const factionRepository = {
         if (!party) return false;
 
         return factionRepository.renameFaction(campaignId, party.name, newName);
+    },
+
+    /**
+     * Ensures all PCs (excluding DM) are affiliated to the party faction.
+     * Called on each command to keep party membership in sync.
+     */
+    ensurePartyMembership: (campaignId: number, partyId: number): void => {
+        // Get all PCs not yet in the party (excluding DM)
+        const unaffiliatedPCs = db.prepare(`
+            SELECT c.rowid, c.character_name 
+            FROM characters c
+            LEFT JOIN faction_affiliations fa 
+                ON fa.entity_type = 'pc' AND fa.entity_id = c.rowid AND fa.faction_id = ?
+            WHERE c.campaign_id = ? 
+              AND lower(c.class) != 'dungeon master'
+              AND fa.id IS NULL
+        `).all(partyId, campaignId) as Array<{ rowid: number; character_name: string }>;
+
+        for (const pc of unaffiliatedPCs) {
+            factionRepository.addAffiliation(partyId, 'pc', pc.rowid, { role: 'MEMBER' });
+            console.log(`[Faction] 🤝 Sync PC al party: ${pc.character_name}`);
+        }
     },
 
     // =============================================

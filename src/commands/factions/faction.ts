@@ -20,6 +20,11 @@ function getNpcById(npcId: number): { id: number; name: string; role?: string } 
     return db.prepare(`SELECT id, name, role FROM npc_dossier WHERE id = ?`).get(npcId) as any;
 }
 
+// Helper: Get Atlas entry by ID
+function getAtlasEntryById(entryId: number): { id: number; macro_location: string; micro_location: string; short_id: string } | null {
+    return db.prepare(`SELECT id, macro_location, micro_location, short_id FROM location_atlas WHERE id = ?`).get(entryId) as any;
+}
+
 const REPUTATION_ICONS: Record<ReputationLevel, string> = {
     'OSTILE': '🔴',
     'DIFFIDENTE': '🟠',
@@ -77,6 +82,17 @@ export const factionCommand: Command = {
                 });
             }
 
+            // 🆕 Alignment (if set)
+            if (faction.alignment_moral || faction.alignment_ethical) {
+                const moralIcon = faction.alignment_moral === 'BUONO' ? '😇' : faction.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
+                const ethicalIcon = faction.alignment_ethical === 'LEGALE' ? '📜' : faction.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
+                embed.addFields({
+                    name: "⚖️ Allineamento",
+                    value: `${moralIcon} ${faction.alignment_moral || 'NEUTRALE'} ${ethicalIcon} ${faction.alignment_ethical || 'NEUTRALE'}`,
+                    inline: true
+                });
+            }
+
             // Members count
             const memberParts: string[] = [];
             if (members.npcs > 0) memberParts.push(`${members.npcs} NPC`);
@@ -99,7 +115,43 @@ export const factionCommand: Command = {
                 }).join('\n');
                 embed.addFields({
                     name: "NPC Affiliati",
-                    value: npcList + (npcAffiliations.length > 5 ? `\n... e altri ${npcAffiliations.length - 5}` : '')
+                    value: npcList + (npcAffiliations.length > 5 ? `\n... e altri ${npcAffiliations.length - 5}` : ''),
+                    inline: false
+                });
+            }
+
+            // Get affiliated Locations
+            if (faction.headquarters_location_id) {
+                const hq = getAtlasEntryById(faction.headquarters_location_id);
+                if (hq) {
+                    embed.addFields({
+                        name: "🏰 Sede Principale",
+                        value: `**${hq.micro_location || hq.macro_location}**` + (hq.macro_location && hq.micro_location ? ` (${hq.macro_location})` : ''),
+                        inline: true
+                    });
+                }
+            }
+
+            const locationAffiliations = factionRepository.getFactionMembers(faction.id, 'location');
+            if (locationAffiliations.length > 0) {
+                const locList = locationAffiliations.slice(0, 5).map(a => {
+                    // Try to get location name (assuming entity_id is atlas_id)
+                    const loc = getAtlasEntryById(a.entity_id);
+                    let locDisplay: string;
+                    if (loc) {
+                        const parts: string[] = [];
+                        if (loc.macro_location) parts.push(loc.macro_location);
+                        if (loc.micro_location) parts.push(loc.micro_location);
+                        locDisplay = parts.join(' > ') + ` (#${loc.short_id})`;
+                    } else {
+                        locDisplay = `Luogo ID:${a.entity_id} (non trovato)`;
+                    }
+                    return `📍 ${locDisplay} (${a.role})`;
+                }).join('\n');
+                embed.addFields({
+                    name: "Luoghi Controllati",
+                    value: locList + (locationAffiliations.length > 5 ? `\n... e altri ${locationAffiliations.length - 5}` : ''),
+                    inline: false
                 });
             }
 
@@ -236,34 +288,308 @@ export const factionCommand: Command = {
             return;
         }
 
-        // =============================================
-        // SUBCOMMAND: update
-        // =============================================
-        if (/^update\s/i.test(argsStr)) {
-            const content = argsStr.substring(7).trim();
-            const parts = content.split('|').map(s => s.trim());
+        // SUBCOMMAND: $faction update <Name or ID> [| <Desc> OR <field> <value>]
+        if (argsStr.toLowerCase().startsWith('update ')) {
+            const fullContent = argsStr.substring(7).trim();
 
-            if (parts.length < 2) {
-                await ctx.message.reply('Uso: `$faction update <Nome o #ID> | <Nuova Descrizione>`');
+            // 1. Identify Target (ID or Name)
+            let targetIdentifier = "";
+            let remainingArgs = "";
+
+            if (fullContent.startsWith('#')) {
+                const parts = fullContent.split(' ');
+                targetIdentifier = parts[0];
+                remainingArgs = parts.slice(1).join(' ');
+            } else {
+                if (fullContent.includes('|')) {
+                    targetIdentifier = fullContent.split('|')[0].trim();
+                    remainingArgs = "|" + fullContent.split('|').slice(1).join('|');
+                } else {
+                    const keywords = ['status', 'stato', 'type', 'tipo', 'leader', 'capo'];
+                    const lower = fullContent.toLowerCase();
+                    let splitIndex = -1;
+
+                    for (const kw of keywords) {
+                        const searchStr = ` ${kw} `;
+                        const idx = lower.lastIndexOf(searchStr);
+                        if (idx !== -1) {
+                            splitIndex = idx;
+                            break;
+                        }
+                    }
+
+                    if (splitIndex !== -1) {
+                        targetIdentifier = fullContent.substring(0, splitIndex).trim();
+                        remainingArgs = fullContent.substring(splitIndex + 1).trim();
+                    } else {
+                        targetIdentifier = fullContent;
+                        remainingArgs = "";
+                    }
+                }
+            }
+
+            // Resolve Faction
+            let factionName = targetIdentifier;
+            const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
+            if (sidMatch) {
+                const faction = factionRepository.getFactionByShortId(campaignId, sidMatch[1]);
+                if (faction) factionName = faction.name;
+            }
+
+            const faction = factionRepository.getFaction(campaignId, factionName);
+            if (!faction) {
+                await ctx.message.reply(`❌ Fazione **${factionName}** non trovata.`);
                 return;
             }
 
-            let name = parts[0];
-            const description = parts.slice(1).join('|').trim();
+            // 2. Parse Actions
 
-            // Resolve short ID
-            const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
-            if (sidMatch) {
-                const faction = factionRepository.getFactionByShortId(campaignId, sidMatch[1]);
-                if (faction) name = faction.name;
+            // Case A: Narrative Update (Description)
+            if (remainingArgs.trim().startsWith('|')) {
+                const description = remainingArgs.replace('|', '').trim();
+                const success = factionRepository.updateFaction(campaignId, faction.name, { description });
+                if (success) {
+                    await ctx.message.reply(`✅ Descrizione di **${faction.name}** aggiornata.`);
+                } else {
+                    await ctx.message.reply(`❌ Errore aggiornamento descrizione.`);
+                }
+                return;
             }
 
-            const success = factionRepository.updateFaction(campaignId, name, { description });
-            if (success) {
-                await ctx.message.reply(`✅ Descrizione di **${name}** aggiornata.`);
-            } else {
-                await ctx.message.reply(`❌ Fazione **${name}** non trovata.`);
+            // Case B: Metadata Update
+            const args = remainingArgs.trim().split(/\s+/);
+            const field = args[0]?.toLowerCase();
+            const value = args.slice(1).join(' ').toUpperCase(); // basic upper for enums
+
+            const showUpdateHelp = async (errorMsg?: string) => {
+                const typeIcon = FACTION_TYPE_ICONS[faction.type] || '⚔️';
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`ℹ️ Aggiornamento Fazione: #${faction.short_id} "${faction.name}"`)
+                    .setColor("#3498DB")
+                    .setDescription(errorMsg ? `⚠️ **${errorMsg}**\n\n` : "")
+                    .addFields(
+                        {
+                            name: "Valori Attuali",
+                            value: `**Status:** ${faction.status}\n**Type:** ${typeIcon} ${faction.type}\n**Leader:** ${faction.leader_npc_id ? `NPC #${faction.leader_npc_id}` : 'Nessuno'}`,
+                            inline: false
+                        },
+                        {
+                            name: "Campi Modificabili",
+                            value: `
+• **status**: ACTIVE (attiva), DISBANDED (sciolta), DESTROYED (distrutta/morta)
+  *Es: $faction update #${faction.short_id} status DESTROYED*
+• **type**: GUILD (gilda), KINGDOM (regno), CULT (culto), ORGANIZATION (org), GENERIC
+  *Es: $faction update #${faction.short_id} type GUILD*
+• **leader**: Nome NPC o ID
+  *Es: $faction update #${faction.short_id} leader "Mario Rossi"*
+• **moral**: BUONO, NEUTRALE, CATTIVO
+  *Es: $faction update #${faction.short_id} moral CATTIVO*
+• **ethical**: LEGALE, NEUTRALE, CAOTICO
+  *Es: $faction update #${faction.short_id} ethical CAOTICO*
+• **hq**: Sede principale (#shortId o "Macro | Micro")
+  *Es: $faction update #${faction.short_id} hq #abc12*
+• **addloc** / **remloc**: Aggiungi/rimuovi luogo controllato
+• **Descrizione** (usa | )
+  *Es: $faction update #${faction.short_id} | Nuova descrizione*`
+                        }
+                    );
+                await ctx.message.reply({ embeds: [embed] });
+            };
+
+            if (!field || !args[1]) {
+                await showUpdateHelp();
+                return;
             }
+
+            // 3. Apply Metadata Update
+            if (field === 'status' || field === 'stato') {
+                const map: Record<string, string> = {
+                    'ACTIVE': 'ACTIVE', 'ATTIVA': 'ACTIVE',
+                    'DISBANDED': 'DISBANDED', 'SCIOLTA': 'DISBANDED', 'CHIUSA': 'DISBANDED',
+                    'DESTROYED': 'DESTROYED', 'DISTRUTTA': 'DESTROYED', 'ELIMINATA': 'DESTROYED', 'MORTA': 'DESTROYED'
+                };
+
+                const mapped = map[value] || map[value.replace(' ', '_')];
+
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}"`);
+                    return;
+                }
+
+                factionRepository.updateFaction(campaignId, faction.name, { status: mapped as any });
+                await ctx.message.reply(`✅ Status di **${faction.name}** aggiornato a **${mapped}**.`);
+                return;
+            }
+
+            if (field === 'type' || field === 'tipo') {
+                const map: Record<string, string> = {
+                    'GUILD': 'GUILD', 'GILDA': 'GUILD',
+                    'KINGDOM': 'KINGDOM', 'REGNO': 'KINGDOM', 'IMPERO': 'KINGDOM',
+                    'CULT': 'CULT', 'CULTO': 'CULT', 'SETTA': 'CULT',
+                    'ORGANIZATION': 'ORGANIZATION', 'ORGANIZZAZIONE': 'ORGANIZATION', 'ORG': 'ORGANIZATION',
+                    'GENERIC': 'GENERIC', 'GENERICA': 'GENERIC', 'ALTRO': 'GENERIC', 'PARTY': 'PARTY'
+                };
+
+                const mapped = map[value];
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}"`);
+                    return;
+                }
+
+                factionRepository.updateFaction(campaignId, faction.name, { type: mapped as any });
+                await ctx.message.reply(`✅ Tipo di **${faction.name}** aggiornato a **${mapped}**.`);
+                return;
+            }
+
+            if (field === 'leader' || field === 'capo') {
+                // Determine NPC
+                const rawName = args.slice(1).join(' ');
+
+                let npcId: number | null = null;
+                let npcName = rawName;
+
+                // Try to find NPC by name
+                const npc = npcRepository.getNpcEntry(campaignId, rawName);
+                if (npc) {
+                    npcId = npc.id;
+                    npcName = npc.name;
+                } else {
+                    // Try numeric ID?
+                    if (!isNaN(Number(rawName))) {
+                        // Check if ID exists?
+                        // Minimal validation
+                        npcId = Number(rawName);
+                        npcName = `NPC #${npcId}`;
+                    } else {
+                        // Try to see if it's "NONE" or "NESSUNO"
+                        const upper = rawName.toUpperCase();
+                        if (upper === 'NONE' || upper === 'NESSUNO' || upper === '0' || upper === '-') {
+                            npcId = null;
+                            npcName = "Nessuno";
+                        } else {
+                            await showUpdateHelp(`NPC Leader non trovato: "${rawName}"`);
+                            return;
+                        }
+                    }
+                }
+
+                factionRepository.updateFaction(campaignId, faction.name, { leader_npc_id: npcId });
+                await ctx.message.reply(`✅ Leader di **${faction.name}** impostato su **${npcName}**.`);
+                return;
+            }
+
+            // moral / alignment_moral
+            if (field === 'moral' || field === 'allineamento') {
+                const map: Record<string, string> = {
+                    'BUONO': 'BUONO', 'GOOD': 'BUONO', 'BENE': 'BUONO',
+                    'NEUTRALE': 'NEUTRALE', 'NEUTRAL': 'NEUTRALE',
+                    'CATTIVO': 'CATTIVO', 'EVIL': 'CATTIVO', 'MALE': 'CATTIVO'
+                };
+                const mapped = map[value];
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}". Usa BUONO, NEUTRALE, CATTIVO.`);
+                    return;
+                }
+                factionRepository.updateFaction(campaignId, faction.name, { alignment_moral: mapped });
+                const icon = mapped === 'BUONO' ? '😇' : mapped === 'CATTIVO' ? '😈' : '⚖️';
+                await ctx.message.reply(`✅ Allineamento morale di **${faction.name}** impostato su ${icon} **${mapped}**.`);
+                return;
+            }
+
+            // ethical / alignment_ethical
+            if (field === 'ethical' || field === 'etico') {
+                const map: Record<string, string> = {
+                    'LEGALE': 'LEGALE', 'LAWFUL': 'LEGALE',
+                    'NEUTRALE': 'NEUTRALE', 'NEUTRAL': 'NEUTRALE',
+                    'CAOTICO': 'CAOTICO', 'CHAOTIC': 'CAOTICO'
+                };
+                const mapped = map[value];
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}". Usa LEGALE, NEUTRALE, CAOTICO.`);
+                    return;
+                }
+                factionRepository.updateFaction(campaignId, faction.name, { alignment_ethical: mapped });
+                const icon = mapped === 'LEGALE' ? '📜' : mapped === 'CAOTICO' ? '🌀' : '⚖️';
+                await ctx.message.reply(`✅ Allineamento etico di **${faction.name}** impostato su ${icon} **${mapped}**.`);
+                return;
+            }
+
+            // Helper: resolve location by shortId or "Macro | Micro"
+            const resolveLocation = (locValue: string) => {
+                const trimmed = locValue.trim();
+                // Try shortId first
+                const sidMatch = trimmed.match(/^#?([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    return locationRepository.getAtlasEntryByShortId(campaignId, sidMatch[1]);
+                }
+                // Try "Macro | Micro" syntax
+                if (trimmed.includes('|')) {
+                    const [macro, micro] = trimmed.split('|').map(s => s.trim());
+                    return locationRepository.getAtlasEntryFull(campaignId, macro, micro);
+                }
+                // Try as micro location name only (search all)
+                const allLocations = locationRepository.listAllAtlasEntries(campaignId);
+                const match = allLocations.find((l: any) =>
+                    l.micro_location?.toLowerCase() === trimmed.toLowerCase() ||
+                    l.macro_location?.toLowerCase() === trimmed.toLowerCase()
+                );
+                return match ? locationRepository.getAtlasEntryFull(campaignId, match.macro_location, match.micro_location) : null;
+            };
+
+            // HQ / Sede Principale
+            if (field === 'hq' || field === 'sede' || field === 'headquarter') {
+                const rawValue = args.slice(1).join(' ');
+                const location = resolveLocation(rawValue);
+
+                if (!location) {
+                    await ctx.message.reply(`❌ Luogo **${rawValue}** non trovato nell'Atlas.\\nUsa un #shortId o "Macro | Micro".`);
+                    return;
+                }
+
+                factionRepository.updateFaction(campaignId, faction.name, { headquarters_location_id: location.id });
+                const locName = location.micro_location || location.macro_location;
+                await ctx.message.reply(`✅ Sede principale di **${faction.name}** impostata su **${locName}** (#${location.short_id}).`);
+                return;
+            }
+
+            // addloc / Aggiunge luogo controllato
+            if (field === 'addloc' || field === 'addluogo') {
+                const rawValue = args.slice(1).join(' ');
+                const location = resolveLocation(rawValue);
+
+                if (!location) {
+                    await ctx.message.reply(`❌ Luogo **${rawValue}** non trovato nell'Atlas.\\nUsa un #shortId o "Macro | Micro".`);
+                    return;
+                }
+
+                factionRepository.addAffiliation(faction.id, 'location', location.id, { role: 'CONTROLLED' });
+                const locName = location.micro_location || location.macro_location;
+                await ctx.message.reply(`✅ Luogo **${locName}** (#${location.short_id}) aggiunto ai luoghi controllati da **${faction.name}**.`);
+                return;
+            }
+
+            // remloc / Rimuove luogo controllato
+            if (field === 'remloc' || field === 'remluogo') {
+                const rawValue = args.slice(1).join(' ');
+                const location = resolveLocation(rawValue);
+
+                if (!location) {
+                    await ctx.message.reply(`❌ Luogo **${rawValue}** non trovato nell'Atlas.\\nUsa un #shortId o "Macro | Micro".`);
+                    return;
+                }
+
+                const success = factionRepository.removeAffiliation(faction.id, 'location', location.id);
+                const locName = location.micro_location || location.macro_location;
+                if (success) {
+                    await ctx.message.reply(`✅ Luogo **${locName}** rimosso dai luoghi controllati da **${faction.name}**.`);
+                } else {
+                    await ctx.message.reply(`⚠️ **${locName}** non era tra i luoghi controllati da **${faction.name}**.`);
+                }
+                return;
+            }
+
+            await showUpdateHelp(`Campo non riconosciuto: "${field}"`);
             return;
         }
 
@@ -423,11 +749,15 @@ export const factionCommand: Command = {
         // =============================================
         // DEFAULT: $faction (list) or $faction <name>
         // =============================================
+        // =============================================
+        // DEFAULT: $faction (list) or $faction <name>
+        // =============================================
         if (!firstArg || firstArg === 'list' || firstArg === 'lista') {
-            // List all factions
-            const factions = factionRepository.listFactions(campaignId);
+            // List all factions (limit 25 for select menu for now)
+            const allFactions = factionRepository.listFactions(campaignId);
+            const factions = allFactions.slice(0, 25);
 
-            if (factions.length === 0) {
+            if (allFactions.length === 0) {
                 await ctx.message.reply('📂 Nessuna fazione registrata.\nUsa `$faction create <Nome> | <Tipo>` per crearne una.');
                 return;
             }
@@ -448,10 +778,65 @@ export const factionCommand: Command = {
                 description += `└ ${rep ? `${repIcon} ${rep} • ` : ''}${memberStr}\n\n`;
             }
 
-            embed.setDescription(description);
-            embed.setFooter({ text: `Totale: ${factions.length} fazioni • Usa $faction <Nome> per i dettagli` });
+            if (allFactions.length > 25) {
+                description += `\n*...e altre ${allFactions.length - 25} fazioni.*`;
+            }
 
-            await ctx.message.reply({ embeds: [embed] });
+            embed.setDescription(description);
+            embed.setFooter({ text: `Totale: ${allFactions.length} fazioni • Usa il menu per i dettagli` });
+
+            // Create Select Menu
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_faction')
+                .setPlaceholder('🔍 Seleziona una fazione per i dettagli...')
+                .addOptions(
+                    factions.map(f => {
+                        const typeIcon = FACTION_TYPE_ICONS[f.type] || '⚔️';
+                        return new StringSelectMenuOptionBuilder()
+                            .setLabel(f.name)
+                            .setDescription(`${f.type} - #${f.short_id}`)
+                            .setValue(f.short_id || 'unknown') // Use short_id for stability
+                            .setEmoji(typeIcon);
+                    })
+                );
+
+            const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+            const reply = await ctx.message.reply({
+                embeds: [embed],
+                components: [row]
+            });
+
+            // Create Collector
+            const collector = reply.createMessageComponentCollector({
+                componentType: ComponentType.StringSelect,
+                time: 60000 * 5 // 5 minutes
+            });
+
+            collector.on('collect', async (interaction) => {
+                if (interaction.user.id !== ctx.message.author.id) {
+                    await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
+                    return;
+                }
+
+                if (interaction.customId === 'select_faction') {
+                    const selectedShortId = interaction.values[0];
+                    const faction = factionRepository.getFactionByShortId(campaignId, selectedShortId);
+
+                    if (faction) {
+                        const detailEmbed = generateFactionEmbed(faction);
+                        await interaction.reply({ embeds: [detailEmbed], ephemeral: true });
+                    } else {
+                        await interaction.reply({ content: "Fazione non trovata.", ephemeral: true });
+                    }
+                }
+            });
+
+            collector.on('end', () => {
+                // Remove components on timeout
+                reply.edit({ components: [] }).catch(() => { });
+            });
+
             return;
         }
 

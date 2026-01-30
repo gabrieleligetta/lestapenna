@@ -148,7 +148,14 @@ export interface AnalystOutput {
         weaknesses?: string[];
         resistances?: string[];
     }>;
-    npc_dossier_updates: Array<{ name: string; description: string; role?: string; status?: 'ALIVE' | 'DEAD' | 'MISSING' }>;
+    npc_dossier_updates: Array<{
+        name: string;
+        description: string;
+        role?: string;
+        status?: 'ALIVE' | 'DEAD' | 'MISSING';
+        alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
+        alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+    }>;
     location_updates: Array<{ macro: string; micro: string; description: string }>;
     travel_sequence: Array<{ macro: string; micro: string; reason?: string }>;
     present_npcs: string[];
@@ -159,11 +166,18 @@ export interface AnalystOutput {
         event: string;
         type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
     }>;
+    // 🆕 PC Updates
+    character_updates?: Array<{
+        name: string;
+        alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
+        alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+    }>;
     npc_events: Array<{
         name: string;
         event: string;
         type: 'REVELATION' | 'BETRAYAL' | 'DEATH' | 'ALLIANCE' | 'STATUS_CHANGE' | 'GENERIC';
     }>;
+
     world_events: Array<{
         event: string;
         type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
@@ -185,4 +199,10 @@ export interface AnalystOutput {
         role?: 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED';
         action: 'JOIN' | 'LEAVE';
     }>;
+    // 🆕 Party Alignment
+    party_alignment_change?: {
+        moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
+        ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+        reason: string;
+    };
 }

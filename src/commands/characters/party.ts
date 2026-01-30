@@ -25,10 +25,18 @@ export const partyCommand: Command = {
             return `**${name}**${details ? ` (${details})` : ''}`;
         }).join('\n');
 
+        const alignMoral = ctx.activeCampaign!.party_alignment_moral || "NEUTRALE";
+        const alignEthical = ctx.activeCampaign!.party_alignment_ethical || "NEUTRALE";
+
         const embed = new EmbedBuilder()
             .setTitle(`🛡️ Party: ${ctx.activeCampaign!.name}`)
             .setColor("#9B59B6")
-            .setDescription(list);
+            .setDescription(list)
+            .addFields({
+                name: "⚖️ Allineamento del Gruppo",
+                value: `**${alignEthical} ${alignMoral}**\n*(Lo spettro etico e morale delle azioni del gruppo)*`,
+                inline: false
+            });
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('select_party_member')
@@ -82,6 +90,14 @@ export const partyCommand: Command = {
                             { name: "🧬 Razza", value: p.race || "Sconosciuta", inline: true },
                             { name: "🌍 Campagna", value: ctx.activeCampaign!.name || "Nessuna", inline: true }
                         );
+
+                    if (p.alignment_moral || p.alignment_ethical) {
+                        profileEmbed.addFields({
+                            name: "⚖️ Allineamento",
+                            value: `${p.alignment_ethical || 'NEUTRALE'} ${p.alignment_moral || 'NEUTRALE'}`,
+                            inline: true
+                        });
+                    }
 
                     try {
                         const targetUser = await ctx.client.users.fetch(userId);

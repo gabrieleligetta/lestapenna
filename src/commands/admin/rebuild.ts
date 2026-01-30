@@ -228,28 +228,29 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
     return db.transaction(() => {
         // 1. Identify NPCs to delete
         const npcsToDelete = db.prepare(`
-            SELECT name FROM npc_dossier
+            SELECT id, name FROM npc_dossier
             WHERE (description IS NULL 
                 OR length(description) < 5
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
-        `).all() as { name: string }[];
+        `).all() as { id: number; name: string }[];
 
         // 2. Identify Locations to delete
         const locationsToDelete = db.prepare(`
-            SELECT macro_location, micro_location FROM location_atlas
+            SELECT id, macro_location, micro_location FROM location_atlas
             WHERE (description IS NULL 
                 OR length(description) < 10
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
-        `).all() as { macro_location: string; micro_location: string }[];
+        `).all() as { id: number; macro_location: string; micro_location: string }[];
 
-        // 3. Delete NPC history first
+        // 3. Delete NPC history and faction affiliations first
         for (const npc of npcsToDelete) {
             db.prepare('DELETE FROM npc_history WHERE npc_name = ?').run(npc.name);
+            db.prepare('DELETE FROM faction_affiliations WHERE entity_type = ? AND entity_id = ?').run('npc', npc.id);
         }
 
-        // 4. Delete Location history
+        // 4. Delete Location history and faction affiliations
         for (const loc of locationsToDelete) {
             db.prepare(`
                 DELETE FROM location_history 
@@ -262,6 +263,9 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 WHERE lower(macro_location) = lower(?) 
                 AND lower(micro_location) = lower(?)
             `).run(loc.macro_location, loc.micro_location);
+
+            // Clean up faction affiliations for this location
+            db.prepare('DELETE FROM faction_affiliations WHERE entity_type = ? AND entity_id = ?').run('location', loc.id);
         }
 
         // 5. Delete actual entities
@@ -279,6 +283,19 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 OR length(description) < 10
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
+        `).run();
+
+        // 6. Also cleanup any orphaned faction affiliations (entities deleted outside this function)
+        db.prepare(`
+            DELETE FROM faction_affiliations 
+            WHERE entity_type = 'npc' 
+            AND entity_id NOT IN (SELECT id FROM npc_dossier)
+        `).run();
+
+        db.prepare(`
+            DELETE FROM faction_affiliations 
+            WHERE entity_type = 'location' 
+            AND entity_id NOT IN (SELECT id FROM location_atlas)
         `).run();
 
         return {

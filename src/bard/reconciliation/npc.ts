@@ -106,6 +106,19 @@ export async function reconcileNpcName(
             continue;
         }
 
+        // 1.5 Strong Prefix Match (Auto-Merge Candidate)
+        // Es. "Leosin" vs "Leosin Erantar"
+        const shorter = newNameClean.length < existingNameClean.length ? newNameClean : existingNameClean;
+        const longer = newNameClean.length < existingNameClean.length ? existingNameClean : newNameClean;
+
+        if (shorter.length >= 4 && longer.startsWith(shorter)) {
+            // Verifica che il prefisso sia seguito da spazio per evitare "Leo" in "Leonidas" (se non è tutto il nome)
+            if (longer.length === shorter.length || longer[shorter.length] === ' ') {
+                candidates.push({ npc, similarity: 0.95, reason: 'strong_prefix_match' });
+                continue;
+            }
+        }
+
         // 2. Substring Match (Boosted)
         if (containsSubstring(newName, existingName)) {
             candidates.push({ npc, similarity: 0.85, reason: 'substring_match' });
@@ -208,11 +221,11 @@ export async function reconcileNpcName(
  * Pre-deduplica un batch di NPC updates PRIMA di salvarli.
  */
 export async function deduplicateNpcBatch(
-    npcs: Array<{ name: string; description: string; role?: string; status?: string }>
-): Promise<Array<{ name: string; description: string; role?: string; status?: string }>> {
+    npcs: Array<{ name: string; description: string; role?: string; status?: string; alignment_moral?: string; alignment_ethical?: string }>
+): Promise<Array<{ name: string; description: string; role?: string; status?: string; alignment_moral?: string; alignment_ethical?: string }>> {
     if (npcs.length <= 1) return npcs;
 
-    const result: Array<{ name: string; description: string; role?: string; status?: string }> = [];
+    const result: Array<{ name: string; description: string; role?: string; status?: string; alignment_moral?: string; alignment_ethical?: string }> = [];
     const processed = new Set<number>();
 
     for (let i = 0; i < npcs.length; i++) {
@@ -240,6 +253,8 @@ export async function deduplicateNpcBatch(
                     }
                     merged.role = merged.role || npcs[j].role;
                     merged.status = merged.status || npcs[j].status;
+                    merged.alignment_moral = merged.alignment_moral || npcs[j].alignment_moral;
+                    merged.alignment_ethical = merged.alignment_ethical || npcs[j].alignment_ethical;
 
                     processed.add(j);
                 }

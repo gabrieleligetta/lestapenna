@@ -51,7 +51,7 @@ export const characterRepository = {
     },
 
     getUserProfile: (userId: string, campaignId: number): UserProfile & { foundation_description: string | null } => {
-        const row = db.prepare('SELECT character_name, race, class, description, foundation_description FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
+        const row = db.prepare('SELECT character_name, race, class, description, foundation_description, alignment_moral, alignment_ethical FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
         return row || { character_name: null, race: null, class: null, description: null, foundation_description: null };
     },
 
@@ -116,5 +116,35 @@ export const characterRepository = {
              SET rag_sync_needed = 0 
              WHERE campaign_id = ? AND user_id = ?
          `).run(campaignId, userId);
+    },
+
+    updateCharacterAlignment: (campaignId: number, characterName: string, moral?: string, ethical?: string): void => {
+        const userId = characterRepository.getCharacterUserId(campaignId, characterName);
+        if (!userId) {
+            console.log(`[DB] ⚠️ Impossibile aggiornare allineamento per PG sconosciuto: ${characterName}`);
+            return;
+        }
+
+        const updates: string[] = [];
+        const params: any[] = [];
+
+        if (moral) {
+            updates.push('alignment_moral = ?');
+            params.push(moral);
+        }
+        if (ethical) {
+            updates.push('alignment_ethical = ?');
+            params.push(ethical);
+        }
+
+        if (updates.length === 0) return;
+
+        updates.push('rag_sync_needed = 1');
+
+        params.push(userId);
+        params.push(campaignId);
+
+        db.prepare(`UPDATE characters SET ${updates.join(', ')} WHERE user_id = ? AND campaign_id = ?`).run(...params);
+        console.log(`[DB] ⚖️ Allineamento PG ${characterName} aggiornato: ${moral || '-'} / ${ethical || '-'}`);
     }
 };

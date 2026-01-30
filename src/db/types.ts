@@ -4,6 +4,8 @@ export interface UserProfile {
     class: string | null;
     description: string | null;
     rag_sync_needed?: number; // NUOVO
+    alignment_moral?: string | null; // 🆕
+    alignment_ethical?: string | null; // 🆕
 }
 
 export interface Recording {
@@ -54,6 +56,8 @@ export interface Campaign {
     current_micro_location?: string;
     current_year?: number; // NUOVO
     allow_auto_character_update?: number; // NUOVO
+    party_alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO'; // 🆕
+    party_alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO'; // 🆕
 }
 
 export interface KnowledgeFragment {
@@ -103,6 +107,8 @@ export interface NpcEntry {
     aliases?: string | null; // 🆕 Sistema Ibrido RAG (soprannomi, titoli)
     first_session_id?: string | null; // 🆕 Tracciamento origine
     short_id?: string; // 🆕 Stable ID
+    alignment_moral?: string | null; // 🆕
+    alignment_ethical?: string | null; // 🆕
 }
 
 export enum QuestStatus {
@@ -251,6 +257,8 @@ export interface FactionEntry {
     rag_sync_needed: number;
     is_manual: number;
     short_id?: string;
+    alignment_moral?: string | null;   // 🆕 BUONO, NEUTRALE, CATTIVO
+    alignment_ethical?: string | null; // 🆕 LEGALE, NEUTRALE, CAOTICO
 }
 
 export interface FactionReputation {

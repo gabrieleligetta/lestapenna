@@ -11,7 +11,8 @@ import {
     getMonsterByName,
     getBestiaryHistory,
     getMonsterByShortId,
-    deleteMonster
+    deleteMonster,
+    db
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
@@ -74,36 +75,153 @@ export const bestiaryCommand: Command = {
             return embed;
         };
 
-        // SUBCOMMAND: $bestiario update <Name> | <Note>
+        // SUBCOMMAND: $bestiario update <Name or ID> [| <Note> OR <field> <value>]
         if (arg.toLowerCase().startsWith('update ')) {
-            const content = arg.substring(7);
-            const parts = content.split('|');
-            if (parts.length < 2) {
-                await ctx.message.reply("⚠️ Uso: `$bestiario update <Mostro/ID> | <Nota/Osservazione>`");
-                return;
-            }
-            let name = parts[0].trim();
-            const note = parts.slice(1).join('|').trim();
+            const fullContent = arg.substring(7).trim(); // Remove 'update '
 
-            // ID Resolution
-            const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
+            // 1. Identify Target (ID or Name)
+            let targetIdentifier = "";
+            let remainingArgs = "";
+
+            if (fullContent.startsWith('#')) {
+                const parts = fullContent.split(' ');
+                targetIdentifier = parts[0];
+                remainingArgs = parts.slice(1).join(' ');
+            } else {
+                if (fullContent.includes('|')) {
+                    targetIdentifier = fullContent.split('|')[0].trim();
+                    remainingArgs = "|" + fullContent.split('|').slice(1).join('|');
+                } else {
+                    const keywords = ['status', 'stato', 'count', 'numero'];
+                    const lower = fullContent.toLowerCase();
+                    let splitIndex = -1;
+
+                    for (const kw of keywords) {
+                        const searchStr = ` ${kw} `;
+                        const idx = lower.lastIndexOf(searchStr);
+                        if (idx !== -1) {
+                            splitIndex = idx;
+                            break;
+                        }
+                    }
+
+                    if (splitIndex !== -1) {
+                        targetIdentifier = fullContent.substring(0, splitIndex).trim();
+                        remainingArgs = fullContent.substring(splitIndex + 1).trim();
+                    } else {
+                        targetIdentifier = fullContent;
+                        remainingArgs = "";
+                    }
+                }
+            }
+
+            // Resolve Monster
+            let monster: any; // Using any because db returns plain objects mainly? No, getMonsterByName usually returns object.
+            const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (monster) name = monster.name;
+                const m = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (m) monster = m;
+            }
+            if (!monster) {
+                monster = getMonsterByName(ctx.activeCampaign!.id, targetIdentifier);
             }
 
-            const monster = getMonsterByName(ctx.activeCampaign!.id, name);
             if (!monster) {
-                await ctx.message.reply(`❌ Mostro "${name}" non trovato.`);
+                await ctx.message.reply(`❌ Mostro "${targetIdentifier}" non trovato.`);
                 return;
             }
 
-            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            addBestiaryEvent(ctx.activeCampaign!.id, name, currentSession, note, "MANUAL_UPDATE", true);
-            await ctx.message.reply(`📝 Nota aggiunta a **${name}**. Aggiornamento dossier...`);
+            // 2. Parse Actions
 
-            await regenerateMonsterBio(ctx.activeCampaign!.id, name);
+            // Case A: Narrative Update
+            if (remainingArgs.trim().startsWith('|')) {
+                const note = remainingArgs.replace('|', '').trim();
+                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, note, "MANUAL_UPDATE", true);
+
+                await ctx.message.reply(`📝 Nota aggiunta a **${monster.name}**. Aggiornamento dossier...`);
+                await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name);
+                return;
+            }
+
+            // Case B: Metadata Update
+            const args = remainingArgs.trim().split(/\s+/);
+            const field = args[0]?.toLowerCase();
+            const value = args.slice(1).join(' ').toUpperCase();
+
+            const showUpdateHelp = async (errorMsg?: string) => {
+                const statusIcon = monster.status === 'ALIVE' ? '⚔️' :
+                    monster.status === 'DEFEATED' ? '💀' :
+                        monster.status === 'FLED' ? '🏃' : '👹';
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`ℹ️ Aggiornamento Bestiario: #${monster.short_id} "${monster.name}"`)
+                    .setColor("#3498DB")
+                    .setDescription(errorMsg ? `⚠️ **${errorMsg}**\n\n` : "")
+                    .addFields(
+                        {
+                            name: "Valori Attuali",
+                            value: `**Status:** ${statusIcon} ${monster.status}\n**Count:** ${monster.count || 'N/A'}`,
+                            inline: false
+                        },
+                        {
+                            name: "Campi Modificabili",
+                            value: `
+• **status**: ALIVE (vivo), DEFEATED (sconfitto/morto), FLED (fuggito)
+  *Es: $bestiario update #${monster.short_id} status DEFEATED*
+• **count**: Testo libero (es. "3", "un branco")
+  *Es: $bestiario update #${monster.short_id} count "un esercito"*
+• **Note Narrative** (usa | )
+  *Es: $bestiario update #${monster.short_id} | Avvistato vicino al fiume*`
+                        }
+                    );
+                await ctx.message.reply({ embeds: [embed] });
+            };
+
+            if (!field || !args[1]) { // args[1] check because value requires at least one word
+                await showUpdateHelp();
+                return;
+            }
+
+            // 3. Apply Metadata Update
+            if (field === 'status' || field === 'stato') {
+                const map: Record<string, string> = {
+                    'ALIVE': 'ALIVE', 'VIVO': 'ALIVE', 'ACTIVE': 'ALIVE',
+                    'DEFEATED': 'DEFEATED', 'SCONFITTO': 'DEFEATED', 'MORTO': 'DEFEATED', 'DEAD': 'DEFEATED', 'UCCISO': 'DEFEATED',
+                    'FLED': 'FLED', 'FUGGITO': 'FLED', 'SCAPPATO': 'FLED'
+                };
+
+                const mapped = map[value] || map[value.replace(' ', '_')];
+
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}"`);
+                    return;
+                }
+
+                db.prepare('UPDATE bestiary SET status = ? WHERE id = ?').run(mapped, monster.id);
+
+                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, `Stato aggiornato a ${mapped}`, "MANUAL_UPDATE", true);
+
+                await ctx.message.reply(`✅ Stato aggiornato: **${monster.name}** → **${mapped}**`);
+                await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name); // Regen
+                return;
+            }
+
+            if (field === 'count' || field === 'numero' || field === 'qt') {
+                const cleanValue = args.slice(1).join(' '); // Keep original case? existing code upper cases value. 
+                // We should keep case for Count maybe? But parsed 'value' above is upper.
+                // Let's re-extract raw value.
+                const rawValue = remainingArgs.trim().split(/\s+/).slice(1).join(' ');
+
+                db.prepare('UPDATE bestiary SET count = ? WHERE id = ?').run(rawValue, monster.id);
+
+                await ctx.message.reply(`✅ Numero aggiornato: **${monster.name}** → **${rawValue}**`);
+                return;
+            }
+
+            await showUpdateHelp(`Campo non riconosciuto: "${field}"`);
             return;
         }
 

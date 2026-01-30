@@ -26,6 +26,7 @@ import {
     npcRepository,
     locationRepository,
     worldRepository,
+    factionRepository,
     getSessionAIOutput,
     saveSessionAIOutput
 } from '../db';
@@ -508,6 +509,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     castContext += charInfo + "\n";
                 }
             });
+
+            // Always include party name
+            const partyFaction = factionRepository.getPartyFaction(campaignId);
+            if (partyFaction) {
+                castContext += `\n🎭 GRUPPO DI EROI (PARTY): **${partyFaction.name}**\n`;
+            }
         }
         let fullDialogue: string;
         if (narrativeText && narrativeText.length > 100) {
@@ -532,8 +539,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     response_format: { type: "json_object" }
                 });
 
-                const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[]}');
-                console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi.`);
+                const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[]}');
+                console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni.`);
 
                 dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
 
@@ -586,6 +593,32 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     dynamicMemoryContext += `\n⚔️ QUEST ATTIVE: ${activeQuests.map((q: any) => q.title).join(', ')}\n`;
                 } else {
                     dynamicMemoryContext += `\n⚔️ NESSUNA QUEST ATTIVA.\n`;
+                }
+
+                // 5. Idratazione Fazioni (solo quelle trovate dallo Scout)
+                if (entities.factions && Array.isArray(entities.factions) && entities.factions.length > 0) {
+                    const foundFactions = new Set<string>();
+
+                    dynamicMemoryContext += `\n⚔️ FAZIONI MENZIONATE:\n`;
+
+                    for (const name of entities.factions) {
+                        try {
+                            const factions = factionRepository.findFactionByName(campaignId, name);
+                            const faction = factions.length > 0 ? factions[0] : null;
+                            if (faction && !foundFactions.has(faction.name)) {
+                                foundFactions.add(faction.name);
+                                const members = factionRepository.countFactionMembers(faction.id);
+                                const totalMembers = members.npcs + members.locations + members.pcs;
+                                const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
+                                let factionInfo = `- **${faction.name}** (${faction.type || 'ORGANIZATION'}): ${faction.description || 'Nessuna descrizione.'}`;
+                                if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
+                                if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
+                                dynamicMemoryContext += factionInfo + '\n';
+                            }
+                        } catch (e) {
+                            console.error(`[Bardo] ⚠️ Errore riconciliazione Fazione "${name}":`, e);
+                        }
+                    }
                 }
 
                 // Fallback location corrente

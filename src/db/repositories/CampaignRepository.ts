@@ -153,5 +153,26 @@ export const campaignRepository = {
      */
     updateLastSessionNumber: (campaignId: number, sessionNumber: number): void => {
         db.prepare('UPDATE campaigns SET last_session_number = ? WHERE id = ?').run(sessionNumber, campaignId);
+    },
+
+    updatePartyAlignment: (campaignId: number, moral?: string, ethical?: string): void => {
+        if (!moral && !ethical) return;
+
+        const updates: string[] = [];
+        const params: any[] = [];
+
+        if (moral) {
+            updates.push('party_alignment_moral = ?');
+            params.push(moral);
+        }
+        if (ethical) {
+            updates.push('party_alignment_ethical = ?');
+            params.push(ethical);
+        }
+
+        params.push(campaignId);
+
+        db.prepare(`UPDATE campaigns SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        console.log(`[DB] ⚖️ Allineamento Party aggiornato: ${moral || '-'} / ${ethical || '-'}`);
     }
 };

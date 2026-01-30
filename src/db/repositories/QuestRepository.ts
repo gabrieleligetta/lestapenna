@@ -138,7 +138,7 @@ export const questRepository = {
         }
     },
 
-    updateQuestStatusById: (questId: number, status: 'COMPLETED' | 'FAILED' | 'OPEN'): boolean => {
+    updateQuestStatusById: (questId: number, status: string): boolean => {
         const result = db.prepare(`
             UPDATE quests 
             SET status = ?, last_updated = ? 

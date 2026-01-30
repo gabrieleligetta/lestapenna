@@ -61,6 +61,15 @@ export const npcCommand: Command = {
                 embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
             }
 
+            // 🆕 Aglignment
+            if (npc.alignment_moral || npc.alignment_ethical) {
+                embed.addFields({
+                    name: "⚖️ Allineamento",
+                    value: `${npc.alignment_ethical || 'NEUTRALE'} ${npc.alignment_moral || 'NEUTRALE'}`,
+                    inline: true
+                });
+            }
+
             // 🆕 Show faction affiliations
             const factionAffiliations = factionRepository.getEntityFactions('npc', npc.id);
             if (factionAffiliations.length > 0) {
@@ -130,6 +139,105 @@ export const npcCommand: Command = {
             updateNpcEntry(ctx.activeCampaign!.id, name, description, role, 'ALIVE', undefined, true);
             await ctx.message.reply(`✅ **Nuovo NPC Creato!**\n👤 **${name}**\n🎭 Ruolo: ${role}\n📜 ${description}`);
             return;
+        }
+
+        // SUBCOMMAND: faction
+        if (argsStr.toLowerCase().startsWith('faction ')) {
+            const subArgs = argsStr.substring(8).trim();
+
+            // Usage: $npc faction add <NPC> | <Faction> | [Role]
+            // Usage: $npc faction remove <NPC> | <Faction>
+
+            if (subArgs.startsWith('add ')) {
+                const parts = subArgs.substring(4).split('|').map(s => s.trim());
+                if (parts.length < 2) {
+                    await ctx.message.reply('Uso: `$npc faction add <Nome NPC> | <Nome Fazione> | [Ruolo]`');
+                    return;
+                }
+
+                let [npcName, factionName, role] = parts;
+
+                // Resolve NPC
+                let targetNpc = getNpcEntry(ctx.activeCampaign!.id, npcName);
+                if (!targetNpc && npcName.startsWith('#')) {
+                    const found = getNpcByShortId(ctx.activeCampaign!.id, npcName);
+                    if (found) targetNpc = found;
+                }
+
+                if (!targetNpc) {
+                    await ctx.message.reply(`❌ NPC **${npcName}** non trovato.`);
+                    return;
+                }
+
+                // Resolve Faction
+                let faction = factionRepository.getFaction(ctx.activeCampaign!.id, factionName);
+                if (!faction) {
+                    faction = factionRepository.createFaction(ctx.activeCampaign!.id, factionName, {
+                        isManual: true,
+                        description: "Creata manualmente via comando"
+                    });
+                }
+
+                if (!faction) {
+                    await ctx.message.reply(`❌ Errore nella creazione della fazione **${factionName}**.`);
+                    return;
+                }
+
+                const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED'];
+                const cleanRole = role ? role.toUpperCase() : 'MEMBER';
+
+                if (!validRoles.includes(cleanRole)) {
+                    await ctx.message.reply(`⚠️ Ruolo non valido. Usa: ${validRoles.join(', ')}. Impostato default: MEMBER`);
+                }
+
+                factionRepository.addAffiliation(faction.id, 'npc', targetNpc.id, {
+                    role: (validRoles.includes(cleanRole) ? cleanRole : 'MEMBER') as any,
+                    notes: "Aggiunto manualmente"
+                });
+
+                await ctx.message.reply(`✅ **${targetNpc.name}** ora è affiliato a **${faction.name}** come **${cleanRole}**.`);
+                markNpcDirty(ctx.activeCampaign!.id, targetNpc.name);
+                return;
+
+            } else if (subArgs.startsWith('remove ')) {
+                const parts = subArgs.substring(7).split('|').map(s => s.trim());
+                if (parts.length < 2) {
+                    await ctx.message.reply('Uso: `$npc faction remove <Nome NPC> | <Nome Fazione>`');
+                    return;
+                }
+
+                let [npcName, factionName] = parts;
+
+                // Resolve NPC
+                let targetNpc = getNpcEntry(ctx.activeCampaign!.id, npcName);
+                if (!targetNpc && npcName.startsWith('#')) {
+                    const found = getNpcByShortId(ctx.activeCampaign!.id, npcName);
+                    if (found) targetNpc = found;
+                }
+
+                if (!targetNpc) {
+                    await ctx.message.reply(`❌ NPC **${npcName}** non trovato.`);
+                    return;
+                }
+
+                const faction = factionRepository.getFaction(ctx.activeCampaign!.id, factionName);
+                if (!faction) {
+                    await ctx.message.reply(`❌ Fazione **${factionName}** non trovata.`);
+                    return;
+                }
+
+                const success = factionRepository.removeAffiliation(faction.id, 'npc', targetNpc.id);
+                if (success) {
+                    await ctx.message.reply(`✅ Rimossa affiliazione di **${targetNpc.name}** da **${faction.name}**.`);
+                    markNpcDirty(ctx.activeCampaign!.id, targetNpc.name);
+                } else {
+                    await ctx.message.reply(`⚠️ Nessuna affiliazione attiva trovata tra **${targetNpc.name}** e **${faction.name}**.`);
+                }
+                return;
+            } else {
+                await ctx.message.reply('Uso: `$npc faction add ...` o `$npc faction remove ...`');
+                return;
+            }
         }
 
         // SUBCOMMAND: merge
@@ -289,6 +397,7 @@ export const npcCommand: Command = {
         }
 
         // SUBCOMMAND: update
+        // SUBCOMMAND: update
         if (argsStr.toLowerCase().startsWith('update')) {
             const content = argsStr.substring(7).trim();
 
@@ -303,7 +412,7 @@ export const npcCommand: Command = {
                 const note = parts.slice(1).join('|').trim();
 
                 // ID Resolution
-                const sidMatchArea = name.match(/^#([a-z0-9]{5})$/i);
+                const sidMatchArea = name.match(/^#?([a-z0-9]{5})$/i);
 
                 if (sidMatchArea) {
                     const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchArea[1]);
@@ -328,66 +437,131 @@ export const npcCommand: Command = {
                 return;
             } else {
                 // Type 2: Metadata Update
-                const fieldIndex = content.indexOf('field:');
-                if (fieldIndex === -1) {
-                    await ctx.message.reply('Uso:\n1. `$npc update <Nome> | <Nota>` (Narrativo)\n2. `$npc update <Nome> field:<campo> <valore>` (Metadati)');
-                    return;
-                }
-
-                let name = content.substring(0, fieldIndex).trim();
-                const remainder = content.substring(fieldIndex); // field:status DEAD
-
-                // ID Resolution
-                const sidMatchMeta = name.match(/^#([a-z0-9]{5})$/i);
-
-                if (sidMatchMeta) {
-                    const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchMeta[1]);
-                    if (npc) name = npc.name;
-                }
-
-                const firstSpace = remainder.indexOf(' ');
-
+                let name = '';
                 let fieldKey = '';
                 let value = '';
 
-                if (firstSpace === -1) {
-                    await ctx.message.reply('❌ Valore mancante.');
+                // Case A: Explicit 'field:' syntax
+                const fieldLower = content.toLowerCase();
+                const fieldIndex = fieldLower.indexOf('field:');
+
+                if (fieldIndex !== -1) {
+                    name = content.substring(0, fieldIndex).trim();
+                    const remainder = content.substring(fieldIndex); // field:status DEAD
+                    const firstSpace = remainder.indexOf(' ');
+
+                    if (firstSpace === -1) {
+                        await ctx.message.reply('❌ Valore mancante.');
+                        return;
+                    }
+
+                    fieldKey = remainder.substring(6, firstSpace).toLowerCase(); // remove field:
+                    value = remainder.substring(firstSpace + 1).trim();
+                } else {
+                    // Case B: Implicit simplified syntax (e.g. "zpvbh status DEAD")
+                    // Regex helps find known keywords preceded by space
+                    const keywordMatch = content.match(/\s+(status|role|ruolo|name|nome|desc|description|moral|morale|ethical|ethic|etica|faction|fazione)\s+/i);
+
+                    if (keywordMatch && keywordMatch.index !== undefined) {
+                        name = content.substring(0, keywordMatch.index).trim();
+                        fieldKey = keywordMatch[1].toLowerCase();
+                        value = content.substring(keywordMatch.index + keywordMatch[0].length).trim();
+                    } else {
+                        // Assume the whole content is the name/ID (show help for this NPC)
+                        name = content.trim();
+                    }
+                }
+
+                // ID Resolution
+                const sidMatchMeta = name.match(/^#?([a-z0-9]{5})$/i);
+
+                let resolvedName = name;
+                if (sidMatchMeta) {
+                    const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatchMeta[1]);
+                    if (npc) resolvedName = npc.name;
+                }
+
+                const npc = getNpcEntry(ctx.activeCampaign!.id, resolvedName);
+                if (!npc) {
+                    if (fieldKey) {
+                        await ctx.message.reply(`❌ NPC **${name}** non trovato.`);
+                    } else {
+                        await ctx.message.reply('Uso:\n1. `$npc update <Nome> | <Nota>` (Narrativo)\n2. `$npc update <Nome/ID> <status/role/name> <valore>` (Rapido)\n3. `$npc update <Nome> field:<campo> <valore>` (Esplicito)');
+                    }
                     return;
                 }
 
-                fieldKey = remainder.substring(6, firstSpace); // remove field:
-                value = remainder.substring(firstSpace + 1).trim();
-
-                const npc = getNpcEntry(ctx.activeCampaign!.id, name);
-                if (!npc) {
-                    await ctx.message.reply(`❌ NPC **${name}** non trovato.`);
+                // If found NPC but no action, show context
+                if (!fieldKey || !value) {
+                    await ctx.message.reply(
+                        `✏️ **Aggiornamento NPC: ${npc.name}**\n` +
+                        `Status attuale: **${npc.status}**\n` +
+                        `Ruolo attuale: **${npc.role || 'Nessuno'}**\n\n` +
+                        `**Comandi Rapidi:**\n` +
+                        `\`$npc update ${npc.short_id} status DEAD\`\n` +
+                        `\`$npc update ${npc.short_id} role Nuovo Ruolo\`\n` +
+                        `\`$npc update ${npc.short_id} | <Nota Narrativa>\``
+                    );
                     return;
                 }
 
                 const updates: any = {};
-                if (fieldKey === 'name') {
+                if (fieldKey === 'name' || fieldKey === 'nome') {
                     updates.name = value;
-                } else if (fieldKey === 'role') {
+                } else if (fieldKey === 'role' || fieldKey === 'ruolo') {
                     updates.role = value;
                 } else if (fieldKey === 'status') {
-                    updates.status = value;
+                    updates.status = value.toUpperCase();
                 } else if (fieldKey === 'desc' || fieldKey === 'description') {
                     updates.description = value;
+                } else if (fieldKey === 'moral' || fieldKey === 'morale') {
+                    updates.alignment_moral = value.toUpperCase();
+                } else if (fieldKey === 'ethical' || fieldKey === 'ethic' || fieldKey === 'etica') {
+                    updates.alignment_ethical = value.toUpperCase();
+                } else if (fieldKey === 'faction' || fieldKey === 'fazione') {
+                    // Special handling for faction relations
+                    const [factionName, roleInput] = value.split('|').map(s => s.trim());
+
+                    let faction = factionRepository.getFaction(ctx.activeCampaign!.id, factionName);
+                    if (!faction) {
+                        faction = factionRepository.createFaction(ctx.activeCampaign!.id, factionName, {
+                            isManual: true,
+                            description: "Creata manualmente via update rapido"
+                        });
+                    }
+
+                    if (faction) {
+                        const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED'];
+                        const role = roleInput ? roleInput.toUpperCase() : 'MEMBER';
+                        const finalRole = validRoles.includes(role) ? role : 'MEMBER';
+
+                        factionRepository.addAffiliation(faction.id, 'npc', npc.id, {
+                            role: finalRole as any,
+                            notes: "Aggiornato via $npc update"
+                        });
+
+                        await ctx.message.reply(`✅ **${npc.name}** ora affiliato a **${faction.name}** (${finalRole}).`);
+                        markNpcDirty(ctx.activeCampaign!.id, npc.name);
+                        return;
+                    } else {
+                        await ctx.message.reply(`❌ Errore creazione fazione **${factionName}**.`);
+                        return;
+                    }
                 } else {
-                    await ctx.message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`');
+                    await ctx.message.reply('❌ Campo non valido. Usa: `name`, `role`, `status`, `moral`, `ethical`, `faction`');
                     return;
                 }
 
-                const success = updateNpcFields(ctx.activeCampaign!.id, name, updates);
+                const success = updateNpcFields(ctx.activeCampaign!.id, resolvedName, updates);
 
                 if (success) {
                     if (updates.name) {
-                        migrateKnowledgeFragments(ctx.activeCampaign!.id, name, updates.name);
+                        migrateKnowledgeFragments(ctx.activeCampaign!.id, resolvedName, updates.name);
                         markNpcDirty(ctx.activeCampaign!.id, updates.name);
-                        await ctx.message.reply(`✅ NPC rinominato da **${name}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
+                        await ctx.message.reply(`✅ NPC rinominato da **${resolvedName}** a **${updates.name}**.\n📌 RAG migrato e sync programmato.`);
                         return;
                     }
-                    await ctx.message.reply(`✅ NPC **${name}** aggiornato: ${fieldKey} = ${value}`);
+                    await ctx.message.reply(`✅ NPC **${resolvedName}** aggiornato: ${fieldKey} = ${updates.status || value}`);
                 } else {
                     await ctx.message.reply(`❌ Errore durante l'aggiornamento.`);
                 }

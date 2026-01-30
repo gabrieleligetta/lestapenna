@@ -19,7 +19,9 @@ export const initDatabase = () => {
         current_micro_location TEXT,
         current_year INTEGER,
         allow_auto_character_update INTEGER DEFAULT 0,
-        last_session_number INTEGER DEFAULT 0
+        last_session_number INTEGER DEFAULT 0,
+        party_alignment_moral TEXT DEFAULT 'NEUTRALE',
+        party_alignment_ethical TEXT DEFAULT 'NEUTRALE'
     )`);
 
     // Migrazione: aggiungi colonna se non esiste
@@ -430,6 +432,9 @@ export const initDatabase = () => {
         "ALTER TABLE world_history ADD COLUMN year INTEGER",
         // NUOVA COLONNA PER ANNO REGISTRAZIONE
         "ALTER TABLE recordings ADD COLUMN year INTEGER",
+        // 🆕 PARTY ALIGNMENT (Good/Evil, Lawful/Chaotic)
+        "ALTER TABLE campaigns ADD COLUMN party_alignment_moral TEXT DEFAULT 'NEUTRALE'",
+        "ALTER TABLE campaigns ADD COLUMN party_alignment_ethical TEXT DEFAULT 'NEUTRALE'",
         // 🆕 NUOVO CAMPO PER TRASCRIZIONI GREZZE
         "ALTER TABLE recordings ADD COLUMN raw_transcription_text TEXT",
         // 🆕 SISTEMA ARMONICO: Lazy sync RAG per NPC
@@ -520,7 +525,16 @@ export const initDatabase = () => {
         "ALTER TABLE location_history ADD COLUMN short_id TEXT",
         "ALTER TABLE world_history ADD COLUMN short_id TEXT",
         "ALTER TABLE world_history ADD COLUMN timestamp INTEGER",
-        "ALTER TABLE characters ADD COLUMN foundation_description TEXT"
+        "ALTER TABLE world_history ADD COLUMN timestamp INTEGER",
+        "ALTER TABLE characters ADD COLUMN foundation_description TEXT",
+        // 🆕 ALIGNMENT FOR NPC & PC
+        "ALTER TABLE npc_dossier ADD COLUMN alignment_moral TEXT",       // BUONO, NEUTRALE, CATTIVO
+        "ALTER TABLE npc_dossier ADD COLUMN alignment_ethical TEXT",     // LEGALE, NEUTRALE, CAOTICO
+        "ALTER TABLE characters ADD COLUMN alignment_moral TEXT",
+        "ALTER TABLE characters ADD COLUMN alignment_ethical TEXT",
+        // 🆕 ALIGNMENT FOR FACTIONS
+        "ALTER TABLE factions ADD COLUMN alignment_moral TEXT",          // BUONO, NEUTRALE, CATTIVO
+        "ALTER TABLE factions ADD COLUMN alignment_ethical TEXT"         // LEGALE, NEUTRALE, CAOTICO
     ];
 
     for (const m of migrations) {

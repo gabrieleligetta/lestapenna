@@ -3,7 +3,7 @@ import { NpcEntry } from '../types';
 import { generateShortId } from '../utils/idGenerator';
 
 export const npcRepository = {
-    updateNpcEntry: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual: boolean = false) => {
+    updateNpcEntry: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual: boolean = false, moral?: string, ethical?: string) => {
         // Sanitize
         const safeDesc = (typeof description === 'object') ? JSON.stringify(description) : String(description);
 
@@ -13,8 +13,8 @@ export const npcRepository = {
 
         // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id)
-            VALUES ($campaignId, $name, $description, $role, COALESCE($status, 'ALIVE'), CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId)
+            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id, alignment_moral, alignment_ethical)
+            VALUES ($campaignId, $name, $description, $role, COALESCE($status, 'ALIVE'), CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId, $moral, $ethical)
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET
                 description = $description,
@@ -23,7 +23,9 @@ export const npcRepository = {
                 last_updated = CURRENT_TIMESTAMP,
                 last_updated_session_id = $sessionId,
                 rag_sync_needed = 1,
-                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END,
+                alignment_moral = COALESCE($moral, alignment_moral),
+                alignment_ethical = COALESCE($ethical, alignment_ethical)
         `).run({
             campaignId,
             name,
@@ -32,7 +34,9 @@ export const npcRepository = {
             status: status || null, // Pass null to let SQL handle COALESCE
             sessionId: sessionId || null,
             isManual: isManual ? 1 : 0,
-            shortId
+            shortId,
+            moral: moral || null,
+            ethical: ethical || null
         });
 
         console.log(`[NPC] 👤 Aggiornato dossier per: ${name} [#${shortId}]`);
@@ -43,10 +47,12 @@ export const npcRepository = {
         const sets: string[] = [];
         const params: any = { campaignId, name };
 
-        if (fields.description !== undefined) { sets.push('description = $description'); params.$description = fields.description; }
-        if (fields.role !== undefined) { sets.push('role = $role'); params.$role = fields.role; }
-        if (fields.status !== undefined) { sets.push('status = $status'); params.$status = fields.status; }
-        if (fields.aliases !== undefined) { sets.push('aliases = $aliases'); params.$aliases = fields.aliases; }
+        if (fields.description !== undefined) { sets.push('description = $description'); params.description = fields.description; }
+        if (fields.role !== undefined) { sets.push('role = $role'); params.role = fields.role; }
+        if (fields.status !== undefined) { sets.push('status = $status'); params.status = fields.status; }
+        if (fields.aliases !== undefined) { sets.push('aliases = $aliases'); params.aliases = fields.aliases; }
+        if (fields.alignment_moral !== undefined) { sets.push('alignment_moral = $alignment_moral'); params.alignment_moral = fields.alignment_moral; }
+        if (fields.alignment_ethical !== undefined) { sets.push('alignment_ethical = $alignment_ethical'); params.alignment_ethical = fields.alignment_ethical; }
 
         if (sets.length === 0) return false;
 

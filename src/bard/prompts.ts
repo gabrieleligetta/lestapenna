@@ -77,8 +77,9 @@ Restituisci un JSON con array di stringhe.
     4. IGNORA: Personaggi citati solo come ricordi, obiettivi lontani o divinità non presenti.
 - "locations": Nomi di luoghi specifici visitati o menzionati come destinazione immediata.
 - "quests": Parole chiave o titoli di missioni citate.
+- "factions": Nomi di fazioni, gilde, regni, culti, organizzazioni menzionate nel testo (es. "Culto del Drago", "Gilda dei Ladri", "Impero"). Includi anche riferimenti generici se chiari (es. "il Culto", "la Gilda").
 
-Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": []}
+Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": [], "factions": []}
 `;
 
 // --- ANALYZER ---
@@ -104,6 +105,7 @@ ${memoryContext}
 5. **QUEST**: Estrai solo se c'è un progresso attivo.
 6. **GLOSSARIO**: Usa i nomi esatti del Contesto di Riferimento se corrispondesi.
 7. **CONFLICT RESOLUTION**: Se il "Testo da Analizzare" CONTRADDICE il "Contesto" (es. il contesto dice che X è "Affidabile" ma nel testo X "Tradisce" o "Attacca"), IL TESTO VINCE SEMPRE. Registra il cambiamento in npc_events e npc_dossier_updates.
+8. **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
 
 ## 3. OUTPUT JSON RICHIESTO
 {
@@ -154,7 +156,9 @@ ${memoryContext}
             "name": "Nome PROPRIO dell'NPC (es. 'Elminster', NON 'Elminster (mago)'). NON inserire descrizioni tra parentesi nel nome.",
             "description": "Descrizione fisica/personalità basata su ciò che emerge dal testo. Inserisci QUI eventuali dettagli descrittivi che metteresti tra parentesi.",
             "role": "Ruolo (es. 'Mercante', 'Guardia')",
-            "status": "ALIVE|DEAD|MISSING"
+            "status": "ALIVE|DEAD|MISSING",
+            "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Protegge/Cura/uccide cattivi -> BUONO, Uccide/Tradisce/uccide innocenti -> CATTIVO)",
+            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Tradisce patti/leggi/alleanze -> CAOTICO, Rispetta ordini/leggi/alleanze -> LEGALE)"
         }
     ],
     // AVVISO AI: Includi qui anche CREATURE NON UMANOIDI (es. Draghi, Ent, Bestie intelligenti) 
@@ -201,6 +205,8 @@ ${memoryContext}
             "name": "Nome della fazione (es. 'Gilda dei Ladri', 'Regno di Cormyr')",
             "description": "Descrizione della fazione se nuova o aggiornata",
             "type": "GUILD|KINGDOM|CULT|ORGANIZATION|GENERIC",
+            "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Protegge innocenti -> BUONO, Stermina villaggi -> CATTIVO)",
+            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Segue codici rigidi -> LEGALE, Opera nell'ombra -> CAOTICO)",
             "reputation_change": {
                 "direction": "UP|DOWN",
                 "reason": "Motivo del cambio reputazione (es. 'Abbiamo salvato un loro membro')"
@@ -213,9 +219,16 @@ ${memoryContext}
             "entity_name": "Nome dell'NPC o Luogo",
             "faction_name": "Nome della fazione",
             "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
+            "faction_name": "Nome della fazione",
+            "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
             "action": "JOIN|LEAVE"
         }
-    ]
+    ],
+    "party_alignment_change": {
+        "moral": "BUONO|NEUTRALE|CATTIVO (opzionale, solo se cambia)",
+        "ethical": "LEGALE|NEUTRALE|CAOTICO (opzionale, solo se cambia)",
+        "reason": "Spiegazione sintetica del cambio di allineamento basato sulle azioni"
+    }
 }
 
 **REGOLE CRITICHE**:
@@ -233,7 +246,13 @@ ${memoryContext}
     - Se un NPC viene ACCUSATO o RIVELATO come traditore da qualcun altro (e il fatto sembra vero), REGISTRA UN EVENTO "REVELATION" ANCHE PER L'NPC ACCUSATO.
     - **ECCEZIONE**: Se un NPC alleato (es. Scaglia grigia) attacca un altro NPC (es. Leosin) perché *quest'ultimo* è un traditore, l'attaccante NON è un traditore. È un evento di "REVELATION" per la vittima (Leosin) e "ALLIANCE" o "HEROIC" per l'attaccante.
 - **MONSTER vs NPC**: Se una creatura ha un NOME PROPRIO ed è AMICHEVOLE/ALLEATA (es. "Scagliagrigia il Drago"), mettila in NPC, NON in MONSTERS.
-- **FAZIONI**: Estrai info su fazioni menzionate (gilde, regni, culti, organizzazioni). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
+- **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
+- **ALLINEAMENTO PARTY**: Analizza se le azioni COLLETTIVE del gruppo spostano il loro asse morale (BUONO/CATTIVO) o etico (LEGALE/CAOTICO).
+    - **BUONO**: Altruismo, sacrificio, protezione dei deboli.
+    - **CATTIVO**: Crudeltà gratuita, egoismo distruttivo, uccisione di innocenti.
+    - **LEGALE**: Rispetto di leggi, codici d'onore, patti.
+    - **CAOTICO**: Libertà assoluta, ribellione all'autorità, imprevedibilità.
+    - Registra un cambiamento SOLO se c'è una **svolta significativa** o una **conferma forte** di un nuovo comportamento. Se rimangono coerenti, NON generare l'output.
 
 
 **TESTO DA ANALIZZARE**:

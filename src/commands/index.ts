@@ -4,7 +4,7 @@
 
 import { Message, Client } from 'discord.js';
 import { Command, CommandContext } from './types';
-import { getActiveCampaign, getGuildConfig } from '../db';
+import { getActiveCampaign, getGuildConfig, factionRepository } from '../db';
 
 export class CommandDispatcher {
     private commands = new Map<string, Command>();
@@ -73,6 +73,19 @@ export class CommandDispatcher {
         if (command.requiresCampaign && !activeCampaign) {
             await message.reply("⚠️ **Nessuna campagna attiva!**\nUsa `$creacampagna <Nome>` o `$selezionacampagna <Nome>` prima di iniziare.");
             return true;
+        }
+
+        // Ensure party faction exists for backward compatibility
+        if (activeCampaign) {
+            let party = factionRepository.getPartyFaction(activeCampaign.id);
+            if (!party) {
+                party = factionRepository.createPartyFaction(activeCampaign.id);
+            }
+
+            // Sync all existing PCs to party (excluding DM)
+            if (party) {
+                factionRepository.ensurePartyMembership(activeCampaign.id, party.id);
+            }
         }
 
         // Build context and execute

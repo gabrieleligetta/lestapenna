@@ -19,7 +19,8 @@ import {
     getQuestByTitle,
     deleteQuestHistory,
     deleteQuestRagSummary,
-    getQuestByShortId
+    getQuestByShortId,
+    db
 } from '../../db';
 import { QuestStatus, Quest } from '../../db/types';
 import { questRepository } from '../../db/repositories/QuestRepository';
@@ -108,39 +109,174 @@ export const questCommand: Command = {
             return;
         }
 
-        // SUBCOMMAND: $quest update <Title> | <Note>
-        // Syntax: $quest update Find the Ring | We found a clue
+        // SUBCOMMAND: $quest update <Title or ID> [| <Note> OR <field> <value>]
         if (arg.toLowerCase().startsWith('update ')) {
-            const content = arg.substring(7);
-            const parts = content.split('|');
-            if (parts.length < 2) {
-                await ctx.message.reply("⚠️ Uso: `$quest update <Titolo/ID> | <Evento/Progresso>`");
-                return;
-            }
-            let title = parts[0].trim();
-            const note = parts.slice(1).join('|').trim();
+            const fullContent = arg.substring(7).trim(); // Remove 'update '
 
-            // ID Resolution
-            const sidMatch = title.match(/^#([a-z0-9]{5})$/i);
-            const numericMatch = title.match(/^#?(\d+)$/);
+            // 1. Identify Target (ID or Title)
+            let targetIdentifier = "";
+            let remainingArgs = "";
+
+            if (fullContent.startsWith('#')) {
+                // Assume #ID format: #abcde ...
+                const parts = fullContent.split(' ');
+                targetIdentifier = parts[0];
+                remainingArgs = parts.slice(1).join(' ');
+            } else {
+                // Search for | first (Narrative)
+                if (fullContent.includes('|')) {
+                    targetIdentifier = fullContent.split('|')[0].trim();
+                    remainingArgs = "|" + fullContent.split('|').slice(1).join('|');
+                } else {
+                    // Metadata update on Title? Look for keywords.
+                    const keywords = ['status', 'stato', 'type', 'tipo'];
+                    const lower = fullContent.toLowerCase();
+                    let splitIndex = -1;
+
+                    for (const kw of keywords) {
+                        const searchStr = ` ${kw} `;
+                        const idx = lower.lastIndexOf(searchStr);
+                        if (idx !== -1) {
+                            splitIndex = idx;
+                            break;
+                        }
+                    }
+
+                    if (splitIndex !== -1) {
+                        targetIdentifier = fullContent.substring(0, splitIndex).trim();
+                        remainingArgs = fullContent.substring(splitIndex + 1).trim();
+                    } else {
+                        // Assume whole string is identifier (for Help View)
+                        targetIdentifier = fullContent;
+                        remainingArgs = "";
+                    }
+                }
+            }
+
+            // Resolve Quest
+            let quest: Quest | null | undefined;
+            const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (quest) title = quest.title;
+                const q = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (q) quest = q;
+            }
+            // Try title if ID parse failed (or if valid ID yielded nothing? No, if match regex but not found -> null)
+            // But getQuestByShortId returns undefined if not found.
+            // If quest is found via ID, good. If not, and identifier wasn't a strict ID format, try title.
+            // Actually targetIdentifier might be "Find Ring" so title lookup makes sense.
+            if (!quest) {
+                quest = getQuestByTitle(ctx.activeCampaign!.id, targetIdentifier);
             }
 
-            const quest = getQuestByTitle(ctx.activeCampaign!.id, title);
             if (!quest) {
-                await ctx.message.reply(`❌ Quest non trovata: "${title}"`);
+                await ctx.message.reply(`❌ Quest non trovata: "${targetIdentifier}"`);
                 return;
             }
 
-            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            addQuestEvent(ctx.activeCampaign!.id, title, currentSession, note, "PROGRESS", true);
-            await ctx.message.reply(`📝 Nota aggiunta a **${title}**. Rigenerazione diario...`);
+            // 2. Parse Actions
 
-            // Trigger Regen
-            await regenerateQuestBio(ctx.activeCampaign!.id, title, quest.status);
+            // Case A: Narrative Update
+            if (remainingArgs.trim().startsWith('|')) {
+                const note = remainingArgs.replace('|', '').trim();
+                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, note, "PROGRESS", true);
+
+                await ctx.message.reply(`📝 Nota aggiunta a **${quest.title}**. Rigenerazione diario...`);
+                await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, quest.status);
+                return;
+            }
+
+            // Case B: Metadata Update
+            const args = remainingArgs.trim().split(/\s+/);
+            const field = args[0]?.toLowerCase(); // status, type...
+            const value = args.slice(1).join(' ').toUpperCase(); // OPEN, MAJOR...
+
+            const showUpdateHelp = async (errorMsg?: string) => {
+                const currentStatusIcon = (quest!.status === QuestStatus.IN_PROGRESS) ? '⏳' :
+                    (quest!.status === QuestStatus.COMPLETED) ? '✅' :
+                        (quest!.status === QuestStatus.FAILED) ? '❌' : '🔹';
+
+                const typeIcon = quest!.type === 'MAJOR' ? '👑' : '📜';
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`ℹ️ Aggiornamento Quest: #${quest!.short_id} "${quest!.title}"`)
+                    .setColor("#3498DB")
+                    .setDescription(errorMsg ? `⚠️ **${errorMsg}**\n\n` : "")
+                    .addFields(
+                        {
+                            name: "Valori Attuali",
+                            value: `**Status:** ${currentStatusIcon} ${quest!.status}\n**Type:** ${typeIcon} ${quest!.type || 'MAJOR'}`,
+                            inline: false
+                        },
+                        {
+                            name: "Campi Modificabili",
+                            value: `
+• **status**: OPEN, COMPLETED (finita), FAILED (fallita), IN_PROGRESS (in corso)
+  *Es: $quest update #${quest!.short_id} status COMPLETED*
+• **type**: MAJOR (principale), MINOR (secondaria)
+  *Es: $quest update #${quest!.short_id} type MINOR*
+• **Note Narrative** (usa | )
+  *Es: $quest update #${quest!.short_id} | Abbiamo trovato indizi*`
+                        }
+                    );
+                await ctx.message.reply({ embeds: [embed] });
+            };
+
+            if (!field || !value) {
+                await showUpdateHelp();
+                return;
+            }
+
+            // 3. Apply Metadata Update
+            if (field === 'status' || field === 'stato') {
+                const map: Record<string, any> = {
+                    'OPEN': 'OPEN', 'APERTA': 'OPEN', 'ATTIVA': 'OPEN',
+                    'COMPLETED': 'COMPLETED', 'FINITA': 'COMPLETED', 'COMPLETATA': 'COMPLETED', 'DONE': 'COMPLETED',
+                    'FAILED': 'FAILED', 'FALLITA': 'FAILED',
+                    'IN_PROGRESS': 'IN_PROGRESS', 'IN CORSO': 'IN_PROGRESS', 'ONGOING': 'IN_PROGRESS'
+                };
+
+                const mapped = map[value] || map[value.replace(' ', '_')];
+
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}"`);
+                    return;
+                }
+
+                updateQuestStatusById(quest.id, mapped as QuestStatus);
+
+                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, `Stato aggiornato a ${mapped}`, "MANUAL_UPDATE", true);
+
+                await ctx.message.reply(`✅ Stato aggiornato: **${quest.title}** → **${mapped}**`);
+                await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, mapped);
+                return;
+            }
+
+            if (field === 'type' || field === 'tipo') {
+                const map: Record<string, string> = {
+                    'MAJOR': 'MAJOR', 'PRINCIPALE': 'MAJOR', 'MAIN': 'MAJOR',
+                    'MINOR': 'MINOR', 'SECONDARIA': 'MINOR', 'SIDE': 'MINOR', 'OPZIONALE': 'MINOR'
+                };
+
+                const mapped = map[value];
+                if (!mapped) {
+                    await showUpdateHelp(`Valore non valido per '${field}': "${value}"`);
+                    return;
+                }
+
+                db.prepare('UPDATE quests SET type = ? WHERE id = ?').run(mapped, quest.id);
+                quest.type = mapped as 'MAJOR' | 'MINOR'; // Update local obj for bio regen? Actually bio uses history.
+
+                await ctx.message.reply(`✅ Tipo aggiornato: **${quest.title}** → **${mapped}**`);
+                // Note: Type change doesn't necessarily need bio regen unless bio uses type. Bio header usually uses type.
+                // Regenerate just in case.
+                await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, quest.status);
+                return;
+            }
+
+            await showUpdateHelp(`Campo non riconosciuto: "${field}"`);
             return;
         }
 

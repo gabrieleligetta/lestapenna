@@ -27,7 +27,8 @@ import {
     addQuestEvent,
     addBestiaryEvent,
     addAtlasEvent,
-    factionRepository
+    factionRepository,
+    getNpcByAlias
 } from '../../db';
 import {
     ingestSessionComplete,
@@ -157,6 +158,12 @@ export class IngestionService {
             updateSessionPresentNPCs(sessionId, result.present_npcs);
         }
 
+        // 🆕 Process Character Updates (Alignment)
+        if (result.character_updates?.length) {
+            console.log(`[Ingestion] 👤 Salvataggio ${result.character_updates.length} aggiornamenti PG...`);
+            await this.processCharacterUpdates(campaignId, sessionId, result.character_updates);
+        }
+
         // 🆕 Process Logs (Bullet points)
         if (result.log?.length) {
             console.log(`[Ingestion] 📝 Salvataggio ${result.log.length} voci di log...`);
@@ -185,6 +192,25 @@ export class IngestionService {
         if (result.faction_affiliations?.length) {
             console.log(`[Ingestion] 🤝 Salvataggio ${result.faction_affiliations.length} affiliazioni...`);
             await this.processFactionAffiliations(campaignId, sessionId, result.faction_affiliations, sessionStartTime);
+        }
+
+        // 🆕 Process Party Alignment
+        if (result.party_alignment_change) {
+            const { moral, ethical, reason } = result.party_alignment_change;
+            if (moral || ethical) {
+                console.log(`[Ingestion] ⚖️ Allineamento Party: ${moral || '-'} / ${ethical || '-'} (${reason})`);
+                const { campaignRepository, addWorldEvent } = await import('../../db');
+                campaignRepository.updatePartyAlignment(campaignId, moral, ethical);
+                addWorldEvent(
+                    campaignId,
+                    sessionId,
+                    `L'allineamento del gruppo è cambiato: ${moral ? `Morale: ${moral}` : ''} ${ethical ? `Etico: ${ethical}` : ''}. Motivo: ${reason}`,
+                    'POLITICS', // Usa un tipo esistente
+                    undefined,
+                    false,
+                    sessionStartTime
+                );
+            }
         }
 
         // 📍 PHASE: SYNCING
@@ -321,7 +347,7 @@ export class IngestionService {
         console.log(`[NPC Dossier] 📋 Aggiornamento ${npcUpdates.length} schede NPC...`);
 
         const dedupedNpcs = await deduplicateNpcBatch(npcUpdates);
-        for (const npc of dedupedNpcs) {
+        for (const npc of dedupedNpcs as any[]) {
             if (npc.name && (npc.description || npc.role || npc.status)) {
                 // Name Cleaning
                 const clean = cleanEntityName(npc.name);
@@ -339,8 +365,18 @@ export class IngestionService {
                 // Signature: (bio1: string, bio2: string)
                 const mergedBio = await smartMergeBios(finalName, oldBio, npcDesc);
 
-                // Signature: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string)
-                updateNpcEntry(campaignId, finalName, mergedBio, npc.role, npc.status, sessionId);
+                // Signature: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual?: boolean, moral?: string, ethical?: string)
+                updateNpcEntry(
+                    campaignId,
+                    finalName,
+                    mergedBio,
+                    npc.role,
+                    npc.status,
+                    sessionId,
+                    false, // isManual
+                    npc.alignment_moral,
+                    npc.alignment_ethical
+                );
                 markNpcDirty(campaignId, finalName);
             }
         }
@@ -541,15 +577,48 @@ export class IngestionService {
                     isManual: false
                 });
                 console.log(`[Faction] ➕ Nuova fazione creata: ${factionName}`);
-            } else if (update.description) {
-                // Update existing faction description
-                factionRepository.updateFaction(campaignId, factionName, {
-                    description: update.description
-                });
+
+                // Set alignment if provided
+                if (faction && (update.alignment_moral || update.alignment_ethical)) {
+                    factionRepository.updateFaction(campaignId, factionName, {
+                        alignment_moral: update.alignment_moral,
+                        alignment_ethical: update.alignment_ethical
+                    }, false);
+                }
+            } else {
+                // Update existing faction - but protect manual descriptions!
+                const shouldUpdateDesc = update.description && !faction.is_manual;
+                const shouldUpdateAlignment = update.alignment_moral || update.alignment_ethical;
+
+                if (shouldUpdateDesc || shouldUpdateAlignment) {
+                    factionRepository.updateFaction(campaignId, factionName, {
+                        ...(shouldUpdateDesc && { description: update.description }),
+                        ...(update.alignment_moral && { alignment_moral: update.alignment_moral }),
+                        ...(update.alignment_ethical && { alignment_ethical: update.alignment_ethical })
+                    }, false);
+
+                    if (faction.is_manual && update.description) {
+                        console.log(`[Faction] 🔒 Descrizione manuale protetta per: ${factionName}`);
+                    }
+                }
             }
 
             // Handle reputation changes
-            if (update.reputation && faction) {
+            if (update.reputation_change && faction) {
+                const direction = update.reputation_change.direction?.toUpperCase();
+                if (direction === 'UP' || direction === 'DOWN') {
+                    const newRep = factionRepository.adjustReputation(campaignId, faction.id, direction);
+                    factionRepository.addFactionEvent(
+                        campaignId,
+                        factionName,
+                        sessionId,
+                        `Reputazione cambiata (${direction}): ${update.reputation_change.reason || 'Nessun motivo'}`,
+                        'REPUTATION_CHANGE',
+                        false
+                    );
+                    console.log(`[Faction] 📊 Reputazione ${factionName}: ADJUST ${direction} -> ${newRep}`);
+                }
+            } else if (update.reputation && faction) {
                 const validReps = ['OSTILE', 'DIFFIDENTE', 'FREDDO', 'NEUTRALE', 'CORDIALE', 'AMICHEVOLE', 'ALLEATO'];
                 const upperRep = update.reputation.toUpperCase();
                 if (validReps.includes(upperRep)) {
@@ -558,12 +627,40 @@ export class IngestionService {
                         campaignId,
                         factionName,
                         sessionId,
-                        `Reputazione cambiata a ${upperRep}`,
+                        `Reputazione impostata a ${upperRep}`,
                         'REPUTATION_CHANGE',
                         false
                     );
-                    console.log(`[Faction] 📊 Reputazione ${factionName}: ${upperRep}`);
+                    console.log(`[Faction] 📊 Reputazione ${factionName}: SET ${upperRep}`);
                 }
+            }
+        }
+    }
+
+    /**
+     * Process character updates (alignment)
+     */
+    private async processCharacterUpdates(campaignId: number, sessionId: string, updates: any[]): Promise<void> {
+        const { characterRepository, addCharacterEvent } = await import('../../db');
+
+        for (const update of updates) {
+            if (!update.name) continue;
+
+            const moral = update.alignment_moral;
+            const ethical = update.alignment_ethical;
+
+            if (moral || ethical) {
+                characterRepository.updateCharacterAlignment(campaignId, update.name, moral, ethical);
+
+                // Add event to history
+                addCharacterEvent(
+                    campaignId,
+                    update.name,
+                    sessionId,
+                    `Allineamento aggiornato: ${moral ? `Morale: ${moral}` : ''} ${ethical ? `Etico: ${ethical}` : ''}`,
+                    'GOAL_CHANGE',
+                    false
+                );
             }
         }
     }
@@ -599,7 +696,15 @@ export class IngestionService {
             const entityName = cleanEntityName_.name;
 
             if (entityType === 'npc') {
-                const npc = getNpcEntry(campaignId, entityName);
+                // Try to resolve NPC name robustly
+                const reconciled = await reconcileNpcName(campaignId, entityName);
+                const targetName = reconciled ? reconciled.canonicalName : entityName;
+
+                let npc = getNpcEntry(campaignId, targetName);
+                if (!npc) {
+                    npc = getNpcByAlias(campaignId, entityName);
+                }
+
                 if (npc) {
                     const role = affiliation.role?.toUpperCase() || 'MEMBER';
                     const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED'];

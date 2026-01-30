@@ -195,6 +195,26 @@ ${memoryContext}
             "event": "Evento che cambia il mondo di gioco (es. scoppiata guerra, cataclisma)", 
             "type": "POLITICS|WAR|DISASTER|DISCOVERY"
         }
+    ],
+    "faction_updates": [
+        {
+            "name": "Nome della fazione (es. 'Gilda dei Ladri', 'Regno di Cormyr')",
+            "description": "Descrizione della fazione se nuova o aggiornata",
+            "type": "GUILD|KINGDOM|CULT|ORGANIZATION|GENERIC",
+            "reputation_change": {
+                "direction": "UP|DOWN",
+                "reason": "Motivo del cambio reputazione (es. 'Abbiamo salvato un loro membro')"
+            }
+        }
+    ],
+    "faction_affiliations": [
+        {
+            "entity_type": "npc|location",
+            "entity_name": "Nome dell'NPC o Luogo",
+            "faction_name": "Nome della fazione",
+            "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
+            "action": "JOIN|LEAVE"
+        }
     ]
 }
 
@@ -213,6 +233,7 @@ ${memoryContext}
     - Se un NPC viene ACCUSATO o RIVELATO come traditore da qualcun altro (e il fatto sembra vero), REGISTRA UN EVENTO "REVELATION" ANCHE PER L'NPC ACCUSATO.
     - **ECCEZIONE**: Se un NPC alleato (es. Scaglia grigia) attacca un altro NPC (es. Leosin) perché *quest'ultimo* è un traditore, l'attaccante NON è un traditore. È un evento di "REVELATION" per la vittima (Leosin) e "ALLIANCE" o "HEROIC" per l'attaccante.
 - **MONSTER vs NPC**: Se una creatura ha un NOME PROPRIO ed è AMICHEVOLE/ALLEATA (es. "Scagliagrigia il Drago"), mettila in NPC, NON in MONSTERS.
+- **FAZIONI**: Estrai info su fazioni menzionate (gilde, regni, culti, organizzazioni). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
 
 
 **TESTO DA ANALIZZARE**:

@@ -54,6 +54,10 @@ import { wikiCommand } from './narrative/wiki';
 import { npcCommand } from './npcs/npc';
 import { presenzeCommand } from './npcs/presenze';
 
+// Factions
+import { factionCommand } from './factions/faction';
+import { affiliateCommand } from './factions/affiliate';
+
 // Sessions
 import { downloadCommand } from './sessions/download';
 import { listCommand as listSessionsCommand } from './sessions/list'; // Renaming to avoid conflict if imported same way, though locally protected.
@@ -123,6 +127,10 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     // NPCs
     dispatcher.register(npcCommand);
     dispatcher.register(presenzeCommand);
+
+    // Factions
+    dispatcher.register(factionCommand);
+    dispatcher.register(affiliateCommand);
 
     // Sessions
     dispatcher.register(downloadCommand);

@@ -1,0 +1,396 @@
+import { db } from '../client';
+import {
+    FactionEntry,
+    FactionReputation,
+    FactionAffiliation,
+    FactionHistoryEntry,
+    ReputationLevel,
+    FactionType,
+    FactionStatus,
+    AffiliationRole,
+    AffiliationEntityType,
+    REPUTATION_SPECTRUM
+} from '../types';
+import { generateShortId } from '../utils/idGenerator';
+
+export const factionRepository = {
+    // =============================================
+    // FACTION CRUD
+    // =============================================
+
+    createFaction: (
+        campaignId: number,
+        name: string,
+        options?: {
+            description?: string;
+            type?: FactionType;
+            isParty?: boolean;
+            sessionId?: string;
+            isManual?: boolean;
+        }
+    ): FactionEntry | null => {
+        const shortId = generateShortId('factions');
+        const type = options?.type || 'GENERIC';
+        const isParty = options?.isParty ? 1 : 0;
+        const isManual = options?.isManual ? 1 : 0;
+
+        try {
+            db.prepare(`
+                INSERT INTO factions (campaign_id, name, description, type, is_party, first_session_id, is_manual, short_id)
+                VALUES ($campaignId, $name, $description, $type, $isParty, $sessionId, $isManual, $shortId)
+            `).run({
+                campaignId,
+                name,
+                description: options?.description || null,
+                type,
+                isParty,
+                sessionId: options?.sessionId || null,
+                isManual,
+                shortId
+            });
+
+            console.log(`[Faction] ⚔️ Creata fazione: ${name} [#${shortId}]${isParty ? ' (PARTY)' : ''}`);
+            return factionRepository.getFaction(campaignId, name);
+        } catch (e: any) {
+            if (e.message?.includes('UNIQUE constraint')) {
+                console.log(`[Faction] ⚠️ Fazione "${name}" già esistente.`);
+                return factionRepository.getFaction(campaignId, name);
+            }
+            throw e;
+        }
+    },
+
+    updateFaction: (
+        campaignId: number,
+        name: string,
+        fields: Partial<Omit<FactionEntry, 'id' | 'campaign_id' | 'short_id'>>,
+        isManual: boolean = true
+    ): boolean => {
+        const sets: string[] = [];
+        const params: any = { campaignId, name };
+
+        if (fields.description !== undefined) { sets.push('description = $description'); params.description = fields.description; }
+        if (fields.type !== undefined) { sets.push('type = $type'); params.type = fields.type; }
+        if (fields.status !== undefined) { sets.push('status = $status'); params.status = fields.status; }
+        if (fields.leader_npc_id !== undefined) { sets.push('leader_npc_id = $leaderNpcId'); params.leaderNpcId = fields.leader_npc_id; }
+        if (fields.headquarters_location_id !== undefined) { sets.push('headquarters_location_id = $hqLocId'); params.hqLocId = fields.headquarters_location_id; }
+
+        if (sets.length === 0) return false;
+
+        sets.push('last_updated = CURRENT_TIMESTAMP');
+        sets.push('rag_sync_needed = 1');
+        if (isManual) sets.push('is_manual = 1');
+
+        const res = db.prepare(`
+            UPDATE factions 
+            SET ${sets.join(', ')} 
+            WHERE campaign_id = $campaignId AND lower(name) = lower($name)
+        `).run(params);
+
+        return res.changes > 0;
+    },
+
+    getFaction: (campaignId: number, name: string): FactionEntry | null => {
+        return db.prepare(`
+            SELECT * FROM factions 
+            WHERE campaign_id = ? AND lower(name) = lower(?)
+        `).get(campaignId, name) as FactionEntry | null;
+    },
+
+    getFactionById: (id: number): FactionEntry | null => {
+        return db.prepare('SELECT * FROM factions WHERE id = ?').get(id) as FactionEntry | null;
+    },
+
+    getFactionByShortId: (campaignId: number, shortId: string): FactionEntry | null => {
+        const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
+        return db.prepare(`
+            SELECT * FROM factions WHERE campaign_id = ? AND short_id = ?
+        `).get(campaignId, cleanId) as FactionEntry | null;
+    },
+
+    listFactions: (campaignId: number, includeParty: boolean = true): FactionEntry[] => {
+        if (includeParty) {
+            return db.prepare(`
+                SELECT * FROM factions 
+                WHERE campaign_id = ? 
+                ORDER BY is_party DESC, last_updated DESC
+            `).all(campaignId) as FactionEntry[];
+        }
+        return db.prepare(`
+            SELECT * FROM factions 
+            WHERE campaign_id = ? AND is_party = 0
+            ORDER BY last_updated DESC
+        `).all(campaignId) as FactionEntry[];
+    },
+
+    deleteFaction: (campaignId: number, name: string): boolean => {
+        // Prevent deletion of party faction
+        const faction = factionRepository.getFaction(campaignId, name);
+        if (faction?.is_party) {
+            console.warn(`[Faction] ⚠️ Non è possibile eliminare la fazione Party.`);
+            return false;
+        }
+        const res = db.prepare('DELETE FROM factions WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+        return res.changes > 0;
+    },
+
+    renameFaction: (campaignId: number, oldName: string, newName: string): boolean => {
+        // Check for conflict
+        const existing = factionRepository.getFaction(campaignId, newName);
+        if (existing) {
+            console.warn(`[Faction] ⚠️ Fazione "${newName}" già esistente.`);
+            return false;
+        }
+
+        const res = db.prepare(`
+            UPDATE factions 
+            SET name = ?, last_updated = CURRENT_TIMESTAMP, rag_sync_needed = 1
+            WHERE campaign_id = ? AND lower(name) = lower(?)
+        `).run(newName, campaignId, oldName);
+
+        // Update history references
+        if (res.changes > 0) {
+            db.prepare(`
+                UPDATE faction_history 
+                SET faction_name = ? 
+                WHERE campaign_id = ? AND lower(faction_name) = lower(?)
+            `).run(newName, campaignId, oldName);
+        }
+
+        return res.changes > 0;
+    },
+
+    // =============================================
+    // PARTY FACTION
+    // =============================================
+
+    getPartyFaction: (campaignId: number): FactionEntry | null => {
+        return db.prepare(`
+            SELECT * FROM factions 
+            WHERE campaign_id = ? AND is_party = 1
+        `).get(campaignId) as FactionEntry | null;
+    },
+
+    createPartyFaction: (campaignId: number, name: string = 'Heros Party'): FactionEntry | null => {
+        // Check if party faction already exists
+        const existing = factionRepository.getPartyFaction(campaignId);
+        if (existing) {
+            console.log(`[Faction] ⚠️ Party faction già esistente: ${existing.name}`);
+            return existing;
+        }
+
+        return factionRepository.createFaction(campaignId, name, {
+            type: 'PARTY',
+            isParty: true,
+            description: 'Il gruppo di avventurieri protagonista della campagna.'
+        });
+    },
+
+    renamePartyFaction: (campaignId: number, newName: string): boolean => {
+        const party = factionRepository.getPartyFaction(campaignId);
+        if (!party) return false;
+
+        return factionRepository.renameFaction(campaignId, party.name, newName);
+    },
+
+    // =============================================
+    // REPUTATION
+    // =============================================
+
+    setFactionReputation: (campaignId: number, factionId: number, reputation: ReputationLevel): void => {
+        db.prepare(`
+            INSERT INTO faction_reputation (campaign_id, faction_id, reputation)
+            VALUES ($campaignId, $factionId, $reputation)
+            ON CONFLICT(campaign_id, faction_id)
+            DO UPDATE SET reputation = $reputation, last_updated = CURRENT_TIMESTAMP
+        `).run({ campaignId, factionId, reputation });
+
+        console.log(`[Faction] 📊 Reputazione impostata: Faction #${factionId} -> ${reputation}`);
+    },
+
+    getFactionReputation: (campaignId: number, factionId: number): ReputationLevel => {
+        const row = db.prepare(`
+            SELECT reputation FROM faction_reputation 
+            WHERE campaign_id = ? AND faction_id = ?
+        `).get(campaignId, factionId) as { reputation: ReputationLevel } | undefined;
+
+        return row?.reputation || 'NEUTRALE';
+    },
+
+    getReputationWithAllFactions: (campaignId: number): Array<FactionEntry & { reputation: ReputationLevel }> => {
+        return db.prepare(`
+            SELECT f.*, COALESCE(fr.reputation, 'NEUTRALE') as reputation
+            FROM factions f
+            LEFT JOIN faction_reputation fr ON f.id = fr.faction_id AND fr.campaign_id = f.campaign_id
+            WHERE f.campaign_id = ? AND f.is_party = 0
+            ORDER BY f.name
+        `).all(campaignId) as Array<FactionEntry & { reputation: ReputationLevel }>;
+    },
+
+    adjustReputation: (campaignId: number, factionId: number, direction: 'UP' | 'DOWN'): ReputationLevel => {
+        const current = factionRepository.getFactionReputation(campaignId, factionId);
+        const currentIndex = REPUTATION_SPECTRUM.indexOf(current);
+
+        let newIndex = currentIndex;
+        if (direction === 'UP' && currentIndex < REPUTATION_SPECTRUM.length - 1) {
+            newIndex = currentIndex + 1;
+        } else if (direction === 'DOWN' && currentIndex > 0) {
+            newIndex = currentIndex - 1;
+        }
+
+        const newReputation = REPUTATION_SPECTRUM[newIndex];
+        factionRepository.setFactionReputation(campaignId, factionId, newReputation);
+
+        return newReputation;
+    },
+
+    // =============================================
+    // AFFILIATIONS
+    // =============================================
+
+    addAffiliation: (
+        factionId: number,
+        entityType: AffiliationEntityType,
+        entityId: number,
+        options?: {
+            role?: AffiliationRole;
+            sessionId?: string;
+            notes?: string;
+        }
+    ): boolean => {
+        try {
+            db.prepare(`
+                INSERT INTO faction_affiliations (faction_id, entity_type, entity_id, role, joined_session_id, notes)
+                VALUES ($factionId, $entityType, $entityId, $role, $sessionId, $notes)
+                ON CONFLICT(faction_id, entity_type, entity_id)
+                DO UPDATE SET role = COALESCE($role, role), is_active = 1, notes = COALESCE($notes, notes)
+            `).run({
+                factionId,
+                entityType,
+                entityId,
+                role: options?.role || 'MEMBER',
+                sessionId: options?.sessionId || null,
+                notes: options?.notes || null
+            });
+
+            console.log(`[Faction] 🔗 Affiliazione aggiunta: ${entityType}:${entityId} -> Faction #${factionId}`);
+            return true;
+        } catch (e) {
+            console.error('[Faction] ❌ Errore aggiunta affiliazione:', e);
+            return false;
+        }
+    },
+
+    removeAffiliation: (factionId: number, entityType: AffiliationEntityType, entityId: number): boolean => {
+        // Soft delete: mark as inactive
+        const res = db.prepare(`
+            UPDATE faction_affiliations 
+            SET is_active = 0 
+            WHERE faction_id = ? AND entity_type = ? AND entity_id = ?
+        `).run(factionId, entityType, entityId);
+
+        return res.changes > 0;
+    },
+
+    getEntityFactions: (entityType: AffiliationEntityType, entityId: number, activeOnly: boolean = true): FactionAffiliation[] => {
+        const query = activeOnly
+            ? `SELECT fa.*, f.name as faction_name 
+               FROM faction_affiliations fa 
+               JOIN factions f ON fa.faction_id = f.id
+               WHERE fa.entity_type = ? AND fa.entity_id = ? AND fa.is_active = 1`
+            : `SELECT fa.*, f.name as faction_name 
+               FROM faction_affiliations fa 
+               JOIN factions f ON fa.faction_id = f.id
+               WHERE fa.entity_type = ? AND fa.entity_id = ?`;
+
+        return db.prepare(query).all(entityType, entityId) as FactionAffiliation[];
+    },
+
+    getFactionMembers: (factionId: number, entityType?: AffiliationEntityType, activeOnly: boolean = true): FactionAffiliation[] => {
+        let query = `SELECT * FROM faction_affiliations WHERE faction_id = ?`;
+        const params: any[] = [factionId];
+
+        if (entityType) {
+            query += ` AND entity_type = ?`;
+            params.push(entityType);
+        }
+
+        if (activeOnly) {
+            query += ` AND is_active = 1`;
+        }
+
+        return db.prepare(query).all(...params) as FactionAffiliation[];
+    },
+
+    countFactionMembers: (factionId: number): { npcs: number; locations: number; pcs: number } => {
+        const counts = db.prepare(`
+            SELECT entity_type, COUNT(*) as count 
+            FROM faction_affiliations 
+            WHERE faction_id = ? AND is_active = 1
+            GROUP BY entity_type
+        `).all(factionId) as Array<{ entity_type: string; count: number }>;
+
+        const result = { npcs: 0, locations: 0, pcs: 0 };
+        for (const row of counts) {
+            if (row.entity_type === 'npc') result.npcs = row.count;
+            else if (row.entity_type === 'location') result.locations = row.count;
+            else if (row.entity_type === 'pc') result.pcs = row.count;
+        }
+        return result;
+    },
+
+    // =============================================
+    // HISTORY
+    // =============================================
+
+    addFactionEvent: (
+        campaignId: number,
+        factionName: string,
+        sessionId: string | null,
+        description: string,
+        eventType: FactionHistoryEntry['event_type'],
+        isManual: boolean = false
+    ): void => {
+        db.prepare(`
+            INSERT INTO faction_history (campaign_id, faction_name, session_id, event_type, description, timestamp, is_manual)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, factionName, sessionId, eventType, description, Date.now(), isManual ? 1 : 0);
+    },
+
+    getFactionHistory: (campaignId: number, factionName: string): FactionHistoryEntry[] => {
+        return db.prepare(`
+            SELECT * FROM faction_history 
+            WHERE campaign_id = ? AND lower(faction_name) = lower(?)
+            ORDER BY timestamp ASC
+        `).all(campaignId, factionName) as FactionHistoryEntry[];
+    },
+
+    // =============================================
+    // RAG SYNC
+    // =============================================
+
+    markFactionDirty: (campaignId: number, name: string): void => {
+        db.prepare('UPDATE factions SET rag_sync_needed = 1 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+    },
+
+    getDirtyFactions: (campaignId: number): FactionEntry[] => {
+        return db.prepare('SELECT * FROM factions WHERE campaign_id = ? AND rag_sync_needed = 1').all(campaignId) as FactionEntry[];
+    },
+
+    clearFactionDirtyFlag: (campaignId: number, name: string): void => {
+        db.prepare('UPDATE factions SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+    },
+
+    // =============================================
+    // SEARCH
+    // =============================================
+
+    findFactionByName: (campaignId: number, query: string): FactionEntry[] => {
+        return db.prepare(`
+            SELECT * FROM factions
+            WHERE campaign_id = ? 
+            AND lower(name) LIKE lower(?)
+            LIMIT 5
+        `).all(campaignId, `%${query}%`) as FactionEntry[];
+    }
+};

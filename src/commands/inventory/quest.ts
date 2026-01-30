@@ -26,6 +26,7 @@ import { questRepository } from '../../db/repositories/QuestRepository';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
+import { showEntityEvents } from '../utils/eventsViewer';
 
 // Helper for Regen
 async function regenerateQuestBio(campaignId: number, title: string, status: string) {
@@ -234,9 +235,44 @@ export const questCommand: Command = {
             return;
         }
 
+        // SUBCOMMAND: events - $quest <title/#id> events [page]
+        const eventsMatch = arg.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        if (eventsMatch) {
+            let questIdentifier = eventsMatch[1].trim();
+            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+
+            // Resolve short ID
+            const sidMatch = questIdentifier.match(/^#([a-z0-9]{5})$/i);
+            if (sidMatch) {
+                const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (quest) questIdentifier = quest.title;
+                else {
+                    await ctx.message.reply(`❌ Quest con ID \`#${sidMatch[1]}\` non trovata.`);
+                    return;
+                }
+            }
+
+            // Verify quest exists
+            const quest = getQuestByTitle(ctx.activeCampaign!.id, questIdentifier);
+            if (!quest) {
+                await ctx.message.reply(`❌ Quest **${questIdentifier}** non trovata.`);
+                return;
+            }
+
+            await showEntityEvents(ctx, {
+                tableName: 'quest_history',
+                entityKeyColumn: 'quest_title',
+                entityKeyValue: quest.title,
+                campaignId: ctx.activeCampaign!.id,
+                entityDisplayName: quest.title,
+                entityEmoji: '🗺️'
+            }, page);
+            return;
+        }
+
         // VIEW: Detail View (ID or Title)
         // If arg exists and is not a reserved keyword, treat as search
-        const keywords = ['add', 'update', 'delete', 'elimina', 'done', 'completata', 'undone', 'riapri', 'list', 'lista'];
+        const keywords = ['add', 'update', 'delete', 'elimina', 'done', 'completata', 'undone', 'riapri', 'list', 'lista', 'events'];
         const firstWord = arg.split(' ')[0].toLowerCase();
 
         if (arg && !keywords.includes(firstWord) && !isSessionId(firstArg)) {

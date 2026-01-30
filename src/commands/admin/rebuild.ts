@@ -27,6 +27,8 @@ interface DiagnosticStats {
     inventory: number;
     bestiary: number;
     ragFragments: number;
+    factions: number;
+    factionEvents: number;
 }
 
 /**
@@ -48,7 +50,9 @@ function getDiagnostics(): DiagnosticStats {
         quests: count('quests'),
         inventory: count('inventory'),
         bestiary: count('bestiary'),
-        ragFragments: count('knowledge_fragments')
+        ragFragments: count('knowledge_fragments'),
+        factions: count('factions'),
+        factionEvents: count('faction_history')
     };
 }
 
@@ -131,7 +135,7 @@ function validateRebuildReadiness(): ValidationResult {
 /**
  * Soft reset: preserves NPC and location names, clears descriptions
  */
-function softResetAnagrafiche(): { npcs: number; locations: number } {
+function softResetAnagrafiche(): { npcs: number; locations: number; factions: number } {
     // Reset NPC descriptions but keep names, roles, status, aliases
     const npcResult = db.prepare(`
         UPDATE npc_dossier
@@ -159,9 +163,19 @@ function softResetAnagrafiche(): { npcs: number; locations: number } {
         WHERE COALESCE(is_manual, 0) = 0
     `).run();
 
+    // Reset faction descriptions
+    const factionResult = db.prepare(`
+        UPDATE factions
+        SET description = NULL,
+            rag_sync_needed = 1,
+            first_session_id = NULL
+        WHERE COALESCE(is_manual, 0) = 0 AND is_party = 0
+    `).run();
+
     return {
         npcs: npcResult.changes,
-        locations: locationResult.changes
+        locations: locationResult.changes,
+        factions: factionResult.changes
     };
 }
 
@@ -182,7 +196,8 @@ function purgeAllDerivedData(): Record<string, number> {
         'atlas_history',
         'quest_history',
         'bestiary_history',
-        'inventory_history'
+        'inventory_history',
+        'faction_history'
     ];
 
     for (const table of tablesWithManual) {
@@ -295,15 +310,17 @@ export const rebuildCommand: Command = {
             const sessions = getCompletedSessions();
 
             const diagnosticMsg = `📊 **DIAGNOSTICA DATABASE**
-
+            
 **Anagrafiche (verranno preservati i NOMI):**
 - NPC nel dossier: **${stats.npcs}**
 - Luoghi nell'atlante: **${stats.locations}**
+- Fazioni: **${stats.factions}**
 
 **Dati Storici (verranno CANCELLATI e rigenerati):**
 - Eventi NPC: **${stats.npcEvents}**
 - Eventi Mondo: **${stats.worldEvents}**
 - Eventi PG: **${stats.characterEvents}**
+- Eventi Fazioni: **${stats.factionEvents}**
 - Quest: **${stats.quests}**
 - Oggetti inventario: **${stats.inventory}**
 - Creature bestiario: **${stats.bestiary}**
@@ -413,7 +430,8 @@ Il processo:
                 `✅ Fase 0/4: Validazione OK\n` +
                 `✅ Fase 1/4: Anagrafiche resettate\n` +
                 `   - ${resetStats.npcs} NPC (nomi preservati)\n` +
-                `   - ${resetStats.locations} luoghi (nomi preservati)\n\n` +
+                `   - ${resetStats.locations} luoghi (nomi preservati)\n` +
+                `   - ${resetStats.factions} fazioni (nomi preservati)\n\n` +
                 `⏳ Fase 2/4: Pulizia dati storici...`
             );
 
@@ -429,6 +447,7 @@ Il processo:
                 `   - Eventi NPC: ${purgeStats.npc_history}\n` +
                 `   - Eventi Mondo: ${purgeStats.world_history}\n` +
                 `   - Eventi PG: ${purgeStats.character_history}\n` +
+                `   - Eventi Fazioni: ${purgeStats.faction_history}\n` +
                 `   - RAG: ${purgeStats.knowledge_fragments}\n\n` +
                 `⏳ Fase 3/4: Rigenerazione sessioni...`
             );
@@ -545,6 +564,7 @@ Il processo:
                 `- Eventi NPC: ${finalStats.npcEvents}\n` +
                 `- Eventi Mondo: ${finalStats.worldEvents}\n` +
                 `- Eventi PG: ${finalStats.characterEvents}\n` +
+                `- Eventi Fazioni: ${finalStats.factionEvents}\n` +
                 `- Quest: ${finalStats.quests}\n` +
                 `- Inventario: ${finalStats.inventory}\n` +
                 `- Frammenti RAG: ${finalStats.ragFragments}`;

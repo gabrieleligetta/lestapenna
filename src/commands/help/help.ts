@@ -18,14 +18,15 @@ export const helpCommand: Command = {
             // --- DETAILED COMMAND HELP ---
             const embed = new EmbedBuilder().setColor("#D4AF37");
 
-            if (['npc', 'quest', 'atlas', 'loot', 'bestiary'].includes(arg)) {
+            if (['npc', 'quest', 'atlas', 'loot', 'bestiary', 'faction'].includes(arg)) {
                 embed.setTitle(`🧩 Unified Entity: $${arg}`)
-                    .setDescription(`Common interface for managing campaign entities like NPCs, Quests, Locations, Items, and Monsters.`)
+                    .setDescription(`Common interface for managing campaign entities like NPCs, Quests, Locations, Items, Monsters, and Factions.`)
                     .addFields(
                         { name: "📋 Listing", value: `\`$${arg}\`: See all items (dossier list).\n\`$${arg} list\`: Explicit listing.\n\`$${arg} #ID\`: View details for a specific entity.` },
                         { name: "📝 Narrative Update", value: `\`$${arg} update <ID> | <Note>\`\nAdd a story update or observation. This triggers an AI bio regeneration.` },
                         { name: "⚙️ Metadata Update", value: `\`$${arg} update <ID> field:<key> <val>\`\nDirectly edit fields (e.g., \`field:status DEFEATED\`).` },
                         { name: "🔀 Merge", value: `\`$${arg} merge <OldID/Name> | <NewID/Name>\`\nCombine duplicates into one record.` },
+                        { name: "📜 Event History", value: `\`$${arg} events [page]\`: View paginated history of events.` },
                         { name: "🗑️ Delete", value: `\`$${arg} delete <ID>\`\nPermanently remove the entity.` }
                     );
             } else if (arg === 'timeline') {
@@ -59,6 +60,14 @@ export const helpCommand: Command = {
                 embed.setTitle(`🗺️ Travel Log: $travels fix`)
                     .addFields(
                         { name: "Fix Location History", value: `\`$travels fix #ID | <NewRegion> | <NewPlace>\`\nCorrect a mistake in the journey log.` }
+                    );
+            } else if (arg === 'affiliate') {
+                embed.setTitle(`🛡️ Affiliations: $affiliate`)
+                    .addFields(
+                        { name: "Usage", value: `\`$affiliate <Type> <Name> | <Faction> | <Role>\`` },
+                        { name: "Listing", value: `\`$affiliate list <Faction>\`: See members.\n\`$affiliate of <Entity>\`: See entity's factions.` },
+                        { name: "Examples", value: `\`$affiliate npc Frodo | Fellowship | MEMBER\`\n\`$affiliate location Rivendell | Elves | CONTROLLED\`` },
+                        { name: "Roles", value: `NPC: MEMBER, LEADER, ALLY, ENEMY, PRISONER\nLocation: CONTROLLED, PRESENCE, BASE` }
                     );
             } else if (arg === 'presenze') {
                 embed.setTitle(`👥 Session NPCs: $presenze`)
@@ -97,8 +106,9 @@ export const helpCommand: Command = {
                 {
                     name: "🧩 Unified Entity Interface",
                     value:
-                        "**Entities:** `$npc`, `$quest`, `$atlas`, `$loot`, `$bestiary`\n" +
+                        "**Entities:** `$npc`, `$quest`, `$atlas`, `$loot`, `$bestiary`, `$faction`\n" +
                         "• `$cmd list` / `$cmd #ID`: Manage records.\n" +
+                        "• `$cmd events`: View history.\n" +
                         "• `$cmd update`: Narrative or field updates.\n" +
                         "• `$cmd merge` / `$cmd delete`: Maintenance.\n" +
                         "💡 *Type `$help <entity>` (e.g. `$help npc`) for details.*"
@@ -198,7 +208,8 @@ export const helpCommand: Command = {
                         "`$quest`: Show active quests.\n" +
                         "`$loot`: group inventory.\n" +
                         "`$atlas`: View world locations.\n" +
-                        "`$bestiary`: Encountered monsters."
+                        "`$bestiary`: Encountered monsters.\n" +
+                        "`$faction`: Factions and reputations."
                 },
                 {
                     name: "🔧 Advanced Tools",

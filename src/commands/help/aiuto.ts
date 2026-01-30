@@ -18,14 +18,15 @@ export const aiutoCommand: Command = {
             // --- AIUTO DETTAGLIATO COMANDO ---
             const embed = new EmbedBuilder().setColor("#D4AF37");
 
-            if (['npc', 'quest', 'atlante', 'loot', 'bestiario', 'atlas'].includes(arg)) {
+            if (['npc', 'quest', 'atlante', 'loot', 'bestiario', 'atlas', 'faction', 'fazione'].includes(arg)) {
                 embed.setTitle(`🧩 Entità Unificata: $${arg}`)
-                    .setDescription(`Interfaccia comune per la gestione di entità come NPC, Missioni, Luoghi, Oggetti e Mostri.`)
+                    .setDescription(`Interfaccia comune per la gestione di entità come NPC, Missioni, Luoghi, Oggetti, Mostri e Fazioni.`)
                     .addFields(
                         { name: "📋 Lista", value: `\`$${arg}\`: Vede tutti gli elementi (dossier).\n\`$${arg} list\`: Listing esplicito.\n\`$${arg} #ID\`: Visualizza i dettagli di un'entità specifica.` },
                         { name: "📝 Aggiornamento Narrativo", value: `\`$${arg} update <ID> | <Nota>\`\nAggiunge un aggiornamento o un'osservazione. Innesca la rigenerazione bio via IA.` },
                         { name: "⚙️ Aggiornamento Metadati", value: `\`$${arg} update <ID> field:<chiave> <valore>\`\nModifica direttamente i campi (es. \`field:status SCONFITTO\`).` },
                         { name: "🔀 Unione (Merge)", value: `\`$${arg} merge <VecchioID/Nome> | <NuovoID/Nome>\`\nUnisce i duplicati in un unico record.` },
+                        { name: "📜 Storico Eventi", value: `\`$${arg} events [pagina]\`: Visualizza lo storico eventi paginato.` },
                         { name: "🗑️ Eliminazione", value: `\`$${arg} delete <ID>\`\nRimuove permanentemente l'entità.` }
                     );
             } else if (arg === 'timeline' || arg === 'cronologia') {
@@ -59,6 +60,14 @@ export const aiutoCommand: Command = {
                 embed.setTitle(`🗺️ Registro Viaggi: $viaggi fix`)
                     .addFields(
                         { name: "Correggi Storico", value: `\`$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>\`\nCorregge un errore nel registro degli spostamenti.` }
+                    );
+            } else if (arg === 'affiliate' || arg === 'affilia') {
+                embed.setTitle(`🛡️ Affiliazioni: $affiliate`)
+                    .addFields(
+                        { name: "Uso", value: `\`$affiliate <Tipo> <Nome> | <Fazione> | <Ruolo>\`` },
+                        { name: "Listing", value: `\`$affiliate list <Fazione>\`: Vedi membri.\n\`$affiliate of <Entità>\`: Vedi fazioni dell'entità.` },
+                        { name: "Esempi", value: `\`$affiliate npc Frodo | Compagnia | MEMBER\`\n\`$affiliate location Imladris | Elfi | CONTROLLED\`` },
+                        { name: "Ruoli", value: `NPC: MEMBER, LEADER, ALLY, ENEMY, PRISONER\nLocation: CONTROLLED, PRESENCE, BASE` }
                     );
             } else if (arg === 'presenze') {
                 embed.setTitle(`👥 NPC in Sessione: $presenze`)
@@ -97,8 +106,9 @@ export const aiutoCommand: Command = {
                 {
                     name: "🧩 Interfaccia Unificata Entità",
                     value:
-                        "**Entità:** `$npc`, `$quest`, `$atlante`, `$loot`, `$bestiario`\n" +
+                        "**Entità:** `$npc`, `$quest`, `$atlante`, `$loot`, `$bestiario`, `$faction`\n" +
                         "• `$cmd list` / `$cmd #ID`: Gestione record.\n" +
+                        "• `$cmd events`: Vedi eventi.\n" +
                         "• `$cmd update`: Aggiornamenti narrativi o tecnici.\n" +
                         "• `$cmd merge` / `$cmd delete`: Manutenzione.\n" +
                         "💡 *Scrivi `$aiuto <entità>` (es. `$aiuto npc`) per i dettagli.*"
@@ -198,7 +208,8 @@ export const aiutoCommand: Command = {
                         "`$quest`: Lista delle missioni.\n" +
                         "`$loot`: Inventario di gruppo.\n" +
                         "`$atlante`: Luoghi del mondo.\n" +
-                        "`$bestiario`: Mostri incontrati."
+                        "`$bestiario`: Mostri incontrati.\n" +
+                        "`$fazione`: Fazioni e reputazioni."
                 },
                 {
                     name: "🔧 Strumenti Avanzati",

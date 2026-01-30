@@ -168,4 +168,21 @@ export interface AnalystOutput {
         event: string;
         type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
     }>;
+    // 🆕 Faction System
+    faction_updates: Array<{
+        name: string;
+        description?: string;
+        type?: 'GUILD' | 'KINGDOM' | 'CULT' | 'ORGANIZATION' | 'GENERIC';
+        reputation_change?: {
+            direction: 'UP' | 'DOWN';
+            reason: string;
+        };
+    }>;
+    faction_affiliations: Array<{
+        entity_type: 'npc' | 'location';
+        entity_name: string;
+        faction_name: string;
+        role?: 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED';
+        action: 'JOIN' | 'LEAVE';
+    }>;
 }

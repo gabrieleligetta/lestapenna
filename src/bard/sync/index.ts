@@ -15,3 +15,4 @@ export {
 export { syncAllDirtyBestiary, syncBestiaryEntryIfNeeded } from './bestiary';
 export { syncAllDirtyInventory, syncInventoryEntryIfNeeded } from './inventory';
 export { syncAllDirtyQuests, syncQuestEntryIfNeeded } from './quest';
+export { syncFactionEntryIfNeeded, syncAllDirtyFactions, syncFaction } from './faction';

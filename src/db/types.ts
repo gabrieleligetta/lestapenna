@@ -188,9 +188,9 @@ export interface MonsterDetails {
 
 /**
  * Entity Reference Types - Prefissi tipizzati per disambiguare entità nel RAG
- * Formato: "type:id" es. "npc:1", "pc:15", "quest:42", "loc:7"
+ * Formato: "type:id" es. "npc:1", "pc:15", "quest:42", "loc:7", "faction:3"
  */
-export type EntityType = 'npc' | 'pc' | 'quest' | 'loc' | 'item' | 'monster' | 'generic';
+export type EntityType = 'npc' | 'pc' | 'quest' | 'loc' | 'item' | 'monster' | 'faction' | 'generic';
 
 export interface EntityRef {
     type: EntityType;
@@ -209,4 +209,81 @@ export interface AtlasEntryFull {
     last_updated: string;
     rag_sync_needed?: number;
     short_id?: string; // 🆕 Stable ID
+}
+
+// =============================================
+// 🆕 FACTION SYSTEM TYPES
+// =============================================
+
+/**
+ * Livelli di reputazione del party con una fazione (spettro a 7 livelli)
+ */
+export type ReputationLevel =
+    | 'OSTILE'      // -3: Nemici dichiarati
+    | 'DIFFIDENTE'  // -2: Sospettosi, poco cooperativi
+    | 'FREDDO'      // -1: Distaccati, formali
+    | 'NEUTRALE'    //  0: Default, nessuna opinione
+    | 'CORDIALE'    // +1: Amichevoli, disponibili
+    | 'AMICHEVOLE'  // +2: Alleati di fatto
+    | 'ALLEATO';    // +3: Alleanza formale
+
+export const REPUTATION_SPECTRUM: ReputationLevel[] = [
+    'OSTILE', 'DIFFIDENTE', 'FREDDO', 'NEUTRALE', 'CORDIALE', 'AMICHEVOLE', 'ALLEATO'
+];
+
+export type FactionType = 'PARTY' | 'GUILD' | 'KINGDOM' | 'CULT' | 'ORGANIZATION' | 'GENERIC';
+export type FactionStatus = 'ACTIVE' | 'DISBANDED' | 'DESTROYED';
+export type AffiliationRole = 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED';
+export type AffiliationEntityType = 'npc' | 'location' | 'pc';
+
+export interface FactionEntry {
+    id: number;
+    campaign_id: number;
+    name: string;
+    description: string | null;
+    type: FactionType;
+    leader_npc_id: number | null;
+    headquarters_location_id: number | null;
+    status: FactionStatus;
+    is_party: number;
+    first_session_id: string | null;
+    last_updated: string;
+    rag_sync_needed: number;
+    is_manual: number;
+    short_id?: string;
+}
+
+export interface FactionReputation {
+    id: number;
+    campaign_id: number;
+    faction_id: number;
+    reputation: ReputationLevel;
+    last_updated: string;
+    // Joined fields (optional, for queries with JOIN)
+    faction_name?: string;
+}
+
+export interface FactionAffiliation {
+    id: number;
+    faction_id: number;
+    entity_type: AffiliationEntityType;
+    entity_id: number;
+    role: AffiliationRole;
+    joined_session_id: string | null;
+    is_active: number;
+    notes: string | null;
+    // Joined fields (optional, for queries with JOIN)
+    faction_name?: string;
+    entity_name?: string;
+}
+
+export interface FactionHistoryEntry {
+    id: number;
+    campaign_id: number;
+    faction_name: string;
+    session_id: string | null;
+    event_type: 'REPUTATION_CHANGE' | 'MEMBER_JOIN' | 'MEMBER_LEAVE' | 'CONFLICT' | 'ALLIANCE' | 'DISSOLUTION' | 'GENERIC';
+    description: string;
+    timestamp: number;
+    is_manual: number;
 }

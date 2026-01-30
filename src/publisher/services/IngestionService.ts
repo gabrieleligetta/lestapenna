@@ -26,7 +26,8 @@ import {
     addInventoryEvent,
     addQuestEvent,
     addBestiaryEvent,
-    addAtlasEvent
+    addAtlasEvent,
+    factionRepository
 } from '../../db';
 import {
     ingestSessionComplete,
@@ -50,6 +51,7 @@ import {
     syncAllDirtyBestiary,
     syncAllDirtyInventory,
     syncAllDirtyQuests,
+    syncAllDirtyFactions,
     cleanEntityName
 } from '../../bard';
 
@@ -171,6 +173,18 @@ export class IngestionService {
             for (const travel of result.travel_sequence) {
                 updateLocation(campaignId, travel.macro, travel.micro, sessionId, travel.reason, sessionStartTime);
             }
+        }
+
+        // 🆕 Process Faction Updates
+        if (result.faction_updates?.length) {
+            console.log(`[Ingestion] ⚔️ Salvataggio ${result.faction_updates.length} aggiornamenti fazioni...`);
+            await this.processFactionUpdates(campaignId, sessionId, result.faction_updates, sessionStartTime);
+        }
+
+        // 🆕 Process Faction Affiliations
+        if (result.faction_affiliations?.length) {
+            console.log(`[Ingestion] 🤝 Salvataggio ${result.faction_affiliations.length} affiliazioni...`);
+            await this.processFactionAffiliations(campaignId, sessionId, result.faction_affiliations, sessionStartTime);
         }
 
         // 📍 PHASE: SYNCING
@@ -494,8 +508,116 @@ export class IngestionService {
             if (syncedQuestCount > 0) {
                 console.log(`[Sync] ✅ Sincronizzati ${syncedQuestCount} quest con RAG.`);
             }
+
+            // 🆕 Sync Factions
+            const syncedFactionCount = await syncAllDirtyFactions(campaignId);
+            if (syncedFactionCount > 0) {
+                console.log(`[Sync] ✅ Sincronizzate ${syncedFactionCount} fazioni con RAG.`);
+            }
         } catch (e) {
             console.error('[Sync] ⚠️ Errore batch sync:', e);
+        }
+    }
+
+    /**
+     * Process faction updates from the Analyst
+     */
+    private async processFactionUpdates(campaignId: number, sessionId: string, factionUpdates: any[], timestamp: number): Promise<void> {
+        for (const update of factionUpdates) {
+            if (!update.name) continue;
+
+            const cleanName = cleanEntityName(update.name);
+            const factionName = cleanName.name;
+
+            // Try to find or create the faction
+            let faction = factionRepository.getFaction(campaignId, factionName);
+
+            if (!faction) {
+                // Create new faction if it doesn't exist
+                faction = factionRepository.createFaction(campaignId, factionName, {
+                    description: update.description || cleanName.extra,
+                    type: update.type || 'GENERIC',
+                    sessionId,
+                    isManual: false
+                });
+                console.log(`[Faction] ➕ Nuova fazione creata: ${factionName}`);
+            } else if (update.description) {
+                // Update existing faction description
+                factionRepository.updateFaction(campaignId, factionName, {
+                    description: update.description
+                });
+            }
+
+            // Handle reputation changes
+            if (update.reputation && faction) {
+                const validReps = ['OSTILE', 'DIFFIDENTE', 'FREDDO', 'NEUTRALE', 'CORDIALE', 'AMICHEVOLE', 'ALLEATO'];
+                const upperRep = update.reputation.toUpperCase();
+                if (validReps.includes(upperRep)) {
+                    factionRepository.setFactionReputation(campaignId, faction.id, upperRep as any);
+                    factionRepository.addFactionEvent(
+                        campaignId,
+                        factionName,
+                        sessionId,
+                        `Reputazione cambiata a ${upperRep}`,
+                        'REPUTATION_CHANGE',
+                        false
+                    );
+                    console.log(`[Faction] 📊 Reputazione ${factionName}: ${upperRep}`);
+                }
+            }
+        }
+    }
+
+    /**
+     * Process faction affiliations from the Analyst
+     */
+    private async processFactionAffiliations(campaignId: number, sessionId: string, affiliations: any[], timestamp: number): Promise<void> {
+        const { getNpcEntry } = await import('../../db');
+
+        for (const affiliation of affiliations) {
+            if (!affiliation.entity_name || !affiliation.faction_name) continue;
+
+            const cleanFactionName = cleanEntityName(affiliation.faction_name);
+            const factionName = cleanFactionName.name;
+
+            // Find the faction
+            let faction = factionRepository.getFaction(campaignId, factionName);
+            if (!faction) {
+                // Create faction if it doesn't exist
+                faction = factionRepository.createFaction(campaignId, factionName, {
+                    type: 'GENERIC',
+                    sessionId,
+                    isManual: false
+                });
+            }
+
+            if (!faction) continue;
+
+            // Determine entity type and find it
+            const entityType = affiliation.entity_type?.toLowerCase() || 'npc';
+            const cleanEntityName_ = cleanEntityName(affiliation.entity_name);
+            const entityName = cleanEntityName_.name;
+
+            if (entityType === 'npc') {
+                const npc = getNpcEntry(campaignId, entityName);
+                if (npc) {
+                    const role = affiliation.role?.toUpperCase() || 'MEMBER';
+                    const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED'];
+                    if (validRoles.includes(role)) {
+                        factionRepository.addAffiliation(faction.id, 'npc', npc.id, { role: role as any });
+                        factionRepository.addFactionEvent(
+                            campaignId,
+                            factionName,
+                            sessionId,
+                            `NPC "${entityName}" affiliato come ${role}`,
+                            'MEMBER_JOIN',
+                            false
+                        );
+                        console.log(`[Faction] 🤝 ${entityName} → ${factionName} (${role})`);
+                    }
+                }
+            }
+            // Location affiliations could be added here similarly if needed
         }
     }
 }

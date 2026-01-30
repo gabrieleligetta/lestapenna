@@ -96,13 +96,19 @@ docker-compose up -d
 *Strumenti di world-building per il DM. Interfaccia unificata per tutte le entità.*
 
 #### 🧩 Sintassi Unificata Entità
-Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri**) condividono gli stessi comandi base:
+Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri, Fazioni**) condividono gli stessi comandi base:
 *   `$comando list`: Elenco completo.
 *   `$comando #ID`: Vedi dettagli scheda (es. `$npc 1`).
 *   `$comando <Nome>`: Cerca per nome (es. `$npc Garlon`).
 *   `$comando update <Nome/ID> | <Nota>`: Aggiunge un evento/osservazione alla storia dell'entità.
 *   `$comando delete <Nome/ID>`: Elimina l'entità.
 *   `$comando merge <Old> | <New>`: Unisce due entità (trasferisce storia e dettagli).
+*   `$comando events [page]`: Visualizza lo storico eventi paginato dell'entità.
+
+#### ⚔️ `$faction` (Fazioni)
+*   **Gestione**: `$faction create <Nome> | <Tipo>`, `$faction delete`, `$faction rename`.
+*   **Reputazione**: `$faction rep <Nome> | <Livello>` (OSTILE...ALLEATO).
+*   **Affiliazioni**: Usa `$affiliate npc <NomeNPC> | <Fazione> | <Ruolo>` per legare entità alle fazioni.
 
 #### 👥 `$npc` (Personaggi Non Giocanti)
 *   **Creazione**: `$npc add <Nome> | <Ruolo> | <Descrizione>`
@@ -131,6 +137,15 @@ Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri**) condividono gli stessi coma
 #### 👹 `$bestiario` (Mostri)
 *   **Aggiornamento**: `$bestiario update <Mostro> | <Osservazione tattica>`
 *   **Lista**: Mostra automaticamente i mostri divisi per stato (Vivi, Sconfitti, Fuggiti).
+
+#### 🛡️ `$affiliate` (Affiliazioni)
+*   Collegare NPC o Luoghi a Fazioni:
+    *   `$affiliate npc <Nome> | <Fazione> | <Ruolo>` (MEMBER, LEADER, ALLY, ENEMY, PRISONER).
+    *   `$affiliate location <Luogo> | <Fazione> | <Ruolo>` (CONTROLLED, PRESENCE, BASE).
+    *   `$affiliate remove npc <Nome> | <Fazione>`: Rimuove l'affiliazione.
+*   **Listing**:
+    *   `$affiliate list <Fazione>`: Vedi tutti i membri di una fazione.
+    *   `$affiliate of <NomeNPC/Luogo>`: Vedi le fazioni a cui appartiene un'entità.
 
 #### ⏳ Timeline e Data
 *   `$data <Anno>`: Imposta l'anno corrente (D.E. positivi, P.E. negativi).

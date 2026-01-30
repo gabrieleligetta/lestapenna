@@ -20,7 +20,8 @@ import {
     addAtlasEvent,
     deleteAtlasHistory,
     deleteAtlasRagSummary,
-    getAtlasEntryByShortId
+    getAtlasEntryByShortId,
+    factionRepository
 } from '../../db';
 import {
     smartMergeBios,
@@ -28,6 +29,7 @@ import {
     syncAtlasEntryIfNeeded
 } from '../../bard';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
+import { showEntityEvents } from '../utils/eventsViewer';
 
 export const atlasCommand: Command = {
     name: 'atlas',
@@ -47,9 +49,19 @@ export const atlasCommand: Command = {
                 .addFields(
                     { name: "ID", value: `\`#${entry.short_id}\``, inline: true },
                     { name: "Ultimo Aggiornamento", value: lastUpdate, inline: true }
-                )
-                .setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
+                );
 
+            // 🆕 Show faction affiliations
+            const factionAffiliations = factionRepository.getEntityFactions('location', entry.id);
+            if (factionAffiliations.length > 0) {
+                const factionText = factionAffiliations.map((a: any) => {
+                    const roleIcon = a.role === 'CONTROLLED' ? '🏛️' : a.role === 'ALLY' ? '🤝' : a.role === 'ENEMY' ? '⚔️' : '📍';
+                    return `${roleIcon} ${a.faction_name} (${a.role})`;
+                }).join('\n');
+                embed.addFields({ name: "⚔️ Fazioni", value: factionText });
+            }
+
+            embed.setFooter({ text: `Usa $atlante update ${entry.short_id} | <Nota> per aggiornare.` });
             return embed;
         };
 
@@ -176,6 +188,43 @@ export const atlasCommand: Command = {
             } else {
                 await ctx.message.reply(`❌ Luogo **${macro} - ${micro}** non trovato.`);
             }
+            return;
+        }
+
+        // SUBCOMMAND: events - $atlante <id/#id|macro|micro> events [page]
+        const eventsMatch = argsStr.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        if (eventsMatch) {
+            let locIdentifier = eventsMatch[1].trim();
+            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+
+            let entry: any = null;
+
+            // Resolve short ID
+            const sidMatch = locIdentifier.match(/^#([a-z0-9]{5})$/i);
+            if (sidMatch) {
+                entry = getAtlasEntryByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+            } else if (locIdentifier.includes('|')) {
+                const locParts = locIdentifier.split('|').map(s => s.trim());
+                if (locParts.length === 2) {
+                    entry = getAtlasEntry(ctx.activeCampaign!.id, locParts[0], locParts[1]);
+                }
+            }
+
+            if (!entry) {
+                await ctx.message.reply(`❌ Luogo **${locIdentifier}** non trovato.`);
+                return;
+            }
+
+            await showEntityEvents(ctx, {
+                tableName: 'atlas_history',
+                entityKeyColumn: 'macro_location',
+                entityKeyValue: entry.macro_location,
+                campaignId: ctx.activeCampaign!.id,
+                entityDisplayName: `${entry.macro_location} - ${entry.micro_location}`,
+                entityEmoji: '🌍',
+                secondaryKeyColumn: 'micro_location',
+                secondaryKeyValue: entry.micro_location
+            }, page);
             return;
         }
 

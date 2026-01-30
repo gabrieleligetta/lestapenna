@@ -36,6 +36,7 @@ export { knowledgeRepository } from './repositories/KnowledgeRepository';
 export { chatRepository } from './repositories/ChatRepository';
 export { pendingMergeRepository } from './repositories/PendingMergeRepository';
 export { worldRepository } from './repositories/WorldRepository';
+export { factionRepository } from './repositories/FactionRepository';
 import { configRepository } from './repositories/ConfigRepository';
 import { campaignRepository } from './repositories/CampaignRepository';
 import { locationRepository } from './repositories/LocationRepository';
@@ -50,6 +51,7 @@ import { knowledgeRepository } from './repositories/KnowledgeRepository';
 import { chatRepository } from './repositories/ChatRepository';
 import { pendingMergeRepository } from './repositories/PendingMergeRepository';
 import { worldRepository } from './repositories/WorldRepository';
+import { factionRepository } from './repositories/FactionRepository';
 import { wipeDatabase } from './maintenance';
 
 // Re-export repository methods as top-level functions (Backward Compatibility)
@@ -256,6 +258,31 @@ export const getWorldTimeline = worldRepository.getWorldTimeline;
 export const deleteWorldEvent = worldRepository.deleteWorldEvent;
 export const getDirtyWorldEvents = worldRepository.getDirtyWorldEvents;
 export const clearWorldEventDirtyFlag = worldRepository.clearWorldEventDirtyFlag;
+
+// Faction
+export const createFaction = factionRepository.createFaction;
+export const getFaction = factionRepository.getFaction;
+export const getFactionById = factionRepository.getFactionById;
+export const listFactions = factionRepository.listFactions;
+export const updateFaction = factionRepository.updateFaction;
+export const deleteFaction = factionRepository.deleteFaction;
+export const renameFaction = factionRepository.renameFaction;
+export const getPartyFaction = factionRepository.getPartyFaction;
+export const createPartyFaction = factionRepository.createPartyFaction;
+export const renamePartyFaction = factionRepository.renamePartyFaction;
+export const setFactionReputation = factionRepository.setFactionReputation;
+export const getFactionReputation = factionRepository.getFactionReputation;
+export const getReputationWithAllFactions = factionRepository.getReputationWithAllFactions;
+export const adjustReputation = factionRepository.adjustReputation;
+export const addAffiliation = factionRepository.addAffiliation;
+export const removeAffiliation = factionRepository.removeAffiliation;
+export const getEntityFactions = factionRepository.getEntityFactions;
+export const getFactionMembers = factionRepository.getFactionMembers;
+export const addFactionEvent = factionRepository.addFactionEvent;
+export const getFactionHistory = factionRepository.getFactionHistory;
+export const markFactionDirty = factionRepository.markFactionDirty;
+export const getDirtyFactions = factionRepository.getDirtyFactions;
+export const clearFactionDirtyFlag = factionRepository.clearFactionDirtyFlag;
 
 // Maintenance
 export { wipeDatabase };

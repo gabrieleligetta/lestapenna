@@ -392,7 +392,10 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
                 log: normalizeStringList(parsed?.log),
                 character_growth: Array.isArray(parsed?.character_growth) ? parsed.character_growth : [],
                 npc_events: Array.isArray(parsed?.npc_events) ? parsed.npc_events : [],
-                world_events: Array.isArray(parsed?.world_events) ? parsed.world_events : []
+                world_events: Array.isArray(parsed?.world_events) ? parsed.world_events : [],
+                // 🆕 Faction System
+                faction_updates: Array.isArray(parsed?.faction_updates) ? parsed.faction_updates : [],
+                faction_affiliations: Array.isArray(parsed?.faction_affiliations) ? parsed.faction_affiliations : []
             },
             tokens: { input: inputTokens, output: outputTokens, inputChars: prompt.length, outputChars: content.length }
         };
@@ -404,7 +407,8 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
             data: {
                 loot: [], loot_removed: [], quests: [], monsters: [],
                 npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
-                log: [], character_growth: [], npc_events: [], world_events: []
+                log: [], character_growth: [], npc_events: [], world_events: [],
+                faction_updates: [], faction_affiliations: []
             },
             tokens: { input: 0, output: 0, inputChars: 0, outputChars: 0 }
         };
@@ -631,7 +635,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             character_growth: [],
             npc_events: [],
             world_events: [],
-            log: []
+            log: [],
+            faction_updates: [],
+            faction_affiliations: []
         };
 
         // CICLO EPISODICO
@@ -646,7 +652,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             let partialAnalystData: AnalystOutput = {
                 loot: [], loot_removed: [], quests: [], monsters: [],
                 npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
-                log: [], character_growth: [], npc_events: [], world_events: []
+                log: [], character_growth: [], npc_events: [], world_events: [],
+                faction_updates: [], faction_affiliations: []
             };
 
             if (!options.skipAnalysis) {
@@ -727,6 +734,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             if (partialAnalystData.character_growth) aggregatedData.character_growth.push(...partialAnalystData.character_growth);
             if (partialAnalystData.npc_events) aggregatedData.npc_events.push(...partialAnalystData.npc_events);
             if (partialAnalystData.world_events) aggregatedData.world_events.push(...partialAnalystData.world_events);
+            // 🆕 Faction System
+            if (partialAnalystData.faction_updates) aggregatedData.faction_updates.push(...partialAnalystData.faction_updates);
+            if (partialAnalystData.faction_affiliations) aggregatedData.faction_affiliations.push(...partialAnalystData.faction_affiliations);
 
             // --- STEP B: SCRITTORE (Per questa parte) ---
             console.log(`[Bardo] ✍️ STEP 2: Scrittore - Atto ${actNumber} (${tone})...`);

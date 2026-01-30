@@ -339,6 +339,69 @@ export const initDatabase = () => {
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_session_logs_session ON session_logs (session_id)`);
 
+    // --- TABELLA FAZIONI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS factions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        type TEXT DEFAULT 'GENERIC', -- PARTY, GUILD, KINGDOM, CULT, ORGANIZATION, GENERIC
+        leader_npc_id INTEGER,       -- FK opzionale a npc_dossier
+        headquarters_location_id INTEGER, -- FK opzionale a location_atlas
+        status TEXT DEFAULT 'ACTIVE', -- ACTIVE, DISBANDED, DESTROYED
+        is_party INTEGER DEFAULT 0,  -- Flag per fazione party (solo 1 per campagna)
+        first_session_id TEXT,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        rag_sync_needed INTEGER DEFAULT 0,
+        is_manual INTEGER DEFAULT 0,
+        short_id TEXT,
+        UNIQUE(campaign_id, name),
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_factions_campaign ON factions (campaign_id)`);
+
+    // --- TABELLA REPUTAZIONE PARTY<->FAZIONE ---
+    db.exec(`CREATE TABLE IF NOT EXISTS faction_reputation (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        faction_id INTEGER NOT NULL,
+        reputation TEXT DEFAULT 'NEUTRALE', -- OSTILE, DIFFIDENTE, FREDDO, NEUTRALE, CORDIALE, AMICHEVOLE, ALLEATO
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(campaign_id, faction_id),
+        FOREIGN KEY(faction_id) REFERENCES factions(id) ON DELETE CASCADE,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+
+    // --- TABELLA AFFILIAZIONI (NPC/Luoghi/PG -> Fazioni) - MANY-TO-MANY ---
+    db.exec(`CREATE TABLE IF NOT EXISTS faction_affiliations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        faction_id INTEGER NOT NULL,
+        entity_type TEXT NOT NULL,   -- 'npc', 'location', 'pc'
+        entity_id INTEGER NOT NULL,
+        role TEXT DEFAULT 'MEMBER',  -- LEADER, MEMBER, ALLY, ENEMY, CONTROLLED
+        joined_session_id TEXT,      -- Quando è entrato
+        is_active INTEGER DEFAULT 1, -- Affiliazione ancora attiva?
+        notes TEXT,
+        UNIQUE(faction_id, entity_type, entity_id),
+        FOREIGN KEY(faction_id) REFERENCES factions(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_faction_affiliations_faction ON faction_affiliations (faction_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_faction_affiliations_entity ON faction_affiliations (entity_type, entity_id)`);
+
+    // --- TABELLA STORIA FAZIONI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS faction_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        faction_name TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT, -- 'REPUTATION_CHANGE', 'MEMBER_JOIN', 'MEMBER_LEAVE', 'CONFLICT', 'ALLIANCE', 'DISSOLUTION'
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_faction_history_name ON faction_history (campaign_id, faction_name)`);
+
     // --- MIGRATIONS ---
     const migrations = [
         "ALTER TABLE sessions ADD COLUMN guild_id TEXT",

@@ -21,6 +21,7 @@ import { inventoryRepository } from '../../db/repositories/InventoryRepository';
 import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
+import { showEntityEvents } from '../utils/eventsViewer';
 
 // Helper for Regen
 async function regenerateItemBio(campaignId: number, itemName: string) {
@@ -180,6 +181,41 @@ export const inventoryCommand: Command = {
             removeLoot(ctx.activeCampaign!.id, item, 999999);
 
             await ctx.message.reply(`✅ Oggetto **${item}** eliminato definitivamente (RAG, Storia, Inventario).`);
+            return;
+        }
+
+        // SUBCOMMAND: events - $loot <name/#id> events [page]
+        const eventsMatch = arg.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        if (eventsMatch) {
+            let itemIdentifier = eventsMatch[1].trim();
+            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+
+            // Resolve short ID
+            const sidMatch = itemIdentifier.match(/^#([a-z0-9]{5})$/i);
+            if (sidMatch) {
+                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (itemEntry) itemIdentifier = itemEntry.item_name;
+                else {
+                    await ctx.message.reply(`❌ Oggetto con ID \`#${sidMatch[1]}\` non trovato.`);
+                    return;
+                }
+            }
+
+            // Verify item exists
+            const item = getInventoryItemByName(ctx.activeCampaign!.id, itemIdentifier);
+            if (!item) {
+                await ctx.message.reply(`❌ Oggetto **${itemIdentifier}** non trovato.`);
+                return;
+            }
+
+            await showEntityEvents(ctx, {
+                tableName: 'inventory_history',
+                entityKeyColumn: 'item_name',
+                entityKeyValue: item.item_name,
+                campaignId: ctx.activeCampaign!.id,
+                entityDisplayName: item.item_name,
+                entityEmoji: '📦'
+            }, page);
             return;
         }
 

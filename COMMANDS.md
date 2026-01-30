@@ -43,16 +43,21 @@
 | `$bio reset` | - | `[NomePG]` | **[Avanzato]** Rigenerazione completa della biografia. |
 
 ## 🛠️ Gestione Mondo (Entità)
-*Sintassi unificata per: `$npc`, `$quest`, `$atlante` (`$atlas`), `$loot`, `$bestiario` (`$bestiary`).*
+*Sintassi unificata per: `$npc`, `$quest`, `$atlante`, `$loot`, `$bestiario`, `$faction`.*
 
 | Azione | Sintassi | Descrizione |
 | :--- | :--- | :--- |
 | **Lista** | `$npc list` | Elenco entità attive. |
+| `$faction rep` | `<Nome> \| <Livello>` | Imposta reputazione. |
+| `$affiliate` | `<Type> <Name> \| <Faction> \| <Role>` | Collega entità a fazione. |
+| `$affiliate list` | `<Fazione>` | Lista membri fazione. |
+| `$affiliate of` | `<NomeEntità>` | Lista fazioni entità. |
 | **Vedi** | `$npc <ID/Nome>` | Dettagli scheda. |
 | **Crea** | `$npc add <Nome>...` | Crea nuova entità (params specifici per tipo). |
 | **Aggiorna** | `$npc update <ID> \| <Nota>` | Aggiunge evento narrativo. |
 | **Edit** | `$npc update <ID> field:<k> <v>` | Modifica metadati (status, role, name). |
 | **Unisci** | `$npc merge <Old> \| <New>` | Unisce due entità duplicati. |
+| **Eventi** | `$npc events [page]` | Visualizza storico eventi. |
 | **Elimina** | `$npc delete <ID>` | Rimuove un'entità. |
 
 ### Comandi Specifici Entità

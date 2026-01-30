@@ -22,7 +22,8 @@ import {
     addNpcEvent,
     deleteNpcRagSummary,
     deleteNpcHistory,
-    getNpcByShortId
+    getNpcByShortId,
+    factionRepository
 } from '../../db';
 import {
     smartMergeBios,
@@ -31,6 +32,7 @@ import {
 } from '../../bard';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
+import { showEntityEvents } from '../utils/eventsViewer';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -57,6 +59,16 @@ export const npcCommand: Command = {
 
             if (npc.aliases) {
                 embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
+            }
+
+            // 🆕 Show faction affiliations
+            const factionAffiliations = factionRepository.getEntityFactions('npc', npc.id);
+            if (factionAffiliations.length > 0) {
+                const factionText = factionAffiliations.map(a => {
+                    const roleIcon = a.role === 'LEADER' ? '👑' : a.role === 'ALLY' ? '🤝' : a.role === 'ENEMY' ? '⚔️' : '👤';
+                    return `${roleIcon} ${a.faction_name} (${a.role})`;
+                }).join('\n');
+                embed.addFields({ name: "⚔️ Fazioni", value: factionText });
             }
 
             const history = getNpcHistory(ctx.activeCampaign!.id, npc.name).slice(-3);
@@ -433,6 +445,42 @@ export const npcCommand: Command = {
                 await syncNpcDossierIfNeeded(ctx.activeCampaign!.id, name, true);
                 await loadingMsg.edit(`✅ **${name}** sincronizzato con RAG.`);
             }
+            return;
+        }
+
+        // SUBCOMMAND: events - $npc <name/#id> events [page]
+        // Pattern: last arg is 'events' or second-to-last is 'events' followed by page number
+        const eventsMatch = argsStr.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        if (eventsMatch) {
+            let npcIdentifier = eventsMatch[1].trim();
+            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+
+            // Resolve short ID
+            const sidMatch = npcIdentifier.match(/^#([a-z0-9]{5})$/i);
+            if (sidMatch) {
+                const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (npc) npcIdentifier = npc.name;
+                else {
+                    await ctx.message.reply(`❌ NPC con ID \`#${sidMatch[1]}\` non trovato.`);
+                    return;
+                }
+            }
+
+            // Verify NPC exists
+            const npc = getNpcEntry(ctx.activeCampaign!.id, npcIdentifier);
+            if (!npc) {
+                await ctx.message.reply(`❌ NPC **${npcIdentifier}** non trovato.`);
+                return;
+            }
+
+            await showEntityEvents(ctx, {
+                tableName: 'npc_history',
+                entityKeyColumn: 'npc_name',
+                entityKeyValue: npc.name,
+                campaignId: ctx.activeCampaign!.id,
+                entityDisplayName: npc.name,
+                entityEmoji: '👤'
+            }, page);
             return;
         }
 

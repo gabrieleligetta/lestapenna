@@ -15,6 +15,7 @@ import {
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
+import { showEntityEvents } from '../utils/eventsViewer';
 
 // Helper for Regen
 async function regenerateMonsterBio(campaignId: number, monsterName: string) {
@@ -163,6 +164,41 @@ export const bestiaryCommand: Command = {
             } else {
                 await ctx.message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nel bestiario.`);
             }
+            return;
+        }
+
+        // SUBCOMMAND: events - $bestiario <name/#id> events [page]
+        const eventsMatch = arg.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        if (eventsMatch) {
+            let monsterIdentifier = eventsMatch[1].trim();
+            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+
+            // Resolve short ID
+            const sidMatch = monsterIdentifier.match(/^#([a-z0-9]{5})$/i);
+            if (sidMatch) {
+                const m = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                if (m) monsterIdentifier = m.name;
+                else {
+                    await ctx.message.reply(`❌ Mostro con ID \`#${sidMatch[1]}\` non trovato.`);
+                    return;
+                }
+            }
+
+            // Verify monster exists
+            const monster = getMonsterByName(ctx.activeCampaign!.id, monsterIdentifier);
+            if (!monster) {
+                await ctx.message.reply(`❌ Mostro **${monsterIdentifier}** non trovato.`);
+                return;
+            }
+
+            await showEntityEvents(ctx, {
+                tableName: 'bestiary_history',
+                entityKeyColumn: 'monster_name',
+                entityKeyValue: monster.name,
+                campaignId: ctx.activeCampaign!.id,
+                entityDisplayName: monster.name,
+                entityEmoji: '👹'
+            }, page);
             return;
         }
 

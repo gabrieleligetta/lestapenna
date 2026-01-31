@@ -18,14 +18,27 @@ WORKDIR /build
 # AGGIUNTO 'cmake': Richiesto per la compilazione delle nuove versioni di whisper.cpp
 RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
 
-# Clona e compila whisper.cpp con GCC 10 (Bullseye) che non ha il bug FP16
-# NOTA: Aggiunto -DBUILD_SHARED_LIBS=OFF per includere la libreria nell'eseguibile
-RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
+# Clona whisper.cpp (cached)
+RUN --mount=type=cache,target=/build/whisper-cache \
+    if [ -d /build/whisper-cache/.git ]; then \
+        cp -r /build/whisper-cache/. . && git pull; \
+    else \
+        git clone https://github.com/ggerganov/whisper.cpp.git . && \
+        cp -r . /build/whisper-cache/; \
+    fi
+
+# Compila whisper.cpp
+RUN cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release
 
-# Scarica il modello LARGE-V3
-RUN bash ./models/download-ggml-model.sh large-v3
+# Scarica il modello LARGE-V3 (cached - ~3GB)
+RUN --mount=type=cache,target=/build/model-cache \
+    if [ -f /build/model-cache/ggml-large-v3.bin ]; then \
+        cp /build/model-cache/ggml-large-v3.bin ./models/; \
+    else \
+        bash ./models/download-ggml-model.sh large-v3 && \
+        cp ./models/ggml-large-v3.bin /build/model-cache/; \
+    fi
 
 # --- STAGE 3: PRODUCTION RUNNER (BOOKWORM = FFmpeg 5.1+) ---
 FROM node:22-bookworm-slim

@@ -47,7 +47,8 @@ jobs:
             echo "${{ secrets.ENV_FILE }}" > .env
             
             # 5. Ricostruisci e riavvia i container usando il file di produzione
-            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            # DOCKER_BUILDKIT=1 abilita i cache mounts per evitare di riscaricare Whisper ogni volta
+            DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
             
             # 6. Pulizia immagini vecchie
             docker image prune -f

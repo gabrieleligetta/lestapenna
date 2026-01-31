@@ -1,19 +1,29 @@
 import { Client, VoiceBasedChannel, TextChannel } from 'discord.js';
 import { guildSessions, autoLeaveTimers } from '../state/sessionState';
-// import { checkAutoLeave } from './voiceState'; // Recursion? No, defining local helper or export.
 import { audioQueue } from '../services/queue';
 import { disconnect } from '../services/recorder';
 import { getGuildConfig } from '../db';
-import { waitForCompletionAndSummarize } from '../publisher'; // Assuming publish has it or I move logic here
+import { waitForCompletionAndSummarize } from '../publisher';
+import { config } from '../config';
 
 export function registerVoiceStateHandler(client: Client) {
     client.on('voiceStateUpdate', (oldState, newState) => {
         const guild = newState.guild || oldState.guild;
         if (!guild) return;
+
+        // DEV_GUILD_ID: If set, only handle that specific guild
+        if (config.discord.devGuildId && guild.id !== config.discord.devGuildId) {
+            return;
+        }
+
+        // IGNORE_GUILD_IDS: Skip these guilds
+        if (config.discord.ignoreGuildIds.includes(guild.id)) {
+            return;
+        }
+
         const botMember = guild.members.cache.get(client.user!.id);
         if (!botMember?.voice.channel) return;
         checkAutoLeave(botMember.voice.channel, client);
-
     });
 }
 

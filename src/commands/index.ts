@@ -5,6 +5,7 @@
 import { Message, Client } from 'discord.js';
 import { Command, CommandContext } from './types';
 import { getActiveCampaign, getGuildConfig, factionRepository } from '../db';
+import { config } from '../config';
 
 export class CommandDispatcher {
     private commands = new Map<string, Command>();
@@ -48,6 +49,16 @@ export class CommandDispatcher {
         // Ignore bots and non-guild messages
         if (message.author.bot) return false;
         if (!message.guild) return false;
+
+        // DEV_GUILD_ID: If set, only respond to that specific guild (for local development)
+        if (config.discord.devGuildId && message.guild.id !== config.discord.devGuildId) {
+            return false;
+        }
+
+        // IGNORE_GUILD_IDS: Skip these guilds (for prod to ignore dev servers)
+        if (config.discord.ignoreGuildIds.includes(message.guild.id)) {
+            return false;
+        }
 
         // Check for command prefix
         if (!message.content.startsWith('$')) return false;

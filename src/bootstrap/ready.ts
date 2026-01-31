@@ -1,4 +1,4 @@
-import { Client, TextChannel } from 'discord.js';
+import { Client, TextChannel, ChannelType } from 'discord.js';
 import { exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -37,12 +37,23 @@ import { audioQueue, removeSessionJobs } from '../services/queue';
 import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../publisher';
 import { sessionPhaseManager, SessionPhase } from '../services/SessionPhaseManager';
 import { config } from '../config';
+import { buildWelcomeEmbed, markGuildAsWelcomed, hasBeenWelcomed } from './guildJoin';
 
 // Note: recoverOrphanedFiles and processOrphanedSessionsSequentially were local. Moving here.
 
 export function registerReadyHandler(client: Client) {
     client.once('ready', async () => {
         console.log(`✅ Bot online: ${client.user?.tag}`);
+
+        // Log DEV_GUILD_ID / IGNORE_GUILD_IDS status
+        if (config.discord.devGuildId) {
+            console.log(`🔧 [DEV MODE] Rispondo solo al server: ${config.discord.devGuildId}`);
+        } else if (config.discord.ignoreGuildIds.length > 0) {
+            console.log(`🌐 [PROD MODE] Rispondo a tutti i server, ignoro: ${config.discord.ignoreGuildIds.join(', ')}`);
+        } else {
+            console.log(`🌐 [PROD MODE] Rispondo a tutti i server`);
+        }
+
         await testRemoteConnection();
         await checkStorageUsage();
 
@@ -84,7 +95,78 @@ export function registerReadyHandler(client: Client) {
         } else {
             console.log('✅ Nessun lavoro in sospeso trovato.');
         }
+
+        // 🆕 Notify unconfigured servers
+        await notifyUnconfiguredGuilds(client);
     });
+}
+
+/**
+ * Send welcome message to all guilds that haven't configured cmd_channel_id yet
+ */
+async function notifyUnconfiguredGuilds(client: Client): Promise<void> {
+    const guilds = client.guilds.cache;
+    let notifiedCount = 0;
+
+    for (const [guildId, guild] of guilds) {
+        // DEV_GUILD_ID: If set, only handle that specific guild
+        if (config.discord.devGuildId && guildId !== config.discord.devGuildId) {
+            continue;
+        }
+
+        // IGNORE_GUILD_IDS: Skip these guilds
+        if (config.discord.ignoreGuildIds.includes(guildId)) {
+            continue;
+        }
+
+        const cmdChannelId = getGuildConfig(guildId, 'cmd_channel_id');
+
+        if (!cmdChannelId) {
+            // Check debounce to prevent duplicate messages
+            if (hasBeenWelcomed(guildId)) {
+                console.log(`[Setup] Server "${guild.name}" già notificato di recente, skip.`);
+                continue;
+            }
+
+            // Server not configured - send welcome message
+            let targetChannel: TextChannel | null = null;
+
+            if (guild.systemChannel) {
+                targetChannel = guild.systemChannel;
+            } else {
+                // Find first text channel we have permission to send to
+                const textChannels = guild.channels.cache
+                    .filter(ch => ch.type === ChannelType.GuildText)
+                    .filter(ch => {
+                        const perms = ch.permissionsFor(client.user!);
+                        return perms?.has('SendMessages') && perms?.has('ViewChannel');
+                    });
+
+                if (textChannels.size > 0) {
+                    targetChannel = textChannels.first() as TextChannel;
+                }
+            }
+
+            if (targetChannel) {
+                try {
+                    await targetChannel.send({ embeds: [buildWelcomeEmbed()] });
+                    markGuildAsWelcomed(guildId);
+                    console.log(`[Setup] 📨 Messaggio di configurazione inviato a "${guild.name}" (#${targetChannel.name})`);
+                    notifiedCount++;
+                } catch (e) {
+                    console.warn(`[Setup] ⚠️ Impossibile inviare messaggio a "${guild.name}":`, e);
+                }
+            } else {
+                console.warn(`[Setup] ⚠️ Nessun canale disponibile per "${guild.name}"`);
+            }
+        }
+    }
+
+    if (notifiedCount > 0) {
+        console.log(`[Setup] 📋 ${notifiedCount} server non configurati notificati.`);
+    } else {
+        console.log('[Setup] ✅ Tutti i server sono configurati.');
+    }
 }
 
 /**

@@ -5,6 +5,8 @@ interface DiscordConfig {
     developerId: string;
     summaryChannelId: string | null;
     commandChannelId: string | null;
+    devGuildId: string | null;  // If set, bot only responds to this guild (for local dev)
+    ignoreGuildIds: string[];   // Guilds to ignore (for prod to skip dev servers)
 }
 
 interface RedisConfig {
@@ -125,7 +127,20 @@ export const config = {
         token: getEnv('DISCORD_BOT_TOKEN', true),
         developerId: getEnv('DISCORD_DEVELOPER_ID', false, '310865403066712074'),
         summaryChannelId: getEnv('DISCORD_SUMMARY_CHANNEL_ID'),
-        commandChannelId: getEnv('DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID')
+        commandChannelId: getEnv('DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID'),
+        devGuildId: getEnv('DEV_GUILD_ID'),  // If set, bot only responds to this guild
+        ignoreGuildIds: (() => {
+            const envIds = (getEnv('IGNORE_GUILD_IDS') || '').split(',').map(s => s.trim()).filter(Boolean);
+            const devGuildId = getEnv('DEV_GUILD_ID');
+            // In prod (no DEV_GUILD_ID), always ignore the test server
+            if (!devGuildId) {
+                const TEST_SERVER_ID = '1458865478637322365';
+                if (!envIds.includes(TEST_SERVER_ID)) {
+                    envIds.push(TEST_SERVER_ID);
+                }
+            }
+            return envIds;
+        })()
     } as DiscordConfig,
 
     redis: {

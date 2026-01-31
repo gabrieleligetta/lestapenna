@@ -772,7 +772,11 @@ export const factionCommand: Command = {
                 const rep = f.is_party ? '' : factionRepository.getFactionReputation(campaignId, f.id);
                 const repIcon = rep ? REPUTATION_ICONS[rep as ReputationLevel] : '';
                 const members = factionRepository.countFactionMembers(f.id);
-                const memberStr = `${members.npcs}👤 ${members.locations}📍`;
+                let memberParts: string[] = [];
+                memberParts.push(`${members.npcs}👤`);
+                if (members.pcs > 0) memberParts.push(`${members.pcs}PG`);
+                memberParts.push(`${members.locations}📍`);
+                const memberStr = memberParts.join(' ');
 
                 description += `\`#${f.short_id}\` ${typeIcon} **${f.name}**${f.is_party ? ' 🎭' : ''}\n`;
                 description += `└ ${rep ? `${repIcon} ${rep} • ` : ''}${memberStr}\n\n`;

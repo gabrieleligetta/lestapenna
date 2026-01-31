@@ -1,0 +1,18 @@
+# Immagine Whisper persistente - buildata una sola volta
+# Rebuild solo con: docker build -f Dockerfile.whisper -t whisper-large-v3 .
+
+FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /whisper
+
+# Clona e compila whisper.cpp
+RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
+    cmake --build build --config Release
+
+# Scarica il modello LARGE-V3 (~3GB)
+RUN bash ./models/download-ggml-model.sh large-v3
+
+# Output: /whisper/build/bin/whisper-cli e /whisper/models/ggml-large-v3.bin

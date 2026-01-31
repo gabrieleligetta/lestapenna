@@ -13,31 +13,32 @@ RUN yarn build
 
 # --- STAGE 2: WHISPER COMPILER (BULLSEYE = GCC 10, NO FP16 BUG) ---
 FROM debian:bullseye-slim AS whisper-builder
-WORKDIR /build
 
 # AGGIUNTO 'cmake': Richiesto per la compilazione delle nuove versioni di whisper.cpp
 RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
 
 # Clona whisper.cpp (cached)
-RUN --mount=type=cache,target=/build/whisper-cache \
-    if [ -d /build/whisper-cache/.git ]; then \
-        cp -r /build/whisper-cache/. . && git pull; \
+RUN --mount=type=cache,target=/cache/whisper \
+    if [ -d /cache/whisper/.git ]; then \
+        cp -r /cache/whisper /build; \
     else \
-        git clone https://github.com/ggerganov/whisper.cpp.git . && \
-        cp -r . /build/whisper-cache/; \
+        git clone https://github.com/ggerganov/whisper.cpp.git /build && \
+        cp -r /build /cache/whisper; \
     fi
+
+WORKDIR /build
 
 # Compila whisper.cpp
 RUN cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release
 
 # Scarica il modello LARGE-V3 (cached - ~3GB)
-RUN --mount=type=cache,target=/build/model-cache \
-    if [ -f /build/model-cache/ggml-large-v3.bin ]; then \
-        cp /build/model-cache/ggml-large-v3.bin ./models/; \
+RUN --mount=type=cache,target=/cache/models \
+    if [ -f /cache/models/ggml-large-v3.bin ]; then \
+        cp /cache/models/ggml-large-v3.bin ./models/; \
     else \
         bash ./models/download-ggml-model.sh large-v3 && \
-        cp ./models/ggml-large-v3.bin /build/model-cache/; \
+        cp ./models/ggml-large-v3.bin /cache/models/; \
     fi
 
 # --- STAGE 3: PRODUCTION RUNNER (BOOKWORM = FFmpeg 5.1+) ---

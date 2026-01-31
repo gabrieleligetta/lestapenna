@@ -33,16 +33,21 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
                     guildSessions.delete(guildId);
                     await audioQueue.resume();
 
+                    // Try to get command channel for notifications (optional)
                     const commandChannelId = getGuildConfig(guildId, 'cmd_channel_id');
+                    let ch: TextChannel | undefined;
                     if (commandChannelId) {
-                        const ch = await client.channels.fetch(commandChannelId) as TextChannel;
-                        if (ch) {
-                            await ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione sessione avviata...`);
-                            // waitForCompletionAndSummarize needs to be available
-                            // I'll assume imported from utils/publish
-                            await waitForCompletionAndSummarize(client, sessionId, ch);
+                        try {
+                            ch = await client.channels.fetch(commandChannelId) as TextChannel;
+                            if (ch) {
+                                await ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione sessione avviata...`);
+                            }
+                        } catch (e) {
+                            console.warn(`⚠️ Impossibile accedere al canale comandi ${commandChannelId}`);
                         }
                     }
+                    // Always process the session, even without a notification channel
+                    await waitForCompletionAndSummarize(client, sessionId, ch);
                 } else {
                     await disconnect(guildId);
                 }

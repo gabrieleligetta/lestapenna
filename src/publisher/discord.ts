@@ -16,7 +16,8 @@ import { fetchSessionInfoFromHistory, truncate } from './formatters';
 import { safeSend } from '../utils/discordHelper';
 import { config } from '../config';
 
-const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || config.discord.summaryChannelId;
+// No fallback - each server must configure its own summary channel, or it uses the command channel
+const getSummaryChannelId = (guildId: string) => getGuildConfig(guildId, 'summary_channel_id') || null;
 
 export async function publishSummary(client: Client, sessionId: string, log: string[], defaultChannel: TextChannel, isReplay: boolean = false, title?: string, loot?: Array<{ name: string; quantity?: number; description?: string }>, quests?: Array<{ title: string; description?: string; status?: string }>, narrative?: string, monsters?: Array<{ name: string; status: string; count?: string }>, encounteredNPCs?: Array<{ name: string; role: string | null; status: string; description: string | null }>, narrativeBriefs?: string[]) {
     const summaryChannelId = getSummaryChannelId(defaultChannel.guild.id);

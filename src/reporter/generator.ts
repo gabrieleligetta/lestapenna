@@ -7,9 +7,8 @@ import * as path from 'path';
 import { SessionMetrics, monitor } from '../monitor';
 import { openaiReporterClient, REPORT_MODEL } from './config';
 import { uploadToOracle } from '../services/backup';
-import { getRecipients, sendEmail } from './email';
+import { getTechnicalRecipients, sendEmail } from './email';
 import { AggregatedCostByPhase } from './types';
-import { getSessionGuildId } from '../db';
 
 export async function processSessionReport(metrics: SessionMetrics) {
     console.log(`[Reporter] 📝 Generazione report post-mortem per sessione ${metrics.sessionId}...`);
@@ -309,9 +308,8 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
         console.error("[Reporter] ❌ Errore upload metriche:", e);
     }
 
-    // 6. Invio Email
-    const guildId = getSessionGuildId(metrics.sessionId);
-    const recipients = getRecipients('TECHNICAL_REPORT_RECIPIENT', guildId);
+    // 6. Invio Email (report tecnici vanno solo all'admin/developer)
+    const recipients = getTechnicalRecipients();
 
     const attachments: any[] = [{ filename: logFileName, content: statsJson }];
 

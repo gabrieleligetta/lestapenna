@@ -4,13 +4,16 @@
 
 import { transporter } from './config';
 import { getGuildConfig } from '../db';
+import { config } from '../config';
+
+const DEFAULT_DEVELOPER_EMAIL = 'gabligetta@gmail.com';
 
 /**
- * Helper per ottenere la lista dei destinatari
- * Prima cerca nella config per-guild, poi fallback su variabili d'ambiente
+ * Helper per ottenere la lista dei destinatari per i REPORT DI SESSIONE
+ * Prima cerca nella config per-guild ($setemail), poi fallback su variabili d'ambiente
  */
 export function getRecipients(envVarName: string, guildId?: string): string[] {
-    // 1. Cerca config per-guild (es. "report_recipients")
+    // 1. Cerca config per-guild (impostata con $setemail)
     if (guildId) {
         const guildRecipients = getGuildConfig(guildId, 'report_recipients');
         if (guildRecipients) {
@@ -20,9 +23,24 @@ export function getRecipients(envVarName: string, guildId?: string): string[] {
 
     // 2. Fallback su variabili d'ambiente
     const recipientEnv = process.env[envVarName] || process.env.REPORT_RECIPIENT;
-    if (!recipientEnv) return ['gabligetta@gmail.com'];
+    if (!recipientEnv) return [DEFAULT_DEVELOPER_EMAIL];
 
     return parseRecipients(recipientEnv);
+}
+
+/**
+ * Helper per ottenere i destinatari dei REPORT TECNICI
+ * Vanno SOLO all'admin del server (o al developer globale)
+ */
+export function getTechnicalRecipients(guildId?: string): string[] {
+    // I report tecnici vanno solo al developer/admin, non a tutti
+    // Per ora usiamo solo l'email del developer globale
+    // In futuro si potrebbe aggiungere una config per-guild 'admin_email'
+    const technicalEnv = process.env.TECHNICAL_REPORT_RECIPIENT;
+    if (technicalEnv) {
+        return parseRecipients(technicalEnv);
+    }
+    return [DEFAULT_DEVELOPER_EMAIL];
 }
 
 function parseRecipients(value: string): string[] {

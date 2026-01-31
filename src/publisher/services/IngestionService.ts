@@ -52,8 +52,6 @@ import {
     syncAllDirtyBestiary,
     syncAllDirtyInventory,
     syncAllDirtyQuests,
-    syncAllDirtyInventory,
-    syncAllDirtyQuests,
     syncAllDirtyFactions,
     syncAllDirtyArtifacts,
     cleanEntityName

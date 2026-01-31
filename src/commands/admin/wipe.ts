@@ -5,6 +5,7 @@ import { wipeLocalFiles } from '../../services/recorder';
 // @ts-ignore
 import { wipeBucket } from '../../services/backup';
 import { wipeDatabase, db } from '../../db';
+import { isGuildAdmin } from '../../utils/permissions';
 
 export const wipeCommand: Command = {
     name: 'wipe',
@@ -15,8 +16,7 @@ export const wipeCommand: Command = {
         const { message } = ctx;
         const commandName = message.content.slice(1).split(' ')[0].toLowerCase();
 
-        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
-        if (message.author.id !== DEVELOPER_ID) return;
+        if (!isGuildAdmin(message.author.id, message.guild!.id)) return;
 
         // --- $wipe (HARD WIPE) ---
         if (commandName === 'wipe') {

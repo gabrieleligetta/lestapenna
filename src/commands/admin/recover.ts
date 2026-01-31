@@ -6,6 +6,7 @@ import { audioQueue, removeSessionJobs } from '../../services/queue';
 import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../../publisher';
 import { monitor } from '../../monitor';
 import { processSessionReport } from '../../reporter';
+import { isGuildAdmin } from '../../utils/permissions';
 
 export const recoverCommand: Command = {
     name: 'recover',
@@ -14,8 +15,7 @@ export const recoverCommand: Command = {
     async execute(ctx: CommandContext) {
         const { message, args } = ctx;
 
-        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
-        if (message.author.id !== DEVELOPER_ID) return;
+        if (!isGuildAdmin(message.author.id, message.guild!.id)) return;
 
         const subCommand = args[0];
 

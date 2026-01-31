@@ -3,27 +3,40 @@
  */
 
 import { transporter } from './config';
+import { getGuildConfig } from '../db';
 
 /**
  * Helper per ottenere la lista dei destinatari
- * Accetta il nome della variabile specifica, con fallback su REPORT_RECIPIENT
+ * Prima cerca nella config per-guild, poi fallback su variabili d'ambiente
  */
-export function getRecipients(envVarName: string): string[] {
-    const recipientEnv = process.env[envVarName] || process.env.REPORT_RECIPIENT;
+export function getRecipients(envVarName: string, guildId?: string): string[] {
+    // 1. Cerca config per-guild (es. "report_recipients")
+    if (guildId) {
+        const guildRecipients = getGuildConfig(guildId, 'report_recipients');
+        if (guildRecipients) {
+            return parseRecipients(guildRecipients);
+        }
+    }
 
+    // 2. Fallback su variabili d'ambiente
+    const recipientEnv = process.env[envVarName] || process.env.REPORT_RECIPIENT;
     if (!recipientEnv) return ['gabligetta@gmail.com'];
 
+    return parseRecipients(recipientEnv);
+}
+
+function parseRecipients(value: string): string[] {
     try {
-        const parsed = JSON.parse(recipientEnv);
+        const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) {
             return parsed;
         }
         return [String(parsed)];
     } catch (e) {
-        if (recipientEnv.includes(',')) {
-            return recipientEnv.split(',').map(s => s.trim());
+        if (value.includes(',')) {
+            return value.split(',').map(s => s.trim());
         }
-        return [recipientEnv];
+        return [value];
     }
 }
 

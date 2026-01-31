@@ -1,6 +1,7 @@
 import { TextChannel, Message, StringSelectMenuBuilder, ActionRowBuilder, StringSelectMenuOptionBuilder, ComponentType } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { db, getSessionCampaignId } from '../../db';
+import { isGuildAdmin } from '../../utils/permissions';
 import { PipelineService } from '../../publisher/services/PipelineService';
 import { IngestionService } from '../../publisher/services/IngestionService';
 import { monitor } from '../../monitor';
@@ -378,10 +379,9 @@ export const rebuildCommand: Command = {
         const { message, args, client } = ctx;
         const channel = message.channel as TextChannel;
 
-        // Developer check
-        const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
-        if (message.author.id !== DEVELOPER_ID) {
-            await message.reply("Solo il developer puo' eseguire questo comando.");
+        // Admin check (per-guild with fallback to global developer)
+        if (!isGuildAdmin(message.author.id, message.guild!.id)) {
+            await message.reply("Solo l'admin del server puo' eseguire questo comando.");
             return;
         }
 

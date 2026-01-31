@@ -9,6 +9,7 @@ import { openaiReporterClient, REPORT_MODEL } from './config';
 import { uploadToOracle } from '../services/backup';
 import { getRecipients, sendEmail } from './email';
 import { AggregatedCostByPhase } from './types';
+import { getSessionGuildId } from '../db';
 
 export async function processSessionReport(metrics: SessionMetrics) {
     console.log(`[Reporter] 📝 Generazione report post-mortem per sessione ${metrics.sessionId}...`);
@@ -309,7 +310,8 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
     }
 
     // 6. Invio Email
-    const recipients = getRecipients('TECHNICAL_REPORT_RECIPIENT');
+    const guildId = getSessionGuildId(metrics.sessionId);
+    const recipients = getRecipients('TECHNICAL_REPORT_RECIPIENT', guildId);
 
     const attachments: any[] = [{ filename: logFileName, content: statsJson }];
 

@@ -93,6 +93,11 @@ export const sessionRepository = {
         return row ? row.campaign_id : undefined;
     },
 
+    getSessionGuildId: (sessionId: string): string | undefined => {
+        const row = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?').get(sessionId) as { guild_id: string } | undefined;
+        return row ? row.guild_id : undefined;
+    },
+
     findSessionByTimestamp: (timestamp: number): string | null => {
         const row = db.prepare(`
             SELECT session_id FROM recordings 

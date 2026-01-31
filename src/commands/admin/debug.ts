@@ -23,6 +23,7 @@ import { waitForCompletionAndSummarize } from '../../publisher';
 import { safeSend } from '../../utils/discordHelper';
 
 import { ensureTestEnvironment } from '../sessions/testEnv';
+import { isGuildAdmin } from '../../utils/permissions';
 
 // Helper for test environment (copied/adapted from index.ts)
 // async function ensureTestEnvironment(guildId: string, authorId: string, message: Message) {
@@ -201,8 +202,7 @@ export const debugCommand: Command = {
 
         // --- $testmail ---
         if (commandName === 'testmail') {
-            const DEVELOPER_ID = process.env.DISCORD_DEVELOPER_ID || '310865403066712074';
-            if (message.author.id !== DEVELOPER_ID) return;
+            if (!isGuildAdmin(message.author.id, message.guild!.id)) return;
 
             await message.reply("📧 Invio email di test in corso...");
             // Use import() to avoid circular dependency issues if reporter depends on db/config which debug might depend on?

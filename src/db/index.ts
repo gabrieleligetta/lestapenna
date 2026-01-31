@@ -203,6 +203,7 @@ export const createSession = sessionRepository.createSession;
 export const getSessionAuthor = sessionRepository.getSessionAuthor;
 export const getSessionStartTime = sessionRepository.getSessionStartTime;
 export const getSessionCampaignId = sessionRepository.getSessionCampaignId;
+export const getSessionGuildId = sessionRepository.getSessionGuildId;
 export const findSessionByTimestamp = sessionRepository.findSessionByTimestamp;
 export const addSessionNote = sessionRepository.addSessionNote;
 export const getSessionNotes = sessionRepository.getSessionNotes;

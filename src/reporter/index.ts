@@ -3,7 +3,7 @@
  */
 
 import * as fs from 'fs';
-import { getCampaignById, getExplicitSessionNumber, getSessionStartTime, getSessionTravelLog, getSessionEncounteredNPCs } from '../db';
+import { getCampaignById, getExplicitSessionNumber, getSessionStartTime, getSessionTravelLog, getSessionEncounteredNPCs, getSessionGuildId } from '../db';
 import { getPresignedUrl } from '../services/backup';
 import { archiveSessionTranscripts } from './archives';
 import { sendEmail, getRecipients } from './email';
@@ -220,7 +220,8 @@ export async function sendSessionRecap(
             if (filePaths.summary && fs.existsSync(filePaths.summary)) attachments.push({ path: filePaths.summary });
         }
 
-        const recipients = getRecipients('SESSION_REPORT_RECIPIENT');
+        const guildId = getSessionGuildId(sessionId);
+        const recipients = getRecipients('SESSION_REPORT_RECIPIENT', guildId);
         await sendEmail(
             recipients,
             `[Lestapenna] Recap Sessione ${sessionNum}: ${campaign?.name}`,

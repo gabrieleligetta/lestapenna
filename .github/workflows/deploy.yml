@@ -46,9 +46,16 @@ jobs:
             # 4. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
             echo "${{ secrets.ENV_FILE }}" > .env
             
-            # 5. Ricostruisci e riavvia i container usando il file di produzione
-            # DOCKER_BUILDKIT=1 abilita i cache mounts per evitare di riscaricare Whisper ogni volta
-            DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
-            
-            # 6. Pulizia immagini vecchie
+            # 5. Build immagine Whisper SOLO se non esiste (sopravvive a docker system prune)
+            if ! docker image inspect whisper-large-v3:latest > /dev/null 2>&1; then
+                echo "🔧 Building whisper-large-v3 image (first time only)..."
+                docker build -f Dockerfile.whisper -t whisper-large-v3:latest .
+            else
+                echo "✅ whisper-large-v3 image already exists, skipping build"
+            fi
+
+            # 6. Ricostruisci e riavvia i container usando il file di produzione
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+
+            # 7. Pulizia immagini vecchie (NON rimuove whisper-large-v3 perché è taggata)
             docker image prune -f

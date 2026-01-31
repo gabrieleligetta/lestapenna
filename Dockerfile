@@ -11,35 +11,11 @@ RUN yarn install --frozen-lockfile
 COPY . .
 RUN yarn build
 
-# --- STAGE 2: WHISPER COMPILER (BULLSEYE = GCC 10, NO FP16 BUG) ---
-FROM debian:bullseye-slim AS whisper-builder
-
-# AGGIUNTO 'cmake': Richiesto per la compilazione delle nuove versioni di whisper.cpp
-RUN apt-get update && apt-get install -y build-essential git make curl cmake && rm -rf /var/lib/apt/lists/*
-
-# Clona whisper.cpp (cached)
-RUN --mount=type=cache,target=/cache/whisper \
-    if [ -d /cache/whisper/.git ]; then \
-        cp -r /cache/whisper /build; \
-    else \
-        git clone https://github.com/ggerganov/whisper.cpp.git /build && \
-        cp -r /build /cache/whisper; \
-    fi
-
-WORKDIR /build
-
-# Compila whisper.cpp
-RUN cmake -B build -DBUILD_SHARED_LIBS=OFF && \
-    cmake --build build --config Release
-
-# Scarica il modello LARGE-V3 (cached - ~3GB)
-RUN --mount=type=cache,target=/cache/models \
-    if [ -f /cache/models/ggml-large-v3.bin ]; then \
-        cp /cache/models/ggml-large-v3.bin ./models/; \
-    else \
-        bash ./models/download-ggml-model.sh large-v3 && \
-        cp ./models/ggml-large-v3.bin /cache/models/; \
-    fi
+# --- STAGE 2: WHISPER (usa immagine pre-buildata) ---
+# L'immagine whisper-large-v3 viene buildata UNA SOLA VOLTA con:
+#   docker build -f Dockerfile.whisper -t whisper-large-v3 .
+# Sopravvive a docker system prune (è un'immagine taggata, non cache)
+FROM whisper-large-v3:latest AS whisper-builder
 
 # --- STAGE 3: PRODUCTION RUNNER (BOOKWORM = FFmpeg 5.1+) ---
 FROM node:22-bookworm-slim
@@ -80,8 +56,8 @@ COPY --from=builder /app/dist ./dist
 
 # Backup interno (sopravvive ai rebuild dell'immagine)
 RUN mkdir -p /app/whisper-backup
-COPY --from=whisper-builder /build/build/bin/whisper-cli /app/whisper-backup/main
-COPY --from=whisper-builder /build/models/ggml-large-v3.bin /app/whisper-backup/model.bin
+COPY --from=whisper-builder /whisper/build/bin/whisper-cli /app/whisper-backup/main
+COPY --from=whisper-builder /whisper/models/ggml-large-v3.bin /app/whisper-backup/model.bin
 RUN chmod +x /app/whisper-backup/main
 
 # Directory per il volume (sarà popolata dall'entrypoint)

@@ -8,6 +8,7 @@ import { CommandDispatcher } from './commands';
 import { registerAllCommands } from './commands/registry';
 import { registerReadyHandler } from './bootstrap/ready';
 import { registerVoiceStateHandler } from './bootstrap/voiceState';
+import { registerGuildJoinHandler } from './bootstrap/guildJoin';
 
 const client = new Client({
     intents: [
@@ -25,6 +26,7 @@ registerAllCommands(dispatcher);
 // Event Handlers Setup
 registerReadyHandler(client);
 registerVoiceStateHandler(client);
+registerGuildJoinHandler(client);
 
 // Message Handler
 client.on('messageCreate', async (message) => {

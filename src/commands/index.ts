@@ -34,10 +34,10 @@ export class CommandDispatcher {
     }
 
     /**
-     * Get the command channel ID for a guild
+     * Get the command channel ID for a guild (no fallback - each server must configure its own)
      */
     getCmdChannelId(guildId: string): string | null {
-        return getGuildConfig(guildId, 'cmd_channel_id') || process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID || null;
+        return getGuildConfig(guildId, 'cmd_channel_id') || null;
     }
 
     /**
@@ -57,9 +57,17 @@ export class CommandDispatcher {
         const commandName = args.shift()?.toLowerCase();
         if (!commandName) return false;
 
-        // Check channel restriction (except for setcmd)
+        // Check channel restriction
+        // Config commands (setcmd, setsummary) always allowed - needed for initial setup
         const allowedChannelId = this.getCmdChannelId(message.guild.id);
-        const isConfigCommand = commandName === 'setcmd';
+        const isConfigCommand = commandName === 'setcmd' || commandName === 'setsummary';
+
+        // If no channel configured and not a config command, ignore (server not set up yet)
+        if (!allowedChannelId && !isConfigCommand) {
+            return false;
+        }
+
+        // If channel configured but message is from wrong channel (and not config command), ignore
         if (allowedChannelId && message.channelId !== allowedChannelId && !isConfigCommand) {
             return false;
         }

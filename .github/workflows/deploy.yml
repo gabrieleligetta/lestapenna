@@ -39,10 +39,9 @@ jobs:
             # 3. Scarica gli ultimi aggiornamenti forzando l'allineamento con origin/main
             git fetch origin
             git reset --hard origin/main
-            
-            # 3.1 Pulizia forzata di file obsoleti che potrebbero causare errori di build se non rimossi da git reset
-            # (succede se ci sono problemi di permessi durante il reset)
-            rm -f src/janitor.ts src/streamingMixer.ts src/backupService.ts
+
+            # 3.1 Rimuovi tutti i file non tracciati (evita errori da file orfani)
+            git clean -fd
             
             # 4. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
             echo "${{ secrets.ENV_FILE }}" > .env

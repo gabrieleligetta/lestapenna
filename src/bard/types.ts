@@ -188,6 +188,7 @@ export interface AnalystOutput {
         resistances?: string[];
     }>;
     npc_dossier_updates: Array<{
+        id?: string;  // 🆕 Short ID for direct lookup
         name: string;
         description: string;
         role?: string;
@@ -195,12 +196,13 @@ export interface AnalystOutput {
         alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
         alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
     }>;
-    location_updates: Array<{ macro: string; micro: string; description: string }>;
+    location_updates: Array<{ id?: string; macro: string; micro: string; description: string }>;  // 🆕 id for direct lookup
     travel_sequence: Array<{ macro: string; micro: string; reason?: string }>;
     present_npcs: string[];
     // Moved from Writer
     log: string[];
     character_growth: Array<{
+        id?: string;  // 🆕 Short ID of the character
         name: string;
         event: string;
         type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
@@ -212,6 +214,7 @@ export interface AnalystOutput {
         alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
     }>;
     npc_events: Array<{
+        id?: string;  // 🆕 Short ID of the NPC
         name: string;
         event: string;
         type: 'REVELATION' | 'BETRAYAL' | 'DEATH' | 'ALLIANCE' | 'STATUS_CHANGE' | 'GENERIC';
@@ -223,17 +226,22 @@ export interface AnalystOutput {
     }>;
     // 🆕 Faction System
     faction_updates: Array<{
+        id?: string;  // 🆕 Short ID for direct lookup
         name: string;
         description?: string;
         type?: 'GUILD' | 'KINGDOM' | 'CULT' | 'ORGANIZATION' | 'GENERIC';
+        alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';  // 🆕
+        alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';  // 🆕
         reputation_change?: {
             direction: 'UP' | 'DOWN';
             reason: string;
         };
     }>;
     faction_affiliations: Array<{
+        entity_id?: string;  // 🆕 Short ID of the entity for direct lookup
         entity_type: 'npc' | 'location';
         entity_name: string;
+        faction_id?: string;  // 🆕 Short ID of the faction
         faction_name: string;
         role?: 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED';
         action: 'JOIN' | 'LEAVE';
@@ -246,6 +254,7 @@ export interface AnalystOutput {
     };
     // 🆕 Artifacts
     artifacts: Array<{
+        id?: string;  // 🆕 Short ID for direct lookup
         name: string;
         description?: string;
         effects?: string;
@@ -260,6 +269,7 @@ export interface AnalystOutput {
     }>;
     // 🆕 Artifact Events
     artifact_events: Array<{
+        id?: string;  // 🆕 Short ID of the artifact
         name: string;
         event: string;
         type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC';

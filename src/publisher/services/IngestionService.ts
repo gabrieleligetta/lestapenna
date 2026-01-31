@@ -276,15 +276,31 @@ export class IngestionService {
         }
 
         // NPC events
-        for (const evt of validated.npc_events.keep) {
-            const safeDesc = evt.event || "Interazione rilevante registrata.";
-            console.log(`[NPC] ➕ ${evt.name}: ${safeDesc}`);
-            // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, island, timestamp)
-            addNpcEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'EVENT', false, timestamp);
-            // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
-            await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'NPC', timestamp);
-            markNpcDirty(campaignId, evt.name);
+        if (validated.npc_events?.keep?.length) {
+            const { npcRepository } = await import('../../db');
+            for (const evt of validated.npc_events.keep) {
+                const safeDesc = evt.event || "Interazione rilevante registrata.";
+                let npcName = evt.name;
+
+                // 🆕 ID-First Lookup logic
+                if (evt.id) {
+                    const existing = npcRepository.getNpcByShortId(campaignId, evt.id);
+                    if (existing) {
+                        console.log(`[NPC Event] 🎯 ID Match event: ${evt.id} → ${existing.name}`);
+                        npcName = existing.name;
+                    }
+                }
+
+                console.log(`[NPC] ➕ ${npcName}: ${safeDesc}`);
+                // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, island, timestamp)
+                addNpcEvent(campaignId, npcName, sessionId, safeDesc, evt.type || 'EVENT', false, timestamp);
+                // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
+                await ingestBioEvent(campaignId, sessionId, npcName, safeDesc, 'NPC', timestamp);
+                // Also mark dirty
+                markNpcDirty(campaignId, npcName);
+            }
         }
+
 
         // World events
         for (const evt of validated.world_events.keep) {
@@ -307,10 +323,20 @@ export class IngestionService {
 
         // 🆕 Artifact events
         if (validated.artifact_events?.keep?.length) {
-            const { addArtifactEvent, markArtifactDirty } = await import('../../db');
+            const { addArtifactEvent, markArtifactDirty, getArtifactByShortId } = await import('../../db');
             for (const evt of validated.artifact_events.keep) {
                 const safeDesc = evt.event || "Evento artefatto registrato.";
-                const artifactName = cleanEntityName(evt.name).name;
+                let artifactName = cleanEntityName(evt.name).name;
+
+                // 🆕 ID-First Lookup logic
+                if (evt.id) {
+                    const existing = getArtifactByShortId(campaignId, evt.id);
+                    if (existing) {
+                        console.log(`[Artifact Event] 🎯 ID Match event: ${evt.id} → ${existing.name}`);
+                        artifactName = existing.name;
+                    }
+                }
+
                 console.log(`[Artifact Event] ➕ ${artifactName}: ${safeDesc} [${evt.type || 'GENERIC'}]`);
                 addArtifactEvent(
                     campaignId,
@@ -406,6 +432,7 @@ export class IngestionService {
     private async processNpcDossierUpdates(campaignId: number, sessionId: string, npcUpdates: any[]): Promise<void> {
         console.log(`[NPC Dossier] 📋 Aggiornamento ${npcUpdates.length} schede NPC...`);
 
+        const { npcRepository } = await import('../../db');
         const dedupedNpcs = await deduplicateNpcBatch(npcUpdates);
         for (const npc of dedupedNpcs as any[]) {
             if (npc.name && (npc.description || npc.role || npc.status)) {
@@ -414,7 +441,30 @@ export class IngestionService {
                 const npcName = clean.name;
                 const npcDesc = clean.extra ? `${npc.description} (Nota: ${clean.extra})` : npc.description;
 
-                // Signature: (campaignId: number, newName: string, newDescription: string = "")
+                // 🆕 ID-First Lookup: If Analyst provided an ID, use it directly
+                if (npc.id) {
+                    const existingById = npcRepository.getNpcByShortId(campaignId, npc.id);
+                    if (existingById) {
+                        console.log(`[NPC Dossier] 🎯 ID Match: ${npc.id} → ${existingById.name}`);
+                        const oldBio = existingById.description || '';
+                        const mergedBio = await smartMergeBios(existingById.name, oldBio, npcDesc);
+                        updateNpcEntry(
+                            campaignId,
+                            existingById.name,
+                            mergedBio,
+                            npc.role || existingById.role,
+                            npc.status || existingById.status,
+                            sessionId,
+                            false,
+                            npc.alignment_moral,
+                            npc.alignment_ethical
+                        );
+                        markNpcDirty(campaignId, existingById.name);
+                        continue; // Skip reconciliation
+                    }
+                }
+
+                // Fallback: Name-based reconciliation
                 const reconciled = await reconcileNpcName(campaignId, npcName, npcDesc);
                 const finalName = reconciled ? reconciled.canonicalName : npcName;
                 if (reconciled) console.log(`[NPC Dossier] 🔄 Riconciliato: "${npc.name}" → "${finalName}"`);
@@ -422,10 +472,8 @@ export class IngestionService {
                 // Get existing bio and merge with new one
                 const existing = getNpcEntry(campaignId, finalName);
                 const oldBio = existing?.description || '';
-                // Signature: (bio1: string, bio2: string)
                 const mergedBio = await smartMergeBios(finalName, oldBio, npcDesc);
 
-                // Signature: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual?: boolean, moral?: string, ethical?: string)
                 updateNpcEntry(
                     campaignId,
                     finalName,
@@ -433,7 +481,7 @@ export class IngestionService {
                     npc.role,
                     npc.status,
                     sessionId,
-                    false, // isManual
+                    false,
                     npc.alignment_moral,
                     npc.alignment_ethical
                 );
@@ -450,6 +498,7 @@ export class IngestionService {
 
         console.log(`[Atlas] 🗺️ Aggiornamento ${locationUpdates.length} luoghi...`);
 
+        const { locationRepository } = await import('../../db');
         const dedupedLocations = await deduplicateLocationBatch(locationUpdates);
         for (const loc of dedupedLocations) {
             // Allow processing even if description is empty, to catch parenthetical info in names
@@ -473,19 +522,22 @@ export class IngestionService {
 
                 // If completely empty after cleaning, skip
                 if (!finalDesc && !cleanMacro.extra && !cleanMicro.extra) {
-                    // Only skip if there's truly no info. 
-                    // However, we might want to register the location even without description?
-                    // Legacy behavior seemed to require description. 
-                    // Let's at least log it or provide a placeholder if it's a new location.
-                    // For now, if we have NO description and NO extra info, we can't really "update" much besides existence.
-                    // But if it's a NEW location, we want it in the atlas?
-                    // The prompt says "scrivi una descrizione". 
-                    // If we have nothing, let's skip to avoid "nessuna descrizione" spam unless we want placeholders.
-                    // But user asked to fix "nessuna descrizione". 
-                    // So if we have nothing, we probably shouldn't overwrite existing description with empty string.
                     if (!finalDesc) continue;
                 }
 
+                // 🆕 ID-First Lookup: If Analyst provided an ID, use it directly
+                if ((loc as any).id) {
+                    const existingById = locationRepository.getAtlasEntryByShortId(campaignId, (loc as any).id);
+                    if (existingById) {
+                        console.log(`[Atlas] 🎯 ID Match: ${(loc as any).id} → ${existingById.macro_location}/${existingById.micro_location}`);
+                        updateAtlasEntry(campaignId, existingById.macro_location, existingById.micro_location, finalDesc, sessionId);
+                        addAtlasEvent(campaignId, existingById.macro_location, existingById.micro_location, sessionId, finalDesc, 'UPDATE', false, timestamp);
+                        markAtlasDirty(campaignId, existingById.macro_location, existingById.micro_location);
+                        continue; // Skip reconciliation
+                    }
+                }
+
+                // Fallback: Name-based reconciliation
                 const reconciled = await reconcileLocationName(campaignId, finalMacro, finalMicro, finalDesc);
 
                 if (reconciled) {
@@ -625,8 +677,30 @@ export class IngestionService {
             const cleanName = cleanEntityName(update.name);
             const factionName = cleanName.name;
 
-            // Try to find or create the faction
-            let faction = factionRepository.getFaction(campaignId, factionName);
+            // 🆕 ID-First Lookup: If Analyst provided an ID, use it directly
+            let faction = null;
+            if (update.id) {
+                faction = factionRepository.getFactionByShortId(campaignId, update.id);
+                if (faction) {
+                    console.log(`[Faction] 🎯 ID Match: ${update.id} → ${faction.name}`);
+                    // Update using matched faction
+                    const shouldUpdateDesc = update.description && !faction.is_manual;
+                    const shouldUpdateAlignment = update.alignment_moral || update.alignment_ethical;
+
+                    if (shouldUpdateDesc || shouldUpdateAlignment) {
+                        factionRepository.updateFaction(campaignId, faction.name, {
+                            ...(shouldUpdateDesc && { description: update.description }),
+                            ...(update.alignment_moral && { alignment_moral: update.alignment_moral }),
+                            ...(update.alignment_ethical && { alignment_ethical: update.alignment_ethical })
+                        }, false);
+                    }
+                }
+            }
+
+            // Fallback: Name-based lookup
+            if (!faction) {
+                faction = factionRepository.getFaction(campaignId, factionName);
+            }
 
             if (!faction) {
                 // Create new faction if it doesn't exist
@@ -645,8 +719,8 @@ export class IngestionService {
                         alignment_ethical: update.alignment_ethical
                     }, false);
                 }
-            } else {
-                // Update existing faction - but protect manual descriptions!
+            } else if (!update.id) {
+                // Update existing faction (only if not already updated via ID-first) - but protect manual descriptions!
                 const shouldUpdateDesc = update.description && !faction.is_manual;
                 const shouldUpdateAlignment = update.alignment_moral || update.alignment_ethical;
 
@@ -810,6 +884,7 @@ export class IngestionService {
             upsertArtifact,
             addArtifactEvent,
             getArtifactByName,
+            getArtifactByShortId,
             getFaction
         } = await import('../../db');
 
@@ -829,8 +904,19 @@ export class IngestionService {
                 }
             }
 
-            // Check if this is a new artifact or an update
-            const existing = getArtifactByName(campaignId, artifactName);
+            // 🆕 ID-First Lookup: If Analyst provided an ID, use it directly
+            let existing = null;
+            if (artifact.id) {
+                existing = getArtifactByShortId(campaignId, artifact.id);
+                if (existing) {
+                    console.log(`[Artifact] 🎯 ID Match: ${artifact.id} → ${existing.name}`);
+                }
+            }
+
+            // Fallback: Name-based lookup
+            if (!existing) {
+                existing = getArtifactByName(campaignId, artifactName);
+            }
             const isNew = !existing;
 
             // Prepare details

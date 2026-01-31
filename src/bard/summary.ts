@@ -571,7 +571,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                             if (reconciled && !foundNpcs.has(reconciled.canonicalName)) {
                                 foundNpcs.add(reconciled.canonicalName);
                                 const npc = reconciled.existingNpc;
-                                dynamicMemoryContext += `- **${npc.name}** (${npc.role || 'Senza ruolo'}): ${npc.description || 'Nessuna descrizione.'} [Status: ${npc.status || 'ALIVE'}]\n`;
+                                // 🆕 Include shortId for ID-based matching
+                                dynamicMemoryContext += `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${npc.description || 'Nessuna descrizione.'} [Status: ${npc.status || 'ALIVE'}]\n`;
                             }
                         } catch (e) {
                             console.error(`[Bardo] ⚠️ Errore riconciliazione NPC "${name}":`, e);
@@ -593,7 +594,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 if (!foundLocs.has(canonicalKey)) {
                                     foundLocs.add(canonicalKey);
                                     const loc = reconciled.existingEntry;
-                                    dynamicMemoryContext += `- **${canonicalKey}**: ${loc.description || 'Nessuna descrizione.'}\n`;
+                                    // 🆕 Include shortId for ID-based matching
+                                    dynamicMemoryContext += `- **${canonicalKey}** [ID: ${loc.short_id || 'N/A'}]: ${loc.description || 'Nessuna descrizione.'}\n`;
                                 }
                             }
                         } catch (e) {
@@ -625,7 +627,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 const members = factionRepository.countFactionMembers(faction.id);
                                 const totalMembers = members.npcs + members.locations + members.pcs;
                                 const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
-                                let factionInfo = `- **${faction.name}** (${faction.type || 'ORGANIZATION'}): ${faction.description || 'Nessuna descrizione.'}`;
+                                // 🆕 Include shortId for ID-based matching
+                                let factionInfo = `- **${faction.name}** [ID: ${faction.short_id || 'N/A'}] (${faction.type || 'ORGANIZATION'}): ${faction.description || 'Nessuna descrizione.'}`;
                                 if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
                                 if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
                                 dynamicMemoryContext += factionInfo + '\n';
@@ -648,7 +651,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                             const artifact = getArtifactByName(campaignId, name);
                             if (artifact && !foundArtifacts.has(artifact.name)) {
                                 foundArtifacts.add(artifact.name);
-                                let artifactInfo = `- **${artifact.name}**: ${artifact.description || 'Nessuna descrizione.'}`;
+                                // 🆕 Include shortId for ID-based matching
+                                let artifactInfo = `- **${artifact.name}** [ID: ${artifact.short_id || 'N/A'}]: ${artifact.description || 'Nessuna descrizione.'}`;
                                 if (artifact.is_cursed) artifactInfo += ` [MALEDETTO]`;
                                 if (artifact.owner_name) artifactInfo += ` [Possessore: ${artifact.owner_name}]`;
                                 dynamicMemoryContext += artifactInfo + '\n';

@@ -108,6 +108,12 @@ ${memoryContext}
 7. **CONFLICT RESOLUTION**: Se il "Testo da Analizzare" CONTRADDICE il "Contesto" (es. il contesto dice che X è "Affidabile" ma nel testo X "Tradisce" o "Attacca"), IL TESTO VINCE SEMPRE. Registra il cambiamento in npc_events e npc_dossier_updates.
 8. **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
 
+## 2.5 ISTRUZIONI ID (CRITICHE)
+Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratteri alfanumerici).
+- Se riconosci un NPC/Luogo/Fazione/Artefatto dal CONTESTO, **COPIA L'ID** nel JSON.
+- Esempio: Contesto ha "Leosin Erantar [ID: zpvbh]", testo dice "Leo Sin parlò..." → usa \`"id": "zpvbh"\`
+- Se l'entità NON appare nel CONTESTO con un ID, OMETTI il campo \`id\`.
+
 ## 3. OUTPUT JSON RICHIESTO
 {
     "loot": [
@@ -151,6 +157,7 @@ ${memoryContext}
     ],
     "npc_dossier_updates": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'zpvbh'). OMETTI se nuovo/assente.",
             "name": "Nome PROPRIO dell'NPC (es. 'Elminster', NON 'Elminster (mago)'). NON inserire descrizioni tra parentesi nel nome.",
             "description": "Descrizione fisica/personalità basata su ciò che emerge dal testo. Inserisci QUI eventuali dettagli descrittivi che metteresti tra parentesi.",
             "role": "Ruolo (es. 'Mercante', 'Guardia')",
@@ -164,6 +171,7 @@ ${memoryContext}
 
     "location_updates": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. '4qkga'). OMETTI se nuovo.",
             "macro": "Città/Regione (es. 'Waterdeep')",
             "micro": "Luogo PRINCIPALE (es. 'Castello di Waterdeep'). NON creare sub-luoghi per singole stanze (es. 'Cucine', 'Sala trono') ma AGGREGA nel luogo principale.",
             "description": "Descrizione atmosferica del luogo. Se vengono visitate più stanze, descrivile qui in un unico blocco. IGNORA SE VUOTO (Non creare l'entry)."
@@ -180,8 +188,9 @@ ${memoryContext}
     "log": ["[Luogo] Chi -> Azione -> Risultato (formato tecnico per il DM, log azioni principali)"],
     "character_growth": [
         {
-            "name": "Nome PG", 
-            "event": "Evento significativo per il personaggio", 
+            "id": "ID del PG (es. 'p_abc12'). OMETTI se non disponibile.",
+            "name": "Nome PG",
+            "event": "Evento significativo per il personaggio",
             "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"
         }
     ],
@@ -200,8 +209,9 @@ ${memoryContext}
     
     "npc_events": [
         {
-            "name": "Nome NPC", 
-            "event": "Evento chiave che coinvolge questo NPC (es. cambiato fazione, morto, rivelato segreto)", 
+            "id": "ID dell'NPC (es. 'zpvbh'). OMETTI se non noto.",
+            "name": "Nome NPC",
+            "event": "Evento chiave che coinvolge questo NPC (es. cambiato fazione, morto, rivelato segreto)",
             "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"
         }
     ],
@@ -213,6 +223,7 @@ ${memoryContext}
     ],
     "faction_updates": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'fw32d'). OMETTI se nuova.",
             "name": "Nome della fazione (es. 'Gilda dei Ladri', 'Regno di Cormyr')",
             "description": "Descrizione della fazione se nuova o aggiornata",
             "type": "GUILD|KINGDOM|CULT|ORGANIZATION|GENERIC",
@@ -226,8 +237,10 @@ ${memoryContext}
     ],
     "faction_affiliations": [
         {
+            "entity_id": "ID dell'entità dal CONTESTO (es. 'zpvbh'). OMETTI se nuova.",
             "entity_type": "npc|location",
             "entity_name": "Nome dell'NPC o Luogo",
+            "faction_id": "ID della fazione dal CONTESTO (es. 'fw32d'). OMETTI se nuova.",
             "faction_name": "Nome della fazione",
             "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
             "action": "JOIN|LEAVE"
@@ -235,6 +248,7 @@ ${memoryContext}
     ],
     "artifacts": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'bmu9p'). OMETTI se nuovo.",
             "name": "Nome artefatto (es. 'Spada del Drago', NON 'Spada del Drago (magica)'). NON usare parentesi.",
             "description": "Descrizione fisica e storia dell'oggetto",
             "effects": "Cosa fa l'artefatto (abilità, poteri, incantesimi)",
@@ -257,6 +271,7 @@ ${memoryContext}
     
     "artifact_events": [
         {
+            "id": "ID dell'artefatto (es. 'bmu9p'). OMETTI se non noto.",
             "name": "Nome Artefatto",
             "event": "Evento significativo (es. 'L'artefatto ha rivelato un nuovo potere', 'Trasferito a Gundren')",
             "type": "ACTIVATION|DESTRUCTION|TRANSFER|REVELATION|CURSE|GENERIC"

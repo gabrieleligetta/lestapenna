@@ -447,46 +447,35 @@ export const rebuildCommand: Command = {
 
 ---
 ⚠️ Per procedere con il rebuild di **${selectedCampaignName}**, scrivi:
-\`CONFIRM\`
+\`CONFIRM\` (o \`CONFIRM SMART\`) per usare la cache esistente.
+\`CONFIRM FORCE\` per rigenerare l'output AI (più lento e costoso).
 `;
 
         await message.reply(diagnosticMsg);
 
-        // --- CONFIRMATION ---
+        // --- CONFIRMATION & MODE SELECTION ---
+        let forceRegeneration = false;
         try {
             const collected = await channel.awaitMessages({
-                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFIRM',
+                filter: (m: Message) => m.author.id === message.author.id && m.content.toUpperCase().startsWith('CONFIRM'),
                 max: 1,
                 time: 60000,
                 errors: ['time']
             });
 
-            if (collected.size === 0) {
-                await message.reply("⌛ Tempo scaduto.");
-                return;
+            const content = collected.first()?.content.toUpperCase().trim();
+            if (!content) return;
+
+            if (content.includes('FORCE')) {
+                forceRegeneration = true;
+                await message.reply("⚡ **MODALITÀ FORCE ATTIVATA**: L'output AI verrà rigenerato.");
+            } else {
+                await message.reply("🧠 **MODALITÀ SMART ATTIVATA**: Verrà usata la cache esistente.");
             }
+
         } catch {
-            await message.reply("⌛ Tempo scaduto.");
+            await message.reply("⌛ Tempo scaduto. Rebuild annullato.");
             return;
-        }
-
-        // --- MODE SELECTION (Smart/Force) ---
-        await message.reply(
-            `ℹ️ **MODALITÀ REBUILD**\nScrivi \`FORCE\` per rigenerare AI output (costoso) o \`SMART\` per usare cache esistente.`
-        );
-
-        let forceRegeneration = false;
-        try {
-            const modeCollected = await channel.awaitMessages({
-                filter: (m: Message) => m.author.id === message.author.id && ['FORCE', 'SMART'].includes(m.content.toUpperCase()),
-                max: 1,
-                time: 30000,
-                errors: ['time']
-            });
-
-            forceRegeneration = modeCollected.first()?.content.toUpperCase() === 'FORCE';
-        } catch {
-            await message.reply("⌛ Defaulting to SMART mode.");
         }
 
         // --- FINAL CONFIRMATION ---

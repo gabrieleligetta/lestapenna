@@ -82,8 +82,8 @@ export const factionCommand: Command = {
                 });
             }
 
-            // 🆕 Alignment (if set)
-            if (faction.alignment_moral || faction.alignment_ethical) {
+            // 🆕 Alignment (Always show for PARTY, otherwise if set)
+            if (faction.is_party || faction.alignment_moral || faction.alignment_ethical) {
                 const moralIcon = faction.alignment_moral === 'BUONO' ? '😇' : faction.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
                 const ethicalIcon = faction.alignment_ethical === 'LEGALE' ? '📜' : faction.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
                 embed.addFields({

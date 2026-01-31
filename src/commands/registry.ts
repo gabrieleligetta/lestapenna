@@ -37,6 +37,7 @@ import { helpCommand } from './help/help';
 import { bestiaryCommand } from './inventory/bestiary';
 import { inventoryCommand } from './inventory/inventory';
 import { questCommand } from './inventory/quest';
+import { artifactCommand } from './inventory/artifact';
 
 // Locations
 import { atlasCommand } from './locations/atlas';
@@ -111,6 +112,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(bestiaryCommand);
     dispatcher.register(inventoryCommand);
     dispatcher.register(questCommand);
+    dispatcher.register(artifactCommand);
 
     // Locations
     dispatcher.register(atlasCommand);

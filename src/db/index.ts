@@ -37,6 +37,7 @@ export { chatRepository } from './repositories/ChatRepository';
 export { pendingMergeRepository } from './repositories/PendingMergeRepository';
 export { worldRepository } from './repositories/WorldRepository';
 export { factionRepository } from './repositories/FactionRepository';
+export { artifactRepository } from './repositories/ArtifactRepository';
 import { configRepository } from './repositories/ConfigRepository';
 import { campaignRepository } from './repositories/CampaignRepository';
 import { locationRepository } from './repositories/LocationRepository';
@@ -52,6 +53,7 @@ import { chatRepository } from './repositories/ChatRepository';
 import { pendingMergeRepository } from './repositories/PendingMergeRepository';
 import { worldRepository } from './repositories/WorldRepository';
 import { factionRepository } from './repositories/FactionRepository';
+import { artifactRepository } from './repositories/ArtifactRepository';
 import { wipeDatabase } from './maintenance';
 
 // Re-export repository methods as top-level functions (Backward Compatibility)
@@ -283,6 +285,21 @@ export const getFactionHistory = factionRepository.getFactionHistory;
 export const markFactionDirty = factionRepository.markFactionDirty;
 export const getDirtyFactions = factionRepository.getDirtyFactions;
 export const clearFactionDirtyFlag = factionRepository.clearFactionDirtyFlag;
+
+// Artifact
+export const upsertArtifact = artifactRepository.upsertArtifact;
+export const getArtifactByName = artifactRepository.getArtifactByName;
+export const getArtifactByShortId = artifactRepository.getArtifactByShortId;
+export const listAllArtifacts = artifactRepository.listAllArtifacts;
+export const listArtifacts = artifactRepository.listArtifacts;
+export const deleteArtifact = artifactRepository.deleteArtifact;
+export const addArtifactEvent = artifactRepository.addArtifactEvent;
+export const getArtifactHistory = artifactRepository.getArtifactHistory;
+export const markArtifactDirty = artifactRepository.markArtifactDirty;
+export const getDirtyArtifacts = artifactRepository.getDirtyArtifacts;
+export const clearArtifactDirtyFlag = artifactRepository.clearArtifactDirtyFlag;
+export const mergeArtifacts = artifactRepository.mergeArtifacts;
+export const updateArtifactFields = artifactRepository.updateArtifactFields;
 
 // Maintenance
 export { wipeDatabase };

@@ -98,6 +98,7 @@ export class IngestionService {
         if (result.character_growth?.length) batchInput.character_events = result.character_growth;
         if (result.npc_events?.length) batchInput.npc_events = result.npc_events;
         if (result.world_events?.length) batchInput.world_events = result.world_events;
+        if (result.artifact_events?.length) batchInput.artifact_events = result.artifact_events;
         if (result.loot?.length) batchInput.loot = result.loot;
         if (result.loot_removed?.length) batchInput.loot_removed = result.loot_removed;
         if (result.quests?.length) batchInput.quests = result.quests;
@@ -116,6 +117,7 @@ export class IngestionService {
                 (batchInput.npc_events?.length || 0) +
                 (batchInput.character_events?.length || 0) +
                 (batchInput.world_events?.length || 0) +
+                (batchInput.artifact_events?.length || 0) +
                 (batchInput.loot?.length || 0) +
                 (batchInput.quests?.length || 0);
 
@@ -123,6 +125,7 @@ export class IngestionService {
                 (validated.npc_events.keep.length) +
                 (validated.character_events.keep.length) +
                 (validated.world_events.keep.length) +
+                (validated.artifact_events.keep.length) +
                 (validated.loot.keep.length) +
                 (validated.loot_removed.keep.length) +
                 (validated.quests.keep.length);
@@ -133,6 +136,12 @@ export class IngestionService {
             console.log(`[Validator] ✅ Validazione completata:`);
             console.log(`  - Accettati: ${totalKept}/${totalInput}`);
             console.log(`  - Filtrati: ${totalSkipped} (${filterRate}%)`);
+
+            const factionsCount = (result.faction_updates?.length || 0);
+            const artifactsCount = (result.artifacts?.length || 0);
+            if (factionsCount > 0 || artifactsCount > 0) {
+                console.log(`  - Rilevati: ${factionsCount} Fazioni, ${artifactsCount} Artefatti (Processati separatamente)`);
+            }
         }
 
         // Process validated events
@@ -156,6 +165,17 @@ export class IngestionService {
         // Process present NPCs
         if (result.present_npcs?.length) {
             updateSessionPresentNPCs(sessionId, result.present_npcs);
+
+            // 🆕 Update last_seen_location for each NPC
+            const { campaignRepository, npcRepository } = await import('../../db');
+            const campaign = campaignRepository.getCampaignById(campaignId);
+            if (campaign?.current_macro_location || campaign?.current_micro_location) {
+                const location = [campaign.current_macro_location, campaign.current_micro_location]
+                    .filter(Boolean).join(' - ');
+                for (const npcName of result.present_npcs) {
+                    npcRepository.updateNpcLastSeenLocation(campaignId, npcName, location);
+                }
+            }
         }
 
         // 🆕 Process Character Updates (Alignment)
@@ -199,8 +219,19 @@ export class IngestionService {
             const { moral, ethical, reason } = result.party_alignment_change;
             if (moral || ethical) {
                 console.log(`[Ingestion] ⚖️ Allineamento Party: ${moral || '-'} / ${ethical || '-'} (${reason})`);
-                const { campaignRepository, addWorldEvent } = await import('../../db');
+                const { campaignRepository, addWorldEvent, factionRepository } = await import('../../db');
                 campaignRepository.updatePartyAlignment(campaignId, moral, ethical);
+
+                // 🆕 Sync with Factions table
+                const partyFaction = factionRepository.getPartyFaction(campaignId);
+                if (partyFaction) {
+                    factionRepository.updateFaction(campaignId, partyFaction.name, {
+                        alignment_moral: moral,
+                        alignment_ethical: ethical
+                    }, false);
+                    console.log(`[Ingestion] 🎭 Fazione Party allineata: ${partyFaction.name}`);
+                }
+
                 addWorldEvent(
                     campaignId,
                     sessionId,
@@ -211,6 +242,15 @@ export class IngestionService {
                     sessionStartTime
                 );
             }
+        }
+
+        // 🆕 Process Artifacts (Magical/Legendary Items)
+        console.log(`[Ingestion] 🔍 DEBUG: result.artifacts = ${JSON.stringify(result.artifacts?.slice(0, 2) || 'undefined')}`);
+        if (result.artifacts?.length) {
+            console.log(`[Ingestion] ✨ Salvataggio ${result.artifacts.length} artefatti...`);
+            await this.processArtifacts(campaignId, sessionId, result.artifacts, sessionStartTime);
+        } else {
+            console.log(`[Ingestion] ⚠️ DEBUG: Nessun artefatto nel result (artifacts è ${result.artifacts === undefined ? 'undefined' : 'empty array'})`);
         }
 
         // 📍 PHASE: SYNCING
@@ -263,6 +303,26 @@ export class IngestionService {
             addWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT', undefined, false, timestamp);
             // Signature: (campaignId: number, sessionId: string, event: string, type: string, timestamp)
             await ingestWorldEvent(campaignId, sessionId, safeDesc, evt.type || 'EVENT', timestamp);
+        }
+
+        // 🆕 Artifact events
+        if (validated.artifact_events?.keep?.length) {
+            const { addArtifactEvent, markArtifactDirty } = await import('../../db');
+            for (const evt of validated.artifact_events.keep) {
+                const safeDesc = evt.event || "Evento artefatto registrato.";
+                const artifactName = cleanEntityName(evt.name).name;
+                console.log(`[Artifact Event] ➕ ${artifactName}: ${safeDesc} [${evt.type || 'GENERIC'}]`);
+                addArtifactEvent(
+                    campaignId,
+                    artifactName,
+                    sessionId,
+                    safeDesc,
+                    evt.type || 'GENERIC',
+                    false,
+                    timestamp
+                );
+                markArtifactDirty(campaignId, artifactName);
+            }
         }
 
         // Loot (with reconciliation)
@@ -599,9 +659,21 @@ export class IngestionService {
 
                     if (faction.is_manual && update.description) {
                         console.log(`[Faction] 🔒 Descrizione manuale protetta per: ${factionName}`);
+                    } else if (shouldUpdateDesc) {
+                        console.log(`[Faction] 🔄 Aggiornata: ${factionName}`);
                     }
                 }
             }
+
+            // Always log the faction processing
+            const safeDesc = update.description || faction?.description || 'Nessuna descrizione';
+            let safeRep = update.reputation || 'NEUTRALE';
+
+            if (!update.reputation && faction) {
+                safeRep = factionRepository.getFactionReputation(campaignId, faction.id);
+            }
+
+            console.log(`[Faction] ➕ ${factionName}: ${safeDesc.substring(0, 50)}${safeDesc.length > 50 ? '...' : ''} (Rep: ${safeRep})`);
 
             // Handle reputation changes
             if (update.reputation_change && faction) {
@@ -725,4 +797,135 @@ export class IngestionService {
             // Location affiliations could be added here similarly if needed
         }
     }
+
+    // Process artifacts from the Analyst (magical/legendary items)
+    private async processArtifacts(campaignId: number, sessionId: string, artifacts: any[], timestamp: number): Promise<void> {
+        console.log(`[Artifact] 🔍 DEBUG: processArtifacts chiamato con ${artifacts?.length || 0} artefatti`);
+        if (!artifacts?.length) {
+            console.log(`[Artifact] ⚠️ DEBUG: Return early - artifacts vuoti`);
+            return;
+        }
+
+        const {
+            upsertArtifact,
+            addArtifactEvent,
+            getArtifactByName,
+            getFaction
+        } = await import('../../db');
+
+        for (const artifact of artifacts) {
+            if (!artifact.name) continue;
+
+            // Clean name (remove parentheses if present)
+            const clean = cleanEntityName(artifact.name);
+            const artifactName = clean.name;
+
+            // Resolve faction ID if faction_name is provided
+            let factionId: number | undefined;
+            if (artifact.faction_name) {
+                const faction = getFaction(campaignId, artifact.faction_name);
+                if (faction) {
+                    factionId = faction.id;
+                }
+            }
+
+            // Check if this is a new artifact or an update
+            const existing = getArtifactByName(campaignId, artifactName);
+            const isNew = !existing;
+
+            // Prepare details
+            // Sanitize function to filter out "UNKNOWN" or empty values
+            const sanitize = (val: string | null | undefined) => {
+                if (!val) return undefined;
+                const v = val.trim();
+                if (v === '' || v.toUpperCase() === 'UNKNOWN' || v.toUpperCase() === 'SCONOSCIUTO' || v.toUpperCase() === 'NESSUNO') return undefined;
+                return v;
+            };
+
+            const cleanOwnerName = sanitize(artifact.owner_name);
+            const cleanMacro = sanitize(artifact.location_macro);
+            const cleanMicro = sanitize(artifact.location_micro);
+
+            // Determine owner_type
+            // If explicit type is provided, use it.
+            // If owner_name is UNKNOWN/undefined, strict check:
+            //   - If it's NEW, default to NONE (or whatever type was provided if any)
+            //   - If it's EXISTING, treat type as undefined (don't overwrite) UNLESS explicitly provided different from current? 
+            //     Actually, safer to just use the provided type unless it's strictly defaulted strings.
+            //     But if name is UNKNOWN, we probably shouldn't change type to NPC if it was something else, 
+            //     unless we really trust the analyst's type classification without a name. 
+            //     Let's rely on standard COALESCE behavior but be careful with 'NONE' defaults.
+
+            let ownerType = artifact.owner_type;
+            if (!ownerType || ownerType === 'NONE') {
+                // If input is NONE or missing
+                if (isNew) ownerType = 'NONE';
+                else ownerType = undefined; // Don't overwrite existing with NONE unless explicit? 
+                // Actually if analyst says NONE explicitly, maybe it WAS dropped. 
+                // But earlier code defaulted `|| 'NONE'`. 
+                // If analyst returns undefined, we want undefined.
+                // If analyst returns 'NONE', we want 'NONE'.
+                if (artifact.owner_type === 'NONE') ownerType = 'NONE';
+            }
+
+            // Special case: If name is unknown, and type is NPC, but we already have an owner,
+            // we might want to skip these updates to prevent "NPC Unknown" overwrites.
+            if (!cleanOwnerName && ownerType === 'NPC' && !isNew) {
+                // If we don't have a name, but type is NPC, and it's an update...
+                // Only apply if we really want to assert "It is held by SOMEONE".
+                // Allow it for now, but since cleanOwnerName is undefined, it won't overwrite the name.
+                // It will just change type to NPC. 
+            }
+
+            const details = {
+                description: artifact.description,
+                effects: artifact.effects,
+                is_cursed: artifact.is_cursed || false,
+                curse_description: artifact.curse_description,
+                owner_type: ownerType,
+                owner_name: cleanOwnerName,
+                location_macro: cleanMacro,
+                location_micro: cleanMicro,
+                faction_id: factionId
+            };
+
+            // Upsert the artifact
+            console.log(`[Artifact] 🔍 DEBUG: Upserting artifact "${artifactName}" con status "${artifact.status || 'FUNZIONANTE'}"`);
+            try {
+                upsertArtifact(
+                    campaignId,
+                    artifactName,
+                    artifact.status || 'FUNZIONANTE',
+                    sessionId,
+                    details,
+                    false, // Not manual
+                    timestamp
+                );
+                console.log(`[Artifact] ✅ DEBUG: upsertArtifact completato per "${artifactName}"`);
+            } catch (err: any) {
+                console.error(`[Artifact] ❌ DEBUG: Errore upsertArtifact per "${artifactName}":`, err.message);
+            }
+
+            // Log appropriate event
+            const eventType = isNew ? 'DISCOVERY' : 'OBSERVATION';
+            const eventDescription = isNew
+                ? `Scoperto: ${artifact.description || 'Nessuna descrizione'}`
+                : `Osservato: ${artifact.description || 'Aggiornamento informazioni'}`;
+
+            addArtifactEvent(
+                campaignId,
+                artifactName,
+                sessionId,
+                eventDescription,
+                eventType,
+                false,
+                timestamp
+            );
+
+            console.log(`[Artifact] ➕ ${artifactName}: ${artifact.description ? artifact.description.substring(0, 50) + (artifact.description.length > 50 ? '...' : '') : 'Nessuna descrizione'} (Status: ${artifact.status || 'FUNZIONANTE'})`);
+
+            console.log(`[Artifact] ✨ ${isNew ? 'Nuovo' : 'Aggiornato'}: ${artifactName}`);
+        }
+    }
 }
+

@@ -49,6 +49,17 @@ export const whoamiCommand: Command = {
                     { name: "🌍 Campagna", value: ctx.activeCampaign!.name || "Nessuna", inline: true }
                 );
 
+            // Add alignment field if available
+            if (p.alignment_moral || p.alignment_ethical) {
+                const moralIcon = p.alignment_moral === 'BUONO' ? '😇' : p.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
+                const ethicalIcon = p.alignment_ethical === 'LEGALE' ? '📜' : p.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
+                embed.addFields({
+                    name: "⚖️ Allineamento",
+                    value: `${moralIcon} ${p.alignment_moral || 'NEUTRALE'} ${ethicalIcon} ${p.alignment_ethical || 'NEUTRALE'}`,
+                    inline: true
+                });
+            }
+
             if (targetUser && targetUser.id === targetUserId) {
                 embed.setThumbnail(targetUser.displayAvatarURL());
             }

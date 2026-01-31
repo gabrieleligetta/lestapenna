@@ -106,6 +106,43 @@ export interface SummaryResponse {
             session_date: string;
         };
     };
+    // 🆕 Faction System
+    faction_updates?: Array<{
+        name: string;
+        description?: string;
+        type?: string;
+        reputation_change?: {
+            direction: 'UP' | 'DOWN';
+            reason: string;
+        };
+    }>;
+    faction_affiliations?: Array<{
+        entity_type: 'npc' | 'location';
+        entity_name: string;
+        faction_name: string;
+        role?: string;
+        action: 'JOIN' | 'LEAVE';
+    }>;
+    // 🆕 Artifacts
+    artifacts?: Array<{
+        name: string;
+        description?: string;
+        effects?: string;
+        is_cursed?: boolean;
+        curse_description?: string;
+        owner_type?: string;
+        owner_name?: string;
+        location_macro?: string;
+        location_micro?: string;
+        faction_name?: string;
+        status?: string;
+    }>;
+    // 🆕 Artifact Events
+    artifact_events?: Array<{
+        name: string;
+        event: string;
+        type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC';
+    }>;
 }
 
 // --- VALIDATION BATCH ---
@@ -113,6 +150,7 @@ export interface ValidationBatchInput {
     npc_events?: Array<{ name: string; event: string; type: string }>;
     character_events?: Array<{ name: string; event: string; type: string }>;
     world_events?: Array<{ event: string; type: string }>;
+    artifact_events?: Array<{ name: string; event: string; type: string }>;
     loot?: Array<{ name: string; quantity?: number; description?: string }>;
     loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
     quests?: Array<{ title: string; description?: string; status?: string }>;
@@ -128,6 +166,7 @@ export interface ValidationBatchOutput {
     npc_events: { keep: any[]; skip: string[] };
     character_events: { keep: any[]; skip: string[] };
     world_events: { keep: any[]; skip: string[] };
+    artifact_events: { keep: any[]; skip: string[] };
     loot: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
     loot_removed: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
     quests: { keep: Array<{ title: string; description?: string; status?: string }>; skip: string[] };
@@ -205,4 +244,24 @@ export interface AnalystOutput {
         ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
         reason: string;
     };
+    // 🆕 Artifacts
+    artifacts: Array<{
+        name: string;
+        description?: string;
+        effects?: string;
+        is_cursed?: boolean;
+        curse_description?: string;
+        owner_type?: 'PC' | 'NPC' | 'FACTION' | 'LOCATION' | 'NONE';
+        owner_name?: string;
+        location_macro?: string;
+        location_micro?: string;
+        faction_name?: string;
+        status?: 'FUNZIONANTE' | 'DISTRUTTO' | 'PERDUTO' | 'SIGILLATO' | 'DORMIENTE';
+    }>;
+    // 🆕 Artifact Events
+    artifact_events: Array<{
+        name: string;
+        event: string;
+        type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC';
+    }>;
 }

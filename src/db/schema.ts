@@ -404,6 +404,46 @@ export const initDatabase = () => {
     )`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_faction_history_name ON faction_history (campaign_id, faction_name)`);
 
+    // --- TABELLA ARTEFATTI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS artifacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        effects TEXT,                    -- Cosa fa l'artefatto
+        is_cursed INTEGER DEFAULT 0,     -- Flag maledizione
+        curse_description TEXT,          -- Descrizione maledizione
+        owner_type TEXT,                 -- PC, NPC, FACTION, LOCATION, NONE
+        owner_id INTEGER,                -- FK dinamica
+        owner_name TEXT,                 -- Denormalizzato
+        location_macro TEXT,             -- Dove si trova
+        location_micro TEXT,
+        faction_id INTEGER,              -- FK a factions
+        status TEXT DEFAULT 'FUNZIONANTE', -- FUNZIONANTE, DISTRUTTO, PERDUTO, SIGILLATO, DORMIENTE
+        first_session_id TEXT,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+        rag_sync_needed INTEGER DEFAULT 0,
+        is_manual INTEGER DEFAULT 0,
+        short_id TEXT,
+        UNIQUE(campaign_id, name),
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_campaign ON artifacts (campaign_id)`);
+
+    // --- TABELLA STORIA ARTEFATTI ---
+    db.exec(`CREATE TABLE IF NOT EXISTS artifact_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        artifact_name TEXT NOT NULL,
+        session_id TEXT,
+        event_type TEXT, -- 'DISCOVERY', 'ACTIVATION', 'CURSE_REVEAL', 'DESTRUCTION', 'TRANSFER', 'OBSERVATION', 'MANUAL_UPDATE'
+        description TEXT NOT NULL,
+        timestamp INTEGER,
+        is_manual INTEGER DEFAULT 0,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_artifact_history_name ON artifact_history (campaign_id, artifact_name)`);
+
     // --- MIGRATIONS ---
     const migrations = [
         "ALTER TABLE sessions ADD COLUMN guild_id TEXT",

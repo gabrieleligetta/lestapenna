@@ -1,4 +1,4 @@
-import { TextChannel, Message } from 'discord.js';
+import { TextChannel, Message, StringSelectMenuBuilder, ActionRowBuilder, StringSelectMenuOptionBuilder, ComponentType } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { db, getSessionCampaignId } from '../../db';
 import { PipelineService } from '../../publisher/services/PipelineService';
@@ -26,17 +26,23 @@ interface DiagnosticStats {
     quests: number;
     inventory: number;
     bestiary: number;
+    artifacts: number; // 🆕
     ragFragments: number;
     factions: number;
     factionEvents: number;
+    artifactEvents: number; // 🆕
 }
 
 /**
  * Gets diagnostic statistics for all derived data
  */
-function getDiagnostics(): DiagnosticStats {
+function getDiagnostics(campaignId?: number): DiagnosticStats {
     const count = (table: string) => {
-        const row = db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get() as { c: number };
+        let sql = `SELECT COUNT(*) as c FROM ${table}`;
+        if (campaignId) {
+            sql += ` WHERE campaign_id = ${campaignId}`;
+        }
+        const row = db.prepare(sql).get() as { c: number };
         return row.c;
     };
 
@@ -50,17 +56,20 @@ function getDiagnostics(): DiagnosticStats {
         quests: count('quests'),
         inventory: count('inventory'),
         bestiary: count('bestiary'),
+        artifacts: count('artifacts'), // 🆕
         ragFragments: count('knowledge_fragments'),
         factions: count('factions'),
-        factionEvents: count('faction_history')
+        factionEvents: count('faction_history'),
+        artifactEvents: count('artifact_history') // 🆕
     };
 }
+
 
 /**
  * Gets all completed sessions ordered by start time
  */
-function getCompletedSessions(): SessionInfo[] {
-    return db.prepare(`
+function getCompletedSessions(campaignId?: number): SessionInfo[] {
+    let sql = `
         SELECT
             s.session_id,
             s.campaign_id,
@@ -71,10 +80,19 @@ function getCompletedSessions(): SessionInfo[] {
         JOIN recordings r ON r.session_id = s.session_id
         WHERE r.status = 'PROCESSED'
         AND r.transcription_text IS NOT NULL
+    `;
+
+    if (campaignId) {
+        sql += ` AND s.campaign_id = @campaignId `;
+    }
+
+    sql += `
         GROUP BY s.session_id
         HAVING COUNT(*) > 0
         ORDER BY start_time ASC
-    `).all() as SessionInfo[];
+    `;
+
+    return db.prepare(sql).all({ campaignId }) as SessionInfo[];
 }
 
 interface ValidationResult {
@@ -86,8 +104,8 @@ interface ValidationResult {
 /**
  * Pre-flight check: validates all sessions have required data before any deletion
  */
-function validateRebuildReadiness(): ValidationResult {
-    const sessions = getCompletedSessions();
+function validateRebuildReadiness(campaignId?: number): ValidationResult {
+    const sessions = getCompletedSessions(campaignId);
     const issues: { session_id: string; title: string | null; reason: string }[] = [];
 
     for (const session of sessions) {
@@ -135,14 +153,22 @@ function validateRebuildReadiness(): ValidationResult {
 /**
  * Soft reset: preserves NPC and location names, clears descriptions
  */
-function softResetAnagrafiche(): { npcs: number; locations: number; factions: number } {
+function softResetAnagrafiche(campaignId?: number): { npcs: number; locations: number; factions: number } {
+    const whereClause = campaignId
+        ? `WHERE COALESCE(is_manual, 0) = 0 AND campaign_id = ${campaignId}`
+        : `WHERE COALESCE(is_manual, 0) = 0`;
+
+    const whereClauseParty = campaignId
+        ? `WHERE COALESCE(is_manual, 0) = 0 AND is_party = 0 AND campaign_id = ${campaignId}`
+        : `WHERE COALESCE(is_manual, 0) = 0 AND is_party = 0`;
+
     // Reset NPC descriptions but keep names, roles, status, aliases
     const npcResult = db.prepare(`
         UPDATE npc_dossier
         SET description = NULL,
             rag_sync_needed = 1,
             first_session_id = NULL
-        WHERE COALESCE(is_manual, 0) = 0
+        ${whereClause}
     `).run();
 
     // Reset character bios but keep foundation_description
@@ -151,7 +177,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number; factions: nu
         SET description = foundation_description,
             rag_sync_needed = 1,
             last_synced_history_id = 0
-        WHERE COALESCE(is_manual, 0) = 0
+        ${whereClause}
     `).run();
 
     // Reset location descriptions but keep macro/micro names
@@ -160,7 +186,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number; factions: nu
         SET description = NULL,
             rag_sync_needed = 1,
             first_session_id = NULL
-        WHERE COALESCE(is_manual, 0) = 0
+        ${whereClause}
     `).run();
 
     // Reset faction descriptions
@@ -169,7 +195,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number; factions: nu
         SET description = NULL,
             rag_sync_needed = 1,
             first_session_id = NULL
-        WHERE COALESCE(is_manual, 0) = 0 AND is_party = 0
+        ${whereClauseParty}
     `).run();
 
     return {
@@ -182,7 +208,7 @@ function softResetAnagrafiche(): { npcs: number; locations: number; factions: nu
 /**
  * Hard purge: deletes all historical/derived data
  */
-function purgeAllDerivedData(): Record<string, number> {
+function purgeAllDerivedData(campaignId?: number): Record<string, number> {
     const results: Record<string, number> = {};
 
     const tablesWithManual = [
@@ -197,25 +223,34 @@ function purgeAllDerivedData(): Record<string, number> {
         'quest_history',
         'bestiary_history',
         'inventory_history',
-        'faction_history'
+        'faction_history',
+        'artifacts',        // 🆕
+        'artifact_history'  // 🆕
     ];
+
+    const whereClause = campaignId
+        ? `WHERE COALESCE(is_manual, 0) = 0 AND campaign_id = ${campaignId}`
+        : `WHERE COALESCE(is_manual, 0) = 0`;
 
     for (const table of tablesWithManual) {
         // Only delete entries NOT marked as manual
-        const result = db.prepare(`DELETE FROM ${table} WHERE COALESCE(is_manual, 0) = 0`).run();
+        const result = db.prepare(`DELETE FROM ${table} ${whereClause}`).run();
         results[table] = result.changes;
     }
 
     // Always full wipe RAG fragments (they will be regenerated from source)
-    const ragResult = db.prepare('DELETE FROM knowledge_fragments').run();
+    const ragWhere = campaignId ? `WHERE campaign_id = ${campaignId}` : '';
+    const ragResult = db.prepare(`DELETE FROM knowledge_fragments ${ragWhere}`).run();
     results['knowledge_fragments'] = ragResult.changes;
 
     // Also reset character sync state but preserve manual descriptions and foundation
+    const charWhere = campaignId ? `AND campaign_id = ${campaignId}` : '';
     db.prepare(`
         UPDATE characters
         SET description = CASE WHEN COALESCE(is_manual, 0) = 1 THEN description ELSE COALESCE(foundation_description, '') END,
             last_synced_history_id = 0,
             rag_sync_needed = 1
+        WHERE 1=1 ${charWhere}
     `).run();
 
     return results;
@@ -224,7 +259,9 @@ function purgeAllDerivedData(): Record<string, number> {
 /**
  * Prune "zombie" entities: deletes NPCs/Locations that remained without description after rebuild
  */
-export function pruneEmptyEntities(): { npcs: number; locations: number } {
+export function pruneEmptyEntities(campaignId?: number): { npcs: number; locations: number } {
+    const campaignFilter = campaignId ? `AND campaign_id = ${campaignId}` : '';
+
     return db.transaction(() => {
         // 1. Identify NPCs to delete
         const npcsToDelete = db.prepare(`
@@ -233,6 +270,7 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 OR length(description) < 5
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
+                ${campaignFilter}
         `).all() as { id: number; name: string }[];
 
         // 2. Identify Locations to delete
@@ -242,11 +280,12 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 OR length(description) < 10
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
+                ${campaignFilter}
         `).all() as { id: number; macro_location: string; micro_location: string }[];
 
         // 3. Delete NPC history and faction affiliations first
         for (const npc of npcsToDelete) {
-            db.prepare('DELETE FROM npc_history WHERE npc_name = ?').run(npc.name);
+            db.prepare('DELETE FROM npc_history WHERE npc_name = ?' + (campaignId ? ` AND campaign_id = ${campaignId}` : '')).run(npc.name);
             db.prepare('DELETE FROM faction_affiliations WHERE entity_type = ? AND entity_id = ?').run('npc', npc.id);
         }
 
@@ -256,12 +295,14 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 DELETE FROM location_history 
                 WHERE lower(macro_location) = lower(?) 
                 AND lower(micro_location) = lower(?)
+                ${campaignFilter}
             `).run(loc.macro_location, loc.micro_location);
 
             db.prepare(`
                 DELETE FROM atlas_history 
                 WHERE lower(macro_location) = lower(?) 
                 AND lower(micro_location) = lower(?)
+                ${campaignFilter}
             `).run(loc.macro_location, loc.micro_location);
 
             // Clean up faction affiliations for this location
@@ -275,6 +316,7 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 OR length(description) < 5
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
+                ${campaignFilter}
         `).run();
 
         const locationResult = db.prepare(`
@@ -283,6 +325,7 @@ export function pruneEmptyEntities(): { npcs: number; locations: number } {
                 OR length(description) < 10
                 OR description LIKE 'Nessuna descrizione%')
                 AND COALESCE(is_manual, 0) = 0
+                ${campaignFilter}
         `).run();
 
         // 6. Also cleanup any orphaned faction affiliations (entities deleted outside this function)
@@ -321,13 +364,71 @@ export const rebuildCommand: Command = {
             return;
         }
 
-        // --- DIAGNOSTIC MODE (no args) ---
-        if (!args[0]) {
-            const stats = getDiagnostics();
-            const sessions = getCompletedSessions();
+        // --- CAMPAIGN SELECTION ---
+        const campaigns = db.prepare('SELECT id, name FROM campaigns').all() as { id: number; name: string }[];
+        let selectedCampaignId: number | undefined = undefined;
+        let selectedCampaignName = 'ALL CAMPAIGNS';
 
-            const diagnosticMsg = `📊 **DIAGNOSTICA DATABASE**
-            
+        // Note: We bypass selection if a specific diagnostic is requested via args, but existing diagnostics logic assumes manual run.
+        // We'll insert the selection flow at the start.
+
+        if (args.length === 0) {
+            // Dropdown selection
+            const campaignOptions = campaigns.map(c =>
+                new StringSelectMenuOptionBuilder()
+                    .setLabel(c.name)
+                    .setValue(c.id.toString())
+            );
+
+            campaignOptions.unshift(
+                new StringSelectMenuOptionBuilder()
+                    .setLabel('TUTTE LE CAMPAGNE')
+                    .setValue('ALL')
+                    .setDescription('Ricostruisce intero database')
+            );
+
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('rebuild_campaign_select')
+                .setPlaceholder('Seleziona campagna da ricostruire')
+                .addOptions(campaignOptions);
+
+            const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+            const reply = await message.reply({
+                content: '🌍 **SELEZIONE CAMPAGNA**\nSeleziona la campagna da analizzare/ricostruire:',
+                components: [row]
+            });
+
+            try {
+                const selection = await reply.awaitMessageComponent({
+                    componentType: ComponentType.StringSelect,
+                    filter: i => i.user.id === message.author.id,
+                    time: 60000
+                });
+
+                const value = selection.values[0];
+                if (value !== 'ALL') {
+                    selectedCampaignId = parseInt(value);
+                    selectedCampaignName = campaigns.find(c => c.id === selectedCampaignId)?.name || 'Unknown';
+                }
+
+                await selection.deferUpdate();
+                await reply.delete();
+            } catch (e) {
+                await reply.edit({ content: '⌛ Tempo scaduto. Comando annullato.', components: [] });
+                return;
+            }
+        }
+
+        // --- DIAGNOSTIC REPORT ---
+        const stats = getDiagnostics(selectedCampaignId);
+        const sessions = getCompletedSessions(selectedCampaignId);
+
+        const diagnosticMsg = `📊 **DIAGNOSTICA REBUILD**
+        
+**Ambito:** ${selectedCampaignName}
+**Sessioni da processare:** ${sessions.length}
+
 **Anagrafiche (verranno preservati i NOMI):**
 - NPC nel dossier: **${stats.npcs}**
 - Luoghi nell'atlante: **${stats.locations}**
@@ -341,45 +442,59 @@ export const rebuildCommand: Command = {
 - Quest: **${stats.quests}**
 - Oggetti inventario: **${stats.inventory}**
 - Creature bestiario: **${stats.bestiary}**
+- Artefatti: **${stats.artifacts}**
 - Frammenti RAG: **${stats.ragFragments}**
 
-**Sessioni da ri-processare:** ${sessions.length}
-${sessions.slice(0, 5).map((s, i) => `  ${i + 1}. \`${s.session_id.slice(0, 8)}...\` - ${s.title || 'Senza titolo'}`).join('\n')}
-${sessions.length > 5 ? `  ... e altre ${sessions.length - 5}` : ''}
-
 ---
-⚠️ Per procedere con il rebuild, scrivi:
-\`$rebuild CONFIRM\`
-
-Il processo:
-1. Resettera' le descrizioni di NPC e luoghi (nomi preservati)
-2. Cancellera' TUTTI i dati storici
-3. Rigenerera' tutto dalle trascrizioni originali
+⚠️ Per procedere con il rebuild di **${selectedCampaignName}**, scrivi:
+\`CONFIRM\`
 `;
 
-            await message.reply(diagnosticMsg);
+        await message.reply(diagnosticMsg);
+
+        // --- CONFIRMATION ---
+        try {
+            const collected = await channel.awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && m.content === 'CONFIRM',
+                max: 1,
+                time: 60000,
+                errors: ['time']
+            });
+
+            if (collected.size === 0) {
+                await message.reply("⌛ Tempo scaduto.");
+                return;
+            }
+        } catch {
+            await message.reply("⌛ Tempo scaduto.");
             return;
         }
 
-        // --- CONFIRM MODE ---
-        if (args[0].toUpperCase() !== 'CONFIRM') {
-            await message.reply("Uso: `$rebuild` (diagnostica) o `$rebuild CONFIRM [FORCE]` (esegui)");
-            return;
-        }
-
-        const forceRegeneration = args[1]?.toUpperCase() === 'FORCE';
-        if (forceRegeneration) {
-            await message.reply("⚠️ **MODALITÀ FORCE ATTIVA**: Verrà forzata la rigenerazione AI di tutti i riassunti (Costi aggiuntivi!).");
-        } else {
-            await message.reply("ℹ️ **MODALITÀ SMART**: Verranno usati i dati AI salvati se disponibili (Zero costi).");
-        }
-
-        // Double confirmation
+        // --- MODE SELECTION (Smart/Force) ---
         await message.reply(
-            `⚠️ **CONFERMA FINALE**\n\n` +
+            `ℹ️ **MODALITÀ REBUILD**\nScrivi \`FORCE\` per rigenerare AI output (costoso) o \`SMART\` per usare cache esistente.`
+        );
+
+        let forceRegeneration = false;
+        try {
+            const modeCollected = await channel.awaitMessages({
+                filter: (m: Message) => m.author.id === message.author.id && ['FORCE', 'SMART'].includes(m.content.toUpperCase()),
+                max: 1,
+                time: 30000,
+                errors: ['time']
+            });
+
+            forceRegeneration = modeCollected.first()?.content.toUpperCase() === 'FORCE';
+        } catch {
+            await message.reply("⌛ Defaulting to SMART mode.");
+        }
+
+        // --- FINAL CONFIRMATION ---
+        await message.reply(
+            `⚠️ **CONFERMA FINALE (${selectedCampaignName})**\n\n` +
             `Stai per:\n` +
             `1. Resettare le descrizioni di NPC e luoghi\n` +
-            `2. Cancellare TUTTI i dati storici (eventi, quest, loot, RAG)\n` +
+            `2. Cancellare TUTTI i dati storici\n` +
             `3. Rigenerare tutto dalle trascrizioni\n\n` +
             `Scrivi \`RICOSTRUISCI\` entro 30 secondi per procedere.`
         );
@@ -392,12 +507,8 @@ Il processo:
                 errors: ['time']
             });
 
-            if (collected.size === 0) {
-                await message.reply("⌛ Tempo scaduto. Operazione annullata.");
-                return;
-            }
+            if (collected.size === 0) return;
         } catch {
-            await message.reply("⌛ Tempo scaduto. Operazione annullata.");
             return;
         }
 
@@ -406,11 +517,11 @@ Il processo:
         monitor.startSession(rebuildSessionId);
         console.log(`[Rebuild] 📊 Monitor avviato per sessione ${rebuildSessionId}`);
 
-        const statusMsg = await channel.send("🔄 **REBUILD AVVIATO**\n\n⏳ Fase 0/3: Validazione pre-flight...");
+        const statusMsg = await channel.send(`🔄 **REBUILD AVVIATO: ${selectedCampaignName}**\n\n⏳ Fase 0/3: Validazione pre-flight...`);
 
         try {
             // Phase 0: PRE-FLIGHT VALIDATION (before any deletion!)
-            const validation = validateRebuildReadiness();
+            const validation = validateRebuildReadiness(selectedCampaignId);
 
             if (!validation.valid) {
                 await monitor.endSession(); // Clean up monitor
@@ -435,13 +546,13 @@ Il processo:
             }
 
             await statusMsg.edit(
-                `🔄 **REBUILD IN CORSO**\n\n` +
+                `🔄 **REBUILD IN CORSO: ${selectedCampaignName}**\n\n` +
                 `✅ Fase 0/3: Validazione OK (${validation.sessions.length} sessioni pronte)\n\n` +
                 `⏳ Fase 1/3: Reset anagrafiche...`
             );
 
             // Phase 1: Soft reset anagrafiche (NOW safe to proceed)
-            const resetStats = softResetAnagrafiche();
+            const resetStats = softResetAnagrafiche(selectedCampaignId);
             await statusMsg.edit(
                 `🔄 **REBUILD IN CORSO**\n\n` +
                 `✅ Fase 0/4: Validazione OK\n` +
@@ -453,7 +564,7 @@ Il processo:
             );
 
             // Phase 2: Purge all derived data
-            const purgeStats = purgeAllDerivedData();
+            const purgeStats = purgeAllDerivedData(selectedCampaignId);
             const totalPurged = Object.values(purgeStats).reduce((a, b) => a + b, 0);
 
             await statusMsg.edit(
@@ -470,7 +581,7 @@ Il processo:
             );
 
             // Phase 3: Regenerate all sessions
-            const sessions = getCompletedSessions();
+            // sessions already filtered by getCompletedSessions(selectedCampaignId)
             const pipelineService = new PipelineService();
             const ingestionService = new IngestionService();
 
@@ -566,24 +677,27 @@ Il processo:
                 `⏳ Fase 4/4: Pulizia entità vuote...`
             );
 
-            const pruneStats = pruneEmptyEntities();
+            const pruneStats = pruneEmptyEntities(selectedCampaignId);
             console.log(`[Rebuild] 🧹 Pruned ${pruneStats.npcs} NPCs and ${pruneStats.locations} Locations.`);
 
             // Final report
-            const finalStats = getDiagnostics();
+            const finalStats = getDiagnostics(selectedCampaignId);
             let finalMessage = `✅ **REBUILD COMPLETATO**\n\n` +
                 `**Risultato:**\n` +
                 `- Sessioni processate: ${successCount}/${sessions.length}\n` +
                 `- Errori: ${errorCount}\n\n` +
-                `**Nuovo stato database:**\n` +
-                `- NPC Rimossi (Vuoti): ${pruneStats.npcs}\n` +
-                `- Luoghi Rimossi (Vuoti): ${pruneStats.locations}\n` +
+                `**Nuovo stato database (${selectedCampaignName}):**\n` +
+                `- NPC: ${finalStats.npcs} (Puliti: ${pruneStats.npcs})\n` +
+                `- Luoghi: ${finalStats.locations} (Puliti: ${pruneStats.locations})\n` +
+                `- Fazioni: ${finalStats.factions}\n` +
                 `- Eventi NPC: ${finalStats.npcEvents}\n` +
                 `- Eventi Mondo: ${finalStats.worldEvents}\n` +
                 `- Eventi PG: ${finalStats.characterEvents}\n` +
                 `- Eventi Fazioni: ${finalStats.factionEvents}\n` +
+                `- Eventi Artefatti: ${finalStats.artifactEvents}\n` +
                 `- Quest: ${finalStats.quests}\n` +
                 `- Inventario: ${finalStats.inventory}\n` +
+                `- Artefatti: ${finalStats.artifacts}\n` +
                 `- Frammenti RAG: ${finalStats.ragFragments}`;
 
             if (errors.length > 0) {

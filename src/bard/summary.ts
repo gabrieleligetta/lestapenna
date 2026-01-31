@@ -340,6 +340,9 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
         saveDebugFile(sessionId, 'analyst_response.txt', content);
         const parsed = safeJsonParse(content);
 
+        // 🔍 DEBUG: Check artifacts in parsed JSON
+        console.log(`[Analista] 🔍 DEBUG parsed.artifacts: ${JSON.stringify(parsed?.artifacts?.slice(0, 2) || 'undefined/null')}`);
+
         // Normalizations
         const validStatuses = ['ALIVE', 'DEAD', 'MISSING'] as const;
         const normalizedNpcUpdates = Array.isArray(parsed?.npc_dossier_updates)
@@ -396,7 +399,11 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
                 world_events: Array.isArray(parsed?.world_events) ? parsed.world_events : [],
                 // 🆕 Faction System
                 faction_updates: Array.isArray(parsed?.faction_updates) ? parsed.faction_updates : [],
-                faction_affiliations: Array.isArray(parsed?.faction_affiliations) ? parsed.faction_affiliations : []
+                faction_affiliations: Array.isArray(parsed?.faction_affiliations) ? parsed.faction_affiliations : [],
+                // 🆕 Artifacts
+                artifacts: Array.isArray(parsed?.artifacts) ? parsed.artifacts : [],
+                // 🆕 Artifact Events
+                artifact_events: Array.isArray(parsed?.artifact_events) ? parsed.artifact_events : []
             },
             tokens: { input: inputTokens, output: outputTokens, inputChars: prompt.length, outputChars: content.length }
         };
@@ -409,7 +416,7 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
                 loot: [], loot_removed: [], quests: [], monsters: [],
                 npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
                 log: [], character_growth: [], npc_events: [], world_events: [],
-                faction_updates: [], faction_affiliations: []
+                faction_updates: [], faction_affiliations: [], artifacts: [], artifact_events: []
             },
             tokens: { input: 0, output: 0, inputChars: 0, outputChars: 0 }
         };
@@ -459,6 +466,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     console.log(`[Bardo] ⚠️ Cache trovata ma con tono diverso (${cachedTone} vs ${tone}). Rigenero.`);
                 } else {
                     console.log(`[Bardo] 💾 Trovata cache valida (generata il ${new Date(cached.lastGeneratedAt).toLocaleString()}). Uso dati salvati.`);
+                    console.log(`[Bardo] 🔍 DEBUG Cache artifacts: ${JSON.stringify(cached.analystData.artifacts?.slice(0, 2) || 'undefined')}`);
                     return {
                         // Reconstruct SummaryResponse from cached data
                         summary: cached.summaryData.summary,
@@ -478,7 +486,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                         npc_dossier_updates: cached.analystData.npc_dossier_updates,
                         location_updates: cached.analystData.location_updates,
                         travel_sequence: cached.analystData.travel_sequence,
-                        present_npcs: cached.analystData.present_npcs
+                        present_npcs: cached.analystData.present_npcs,
+                        // 🆕 Faction System
+                        faction_updates: cached.analystData.faction_updates || [],
+                        faction_affiliations: cached.analystData.faction_affiliations || [],
+                        // 🆕 Artifacts
+                        artifacts: cached.analystData.artifacts || [],
+                        // 🆕 Artifact Events
+                        artifact_events: cached.analystData.artifact_events || []
                     };
                 }
             }
@@ -539,8 +554,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     response_format: { type: "json_object" }
                 });
 
-                const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[]}');
-                console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni.`);
+                const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[], "artifacts":[]}');
+                console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni, ${entities.artifacts?.length || 0} Artefatti.`);
 
                 dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
 
@@ -621,6 +636,36 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     }
                 }
 
+                // 6. Idratazione Artefatti (solo quelli trovati dallo Scout)
+                if (entities.artifacts && Array.isArray(entities.artifacts) && entities.artifacts.length > 0) {
+                    const foundArtifacts = new Set<string>();
+
+                    dynamicMemoryContext += `\n✨ ARTEFATTI MENZIONATI:\n`;
+
+                    const { getArtifactByName } = await import('../db');
+                    for (const name of entities.artifacts) {
+                        try {
+                            const artifact = getArtifactByName(campaignId, name);
+                            if (artifact && !foundArtifacts.has(artifact.name)) {
+                                foundArtifacts.add(artifact.name);
+                                let artifactInfo = `- **${artifact.name}**: ${artifact.description || 'Nessuna descrizione.'}`;
+                                if (artifact.is_cursed) artifactInfo += ` [MALEDETTO]`;
+                                if (artifact.owner_name) artifactInfo += ` [Possessore: ${artifact.owner_name}]`;
+                                dynamicMemoryContext += artifactInfo + '\n';
+                            }
+                        } catch (e) {
+                            console.error(`[Bardo] ⚠️ Errore riconciliazione Artefatto "${name}":`, e);
+                        }
+                    }
+                }
+
+                // LOG RIEPILOGATIVO CONTESTO
+                console.log(`[Bardo] 📋 Riepilogo Contesto Analista:`);
+                if (entities.npcs?.length) console.log(`  - NPCs: ${entities.npcs.join(', ')}`);
+                if (entities.locations?.length) console.log(`  - Luoghi: ${entities.locations.join(', ')}`);
+                if (entities.factions?.length) console.log(`  - Fazioni: ${entities.factions.join(', ')}`);
+                if (entities.artifacts?.length) console.log(`  - Artefatti: ${entities.artifacts.join(', ')}`);
+
                 // Fallback location corrente
                 const snapshot = getCampaignSnapshot(campaignId);
                 dynamicMemoryContext += `\n📍 LUOGO CORRENTE: ${snapshot.location_context || 'Sconosciuto'}\n`;
@@ -670,7 +715,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             world_events: [],
             log: [],
             faction_updates: [],
-            faction_affiliations: []
+            faction_affiliations: [],
+            artifacts: [],
+            artifact_events: []
         };
 
         // CICLO EPISODICO
@@ -686,7 +733,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 loot: [], loot_removed: [], quests: [], monsters: [],
                 npc_dossier_updates: [], location_updates: [], travel_sequence: [], present_npcs: [],
                 log: [], character_growth: [], npc_events: [], world_events: [],
-                faction_updates: [], faction_affiliations: []
+                faction_updates: [], faction_affiliations: [], artifacts: [], artifact_events: []
             };
 
             if (!options.skipAnalysis) {
@@ -770,6 +817,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             // 🆕 Faction System
             if (partialAnalystData.faction_updates) aggregatedData.faction_updates.push(...partialAnalystData.faction_updates);
             if (partialAnalystData.faction_affiliations) aggregatedData.faction_affiliations.push(...partialAnalystData.faction_affiliations);
+            // 🆕 Artifacts
+            if (partialAnalystData.artifacts) aggregatedData.artifacts.push(...partialAnalystData.artifacts);
+            // 🆕 Artifact Events
+            if (partialAnalystData.artifact_events) aggregatedData.artifact_events.push(...partialAnalystData.artifact_events);
 
             // --- STEP B: SCRITTORE (Per questa parte) ---
             console.log(`[Bardo] ✍️ STEP 2: Scrittore - Atto ${actNumber} (${tone})...`);
@@ -950,7 +1001,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             npc_dossier_updates: aggregatedData.npc_dossier_updates,
             location_updates: aggregatedData.location_updates,
             travel_sequence: aggregatedData.travel_sequence,
-            present_npcs: aggregatedData.present_npcs
+            present_npcs: aggregatedData.present_npcs,
+            // 🆕 Faction System
+            faction_updates: aggregatedData.faction_updates,
+            faction_affiliations: aggregatedData.faction_affiliations,
+            // 🆕 Artifacts
+            artifacts: aggregatedData.artifacts,
+            // 🆕 Artifact Events
+            artifact_events: aggregatedData.artifact_events
         };
     } catch (err: any) {
         console.error("[Bardo] ❌ Errore finale:", err);

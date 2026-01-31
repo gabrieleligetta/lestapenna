@@ -295,3 +295,50 @@ export interface FactionHistoryEntry {
     timestamp: number;
     is_manual: number;
 }
+
+// =============================================
+// 🆕 ARTIFACT SYSTEM TYPES
+// =============================================
+
+/**
+ * Stati possibili di un artefatto
+ */
+export type ArtifactStatus = 'FUNZIONANTE' | 'DISTRUTTO' | 'PERDUTO' | 'SIGILLATO' | 'DORMIENTE';
+
+/**
+ * Tipi di proprietario per un artefatto
+ */
+export type ArtifactOwnerType = 'PC' | 'NPC' | 'FACTION' | 'LOCATION' | 'NONE';
+
+export interface ArtifactEntry {
+    id: number;
+    campaign_id: number;
+    name: string;
+    description: string | null;
+    effects: string | null;
+    is_cursed: number;
+    curse_description: string | null;
+    owner_type: ArtifactOwnerType | null;
+    owner_id: number | null;
+    owner_name: string | null;
+    location_macro: string | null;
+    location_micro: string | null;
+    faction_id: number | null;
+    status: ArtifactStatus;
+    first_session_id: string | null;
+    last_updated: string;
+    rag_sync_needed: number;
+    is_manual: number;
+    short_id?: string;
+}
+
+export interface ArtifactHistoryEntry {
+    id: number;
+    campaign_id: number;
+    artifact_name: string;
+    session_id: string | null;
+    event_type: 'DISCOVERY' | 'ACTIVATION' | 'CURSE_REVEAL' | 'DESTRUCTION' | 'TRANSFER' | 'OBSERVATION' | 'MANUAL_UPDATE';
+    description: string;
+    timestamp: number;
+    is_manual: number;
+}

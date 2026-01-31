@@ -249,6 +249,17 @@ export async function reconcileLocationName(
     console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.entry.macro_location}-${c.entry.micro_location}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
     for (const candidate of topCandidates) {
+        // SUPER-MATCH: If similarity is very high (e.g. same micro), accept immediately without AI
+        // Lowered threshold to 0.85 to catch robust matches like "Palazzo dei Draghi"
+        if (candidate.similarity >= 0.85) {
+            console.log(`[Location Reconcile] ⚡ AUTO-MERGE (High Sim): "${newMacro} - ${newMicro}" → "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason})`);
+            return {
+                canonicalMacro: candidate.entry.macro_location,
+                canonicalMicro: candidate.entry.micro_location,
+                existingEntry: candidate.entry
+            };
+        }
+
         console.log(`[Location Reconcile] 🤔 Checking candidate: "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason})...`);
 
         const isSame = await aiConfirmSameLocationExtended(

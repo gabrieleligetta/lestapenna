@@ -78,8 +78,9 @@ Restituisci un JSON con array di stringhe.
 - "locations": Nomi di luoghi specifici visitati o menzionati come destinazione immediata.
 - "quests": Parole chiave o titoli di missioni citate.
 - "factions": Nomi di fazioni, gilde, regni, culti, organizzazioni menzionate nel testo (es. "Culto del Drago", "Gilda dei Ladri", "Impero"). Includi anche riferimenti generici se chiari (es. "il Culto", "la Gilda").
+- "artifacts": Nomi di oggetti magici, leggendari, unici o molto importanti per la trama (es. "Maschera del Drago", "Spada vorpal", "Chiave dello scheletro"). Ignora oggetti comuni.
 
-Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": [], "factions": []}
+Rispondi SOLO con JSON valido: {"npcs": [], "locations": [], "quests": [], "factions": [], "artifacts": []}
 `;
 
 // --- ANALYZER ---
@@ -127,8 +128,6 @@ ${memoryContext}
         {
             "title": "Titolo breve della missione (es. 'Salvare il Fabbro')",
             "description": "Descrizione del progresso o aggiornamento (es. 'Il gruppo ha trovato la chiave della cella')",
-            "title": "Titolo breve della missione (es. 'Salvare il Fabbro')",
-            "description": "Descrizione del progresso o aggiornamento (es. 'Il gruppo ha trovato la chiave della cella')",
             "status": "OPEN|IN_PROGRESS|COMPLETED|FAILED",
             "type": "MAJOR|MINOR"
         }
@@ -142,7 +141,6 @@ ${memoryContext}
             "abilities": ["Abilità speciali osservate (es. 'soffio di fuoco', 'attacco multiplo')"],
             "weaknesses": ["Debolezze scoperte (es. 'vulnerabile al fuoco')"],
             "resistances": ["Resistenze osservate (es. 'immune al veleno')"]
-        }
         }
         // AVVISO AI:
         // 1. NON INCLUDERE creature menzionate solo nel "Contesto".
@@ -187,6 +185,19 @@ ${memoryContext}
             "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"
         }
     ],
+    "character_updates": [
+        {
+            "name": "Nome PG (esatto dal CONTESTO)",
+            "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Sacrifica sé stesso per altri -> BUONO, Uccide innocenti per profitto -> CATTIVO)",
+            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Rispetta codici/patti -> LEGALE, Infrange leggi/tradisce -> CAOTICO)"
+        }
+    ],
+    // AVVISO AI CHARACTER_UPDATES:
+    // 1. Estrai allineamento SOLO per PG (Personaggi Giocanti) elencati nel CONTESTO.
+    // 2. Deduci l'allineamento dalle AZIONI osservate nel TESTO DA ANALIZZARE.
+    // 3. NON estrarre se non ci sono azioni significative che rivelino l'allineamento.
+    // 4. Questo è SEPARATO da character_growth (che traccia eventi). Qui tracci SOLO moral/ethical.
+    
     "npc_events": [
         {
             "name": "Nome NPC", 
@@ -219,11 +230,47 @@ ${memoryContext}
             "entity_name": "Nome dell'NPC o Luogo",
             "faction_name": "Nome della fazione",
             "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
-            "faction_name": "Nome della fazione",
-            "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
             "action": "JOIN|LEAVE"
         }
     ],
+    "artifacts": [
+        {
+            "name": "Nome artefatto (es. 'Spada del Drago', NON 'Spada del Drago (magica)'). NON usare parentesi.",
+            "description": "Descrizione fisica e storia dell'oggetto",
+            "effects": "Cosa fa l'artefatto (abilità, poteri, incantesimi)",
+            "is_cursed": true,
+            "curse_description": "Dettagli sulla maledizione se presente",
+            "owner_type": "PC|NPC|FACTION|LOCATION|NONE",
+            "owner_name": "Nome del proprietario attuale",
+            "location_macro": "Regione/Città dove si trova",
+            "location_micro": "Luogo specifico",
+            "faction_name": "Nome fazione che lo possiede (se applicabile)",
+            "status": "FUNZIONANTE|DISTRUTTO|PERDUTO|SIGILLATO|DORMIENTE"
+        }
+    ],
+    // AVVISO AI ARTEFATTI:
+    // 1. Estrai SOLO oggetti MAGICI, LEGGENDARI o IMPORTANTI per la trama (es. reliquie, armi leggendarie, oggetti maledetti).
+    // 2. NON estrarre oggetti comuni (spade normali, pozioni base, oro, equipaggiamento standard).
+    // 3. Estrai se l'oggetto ha un NOME PROPRIO o è descritto come significativo/unico.
+    // 4. Se un artefatto cambia proprietario, aggiorna owner_type e owner_name.
+    // 5. Se un artefatto viene distrutto/sigillato/perso, aggiorna status.
+    
+    "artifact_events": [
+        {
+            "name": "Nome Artefatto",
+            "event": "Evento significativo (es. 'L'artefatto ha rivelato un nuovo potere', 'Trasferito a Gundren')",
+            "type": "ACTIVATION|DESTRUCTION|TRANSFER|REVELATION|CURSE|GENERIC"
+        }
+    ],
+    // AVVISO AI ARTIFACT_EVENTS:
+    // 1. Estrai eventi SIGNIFICATIVI per artefatti già noti o appena scoperti.
+    // 2. ACTIVATION: L'artefatto si attiva, usa un potere, o viene "risvegliato".
+    // 3. DESTRUCTION: L'artefatto viene distrutto, danneggiato o reso inutilizzabile.
+    // 4. TRANSFER: L'artefatto cambia possessore, viene rubato, donato o perso.
+    // 5. REVELATION: Viene scoperta una nuova proprietà, storia o segreto dell'artefatto.
+    // 6. CURSE: La maledizione si manifesta, viene attivata o viene rimossa.
+    // 7. GENERIC: Altri eventi significativi che non rientrano nelle categorie sopra.
+    
     "party_alignment_change": {
         "moral": "BUONO|NEUTRALE|CATTIVO (opzionale, solo se cambia)",
         "ethical": "LEGALE|NEUTRALE|CAOTICO (opzionale, solo se cambia)",
@@ -253,6 +300,8 @@ ${memoryContext}
     - **LEGALE**: Rispetto di leggi, codici d'onore, patti.
     - **CAOTICO**: Libertà assoluta, ribellione all'autorità, imprevedibilità.
     - Registra un cambiamento SOLO se c'è una **svolta significativa** o una **conferma forte** di un nuovo comportamento. Se rimangono coerenti, NON generare l'output.
+- **ARTEFATTI**: Estrai SOLO oggetti MAGICI, LEGGENDARI o IMPORTANTI per la trama. NON estrarre oggetti comuni. Estrai se l'oggetto ha un NOME PROPRIO o è descritto come significativo/unico. Se un artefatto cambia proprietario o stato, aggiornalo.
+- **ARTIFACT EVENTS**: Registra eventi SIGNIFICATIVI per artefatti (attivazione poteri, distruzione, trasferimento, rivelazioni, maledizioni). NON registrare semplici osservazioni o menzioni.
 
 
 **TESTO DA ANALIZZARE**:
@@ -465,12 +514,13 @@ CONFRONTO DATI:
 ${ragContextText}
 
 CRITERI DI GIUDIZIO (In ordine di importanza):
-1. **Fonetica e Trascrizione:** Se i nomi suonano molto simili (es. Siri/Ciri, Leosin/Leo Sin), c'è un'altissima probabilità che siano la stessa persona, specialmente se il contesto non smentisce categoricamente.
-2. **Trasformazioni D&D:** In un mondo fantasy, i personaggi possono cambiare età, forma fisica o aspetto rapidamente (possessione divina, crescita magica, polimorfismo, maledizioni). NON rifiutare un match solo perché uno è "bambino" e l'altro "adulto" se i nomi coincidono.
-3. **Ruoli Semantici:** Cerca legami come "Contenitore/Ospite di X" vs "Incarnazione di X". Se entrambi sono legati alla stessa entità (es. Voce di Ogma), sono la stessa entità.
-4. **Logica di Situazione:** Se le descrizioni condividono dettagli unici (es. "tre occhi", "sguardo gelido", "legata agli Insonni"), conferma il match.
+1. **Fonetica e Trascrizione:** Se i nomi suonano simili (es. Siri/Ciri, Leosin/Leo Sin), c'è un'altissima probabilità che siano la stessa persona.
+2. **Soprannomi/Alias:** Se uno dei nomi sembra un soprannome o una forma abbreviata dell'altro, RISPONDI SI.
+3. **Trasformazioni D&D:** I personaggi possono cambiare età, forma fisica o stato (morto/vivo) rapidamente. NON rifiutare un match per differenze di stato se l'identità è la stessa.
+4. **Ruoli Semantici:** Se entrambi sono legati alla stessa entità o ruolo specfifico (es. Voce di Ogma), sono la stessa persona.
+5. **Logica di Situazione:** Se le descrizioni condividono dettagli unici, conferma il match.
 
-Se c'è una forte somiglianza fonetica o un legame logico plausibile nel contesto/descrizione, **RISPONDI SI** per evitare la proliferazione di duplicati nel database.
+Se c'è una somiglianza fonetica o un legame logico plausibile, **RISPONDI SI** per evitare duplicati. Sii permissivo sugli errori di trascrizione.
 
 Rispondi SOLO: SI oppure NO`;
 
@@ -480,8 +530,9 @@ Domanda: "${name1}" e "${name2}" sono la STESSA persona/NPC?
 
 Considera che:
 - I nomi potrebbero essere pronunce errate o parziali (es. "Leo Sin" = "Leosin")
-- Potrebbero essere soprannomi (es. "Rantar" potrebbe essere il cognome di "Leosin Erantar")
-- Le trascrizioni audio spesso dividono i nomi (es. "Leosin Erantar" → "Leo Sin" + "Rantar")
+- Potrebbero essere soprannomi o alias (es. "Rantar" = "Leosin Erantar")
+- Le trascrizioni audio spesso dividono i nomi
+- Sii permissivo sugli errori di battitura/trascrizione.
 
 ${context ? `Contesto aggiuntivo: ${context}` : ''}
 
@@ -497,12 +548,13 @@ CONFRONTO DATI:
 ${ragContextText}
 
 CRITERI DI GIUDIZIO:
-1. **Fonetica:** Se i nomi suonano simili o sono traduzioni/sinonimi (es. "Torre Nera" vs "Torre Oscura").
-2. **Contesto (RAG):** Se la "Memoria Storica" descrive eventi accaduti nel luogo candidato che coincidono con la descrizione del nuovo luogo.
-3. **Gerarchia:** Se uno è chiaramente un sotto-luogo dell'altro ma usato come nome principale.
-4. **Link Semantico:** Se il Contesto RAG o la descrizione suggeriscono che sono lo stesso posto (es. "Torre Nera" che è descritta come "Oscura"), RISPONDI SI.
+1. **Macro Mancante:** Se il NUOVO luogo ha una Macro vuota o sconosciuta (es. inizia con " - " o è vuota), IGNORA la differenza di Macro. Se la Micro coincide o è molto simile ("Palazzo" vs "Palazzo dei Draghi"), RISPONDI SI.
+2. **Fonetica:** Se i nomi suonano simili o sono traduzioni/sinonimi (es. "Torre Nera" vs "Torre Oscura").
+3. **Contesto (RAG):** Se la "Memoria Storica" descrive eventi accaduti nel luogo candidato che coincidono con la descrizione del nuovo luogo.
+4. **Gerarchia:** Se uno è chiaramente un sotto-luogo dell'altro ma usato come nome principale.
+5. **Link Semantico:** Se il Contesto RAG o la descrizione suggeriscono che sono lo stesso posto.
 
-Se c'è anche solo un vago ma plausibile collegamento nel contesto, **FAVORISCI IL SI** per evitare duplicati.
+Se c'è un collegamento plausibile o una parte del nome coincide (specialmente la Micro), **FAVORISCI IL SI** per evitare duplicati.
 
 Rispondi SOLO: SI oppure NO`;
 
@@ -514,7 +566,7 @@ Considera che:
 - I nomi potrebbero essere trascrizioni errate o parziali (es. "Palazzo centrale" = "Palazzo Centrale")
 - Potrebbero essere descrizioni diverse dello stesso posto (es. "Sala del trono" = "Sala Trono")
 - I luoghi macro potrebbero avere varianti (es. "Dominio di Ogma" = "Regno di Ogma")
-- I micro-luoghi potrebbero essere sottoinsiemi (es. "Cancelli d'Ingresso" ≈ "Cancelli del dominio")
+- **Se una Macro è vuota (" - Micro"), ignora la Macro e confronta solo la Micro.**
 
 ${context ? `Contesto aggiuntivo: ${context}` : ''}
 

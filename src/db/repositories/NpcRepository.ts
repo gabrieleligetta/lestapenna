@@ -114,6 +114,17 @@ export const npcRepository = {
         db.prepare('UPDATE npc_dossier SET rag_sync_needed = 0 WHERE campaign_id = ? AND name = ?').run(campaignId, name);
     },
 
+    updateNpcLastSeenLocation: (campaignId: number, name: string, location: string): void => {
+        const res = db.prepare(`
+            UPDATE npc_dossier 
+            SET last_seen_location = ?, last_updated = CURRENT_TIMESTAMP
+            WHERE campaign_id = ? AND lower(name) = lower(?)
+        `).run(location, campaignId, name);
+        if (res.changes > 0) {
+            console.log(`[NPC] 📍 Aggiornata posizione per ${name}: ${location}`);
+        }
+    },
+
     getNpcByAlias: (campaignId: number, alias: string): NpcEntry | undefined => {
         return db.prepare(`
             SELECT * FROM npc_dossier 

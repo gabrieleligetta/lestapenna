@@ -190,8 +190,8 @@ export async function reconcileNpcName(
     console.log(`[Reconcile] 🔍 "${newName}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.npc.name}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
     for (const candidate of topCandidates) {
-        // SUPER-MATCH: If similarity is extremely high, accept immediately without AI
-        if (candidate.similarity >= 0.90) {
+        // SUPER-MATCH: If similarity is very high, accept immediately without AI
+        if (candidate.similarity >= 0.85) {
             console.log(`[Reconcile] ⚡ AUTO-MERGE (High Sim): "${newName}" → "${candidate.npc.name}" (${candidate.reason})`);
             return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
         }

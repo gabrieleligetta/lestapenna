@@ -19,6 +19,8 @@ export async function normalizeSummaryNames(campaignId: any, result: any): Promi
     if (result.character_growth) result.character_growth.forEach((e: any) => e.name = cleanName(e.name));
     // Aggiungiamo anche mostri se presenti nel result (anche se normalizeSummaryNames è storicamente per NPC/PG)
     if (result.monsters) result.monsters.forEach((m: any) => m.name = cleanName(m.name));
+    // 🆕 Artifact Events
+    if (result.artifact_events) result.artifact_events.forEach((e: any) => e.name = cleanName(e.name));
 
     const nameMap = new Map<string, string>();
     const namesToCheck = new Set<string>();

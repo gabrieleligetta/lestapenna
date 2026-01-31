@@ -82,6 +82,7 @@ import {
 import { generateBio } from './bio'; // 🆕 Unified Generator
 import { reconcileNpcName } from './reconciliation/npc';
 import { reconcileLocationName } from './reconciliation/location';
+import { reconcileQuestTitle } from './reconciliation/quest';
 
 // Constants
 // Constants
@@ -604,12 +605,33 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     }
                 }
 
-                // 4. Idratazione Quest (Titoli attivi sempre)
-                const activeQuests = questRepository.getOpenQuests(campaignId);
-                if (activeQuests.length > 0) {
-                    dynamicMemoryContext += `\n⚔️ QUEST ATTIVE: ${activeQuests.map((q: any) => q.title).join(', ')}\n`;
+                // 4. Idratazione Quest (solo quelle trovate dallo Scout)
+                if (entities.quests && Array.isArray(entities.quests) && entities.quests.length > 0) {
+                    const foundQuests = new Set<string>();
+
+                    dynamicMemoryContext += `\n⚔️ QUEST RILEVANTI:\n`;
+
+                    for (const title of entities.quests) {
+                        try {
+                            const match = await reconcileQuestTitle(campaignId, title);
+                            if (match && !foundQuests.has(match.canonicalTitle)) {
+                                foundQuests.add(match.canonicalTitle);
+                                const q = match.existingQuest;
+                                // 🆕 Include shortId for ID-based matching
+                                let questInfo = `- **${q.title}** [ID: ${q.short_id || 'N/A'}]: ${q.description || 'Nessuna descrizione.'} [Status: ${q.status}]`;
+                                if (q.type) questInfo += ` [${q.type}]`;
+                                dynamicMemoryContext += questInfo + '\n';
+                            }
+                        } catch (e) {
+                            console.error(`[Bardo] ⚠️ Errore riconciliazione Quest "${title}":`, e);
+                        }
+                    }
+
+                    if (foundQuests.size === 0) {
+                        dynamicMemoryContext += `- Nessuna quest nota corrispondente trovata.\n`;
+                    }
                 } else {
-                    dynamicMemoryContext += `\n⚔️ NESSUNA QUEST ATTIVA.\n`;
+                    dynamicMemoryContext += `\n⚔️ NESSUNA QUEST MENZIONATA.\n`;
                 }
 
                 // 5. Idratazione Fazioni (solo quelle trovate dallo Scout)
@@ -667,6 +689,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 console.log(`[Bardo] 📋 Riepilogo Contesto Analista:`);
                 if (entities.npcs?.length) console.log(`  - NPCs: ${entities.npcs.join(', ')}`);
                 if (entities.locations?.length) console.log(`  - Luoghi: ${entities.locations.join(', ')}`);
+                if (entities.quests?.length) console.log(`  - Quest: ${entities.quests.join(', ')}`);
                 if (entities.factions?.length) console.log(`  - Fazioni: ${entities.factions.join(', ')}`);
                 if (entities.artifacts?.length) console.log(`  - Artefatti: ${entities.artifacts.join(', ')}`);
 

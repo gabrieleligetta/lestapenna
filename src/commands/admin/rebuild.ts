@@ -151,9 +151,9 @@ function validateRebuildReadiness(campaignId?: number): ValidationResult {
 }
 
 /**
- * Soft reset: preserves NPC and location names, clears descriptions
+ * Soft reset: preserves entity names, clears descriptions
  */
-function softResetAnagrafiche(campaignId?: number): { npcs: number; locations: number; factions: number } {
+function softResetAnagrafiche(campaignId?: number): { npcs: number; locations: number; factions: number; artifacts: number; bestiary: number } {
     const whereClause = campaignId
         ? `WHERE COALESCE(is_manual, 0) = 0 AND campaign_id = ${campaignId}`
         : `WHERE COALESCE(is_manual, 0) = 0`;
@@ -198,10 +198,33 @@ function softResetAnagrafiche(campaignId?: number): { npcs: number; locations: n
         ${whereClauseParty}
     `).run();
 
+    // Reset artifact descriptions but keep names
+    const artifactResult = db.prepare(`
+        UPDATE artifacts
+        SET description = NULL,
+            effects = NULL,
+            curse_description = NULL,
+            rag_sync_needed = 1,
+            first_session_id = NULL
+        ${whereClause}
+    `).run();
+
+    // Reset bestiary but keep names
+    const bestiaryResult = db.prepare(`
+        UPDATE bestiary
+        SET status = 'ALIVE',
+            count = NULL,
+            session_id = NULL,
+            last_seen = NULL
+        ${whereClause}
+    `).run();
+
     return {
         npcs: npcResult.changes,
         locations: locationResult.changes,
-        factions: factionResult.changes
+        factions: factionResult.changes,
+        artifacts: artifactResult.changes,
+        bestiary: bestiaryResult.changes
     };
 }
 
@@ -218,14 +241,12 @@ function purgeAllDerivedData(campaignId?: number): Record<string, number> {
         'location_history',
         'quests',
         'inventory',
-        'bestiary',
         'atlas_history',
         'quest_history',
-        'bestiary_history',
+        'bestiary_history',   // Eventi bestiary (entità resettate in softResetAnagrafiche)
         'inventory_history',
         'faction_history',
-        'artifacts',        // 🆕
-        'artifact_history'  // 🆕
+        'artifact_history'    // Eventi artifacts (entità resettate in softResetAnagrafiche)
     ];
 
     const whereClause = campaignId
@@ -548,7 +569,9 @@ export const rebuildCommand: Command = {
                 `✅ Fase 1/4: Anagrafiche resettate\n` +
                 `   - ${resetStats.npcs} NPC (nomi preservati)\n` +
                 `   - ${resetStats.locations} luoghi (nomi preservati)\n` +
-                `   - ${resetStats.factions} fazioni (nomi preservati)\n\n` +
+                `   - ${resetStats.factions} fazioni (nomi preservati)\n` +
+                `   - ${resetStats.artifacts} artefatti (nomi preservati)\n` +
+                `   - ${resetStats.bestiary} creature (nomi preservati)\n\n` +
                 `⏳ Fase 2/4: Pulizia dati storici...`
             );
 

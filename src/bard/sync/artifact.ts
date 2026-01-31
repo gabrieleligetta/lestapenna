@@ -4,6 +4,7 @@
 
 import { getArtifactByName, clearArtifactDirtyFlag, getDirtyArtifacts } from '../../db';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
  * Sincronizza un artefatto nel RAG
@@ -21,19 +22,35 @@ export async function syncArtifactEntryIfNeeded(
 
     console.log(`[Sync] Avvio sync Artefatto: ${artifactName}...`);
 
-    let ragContent = `[[ARTEFATTO: ${artifactName}]]\n`;
-    if (artifact.description) ragContent += `DESCRIZIONE: ${artifact.description}\n`;
-    if (artifact.effects) ragContent += `EFFETTI: ${artifact.effects}\n`;
+    // 1. Fetch History
+    const { artifactRepository } = await import('../../db/repositories/ArtifactRepository');
+    const history = artifactRepository.getArtifactHistory(campaignId, artifactName);
+
+    // 2. Generate Bio (Historical Memory)
+    const newBio = await generateBio('ARTIFACT', {
+        campaignId,
+        name: artifactName,
+        currentDesc: artifact.description || '',
+    }, history);
+
+
+    // 3. Build RAG content
+    let ragContent = `[[SCHEDA ARTEFATTO UFFICIALE: ${artifactName}]]\n`;
+    ragContent += `DESCRIZIONE COMPLETA: ${newBio}\n`;
+    if (artifact.effects) ragContent += `EFFETTI CONOSCIUTI: ${artifact.effects}\n`;
     if (artifact.status) ragContent += `STATO: ${artifact.status}\n`;
     if (artifact.is_cursed) {
         ragContent += `MALEDETTO: Sì\n`;
         if (artifact.curse_description) ragContent += `MALEDIZIONE: ${artifact.curse_description}\n`;
     }
-    if (artifact.owner_name) ragContent += `PROPRIETARIO: ${artifact.owner_name} (${artifact.owner_type})\n`;
+    if (artifact.owner_name) ragContent += `POSSESSORE ATTUALE: ${artifact.owner_name} (${artifact.owner_type})\n`;
     if (artifact.location_macro || artifact.location_micro) {
         ragContent += `POSIZIONE: ${artifact.location_macro || ''} ${artifact.location_micro ? '- ' + artifact.location_micro : ''}\n`;
     }
 
+    ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
+
+    // 4. Ingest into RAG
     await ingestGenericEvent(
         campaignId,
         'ARTIFACT_UPDATE',

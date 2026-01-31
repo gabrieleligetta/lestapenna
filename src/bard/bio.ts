@@ -11,7 +11,7 @@ import {
     CHARACTER_NARRATIVE_BIO_PROMPT
 } from './prompts';
 
-export type BioEntityType = 'CHARACTER' | 'NPC' | 'LOCATION' | 'QUEST' | 'MONSTER' | 'ITEM';
+export type BioEntityType = 'CHARACTER' | 'NPC' | 'LOCATION' | 'QUEST' | 'MONSTER' | 'ITEM' | 'FACTION' | 'ARTIFACT';
 
 interface BioContext {
     campaignId?: number; // Optional for backward compat or forced? Should be required really.
@@ -115,6 +115,35 @@ Scrivi la storia dell'oggetto basandoti sui suoi passaggi di mano e utilizzi.
 - Stile: Descrizione da catalogo d'asta magica o leggenda sussurrata.
 - Lunghezza: Massimo 3000 caratteri.`;
 
+        case 'FACTION':
+            return `Sei uno Storico Politico. Scrivi il **Rapporto di Intelligence** per la fazione: "${ctx.name}".
+DESCRIZIONE ESISTENTE: ${ctx.currentDesc || 'Nessuna'}
+
+MOVIMENTI E AZIONI RECENTI:
+${historyText}
+
+OBIETTIVO:
+Aggiorna la descrizione della fazione integrando le sue mosse recenti e i cambiamenti di status/reputazione.
+- Come sono cambiate le sue alleanze?
+- Ha guadagnato o perso influenza?
+- Stile: Analitico e Persuasivo.
+- Focus: Obiettivi politici, reputazione e struttura di potere.
+- Lunghezza: Massimo 3500 caratteri.`;
+
+        case 'ARTIFACT':
+            return `Sei il Custode delle Reliquie. Scrivi la **Storia dell'Artefatto**: "${ctx.name}".
+DESCRIZIONE ESISTENTE: ${ctx.currentDesc || 'Nessuna'}
+
+EVENTI E UTILIZZI:
+${historyText}
+
+OBIETTIVO:
+Narra la storia recente dell'artefatto, chi lo ha impugnato e quali poteri ha manifestato.
+- Se ha cambiato proprietario, descrivi come.
+- Se sono emersi nuovi poteri o maledizioni, integrali nella descrizione.
+- Stile: Mitologico e Solenne.
+- Lunghezza: Massimo 3000 caratteri.`;
+
         default:
             return `Aggiorna la descrizione di ${ctx.name} basandoti su: ${historyText}`;
     }
@@ -187,6 +216,16 @@ export async function generateBio(
                 case 'ITEM': {
                     const { inventoryRepository } = await import('../db/repositories/InventoryRepository');
                     inventoryRepository.updateInventoryDescription(campaignId, ctx.name, newDesc);
+                    break;
+                }
+                case 'FACTION': {
+                    const { factionRepository } = await import('../db/repositories/FactionRepository');
+                    factionRepository.updateFaction(campaignId, ctx.name, { description: newDesc }, false);
+                    break;
+                }
+                case 'ARTIFACT': {
+                    const { artifactRepository } = await import('../db/repositories/ArtifactRepository');
+                    artifactRepository.updateArtifactDescription(campaignId, ctx.name, newDesc);
                     break;
                 }
             }

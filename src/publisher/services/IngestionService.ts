@@ -52,7 +52,10 @@ import {
     syncAllDirtyBestiary,
     syncAllDirtyInventory,
     syncAllDirtyQuests,
+    syncAllDirtyInventory,
+    syncAllDirtyQuests,
     syncAllDirtyFactions,
+    syncAllDirtyArtifacts,
     cleanEntityName
 } from '../../bard';
 
@@ -661,6 +664,12 @@ export class IngestionService {
             const syncedFactionCount = await syncAllDirtyFactions(campaignId);
             if (syncedFactionCount > 0) {
                 console.log(`[Sync] ✅ Sincronizzate ${syncedFactionCount} fazioni con RAG.`);
+            }
+
+            // 🆕 Sync Artifacts
+            const syncedArtifactCount = await syncAllDirtyArtifacts(campaignId);
+            if (syncedArtifactCount > 0) {
+                console.log(`[Sync] ✅ Sincronizzati ${syncedArtifactCount} artefatti con RAG.`);
             }
         } catch (e) {
             console.error('[Sync] ⚠️ Errore batch sync:', e);

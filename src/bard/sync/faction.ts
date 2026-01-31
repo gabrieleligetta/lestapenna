@@ -8,6 +8,7 @@ import {
     locationRepository
 } from '../../db';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
  * Sincronizza una Fazione nel RAG (LAZY - solo se necessario)
@@ -28,34 +29,31 @@ export async function syncFactionEntryIfNeeded(
 
     console.log(`[Sync] Avvio sync per fazione "${factionName}"...`);
 
-    // 1. Get members and reputation
-    const members = factionRepository.countFactionMembers(faction.id);
-    const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
+    // 1. Get History
     const history = factionRepository.getFactionHistory(campaignId, factionName);
 
-    // 2. Build RAG content
-    let ragContent = `[[SCHEDA FAZIONE: ${factionName}]]
+    // 2. Generate Bio using unified service (Historical Memory)
+    const newBio = await generateBio('FACTION', {
+        campaignId,
+        name: factionName,
+        currentDesc: faction.description || '',
+    }, history);
+
+    // 3. Build RAG content
+    const members = factionRepository.countFactionMembers(faction.id);
+    const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
+
+    // Use the NEW generated bio as the description
+    let ragContent = `[[SCHEDA FAZIONE UFFICIALE: ${factionName}]]
 TIPO: ${faction.type}
 STATO: ${faction.status}
 REPUTAZIONE CON IL PARTY: ${reputation}
 MEMBRI: ${members.npcs} NPC, ${members.pcs} PG, ${members.locations} Luoghi affiliati
-`;
+DESCRIZIONE COMPLETA: ${newBio}
 
-    if (faction.description) {
-        ragContent += `DESCRIZIONE: ${faction.description}\n`;
-    }
+(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
 
-    // Add recent history (max 5 events)
-    if (history.length > 0) {
-        ragContent += `\nEVENTI RECENTI:\n`;
-        history.slice(-5).forEach(h => {
-            ragContent += `- [${h.event_type}] ${h.description}\n`;
-        });
-    }
-
-    ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
-
-    // 3. Ingest into RAG
+    // 4. Ingest into RAG
     await ingestGenericEvent(
         campaignId,
         'FACTION_UPDATE',
@@ -64,11 +62,11 @@ MEMBRI: ${members.npcs} NPC, ${members.pcs} PG, ${members.locations} Luoghi affi
         'FACTION'
     );
 
-    // 4. Clear dirty flag
+    // 5. Clear dirty flag
     factionRepository.clearFactionDirtyFlag(campaignId, factionName);
 
     console.log(`[Sync] Fazione "${factionName}" sincronizzata.`);
-    return faction.description;
+    return newBio;
 }
 
 /**

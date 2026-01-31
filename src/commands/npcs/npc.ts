@@ -33,6 +33,7 @@ import {
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
+import { startInteractiveNpcUpdate } from './interactiveUpdate';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -401,11 +402,16 @@ export const npcCommand: Command = {
         if (argsStr.toLowerCase().startsWith('update')) {
             const content = argsStr.substring(7).trim();
 
+            if (!content) {
+                await startInteractiveNpcUpdate(ctx);
+                return;
+            }
+
             if (content.includes('|')) {
                 // Type 1: Narrative Update
                 const parts = content.split('|').map(s => s.trim());
                 if (parts.length < 2) {
-                    await ctx.message.reply('Uso: `$npc update <Nome> | <Nota/Fatto>`');
+                    await startInteractiveNpcUpdate(ctx);
                     return;
                 }
                 let name = parts[0];

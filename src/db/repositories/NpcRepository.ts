@@ -53,6 +53,7 @@ export const npcRepository = {
         if (fields.aliases !== undefined) { sets.push('aliases = $aliases'); params.aliases = fields.aliases; }
         if (fields.alignment_moral !== undefined) { sets.push('alignment_moral = $alignment_moral'); params.alignment_moral = fields.alignment_moral; }
         if (fields.alignment_ethical !== undefined) { sets.push('alignment_ethical = $alignment_ethical'); params.alignment_ethical = fields.alignment_ethical; }
+        if (fields.last_seen_location !== undefined) { sets.push('last_seen_location = $last_seen_location'); params.last_seen_location = fields.last_seen_location; }
 
         if (sets.length === 0) return false;
 

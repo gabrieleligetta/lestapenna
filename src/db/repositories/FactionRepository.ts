@@ -137,7 +137,12 @@ export const factionRepository = {
     },
 
     renameFaction: (campaignId: number, oldName: string, newName: string): boolean => {
-        // Check for conflict
+        // Same name = no-op, return success
+        if (oldName.toLowerCase() === newName.toLowerCase()) {
+            return true;
+        }
+
+        // Check for conflict with a different faction
         const existing = factionRepository.getFaction(campaignId, newName);
         if (existing) {
             console.warn(`[Faction] ⚠️ Fazione "${newName}" già esistente.`);

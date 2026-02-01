@@ -31,6 +31,7 @@ export async function syncArtifactEntryIfNeeded(
         campaignId,
         name: artifactName,
         currentDesc: artifact.description || '',
+        manualDescription: (artifact as any).manual_description || undefined // 🆕 Passa la descrizione manuale
     }, history);
 
 

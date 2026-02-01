@@ -717,7 +717,8 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     if (input.world_events && input.world_events.length > 0) {
         prompt += `**Eventi Mondo (${input.world_events.length}):**\n`;
         input.world_events.forEach((e: any, i: number) => {
-            prompt += `${i + 1}. [${e.type}] ${e.event}\n`;
+            const idTag = e.id ? `[ID: ${e.id}] ` : '';
+            prompt += `${i + 1}. ${idTag}[${e.type}] ${e.event}\n`;
         });
         prompt += "\n";
     }
@@ -726,8 +727,9 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     if (input.loot && input.loot.length > 0) {
         prompt += `**Loot (${input.loot.length}):**\n`;
         input.loot.forEach((item: any, i: number) => {
+            const idTag = item.id ? `[ID: ${item.id}] ` : '';
             const desc = typeof item === 'string' ? item : `${item.name} (x${item.quantity}) - ${item.description || ''}`;
-            prompt += `${i + 1}. ${desc}\n`
+            prompt += `${i + 1}. ${idTag}${desc}\n`
         });
         prompt += "\n";
     }
@@ -736,9 +738,10 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     if (input.quests && input.quests.length > 0) {
         prompt += `**Quest (${input.quests.length}):**\n`;
         input.quests.forEach((q: any, i: number) => {
+            const idTag = q.id ? `[ID: ${q.id}] ` : '';
             const title = typeof q === 'string' ? q : q.title;
             const desc = typeof q === 'string' ? '' : ` - ${q.description || ''}`;
-            prompt += `${i + 1}. ${title}${desc}\n`;
+            prompt += `${i + 1}. ${idTag}${title}${desc}\n`;
         });
         prompt += "\n";
     }

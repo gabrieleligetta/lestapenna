@@ -35,7 +35,9 @@ export async function syncAtlasEntryIfNeeded(
             name: `${macro} - ${micro}`,
             macro: macro,
             micro: micro,
-            currentDesc: entry?.description || "" // Use existing desc as base or fallback
+            campaignId,
+            currentDesc: entry?.description || "",
+            manualDescription: (entry as any).manual_description || undefined // 🆕 Passa la descrizione manuale
         }, history);
 
         // 3. Update DB

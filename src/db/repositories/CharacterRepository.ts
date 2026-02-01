@@ -77,12 +77,20 @@ export const characterRepository = {
             let sql = `UPDATE characters SET ${field} = ?`;
             if (needsRagSync) sql += `, rag_sync_needed = 1`;
             if (isManual) sql += `, is_manual = 1`;
+            if (field === 'description' && isManual) sql += `, manual_description = ?`;
+
             sql += ` WHERE user_id = ? AND campaign_id = ? `;
-            db.prepare(sql).run(value, userId, campaignId);
+
+            const params:(string | number)[] = [value];
+            if (field === 'description' && isManual) params.push(value);
+            params.push(userId, campaignId);
+
+            db.prepare(sql).run(...params);
         } else {
             // Create new with just this field populated
             const ragValue = needsRagSync ? 1 : 0;
-            db.prepare(`INSERT INTO characters(user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES(?, ?, ?, ?, ?)`).run(userId, campaignId, value, ragValue, isManual ? 1 : 0);
+            const manualDesc = (field === 'description' && isManual) ? value : null;
+            db.prepare(`INSERT INTO characters(user_id, campaign_id, ${field}, rag_sync_needed, is_manual, manual_description) VALUES(?, ?, ?, ?, ?, ?)`).run(userId, campaignId, value, ragValue, isManual ? 1 : 0, manualDesc);
         }
     },
 

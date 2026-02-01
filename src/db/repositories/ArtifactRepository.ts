@@ -34,17 +34,16 @@ export const artifactRepository = {
         const shortId = existing?.short_id || generateShortId('artifacts');
 
         db.prepare(`
-            INSERT INTO artifacts (
                 campaign_id, name, status, description, effects, 
                 is_cursed, curse_description, owner_type, owner_id, owner_name,
                 location_macro, location_micro, faction_id,
-                first_session_id, rag_sync_needed, is_manual, short_id
+                first_session_id, rag_sync_needed, is_manual, short_id, manual_description
             )
             VALUES (
                 $campaignId, $name, $status, $description, $effects,
                 $isCursed, $curseDesc, $ownerType, $ownerId, $ownerName,
                 $locationMacro, $locationMicro, $factionId,
-                $sessionId, 1, $isManual, $shortId
+                $sessionId, 1, $isManual, $shortId, CASE WHEN $isManual = 1 THEN $description ELSE NULL END
             )
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET 
@@ -61,7 +60,8 @@ export const artifactRepository = {
                 faction_id = COALESCE($factionId, faction_id),
                 last_updated = CURRENT_TIMESTAMP,
                 rag_sync_needed = 1,
-                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END,
+                manual_description = CASE WHEN $isManual = 1 THEN $description ELSE manual_description END
         `).run({
             campaignId,
             name,
@@ -248,6 +248,9 @@ export const artifactRepository = {
         if (fields.description !== undefined) {
             updates.push('description = $description');
             params.description = fields.description;
+            if (isManual) {
+                updates.push('manual_description = $description');
+            }
         }
         if (fields.effects !== undefined) {
             updates.push('effects = $effects');
@@ -274,8 +277,8 @@ export const artifactRepository = {
             params.isCursed = fields.is_cursed ? 1 : 0;
         }
         if (fields.curse_description !== undefined) {
-            updates.push('curse_description = $curseDescription');
-            params.curseDescription = fields.curse_description;
+            updates.push('curse_description = $curseDesc');
+            params.curseDesc = fields.curse_description;
         }
 
         if (updates.length === 0) return false;

@@ -33,37 +33,17 @@ interface BioContext {
 function generatePrompt(type: BioEntityType, ctx: BioContext, historyText: string): string {
     const complexity = historyText.length > 500 ? "DETTAGLIATO" : "CONCISO";
 
+    let promptText = '';
+
     switch (type) {
         case 'CHARACTER':
-            // PC: Narrative focus (Foundation + History)
-            return CHARACTER_NARRATIVE_BIO_PROMPT(ctx.name, ctx.foundationDescription || '', historyText);
-
+            promptText = CHARACTER_NARRATIVE_BIO_PROMPT(ctx.name, ctx.foundationDescription || '', historyText);
+            break;
         case 'NPC':
-            // NPC: Narrative approach
-            let promptText = REGENERATE_NPC_NOTES_PROMPT(
-                ctx.name,
-                ctx.role || 'Sconosciuto',
-                ctx.currentDesc || '',
-                historyText,
-                complexity
-            );
-
-            if (ctx.manualDescription) {
-                promptText = `⚠️ DESCRIZIONE MANUALE VINCOLANTE (FONDAZIONE):
-"${ctx.manualDescription}"
-
-${promptText}
-
-ISTRUZIONE CRITICA:
-Non contraddire la descrizione manuale. Usala come scheletro e arricchiscila con gli eventi recenti, ma mantieni inalterati i fatti stabiliti dall'utente.`;
-            }
-
-            return promptText;
-
+            promptText = REGENERATE_NPC_NOTES_PROMPT(ctx.name, ctx.role || 'Sconosciuto', ctx.currentDesc || '', historyText, complexity);
+            break;
         case 'LOCATION':
-            // LOCATION: Atmospheric approach
-            // TODO: Move this prompt to prompts.ts if it grows complex
-            return `Sei l'Archivista di un Atlante Fantasy.
+            promptText = `Sei l'Archivista di un Atlante Fantasy.
     Devi aggiornare la descrizione del luogo: **${ctx.macro || '?'} - ${ctx.micro || '?'}**.
     
     DESCRIZIONE ESISTENTE: 
@@ -82,9 +62,9 @@ Non contraddire la descrizione manuale. Usala come scheletro e arricchiscila con
     4. **Limiti:** Massimo 3500 caratteri.
     
     Restituisci SOLO il testo della nuova descrizione.`;
-
+            break;
         case 'QUEST':
-            return `Sei il Bardo, custode delle imprese. Scrivi il **Diario della Missione** per la quest: "${ctx.name}".
+            promptText = `Sei il Bardo, custode delle imprese. Scrivi il **Diario della Missione** per la quest: "${ctx.name}".
 STATO ATTUALE: ${ctx.role || 'In Corso'}
 
 CRONOLOGIA EVENTI:
@@ -97,9 +77,9 @@ Scrivi un riassunto narrativo della missione che integri gli eventi accaduti.
 - Se la quest è conclusa, scrivi un epilogo.
 - NO liste puntate, usa paragrafi fluidi.
 - Lunghezza: Massimo 3000 caratteri.`;
-
+            break;
         case 'MONSTER':
-            return `Sei uno Studioso di Mostri. Scrivi il **Dossier Ecologico** per: "${ctx.name}".
+            promptText = `Sei uno Studioso di Mostri. Scrivi il **Dossier Ecologico** per: "${ctx.name}".
 NOTE ESISTENTI: ${ctx.currentDesc || 'Nessuna'}
 
 OSSERVAZIONI E INCONTRI:
@@ -112,9 +92,9 @@ Compila una descrizione tecnica ma narrativa della creatura basata SOLO su ciò 
 - Non inventare fatti non supportati dalla storia.
 - Stile: Accademico ma pratico (Manuale di Sopravvivenza).
 - Lunghezza: Massimo 3500 caratteri.`;
-
+            break;
         case 'ITEM':
-            return `Sei un Antiquario Arcano. Scrivi la **Leggenda** dell'oggetto: "${ctx.name}".
+            promptText = `Sei un Antiquario Arcano. Scrivi la **Leggenda** dell'oggetto: "${ctx.name}".
 DESCRIZIONE BASE: ${ctx.currentDesc || 'Nessuna'}
 
 STORIA DELL'OGGETTO:
@@ -127,9 +107,9 @@ Scrivi la storia dell'oggetto basandoti sui suoi passaggi di mano e utilizzi.
 - Si è danneggiato o modificato nel tempo?
 - Stile: Descrizione da catalogo d'asta magica o leggenda sussurrata.
 - Lunghezza: Massimo 3000 caratteri.`;
-
+            break;
         case 'FACTION':
-            return `Sei uno Storico Politico. Scrivi il **Rapporto di Intelligence** per la fazione: "${ctx.name}".
+            promptText = `Sei uno Storico Politico. Scrivi il **Rapporto di Intelligence** per la fazione: "${ctx.name}".
 DESCRIZIONE ESISTENTE: ${ctx.currentDesc || 'Nessuna'}
 
 MOVIMENTI E AZIONI RECENTI:
@@ -142,9 +122,9 @@ Aggiorna la descrizione della fazione integrando le sue mosse recenti e i cambia
 - Stile: Analitico e Persuasivo.
 - Focus: Obiettivi politici, reputazione e struttura di potere.
 - Lunghezza: Massimo 3500 caratteri.`;
-
+            break;
         case 'ARTIFACT':
-            return `Sei il Custode delle Reliquie. Scrivi la **Storia dell'Artefatto**: "${ctx.name}".
+            promptText = `Sei il Custode delle Reliquie. Scrivi la **Storia dell'Artefatto**: "${ctx.name}".
 DESCRIZIONE ESISTENTE: ${ctx.currentDesc || 'Nessuna'}
 
 EVENTI E UTILIZZI:
@@ -156,11 +136,25 @@ Narra la storia recente dell'artefatto, chi lo ha impugnato e quali poteri ha ma
 - Se sono emersi nuovi poteri o maledizioni, integrali nella descrizione.
 - Stile: Mitologico e Solenne.
 - Lunghezza: Massimo 3000 caratteri.`;
-
+            break;
         default:
-            return `Aggiorna la descrizione di ${ctx.name} basandoti su: ${historyText}`;
+            promptText = `Aggiorna la descrizione di ${ctx.name} basandoti su: ${historyText}`;
     }
+
+    // 🆕 UNIVERSAL MANUAL DESCRIPTION PROTECTION
+    if (ctx.manualDescription) {
+        promptText = `⚠️ DESCRIZIONE MANUALE VINCOLANTE (FONDAZIONE):
+"${ctx.manualDescription}"
+
+${promptText}
+
+ISTRUZIONE CRITICA:
+Non contraddire la descrizione manuale. Usala come scheletro e arricchiscila con gli eventi recenti, ma mantieni inalterati i fatti chiave stabiliti dall'utente.`;
+    }
+
+    return promptText;
 }
+
 
 /**
  * Unified Bio Generator

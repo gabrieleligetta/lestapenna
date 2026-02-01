@@ -37,17 +37,19 @@ export const factionRepository = {
 
         try {
             db.prepare(`
-                INSERT INTO factions (campaign_id, name, description, type, is_party, first_session_id, is_manual, short_id)
-                VALUES ($campaignId, $name, $description, $type, $isParty, $sessionId, $isManual, $shortId)
+                INSERT INTO factions (campaign_id, name, description, type, is_party, first_session_id, is_manual, short_id, manual_description)
+                VALUES ($campaignId, $name, $description, $type, $isParty, $sessionId, $isManual, $shortId, $manualDescription)
             `).run({
                 campaignId,
                 name,
                 description: options?.description || null,
                 type,
                 isParty,
+                isPerson: isParty,
                 sessionId: options?.sessionId || null,
                 isManual,
-                shortId
+                shortId,
+                manualDescription: isManual ? (options?.description || null) : null
             });
 
             console.log(`[Faction] ⚔️ Creata fazione: ${name} [#${shortId}]${isParty ? ' (PARTY)' : ''}`);
@@ -70,7 +72,13 @@ export const factionRepository = {
         const sets: string[] = [];
         const params: any = { campaignId, name };
 
-        if (fields.description !== undefined) { sets.push('description = $description'); params.description = fields.description; }
+        if (fields.description !== undefined) {
+            sets.push('description = $description');
+            params.description = fields.description;
+            if (isManual) {
+                sets.push('manual_description = $description');
+            }
+        }
         if (fields.type !== undefined) { sets.push('type = $type'); params.type = fields.type; }
         if (fields.status !== undefined) { sets.push('status = $status'); params.status = fields.status; }
         if (fields.leader_npc_id !== undefined) { sets.push('leader_npc_id = $leaderNpcId'); params.leaderNpcId = fields.leader_npc_id; }

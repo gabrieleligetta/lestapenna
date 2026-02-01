@@ -5,7 +5,7 @@
 import { ValidationBatchInput, ValidationBatchOutput } from './types';
 import { metadataClient, METADATA_PROVIDER, METADATA_MODEL } from './config';
 import { monitor } from '../monitor';
-import { getNpcHistory, getCharacterHistory, getOpenQuests } from '../db';
+import { getNpcHistory, getCharacterHistory, getOpenQuests, npcRepository, characterRepository, artifactRepository, inventoryRepository, questRepository } from '../db';
 import { QuestStatus } from '../db/types';
 import { VALIDATION_PROMPT } from './prompts';
 
@@ -26,36 +26,126 @@ export async function validateBatch(
 
     const context: any = {};
 
+    // 1. NPC History Context
     if (input.npc_events && input.npc_events.length > 0) {
-        const npcNames = [...new Set(input.npc_events.map(e => e.name))];
         context.npcHistories = {};
 
-        for (const name of npcNames) {
-            const history = getNpcHistory(campaignId, name).slice(-10);
+        // Use a map to avoid duplicate lookups
+        const processedNpcs = new Set<string>();
+
+        for (const event of input.npc_events) {
+            if (processedNpcs.has(event.name)) continue;
+            processedNpcs.add(event.name);
+
+            let canonicalName = event.name;
+
+            // Try to resolve by ID first if available
+            if (event.id) {
+                const npc = npcRepository.getNpcByShortId(campaignId, event.id);
+                if (npc) {
+                    canonicalName = npc.name;
+                }
+            }
+
+            const history = getNpcHistory(campaignId, canonicalName).slice(-10);
             if (history.length > 0) {
-                context.npcHistories[name] = history.map((h: any) =>
+                context.npcHistories[event.name] = history.map((h: any) =>
                     `[${h.event_type}] ${h.description}`
                 ).join('; ');
             }
         }
     }
 
+    // 2. Character History Context
     if (input.character_events && input.character_events.length > 0) {
-        const charNames = [...new Set(input.character_events.map(e => e.name))];
         context.charHistories = {};
+        const processedChars = new Set<string>();
 
-        for (const name of charNames) {
-            const history = getCharacterHistory(campaignId, name).slice(-3);
+        for (const event of input.character_events) {
+            if (processedChars.has(event.name)) continue;
+            processedChars.add(event.name);
+
+            let canonicalName = event.name;
+
+            // Try to resolve by ID (User ID for PCs) if available
+            if (event.id) {
+                const profile = characterRepository.getUserProfile(event.id, campaignId);
+                if (profile && profile.character_name) {
+                    canonicalName = profile.character_name;
+                }
+            }
+
+            const history = getCharacterHistory(campaignId, canonicalName).slice(-3);
             if (history.length > 0) {
-                context.charHistories[name] = history.map((h: any) =>
+                context.charHistories[event.name] = history.map((h: any) =>
                     `[${h.event_type}] ${h.description}`
                 ).join('; ');
             }
         }
     }
 
+    // 3. Artifact History Context
+    if (input.artifact_events && input.artifact_events.length > 0) {
+        context.artifactHistories = {};
+        const processedArtifacts = new Set<string>();
+
+        // Pre-process to resolve IDs
+        for (const event of input.artifact_events) {
+            // Try to resolve by ID first
+            if (event.id) {
+                const artifact = artifactRepository.getArtifactByShortId(campaignId, event.id);
+                if (artifact) {
+                    event.name = artifact.name; // Canonicalize Name
+                }
+            }
+        }
+
+        for (const event of input.artifact_events) {
+            if (processedArtifacts.has(event.name)) continue;
+            processedArtifacts.add(event.name);
+
+            const history = artifactRepository.getArtifactHistory(campaignId, event.name).slice(-5);
+            if (history.length > 0) {
+                context.artifactHistories[event.name] = history.map((h: any) =>
+                    `[${h.event_type}] ${h.description}`
+                ).join('; ');
+            }
+        }
+    }
+
+    // 4. Quest Context (Resolve IDs)
     if (input.quests && input.quests.length > 0) {
+        for (const q of input.quests) {
+            if (q.id) {
+                const quest = questRepository.getQuestByShortId(campaignId, q.id);
+                if (quest) {
+                    q.title = quest.title; // Canonicalize Title
+                }
+            }
+        }
         context.existingQuests = getOpenQuests(campaignId).map((q: any) => q.title);
+    }
+
+    // 5. Loot Context (Resolve IDs)
+    if (input.loot && input.loot.length > 0) {
+        for (const item of input.loot) {
+            if (item.id) {
+                const invItem = inventoryRepository.getInventoryItemByShortId(campaignId, item.id);
+                if (invItem) {
+                    item.name = invItem.item_name; // Canonicalize Name
+                }
+            }
+        }
+    }
+
+    // 6. World Events Context (Resolve IDs)
+    if (input.world_events && input.world_events.length > 0) {
+        // Note: World events usually don't have a specific "name" field like others, 
+        // but if they refer to a location ID, we might want to resolve it if the event structure supported it.
+        // However, the current input structure is { id?: string; event: string; type: string }.
+        // The ID here likely refers to an Atlas Entry (Location).
+        // We can't easily "canonicalize" the event text, but we pass the ID to the prompt.
+        // Effectively, the prompt sees [ID: xxxxx] and knows what it is.
     }
 
     const prompt = buildValidationPrompt(context, input);
@@ -123,13 +213,13 @@ export async function validateBatch(
         }
 
         // Helper to merge Validator output (Description/Type) with Analyst input (ID/Alignments)
-        const mergeValidationResults = (outputItems: any[], inputItems: any[]) => {
+        const mergeValidationResults = (outputItems: any[], inputItems: any[], nameField: string = 'name') => {
             if (!outputItems || !inputItems) return outputItems;
             return outputItems.map(outItem => {
                 // Try to find matching input item by name (case-insensitive)
                 const match = inputItems.find(inItem =>
-                    inItem.name && outItem.name &&
-                    inItem.name.toLowerCase() === outItem.name.toLowerCase()
+                    inItem[nameField] && outItem[nameField] &&
+                    inItem[nameField].toLowerCase() === outItem[nameField].toLowerCase()
                 );
 
                 if (match) {
@@ -159,9 +249,18 @@ export async function validateBatch(
                 keep: mergeValidationResults(result.artifact_events?.keep || [], input.artifact_events || []),
                 skip: result.artifact_events?.skip || []
             },
-            loot: result.loot || { keep: input.loot || [], skip: [] },
-            loot_removed: result.loot_removed || { keep: input.loot_removed || [], skip: [] },
-            quests: normalizedQuests,
+            loot: {
+                keep: mergeValidationResults(result.loot?.keep || result.loot || [], input.loot || []), // Handles both {keep: []} and [] formats
+                skip: result.loot?.skip || []
+            },
+            loot_removed: {
+                keep: mergeValidationResults(result.loot_removed?.keep || result.loot_removed || [], input.loot_removed || []),
+                skip: result.loot_removed?.skip || []
+            },
+            quests: {
+                keep: mergeValidationResults(normalizedQuests.keep, input.quests || [], 'title'),
+                skip: normalizedQuests.skip
+            },
             atlas: result.atlas || { action: 'keep' }
         };
 

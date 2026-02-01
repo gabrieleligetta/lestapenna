@@ -31,7 +31,8 @@ export async function syncQuestEntryIfNeeded(
         campaignId,
         name: questTitle,
         role: quest.status,
-        currentDesc: quest.description || ''
+        currentDesc: quest.description || '',
+        manualDescription: (quest as any).manual_description || undefined // 🆕 Passa la descrizione manuale
     }, simpleHistory);
 
     // 2. Build RAG content

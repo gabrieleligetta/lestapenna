@@ -76,11 +76,18 @@ export const locationRepository = {
         const shortId = existing?.short_id || generateShortId('location_atlas');
 
         // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
+        // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id)
-            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId)
+            INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id, manual_description)
+            VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId, CASE WHEN $isManual = 1 THEN $desc ELSE NULL END)
             ON CONFLICT(campaign_id, macro_location, micro_location)
-            DO UPDATE SET description = $desc, last_updated = CURRENT_TIMESTAMP, last_updated_session_id = $sessionId, rag_sync_needed = 1, is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+            DO UPDATE SET 
+                description = $desc, 
+                last_updated = CURRENT_TIMESTAMP, 
+                last_updated_session_id = $sessionId, 
+                rag_sync_needed = 1, 
+                is_manual = $isManual,
+                manual_description = CASE WHEN $isManual = 1 THEN $desc ELSE manual_description END
         `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null, isManual: isManual ? 1 : 0, shortId });
 
         console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro} [#${shortId}]`);

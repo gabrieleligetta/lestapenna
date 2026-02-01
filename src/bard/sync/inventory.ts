@@ -31,7 +31,8 @@ export async function syncInventoryEntryIfNeeded(
     const newBio = await generateBio('ITEM', {
         campaignId,
         name: itemName,
-        currentDesc: item.description || ''
+        currentDesc: item.description || '',
+        manualDescription: (item as any).manual_description || undefined // 🆕 Passa la descrizione manuale
     }, simpleHistory);
 
     // 2. Build RAG content

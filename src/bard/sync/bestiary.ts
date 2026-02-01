@@ -31,7 +31,8 @@ export async function syncBestiaryEntryIfNeeded(
     const newBio = await generateBio('MONSTER', {
         campaignId,
         name: monsterName,
-        currentDesc: monster.description || ''
+        currentDesc: monster.description || '',
+        manualDescription: (monster as any).manual_description || undefined // 🆕 Passa la descrizione manuale
     }, simpleHistory);
 
     // 2. Build RAG content

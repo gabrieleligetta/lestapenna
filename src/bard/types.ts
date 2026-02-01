@@ -147,13 +147,13 @@ export interface SummaryResponse {
 
 // --- VALIDATION BATCH ---
 export interface ValidationBatchInput {
-    npc_events?: Array<{ name: string; event: string; type: string }>;
-    character_events?: Array<{ name: string; event: string; type: string }>;
-    world_events?: Array<{ event: string; type: string }>;
-    artifact_events?: Array<{ name: string; event: string; type: string }>;
-    loot?: Array<{ name: string; quantity?: number; description?: string }>;
-    loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
-    quests?: Array<{ title: string; description?: string; status?: string }>;
+    npc_events?: Array<{ id?: string; name: string; event: string; type: string }>;
+    character_events?: Array<{ id?: string; name: string; event: string; type: string }>;
+    world_events?: Array<{ id?: string; event: string; type: string }>;
+    artifact_events?: Array<{ id?: string; name: string; event: string; type: string }>;
+    loot?: Array<{ id?: string; name: string; quantity?: number; description?: string }>;
+    loot_removed?: Array<{ id?: string; name: string; quantity?: number; description?: string }>;
+    quests?: Array<{ id?: string; title: string; description?: string; status?: string }>;
     atlas_update?: {
         macro: string;
         micro: string;

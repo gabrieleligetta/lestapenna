@@ -22,7 +22,8 @@ export const inventoryRepository = {
                     description = $desc, 
                     session_id = COALESCE(session_id, $sessionId), 
                     rag_sync_needed = 1,
-                    is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                    is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END,
+                    manual_description = CASE WHEN $isManual = 1 THEN $desc ELSE manual_description END
                 WHERE id = $id
             `).run({
                 qty,
@@ -35,8 +36,8 @@ export const inventoryRepository = {
         } else {
             const shortId = generateShortId('inventory');
             db.prepare(`
-                INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed, is_manual, short_id) 
-                VALUES ($campaignId, $name, $qty, $timestamp, $timestamp, $sessionId, $desc, 1, $isManual, $shortId)
+                INSERT INTO inventory (campaign_id, item_name, quantity, acquired_at, last_updated, session_id, description, rag_sync_needed, is_manual, short_id, manual_description) 
+                VALUES ($campaignId, $name, $qty, $timestamp, $timestamp, $sessionId, $desc, 1, $isManual, $shortId, CASE WHEN $isManual = 1 THEN $desc ELSE NULL END)
             `).run({
                 campaignId,
                 name: cleanName,
@@ -210,6 +211,9 @@ export const inventoryRepository = {
         updates.push('last_updated = $timestamp');
         params.timestamp = Date.now();
         if (isManual) updates.push('is_manual = 1');
+        if (fields.description && isManual) {
+            updates.push('manual_description = $description');
+        }
 
         db.prepare(`UPDATE inventory SET ${updates.join(', ')} WHERE id = $id`).run(params);
         return true;

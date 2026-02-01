@@ -9,6 +9,7 @@ export interface UserProfile {
     alignment_ethical?: string | null; // 🆕
     moral_score?: number; // 🆕
     ethical_score?: number; // 🆕
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export interface NpcEntry {
@@ -133,6 +134,7 @@ export interface NpcEntry {
     short_id?: string; // 🆕 Stable ID
     alignment_moral?: string | null; // 🆕
     alignment_ethical?: string | null; // 🆕
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export enum QuestStatus {
@@ -153,6 +155,7 @@ export interface Quest {
     last_updated: number;
     session_id?: string;
     short_id?: string; // 🆕 Stable ID
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export interface InventoryItem {
@@ -166,6 +169,7 @@ export interface InventoryItem {
     description?: string;
     notes?: string;
     short_id?: string; // 🆕 Stable ID
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export interface PendingMerge {
@@ -206,6 +210,7 @@ export interface BestiaryEntry {
     notes: string | null;
     first_session_id: string | null;
     short_id?: string; // 🆕 Stable ID
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export interface MonsterDetails {
@@ -239,6 +244,7 @@ export interface AtlasEntryFull {
     last_updated: string;
     rag_sync_needed?: number;
     short_id?: string; // 🆕 Stable ID
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 // =============================================
@@ -422,6 +428,7 @@ export interface ArtifactEntry {
     rag_sync_needed: number;
     is_manual: number;
     short_id?: string;
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export interface ArtifactHistoryEntry {

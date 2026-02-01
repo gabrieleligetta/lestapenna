@@ -40,7 +40,9 @@ export const initDatabase = () => {
         foundation_description TEXT,
         rag_sync_needed INTEGER DEFAULT 0,
         last_synced_history_id INTEGER DEFAULT 0,
+        last_synced_history_id INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         PRIMARY KEY (user_id, campaign_id),
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
@@ -211,6 +213,7 @@ export const initDatabase = () => {
         first_session_id TEXT, -- 🆕 Tracciamento origine
         last_updated_session_id TEXT, -- 🆕 Tracciamento ultima modifica
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         short_id TEXT, -- 🆕 Stable ID
         UNIQUE(campaign_id, macro_location, micro_location)
     )`);
@@ -262,6 +265,7 @@ export const initDatabase = () => {
         last_updated INTEGER,
         session_id TEXT,
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
@@ -275,6 +279,7 @@ export const initDatabase = () => {
         session_id TEXT, -- Sessione in cui è stato incontrato
         last_seen INTEGER, -- Timestamp ultimo avvistamento
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
@@ -292,6 +297,7 @@ export const initDatabase = () => {
         last_updated INTEGER,
         session_id TEXT,
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
@@ -373,6 +379,7 @@ export const initDatabase = () => {
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         short_id TEXT,
         UNIQUE(campaign_id, name),
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
@@ -447,6 +454,7 @@ export const initDatabase = () => {
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         short_id TEXT,
         UNIQUE(campaign_id, name),
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
@@ -611,7 +619,14 @@ export const initDatabase = () => {
         "ALTER TABLE campaigns ADD COLUMN party_moral_score INTEGER DEFAULT 0",
         "ALTER TABLE campaigns ADD COLUMN party_ethical_score INTEGER DEFAULT 0",
         // 🆕 MANUAL DESCRIPTION BACKUP
-        "ALTER TABLE npc_dossier ADD COLUMN manual_description TEXT"
+        "ALTER TABLE npc_dossier ADD COLUMN manual_description TEXT",
+        "ALTER TABLE characters ADD COLUMN manual_description TEXT",
+        "ALTER TABLE location_atlas ADD COLUMN manual_description TEXT",
+        "ALTER TABLE quests ADD COLUMN manual_description TEXT",
+        "ALTER TABLE bestiary ADD COLUMN manual_description TEXT",
+        "ALTER TABLE inventory ADD COLUMN manual_description TEXT",
+        "ALTER TABLE factions ADD COLUMN manual_description TEXT",
+        "ALTER TABLE artifacts ADD COLUMN manual_description TEXT"
     ];
 
     for (const m of migrations) {

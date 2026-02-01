@@ -100,7 +100,8 @@ export const questRepository = {
                     status = $status, 
                     last_updated = $timestamp, 
                     rag_sync_needed = 1,
-                    is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                    is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END,
+                    manual_description = CASE WHEN $isManual = 1 THEN $description ELSE manual_description END
                 WHERE id = $id
             `).run({
                 description: finalDesc,
@@ -114,9 +115,9 @@ export const questRepository = {
             // Insert new quest
             const shortId = generateShortId('quests');
             db.prepare(`
-                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed, is_manual, short_id) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, timestamp || Date.now(), timestamp || Date.now(), isManual ? 1 : 0, shortId);
+                INSERT INTO quests (campaign_id, title, session_id, description, status, type, created_at, last_updated, rag_sync_needed, is_manual, short_id, manual_description) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+            `).run(campaignId, cleanedTitle, sessionId || null, description || null, status, type, timestamp || Date.now(), timestamp || Date.now(), isManual ? 1 : 0, shortId, isManual ? (description || null) : null);
             console.log(`[Quest] 🆕 Nuova Quest (${type}): ${cleanedTitle} [#${shortId}]`);
         }
     },
@@ -151,10 +152,16 @@ export const questRepository = {
         const keys = Object.keys(fields).filter(k => k !== 'id');
         if (keys.length === 0) return false;
 
-        const sets = keys.map(k => `${k} = ?`).join(', ');
+        let sets = keys.map(k => `${k} = ?`).join(', ');
         const values = keys.map(k => (fields as any)[k]);
         values.push(Date.now()); // last_updated
         values.push(questId);
+
+        if ((fields as any).description && (fields as any).is_manual) {
+            const desc = (fields as any).description;
+            sets += `, manual_description = ?`;
+            values.push(desc);
+        }
 
         const result = db.prepare(`
             UPDATE quests 

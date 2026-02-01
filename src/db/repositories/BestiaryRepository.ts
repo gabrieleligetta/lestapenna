@@ -50,11 +50,11 @@ export const bestiaryRepository = {
         db.prepare(`
             INSERT INTO bestiary (
                 campaign_id, name, status, count, session_id, last_seen,
-                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed, is_manual, short_id
+                description, abilities, weaknesses, resistances, notes, variants, first_session_id, rag_sync_needed, is_manual, short_id, manual_description
             )
             VALUES (
                 $campaignId, $name, $status, $count, $sessionId, $timestamp,
-                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1, $isManual, $shortId
+                $desc, $abil, $weak, $res, $notes, $variants, $sessionId, 1, $isManual, $shortId, CASE WHEN $isManual = 1 THEN $desc ELSE NULL END
             )
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET 
@@ -81,7 +81,8 @@ export const bestiaryRepository = {
                     ELSE variants
                 END,
                 rag_sync_needed = 1,
-                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END
+                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END,
+                manual_description = CASE WHEN $isManual = 1 THEN $desc ELSE manual_description END
         `).run({
             campaignId,
             name,
@@ -339,6 +340,10 @@ export const bestiaryRepository = {
         updates.push('last_seen = $timestamp');
         params.timestamp = Date.now();
         if (isManual) updates.push('is_manual = 1');
+
+        if (fields.description && isManual) {
+            updates.push('manual_description = $description');
+        }
 
         // Note: this updates the MOST RECENT entry found by getMonsterByName if they are per session.
         // In this system, bestiary entries are somewhat per-session but grouped.

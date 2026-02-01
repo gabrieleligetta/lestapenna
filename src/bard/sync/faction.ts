@@ -37,6 +37,7 @@ export async function syncFactionEntryIfNeeded(
         campaignId,
         name: factionName,
         currentDesc: faction.description || '',
+        manualDescription: (faction as any).manual_description || undefined // 🆕 Passa la descrizione manuale
     }, history);
 
     // 3. Build RAG content

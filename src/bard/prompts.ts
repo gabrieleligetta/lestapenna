@@ -113,14 +113,18 @@ ${memoryContext}
 
 ## 2.5 ISTRUZIONI ID (CRITICHE)
 Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratteri alfanumerici).
-- Se riconosci un NPC/Luogo/Fazione/Artefatto dal CONTESTO, **COPIA L'ID** nel JSON.
-- Esempio: Contesto ha "Leosin Erantar [ID: zpvbh]", testo dice "Leo Sin parlò..." → usa \`"id": "zpvbh"\`
+- Se riconosci un NPC/Luogo/Fazione/Artefatto/Quest/Oggetto Inventario dal CONTESTO, **COPIA L'ID** nel JSON.
+- Esempio NPC: Contesto ha "Leosin Erantar [ID: zpvbh]", testo dice "Leo Sin parlò..." → usa \`"id": "zpvbh"\`
+- Esempio Loot: Contesto ha "Pozione di Cura [ID: iv3k9]", testo dice "bevono la pozione" → usa \`"id": "iv3k9"\` in loot_removed
+- Esempio Quest: Contesto ha "Salvare il Fabbro [ID: qst7m]", testo dice "missione completata" → usa \`"id": "qst7m"\`
 - Se l'entità NON appare nel CONTESTO con un ID, OMETTI il campo \`id\`.
+- **PRIORITÀ ID**: Gli ID permettono di collegare eventi a entità esistenti. Usali SEMPRE quando disponibili.
 
 ## 3. OUTPUT JSON RICHIESTO
 {
     "loot": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'iv3k9'). OMETTI se nuovo oggetto.",
             "name": "Nome oggetto (ESATTO, senza descrizioni tra parentesi)",
             "quantity": 1,
             "description": "Descrizione fisica/magica. Inserisci QUI i dettagli che metteresti tra parentesi."
@@ -128,6 +132,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     ],
     "loot_removed": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'iv3k9'). CRITICO: se l'oggetto rimosso è nell'inventario, DEVI inserire l'ID.",
             "name": "Nome oggetto",
             "quantity": 1,
             "description": "Motivo rimozione o utilizzo (es. 'Bevuta pozione', 'Persa spada')"
@@ -135,6 +140,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     ],
     "quests": [
         {
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'qst7m'). OMETTI se nuova quest.",
             "title": "Titolo breve della missione (es. 'Salvare il Fabbro')",
             "description": "Descrizione del progresso o aggiornamento (es. 'Il gruppo ha trovato la chiave della cella')",
             "status": "OPEN|IN_PROGRESS|COMPLETED|FAILED",

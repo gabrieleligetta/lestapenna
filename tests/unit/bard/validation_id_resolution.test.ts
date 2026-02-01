@@ -7,6 +7,7 @@ import {
     artifactRepository,
     inventoryRepository,
     questRepository,
+    locationRepository,
     getNpcHistory,
     getCharacterHistory,
     getOpenQuests
@@ -43,6 +44,9 @@ jest.mock('../../../src/db', () => ({
     },
     questRepository: {
         getQuestByShortId: jest.fn()
+    },
+    locationRepository: {
+        getAtlasEntryByShortId: jest.fn()
     }
 }));
 
@@ -175,5 +179,143 @@ describe('validateBatch ID Resolution', () => {
         expect(inventoryRepository.getInventoryItemByShortId).toHaveBeenCalledWith(1, 'l01');
         expect(result.loot.keep[0].name).toBe('Gold Pieces');
         expect(result.loot.keep[0]).toHaveProperty('id', 'l01');
+    });
+
+    it('should resolve Loot Removed matched name using shortId and preserve ID', async () => {
+        const input = {
+            loot_removed: [
+                { id: 'lr01', name: 'Old Sword', quantity: 1 }
+            ]
+        };
+
+        (inventoryRepository.getInventoryItemByShortId as jest.Mock).mockReturnValue({ item_name: 'Rusty Sword' });
+
+        (metadataClient.chat.completions.create as jest.Mock).mockResolvedValue({
+            usage: {},
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        loot_removed: {
+                            keep: [{ name: 'Rusty Sword', quantity: 1 }],
+                            skip: []
+                        }
+                    })
+                }
+            }]
+        });
+
+        const result = await validateBatch(1, input);
+
+        expect(inventoryRepository.getInventoryItemByShortId).toHaveBeenCalledWith(1, 'lr01');
+        expect(result.loot_removed.keep[0].name).toBe('Rusty Sword');
+        expect(result.loot_removed.keep[0]).toHaveProperty('id', 'lr01');
+    });
+
+    it('should resolve Character canonical name using User ID and preserve ID', async () => {
+        const input = {
+            character_events: [
+                { id: 'user123', name: 'Player Name', event: 'Leveled up', type: 'ACHIEVEMENT' }
+            ]
+        };
+
+        (characterRepository.getUserProfile as jest.Mock).mockReturnValue({ character_name: 'Thorin Oakenshield' });
+
+        (metadataClient.chat.completions.create as jest.Mock).mockResolvedValue({
+            usage: {},
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        character_events: {
+                            keep: [{ name: 'Thorin Oakenshield', event: 'Leveled up', type: 'ACHIEVEMENT' }],
+                            skip: []
+                        }
+                    })
+                }
+            }]
+        });
+
+        const result = await validateBatch(1, input);
+
+        expect(characterRepository.getUserProfile).toHaveBeenCalledWith('user123', 1);
+        expect(result.character_events.keep[0]).toHaveProperty('id', 'user123');
+        expect(result.character_events.keep[0]).toHaveProperty('name', 'Thorin Oakenshield');
+    });
+
+    it('should resolve World Event location using shortId and log the match', async () => {
+        const input = {
+            world_events: [
+                { id: 'loc01', event: 'A great fire broke out', type: 'CALAMITY' }
+            ]
+        };
+
+        (locationRepository.getAtlasEntryByShortId as jest.Mock).mockReturnValue({
+            macro_location: 'Waterdeep',
+            micro_location: 'Market District'
+        });
+
+        (metadataClient.chat.completions.create as jest.Mock).mockResolvedValue({
+            usage: {},
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        world_events: {
+                            keep: [{ id: 'loc01', event: 'A great fire broke out', type: 'CALAMITY' }],
+                            skip: []
+                        }
+                    })
+                }
+            }]
+        });
+
+        const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+
+        await validateBatch(1, input);
+
+        expect(locationRepository.getAtlasEntryByShortId).toHaveBeenCalledWith(1, 'loc01');
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('[World Event] 🎯 ID Match: loc01 → Waterdeep - Market District')
+        );
+
+        consoleSpy.mockRestore();
+    });
+
+    it('should log ID Match for all entity types when resolution succeeds', async () => {
+        const input = {
+            npc_events: [{ id: 'npc01', name: 'Wrong', event: 'Met', type: 'MEETING' }],
+            artifact_events: [{ id: 'art01', name: 'Wrong', event: 'Found', type: 'DISCOVERY' }],
+            quests: [{ id: 'q01', title: 'Wrong', status: 'OPEN' }],
+            loot: [{ id: 'l01', name: 'Wrong', quantity: 1 }]
+        };
+
+        (npcRepository.getNpcByShortId as jest.Mock).mockReturnValue({ name: 'Correct NPC' });
+        (artifactRepository.getArtifactByShortId as jest.Mock).mockReturnValue({ name: 'Correct Artifact' });
+        (questRepository.getQuestByShortId as jest.Mock).mockReturnValue({ title: 'Correct Quest' });
+        (inventoryRepository.getInventoryItemByShortId as jest.Mock).mockReturnValue({ item_name: 'Correct Item' });
+
+        (metadataClient.chat.completions.create as jest.Mock).mockResolvedValue({
+            usage: {},
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        npc_events: { keep: [{ name: 'Correct NPC', event: 'Met', type: 'MEETING' }], skip: [] },
+                        artifact_events: { keep: [{ name: 'Correct Artifact', event: 'Found', type: 'DISCOVERY' }], skip: [] },
+                        quests: { keep: [{ title: 'Correct Quest', status: 'OPEN' }], skip: [] },
+                        loot: { keep: [{ name: 'Correct Item', quantity: 1 }], skip: [] }
+                    })
+                }
+            }]
+        });
+
+        const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+
+        await validateBatch(1, input);
+
+        // Verify all entity types logged their ID Match
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[NPC Event] 🎯 ID Match: npc01 → Correct NPC'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[Artifact Event] 🎯 ID Match: art01 → Correct Artifact'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[Quest Event] 🎯 ID Match: q01 → Correct Quest'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[Loot Event] 🎯 ID Match: l01 → Correct Item'));
+
+        consoleSpy.mockRestore();
     });
 });

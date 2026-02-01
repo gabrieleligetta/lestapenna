@@ -710,6 +710,21 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     }
                 }
 
+                // 7. Idratazione Inventario (per ID-based matching su loot/loot_removed)
+                const inventory = inventoryRepository.listAllInventory(campaignId);
+                if (inventory && inventory.length > 0) {
+                    dynamicMemoryContext += `\n🎒 INVENTARIO DEL PARTY:\n`;
+                    for (const item of inventory.slice(0, 30)) { // Limit to 30 items
+                        let itemInfo = `- **${item.item_name}** [ID: ${item.short_id || 'N/A'}]`;
+                        if (item.quantity > 1) itemInfo += ` (x${item.quantity})`;
+                        if (item.description) itemInfo += `: ${item.description.substring(0, 100)}`;
+                        dynamicMemoryContext += itemInfo + '\n';
+                    }
+                    if (inventory.length > 30) {
+                        dynamicMemoryContext += `... e altri ${inventory.length - 30} oggetti.\n`;
+                    }
+                }
+
                 // LOG RIEPILOGATIVO CONTESTO
                 console.log(`[Bardo] 📋 Riepilogo Contesto Analista:`);
                 if (entities.npcs?.length) console.log(`  - NPCs: ${entities.npcs.join(', ')}`);

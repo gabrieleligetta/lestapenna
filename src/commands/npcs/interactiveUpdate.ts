@@ -13,51 +13,255 @@ import { CommandContext } from '../types';
 import {
     listNpcs,
     updateNpcFields,
+    updateNpcEntry,
     getNpcEntry,
     markNpcDirty,
     factionRepository
 } from '../../db';
 
 export async function startInteractiveNpcUpdate(ctx: CommandContext) {
-    // 1. Fetch NPCs for selection (Limit 25 for Select Menu)
-    const npcs = listNpcs(ctx.activeCampaign!.id, 25, 0);
+    if (ctx.args.length > 0) {
+        const query = ctx.args.join(' ');
+        let npc = getNpcEntry(ctx.activeCampaign!.id, query);
 
-    if (npcs.length === 0) {
-        await ctx.message.reply("⚠️ Nessun NPC disponibile per l'aggiornamento.");
-        return;
+        if (!npc) {
+            // Try ID search
+            const cleanQuery = query.replace('#', '').toLowerCase();
+            const all = listNpcs(ctx.activeCampaign!.id);
+            npc = all.find(n => n.short_id && n.short_id.toLowerCase() === cleanQuery) || null;
+        }
+
+        if (npc) {
+            await showFieldSelection(ctx.message as any, npc, ctx, true);
+            return;
+        }
     }
 
     // 2. Build NPC Select Menu
-    const npcSelect = new StringSelectMenuBuilder()
-        .setCustomId('npc_update_select_entity')
-        .setPlaceholder('🔍 Seleziona un NPC da modificare...')
-        .addOptions(
-            npcs.map((n: any) =>
-                new StringSelectMenuOptionBuilder()
-                    .setLabel(n.name)
-                    .setDescription(n.role ? n.role.substring(0, 100) : 'Nessun ruolo')
-                    .setValue(n.name) // Using name as ID for simplicity in this system
-                    .setEmoji(n.status === 'DEAD' ? '💀' : n.status === 'MISSING' ? '❓' : '👤')
-            )
+    await showNpcSelection(ctx, null, null);
+}
+
+export async function startInteractiveNpcAdd(ctx: CommandContext) {
+    const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_trigger_npc_add')
+                .setLabel('Crea Nuovo NPC')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('👤')
         );
 
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(npcSelect);
-
-    const response = await ctx.message.reply({
-        content: "**🛠️ Aggiornamento NPC Interattivo**\nSeleziona un personaggio dalla lista:",
+    const reply = await ctx.message.reply({
+        content: "**🛠️ Creazione NPC**\nClicca sul bottone qui sotto per aprire il modulo di creazione.",
         components: [row]
     });
 
-    // 3. Collector for NPC Selection
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 60000,
+        filter: (i) => i.customId === 'btn_trigger_npc_add' && i.user.id === ctx.message.author.id
+    });
+
+    collector.on('collect', async (interaction) => {
+        // Show Modal
+        const modal = new ModalBuilder()
+            .setCustomId('modal_npc_add_new')
+            .setTitle("Nuovo NPC");
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('npc_name')
+            .setLabel("Nome NPC")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+
+        const roleInput = new TextInputBuilder()
+            .setCustomId('npc_role')
+            .setLabel("Ruolo (Opzionale)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false);
+
+        const descInput = new TextInputBuilder()
+            .setCustomId('npc_description')
+            .setLabel("Descrizione (Opzionale)")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false);
+
+        modal.addComponents(
+            new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput),
+            new ActionRowBuilder<TextInputBuilder>().addComponents(roleInput),
+            new ActionRowBuilder<TextInputBuilder>().addComponents(descInput)
+        );
+
+        await interaction.showModal(modal);
+
+        try {
+            const submission = await interaction.awaitModalSubmit({
+                time: 300000,
+                filter: (i) => i.customId === 'modal_npc_add_new' && i.user.id === interaction.user.id
+            });
+
+            const name = submission.fields.getTextInputValue('npc_name');
+            const role = submission.fields.getTextInputValue('npc_role') || "";
+            const description = submission.fields.getTextInputValue('npc_description') || "";
+
+            const existing = getNpcEntry(ctx.activeCampaign!.id, name);
+            if (existing) {
+                await submission.reply({
+                    content: `⚠️ L'NPC **${name}** esiste già! Usa \`$npc update\` per modificarlo.`,
+                    ephemeral: true
+                });
+                return;
+            }
+
+            // Create NPC
+            updateNpcEntry(ctx.activeCampaign!.id, name, description, role, 'ALIVE', undefined, true);
+
+            // Reply with success and "Edit" button
+            const successRow = new ActionRowBuilder<ButtonBuilder>()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('edit_created_npc')
+                        .setLabel('Modifica Dettagli')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('✏️')
+                );
+
+            await submission.reply({
+                content: `✅ **Nuovo NPC Creato!**\n👤 **${name}**\n🎭 Ruolo: ${role || "Nessuno"}\n📜 ${description || "Nessuna descrizione"}\n\n*Puoi aggiungere altri dettagli ora:*`,
+                components: [successRow]
+            });
+
+            // Cleanup the trigger button
+            try { await reply.delete(); } catch { }
+
+            // Optional: Listen for Edit button
+            const message = await submission.fetchReply();
+            const editCollector = message.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000,
+                filter: (i) => i.customId === 'edit_created_npc' && i.user.id === ctx.message.author.id
+            });
+
+            editCollector.on('collect', async (i) => {
+                const npc = getNpcEntry(ctx.activeCampaign!.id, name);
+                if (npc) {
+                    await showFieldSelection(i, npc, ctx);
+                } else {
+                    await i.reply({ content: "❌ NPC non trovato.", ephemeral: true });
+                }
+            });
+
+        } catch (err) {
+            // Modal timeout
+        }
+    });
+
+    collector.on('end', () => {
+        if (reply.editable) {
+            reply.edit({ components: [] }).catch(() => { });
+        }
+    });
+}
+
+async function showNpcSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null) {
+    let npcs: any[] = [];
+
+    if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        // Since listNpcs handles pagination but not filtering by name in the repository query (usually),
+        // we might need to fetch all and filter, or add search support to repository.
+        // For now, let's fetch a larger batch or all if possible. 
+        // listNpcs signature: (campaignId, limit, offset)
+        // Let's assume for now we filter in memory from a larger fetch or add a proper search capability later.
+        // Or if listNpcs supports search? It doesn't seem to based on arg names.
+        // Let's list 100 recent and filter, or rely on precise search if user types it.
+        // A better approach for scalability would be adding searchNpcs to repository, but let's stick to in-memory filter of a reasonable set for now
+        // OR better: use listNpcs(id, 100, 0) and filter.
+
+        // Actually, db/index.ts exports listNpcs. Let's assume we can get a good enough list.
+        // If the workspace is huge, this is inefficient, but for a Discord bot command usually fine.
+        const allNpcs = listNpcs(ctx.activeCampaign!.id, 500, 0);
+        npcs = allNpcs.filter((n: any) =>
+            n.name.toLowerCase().includes(query) ||
+            (n.role && n.role.toLowerCase().includes(query))
+        ).slice(0, 24);
+    } else {
+        npcs = listNpcs(ctx.activeCampaign!.id, 24, 0);
+    }
+
+    const options = npcs.map((n: any) =>
+        new StringSelectMenuOptionBuilder()
+            .setLabel(n.name)
+            .setDescription(n.role ? n.role.substring(0, 100) : 'Nessun ruolo')
+            .setValue(n.name)
+            .setEmoji(n.status === 'DEAD' ? '💀' : n.status === 'MISSING' ? '❓' : '👤')
+    );
+
+    options.unshift(
+        new StringSelectMenuOptionBuilder()
+            .setLabel("🔍 Cerca...")
+            .setDescription("Filtra NPC per nome o ruolo")
+            .setValue("SEARCH_ACTION")
+            .setEmoji('🔍')
+    );
+
+    const npcSelect = new StringSelectMenuBuilder()
+        .setCustomId('npc_update_select_entity')
+        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : '🔍 Seleziona un NPC da modificare...')
+        .addOptions(options);
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(npcSelect);
+
+    const content = searchQuery
+        ? `**🛠️ Aggiornamento NPC**\nRisultati ricerca per "${searchQuery}":`
+        : "**🛠️ Aggiornamento NPC Interattivo**\nSeleziona un personaggio dalla lista o usa Cerca:";
+
+    let response;
+    if (interactionToUpdate) {
+        await interactionToUpdate.update({ content, components: [row] });
+        response = interactionToUpdate.message;
+    } else {
+        response = await ctx.message.reply({ content, components: [row] });
+    }
+
+    // 3. Collector
     const collector = response.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
         time: 60000,
-        filter: i => i.user.id === ctx.message.author.id
+        filter: (i: any) => i.user.id === ctx.message.author.id && i.customId === 'npc_update_select_entity'
     });
 
-    collector.on('collect', async interaction => {
-        if (interaction.customId === 'npc_update_select_entity') {
-            const selectedNpcName = interaction.values[0];
+    collector.on('collect', async (interaction: any) => {
+        const val = interaction.values[0];
+
+        if (val === 'SEARCH_ACTION') {
+            collector.stop();
+            const modal = new ModalBuilder()
+                .setCustomId('modal_npc_search')
+                .setTitle("🔍 Cerca NPC");
+
+            const input = new TextInputBuilder()
+                .setCustomId('search_query')
+                .setLabel("Nome o ruolo")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+
+            await interaction.showModal(modal);
+
+            try {
+                const submission = await interaction.awaitModalSubmit({
+                    time: 60000,
+                    filter: (i: any) => i.customId === 'modal_npc_search' && i.user.id === interaction.user.id
+                });
+
+                const query = submission.fields.getTextInputValue('search_query');
+                await showNpcSelection(ctx, query, submission);
+            } catch (e) { }
+        } else {
+            collector.stop();
+            const selectedNpcName = val;
             const npc = getNpcEntry(ctx.activeCampaign!.id, selectedNpcName);
 
             if (!npc) {
@@ -65,13 +269,12 @@ export async function startInteractiveNpcUpdate(ctx: CommandContext) {
                 return;
             }
 
-            // 4. Show Field Selection
             await showFieldSelection(interaction, npc, ctx);
         }
     });
 }
 
-async function showFieldSelection(interaction: any, npc: any, ctx: CommandContext) {
+async function showFieldSelection(interaction: any, npc: any, ctx: CommandContext, isNewMessage: boolean = false) {
     const fieldSelect = new StringSelectMenuBuilder()
         .setCustomId('npc_update_select_field')
         .setPlaceholder(`Modifica ${npc.name}...`)
@@ -89,23 +292,27 @@ async function showFieldSelection(interaction: any, npc: any, ctx: CommandContex
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fieldSelect);
 
-    await interaction.update({
-        content: `**🛠️ Modifica di ${npc.name}**\nCosa vuoi aggiornare?`,
-        components: [row]
-    });
+    const content = `**🛠️ Modifica di ${npc.name}**\nCosa vuoi aggiornare?`;
+
+    let message;
+    if (isNewMessage) {
+        message = await interaction.reply({ content, components: [row] });
+    } else {
+        await interaction.update({ content, components: [row] });
+        message = interaction.message;
+    }
+
+    const targetMessage = isNewMessage ? message : interaction.message;
 
     // Create a new collector for this interaction's channel to handle subsequent steps
-    // Note: We need a collector attached to the message, which we updated. 
-    // Since 'interaction.update' doesn't return the message, we use the message from the interaction.
-    const message = interaction.message;
-
-    const fieldCollector = message.createMessageComponentCollector({
+    const fieldCollector = targetMessage.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
         time: 120000,
-        filter: (i: any) => i.user.id === interaction.user.id && i.customId === 'npc_update_select_field'
+        filter: (i: any) => i.user.id === ctx.message.author.id && i.customId === 'npc_update_select_field' // Check author ID from context
     });
 
     fieldCollector.on('collect', async (i: any) => {
+        fieldCollector.stop();
         const field = i.values[0];
 
         if (field === 'status') {
@@ -148,13 +355,36 @@ async function showStatusSelection(interaction: any, npc: any, ctx: CommandConte
     });
 
     collector.on('collect', async (i: any) => {
+        collector.stop();
         const newStatus = i.values[0];
         updateNpcFields(ctx.activeCampaign!.id, npc.name, { status: newStatus });
         markNpcDirty(ctx.activeCampaign!.id, npc.name);
 
+        const updateAgainRow = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_npc_update_again')
+                    .setLabel('Modifica Ancora')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('✏️')
+            );
+
         await i.update({
             content: `✅ Staus di **${npc.name}** aggiornato a **${newStatus}**!`,
-            components: []
+            components: [updateAgainRow]
+        });
+
+        const btnCollector = i.message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+            filter: (btn: any) => btn.customId === 'btn_npc_update_again' && btn.user.id === interaction.user.id
+        });
+
+        btnCollector.on('collect', async (btn: any) => {
+            btnCollector.stop();
+            const freshNpc = getNpcEntry(ctx.activeCampaign!.id, npc.name);
+            if (freshNpc) await showFieldSelection(btn, freshNpc, ctx);
+            else await btn.reply({ content: "❌ Errore reload NPC.", ephemeral: true });
         });
     });
 }
@@ -193,24 +423,51 @@ async function showAlignmentSelection(interaction: any, npc: any, type: 'moral' 
     });
 
     collector.on('collect', async (i: any) => {
+        collector.stop();
         const newVal = i.values[0];
         const update = type === 'moral' ? { alignment_moral: newVal } : { alignment_ethical: newVal };
 
         updateNpcFields(ctx.activeCampaign!.id, npc.name, update);
         markNpcDirty(ctx.activeCampaign!.id, npc.name);
 
+        const updateAgainRow = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_npc_update_again_align')
+                    .setLabel('Modifica Ancora')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('✏️')
+            );
+
         await i.update({
             content: `✅ Allineamento di **${npc.name}** aggiornato a **${newVal}**!`,
-            components: []
+            components: [updateAgainRow]
+        });
+
+        const btnCollector = i.message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+            filter: (btn: any) => btn.customId === 'btn_npc_update_again_align' && btn.user.id === interaction.user.id
+        });
+
+        btnCollector.on('collect', async (btn: any) => {
+            btnCollector.stop();
+            const freshNpc = getNpcEntry(ctx.activeCampaign!.id, npc.name);
+            if (freshNpc) await showFieldSelection(btn, freshNpc, ctx);
+            else await btn.reply({ content: "❌ Errore reload NPC.", ephemeral: true });
         });
     });
 }
 
 async function showTextModal(interaction: any, npc: any, field: string, ctx: CommandContext) {
     const modalId = `modal_update_${field}_${Date.now()}`; // Unique ID to avoid conflicts
+    const label = field.charAt(0).toUpperCase() + field.slice(1);
+    const baseTitle = `Modifica ${label}: ${npc.name}`;
+    const title = baseTitle.length > 45 ? baseTitle.substring(0, 42) + '...' : baseTitle;
+
     const modal = new ModalBuilder()
         .setCustomId(modalId)
-        .setTitle(`Modifica ${field.charAt(0).toUpperCase() + field.slice(1)}`);
+        .setTitle(title);
 
     let currentValue = '';
     if (field === 'name') currentValue = npc.name;
@@ -231,10 +488,6 @@ async function showTextModal(interaction: any, npc: any, field: string, ctx: Com
 
     await interaction.showModal(modal);
 
-    // Modal submit interaction needs to be handled on the client level or via awaiting submission here?
-    // interaction.showModal DOES NOT return a promise that resolves with the submission.
-    // We must wait for the modal submission.
-
     try {
         const submission = await interaction.awaitModalSubmit({
             time: 300000,
@@ -248,9 +501,35 @@ async function showTextModal(interaction: any, npc: any, field: string, ctx: Com
         updateNpcFields(ctx.activeCampaign!.id, npc.name, updates);
         markNpcDirty(ctx.activeCampaign!.id, field === 'name' ? newValue : npc.name);
 
+        const updateAgainRow = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_npc_update_again_text')
+                    .setLabel('Modifica Ancora')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('✏️')
+            );
+
         await submission.reply({
             content: `✅ **${npc.name}** aggiornato!\n${field}: ${newValue}`,
-            ephemeral: false
+            ephemeral: false,
+            components: [updateAgainRow]
+        });
+
+        const msg = await submission.fetchReply();
+        const btnCollector = msg.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+            filter: (btn: any) => btn.customId === 'btn_npc_update_again_text' && btn.user.id === interaction.user.id
+        });
+
+        btnCollector.on('collect', async (btn: any) => {
+            btnCollector.stop();
+            // Handle rename case carefully
+            const nameToFetch = (field === 'name') ? newValue : npc.name;
+            const freshNpc = getNpcEntry(ctx.activeCampaign!.id, nameToFetch);
+            if (freshNpc) await showFieldSelection(btn, freshNpc, ctx);
+            else await btn.reply({ content: "❌ Errore reload NPC.", ephemeral: true });
         });
 
         // Cleanup original selection message if possible
@@ -264,11 +543,24 @@ async function showTextModal(interaction: any, npc: any, field: string, ctx: Com
 }
 
 async function showFactionSelection(interaction: any, npc: any, ctx: CommandContext) {
-    const factions = factionRepository.listFactions(ctx.activeCampaign!.id, true);
+    await showFactionSelectionRecursively(interaction, npc, ctx, null);
+}
 
-    if (factions.length === 0) {
-        // No factions exist, maybe offer to create one via modal? 
-        // For now, simpler to just say no factions.
+async function showFactionSelectionRecursively(interaction: any, npc: any, ctx: CommandContext, searchQuery: string | null) {
+    let factions: any[] = [];
+    const allFactions = factionRepository.listFactions(ctx.activeCampaign!.id, true);
+
+    if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        factions = allFactions.filter(f =>
+            f.name.toLowerCase().includes(query) ||
+            f.type.toLowerCase().includes(query)
+        ).slice(0, 24);
+    } else {
+        factions = allFactions.slice(0, 24);
+    }
+
+    if (allFactions.length === 0 && !searchQuery) {
         await interaction.update({
             content: "⚠️ Nessuna fazione trovata. Usa `$faction create` per crearne una prima.",
             components: []
@@ -276,7 +568,7 @@ async function showFactionSelection(interaction: any, npc: any, ctx: CommandCont
         return;
     }
 
-    const factionOptions = factions.slice(0, 24).map(f =>
+    const factionOptions = factions.map(f =>
         new StringSelectMenuOptionBuilder()
             .setLabel(f.name)
             .setValue(f.id.toString())
@@ -284,42 +576,86 @@ async function showFactionSelection(interaction: any, npc: any, ctx: CommandCont
             .setEmoji(f.is_party ? '🛡️' : '⚔️')
     );
 
-    // Add option for "New Faction" if space permits
-    factionOptions.push(
+    // Search Option
+    factionOptions.unshift(
         new StringSelectMenuOptionBuilder()
-            .setLabel("➕ Crea Nuova Fazione")
-            .setValue("NEW_FACTION")
-            .setEmoji("✨")
-            .setDescription("Crea e affilia a una nuova fazione")
+            .setLabel("🔍 Cerca...")
+            .setDescription("Filtra fazioni")
+            .setValue("SEARCH_ACTION")
+            .setEmoji('🔍')
     );
+
+    // New Faction Option
+    if (!searchQuery) {
+        factionOptions.push(
+            new StringSelectMenuOptionBuilder()
+                .setLabel("➕ Crea Nuova Fazione")
+                .setValue("NEW_FACTION")
+                .setEmoji("✨")
+                .setDescription("Crea e affilia a una nuova fazione")
+        );
+    }
 
     const select = new StringSelectMenuBuilder()
         .setCustomId('npc_update_select_faction')
-        .setPlaceholder('Seleziona Fazione...')
+        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : 'Seleziona Fazione...')
         .addOptions(factionOptions);
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 
-    await interaction.update({
-        content: `**Affiliazione: Seleziona Fazione per ${npc.name}**`,
-        components: [row]
-    });
+    const content = searchQuery
+        ? `**Affiliazione per ${npc.name}**\nRisultati ricerca "${searchQuery}":`
+        : `**Affiliazione: Seleziona Fazione per ${npc.name}**`;
 
-    const collector = interaction.message.createMessageComponentCollector({
+    // Only attempt to update if we have a valid interaction
+    if (interaction.isMessageComponent?.() || interaction.isModalSubmit?.()) {
+        await interaction.update({
+            content: content,
+            components: [row]
+        });
+    }
+
+    const message = interaction.message;
+    const collector = message.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
         time: 60000,
         filter: (i: any) => i.user.id === interaction.user.id && i.customId === 'npc_update_select_faction'
     });
 
     collector.on('collect', async (i: any) => {
+        collector.stop();
         const selectedValue = i.values[0];
 
-        if (selectedValue === 'NEW_FACTION') {
-            // Fallback to Modal for creation
+        if (selectedValue === 'SEARCH_ACTION') {
+            collector.stop();
+            const modal = new ModalBuilder()
+                .setCustomId('modal_npc_faction_search')
+                .setTitle("🔍 Cerca Fazione");
+
+            const input = new TextInputBuilder()
+                .setCustomId('search_query')
+                .setLabel("Nome o tipo")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+
+            await i.showModal(modal);
+
+            try {
+                const submission = await i.awaitModalSubmit({
+                    time: 60000,
+                    filter: (sub: any) => sub.customId === 'modal_npc_faction_search' && sub.user.id === i.user.id
+                });
+                const query = submission.fields.getTextInputValue('search_query');
+                await showFactionSelectionRecursively(submission, npc, ctx, query);
+            } catch (e) { }
+
+        } else if (selectedValue === 'NEW_FACTION') {
             await showFactionModal(i, npc, ctx);
         } else {
             const factionId = parseInt(selectedValue);
-            const faction = factions.find(f => f.id === factionId);
+            const faction = allFactions.find((f: any) => f.id === factionId);
             if (faction) {
                 await showFactionRoleSelection(i, npc, faction, ctx);
             }
@@ -350,7 +686,7 @@ async function showFactionRoleSelection(interaction: any, npc: any, faction: any
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 
     await interaction.update({
-        content: `**Ruolo di ${npc.name} in ${faction.name}**`,
+        content: `**Affiliazione incompleta!**\nSeleziona un **Ruolo** per **${npc.name}** in **${faction.name}** per confermare l'aggiornamento.`,
         components: [row]
     });
 
@@ -361,6 +697,7 @@ async function showFactionRoleSelection(interaction: any, npc: any, faction: any
     });
 
     collector.on('collect', async (i: any) => {
+        collector.stop();
         const role = i.values[0];
 
         factionRepository.addAffiliation(faction.id, 'npc', npc.id, {
@@ -369,9 +706,31 @@ async function showFactionRoleSelection(interaction: any, npc: any, faction: any
         });
         markNpcDirty(ctx.activeCampaign!.id, npc.name);
 
+        const updateAgainRow = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_npc_update_again_role')
+                    .setLabel('Modifica Ancora')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('✏️')
+            );
+
         await i.update({
             content: `✅ **${npc.name}** ora affiliato a **${faction.name}** come **${role}**.`,
-            components: []
+            components: [updateAgainRow]
+        });
+
+        const btnCollector = i.message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+            filter: (btn: any) => btn.customId === 'btn_npc_update_again_role' && btn.user.id === interaction.user.id
+        });
+
+        btnCollector.on('collect', async (btn: any) => {
+            btnCollector.stop();
+            const freshNpc = getNpcEntry(ctx.activeCampaign!.id, npc.name);
+            if (freshNpc) await showFieldSelection(btn, freshNpc, ctx);
+            else await btn.reply({ content: "❌ Errore reload NPC.", ephemeral: true });
         });
     });
 }
@@ -428,9 +787,33 @@ async function showFactionModal(interaction: any, npc: any, ctx: CommandContext)
             });
             markNpcDirty(ctx.activeCampaign!.id, npc.name);
 
+            const updateAgainRow = new ActionRowBuilder<ButtonBuilder>()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('btn_npc_update_again_new_fact')
+                        .setLabel('Modifica Ancora')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('✏️')
+                );
+
             await submission.reply({
                 content: `✅ **${npc.name}** ora affiliato a **${faction.name}** come **${role}**.`,
-                ephemeral: false
+                ephemeral: false,
+                components: [updateAgainRow]
+            });
+
+            const msg = await submission.fetchReply();
+            const btnCollector = msg.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000,
+                filter: (btn: any) => btn.customId === 'btn_npc_update_again_new_fact' && btn.user.id === interaction.user.id
+            });
+
+            btnCollector.on('collect', async (btn: any) => {
+                btnCollector.stop();
+                const freshNpc = getNpcEntry(ctx.activeCampaign!.id, npc.name);
+                if (freshNpc) await showFieldSelection(btn, freshNpc, ctx);
+                else await btn.reply({ content: "❌ Errore reload NPC.", ephemeral: true });
             });
             try {
                 await interaction.message.edit({ components: [] });

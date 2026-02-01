@@ -14,6 +14,7 @@ import { FactionEntry, ReputationLevel, REPUTATION_SPECTRUM } from '../../db/typ
 import { syncFactionEntryIfNeeded, syncAllDirtyFactions } from '../../bard';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
+import { startInteractiveFactionUpdate, startInteractiveFactionAdd } from './interactiveUpdate';
 
 // Helper: Get NPC by ID (for internal use)
 function getNpcById(npcId: number): { id: number; name: string; role?: string } | null {
@@ -35,7 +36,7 @@ const REPUTATION_ICONS: Record<ReputationLevel, string> = {
     'ALLEATO': '⭐'
 };
 
-const FACTION_TYPE_ICONS: Record<string, string> = {
+export const FACTION_TYPE_ICONS: Record<string, string> = {
     'PARTY': '🎭',
     'GUILD': '🛡️',
     'KINGDOM': '👑',
@@ -176,9 +177,14 @@ export const factionCommand: Command = {
         // =============================================
         // SUBCOMMAND: create / add / crea
         // =============================================
-        if (/^(add|create|crea)\s/i.test(argsStr)) {
-            const content = argsStr.substring(argsStr.indexOf(' ') + 1);
+        if (/^(add|create|crea)(\s|$)/i.test(argsStr)) {
+            const content = argsStr.replace(/^(add|create|crea)\s*/i, '').trim();
             const parts = content.split('|').map(s => s.trim());
+
+            if (!content) {
+                await startInteractiveFactionAdd(ctx);
+                return;
+            }
 
             if (parts.length < 1 || !parts[0]) {
                 await ctx.message.reply('Uso: `$faction create <Nome> [| <Tipo>] [| <Descrizione>]`\nTipi: GUILD, KINGDOM, CULT, ORGANIZATION, GENERIC');
@@ -289,12 +295,18 @@ export const factionCommand: Command = {
         }
 
         // SUBCOMMAND: $faction update <Name or ID> [| <Desc> OR <field> <value>]
-        if (argsStr.toLowerCase().startsWith('update ')) {
+        if (argsStr.toLowerCase() === 'update' || argsStr.toLowerCase().startsWith('update ')) {
             const fullContent = argsStr.substring(7).trim();
 
             // 1. Identify Target (ID or Name)
             let targetIdentifier = "";
             let remainingArgs = "";
+
+
+            if (fullContent.length === 0) {
+                await startInteractiveFactionUpdate(ctx);
+                return;
+            }
 
             if (fullContent.startsWith('#')) {
                 const parts = fullContent.split(' ');

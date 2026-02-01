@@ -28,6 +28,7 @@ import {
     syncAllDirtyAtlas,
     syncAtlasEntryIfNeeded
 } from '../../bard';
+import { startInteractiveAtlasUpdate, startInteractiveAtlasAdd } from './interactiveUpdate';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { showEntityEvents } from '../utils/eventsViewer';
 
@@ -100,9 +101,23 @@ export const atlasCommand: Command = {
             return;
         }
 
+        // --- SUBCOMMAND: add ---
+        if (argsStr.toLowerCase() === 'add' || argsStr.toLowerCase().startsWith('add ')) {
+            const content = argsStr.substring(3).trim();
+            if (!content) {
+                await startInteractiveAtlasAdd(ctx);
+                return;
+            }
+        }
+
         // --- SUBCOMMAND: update ---
-        if (argsStr.toLowerCase().startsWith('update')) {
+        if (argsStr.toLowerCase() === 'update' || argsStr.toLowerCase().startsWith('update ')) {
             const content = argsStr.substring(7).trim();
+
+            if (!content) {
+                await startInteractiveAtlasUpdate(ctx);
+                return;
+            }
             // ID or Macro|Micro
             // $atlante update 1 | Note
             // $atlante update Region | Place | Note

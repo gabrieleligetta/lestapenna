@@ -145,6 +145,10 @@ export const locationRepository = {
         `).get(campaignId, macro, micro) as AtlasEntryFull || null;
     },
 
+    getAtlasEntryById: (id: number): AtlasEntryFull | null => {
+        return db.prepare(`SELECT * FROM location_atlas WHERE id = ?`).get(id) as AtlasEntryFull || null;
+    },
+
     getAtlasEntryByShortId: (campaignId: number, shortId: string): AtlasEntryFull | null => {
         const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
         return db.prepare(`

@@ -18,6 +18,7 @@ import {
 import { ArtifactEntry, ArtifactStatus } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { showEntityEvents } from '../utils/eventsViewer';
+import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd } from './interactiveUpdate';
 
 // Status icons and colors
 const getStatusDisplay = (status: ArtifactStatus) => {
@@ -78,8 +79,13 @@ export const artifactCommand: Command = {
         };
 
         // SUBCOMMAND: $artifact update <Name or ID> [| <Note> OR <field> <value>]
-        if (arg.toLowerCase().startsWith('update ')) {
-            const fullContent = arg.substring(7).trim();
+        if (arg.toLowerCase().startsWith('update')) { // Changed from 'update ' to 'update' to catch bare command
+            const fullContent = arg.substring(6).trim(); // Changed substring index
+
+            if (!fullContent) {
+                await startInteractiveArtifactUpdate(ctx);
+                return;
+            }
 
             let targetIdentifier = "";
             let remainingArgs = "";
@@ -251,6 +257,14 @@ export const artifactCommand: Command = {
                 await msg.edit({ content: '⏱️ Tempo scaduto.', components: [] });
             }
             return;
+        }
+
+        if (arg.toLowerCase() === 'add' || arg.toLowerCase().startsWith('add ')) {
+            const content = arg.substring(3).trim();
+            if (!content) {
+                await startInteractiveArtifactAdd(ctx);
+                return;
+            }
         }
 
         // SUBCOMMAND: $artifact merge <old> | <new>

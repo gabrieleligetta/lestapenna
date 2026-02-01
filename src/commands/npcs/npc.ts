@@ -33,7 +33,7 @@ import {
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
-import { startInteractiveNpcUpdate } from './interactiveUpdate';
+import { startInteractiveNpcUpdate, startInteractiveNpcAdd } from './interactiveUpdate';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -120,9 +120,14 @@ export const npcCommand: Command = {
         }
 
         // SUBCOMMAND: add / create
-        if (argsStr.toLowerCase().startsWith('add ') || argsStr.toLowerCase().startsWith('create ') || argsStr.toLowerCase().startsWith('crea ')) {
-            const content = argsStr.substring(argsStr.indexOf(' ') + 1);
+        if (argsStr.toLowerCase() === 'add' || argsStr.toLowerCase().startsWith('add ') || argsStr.toLowerCase() === 'create' || argsStr.toLowerCase().startsWith('create ') || argsStr.toLowerCase() === 'crea' || argsStr.toLowerCase().startsWith('crea ')) {
+            const content = argsStr.replace(/^(add|create|crea)\s*/i, '').trim();
             const parts = content.split('|').map(s => s.trim());
+
+            if (!content) {
+                await startInteractiveNpcAdd(ctx);
+                return;
+            }
 
             if (parts.length < 3) {
                 await ctx.message.reply('Uso: `$npc add <Nome> | <Ruolo> | <Descrizione>`');

@@ -16,15 +16,19 @@ import {
     startInteractiveBestiaryDelete
 } from './bestiaryInteractive';
 
-// Helper for Regen
+// Helper for Regen - usato SOLO per note narrative
 async function regenerateMonsterBio(campaignId: number, monsterName: string) {
     const history = bestiaryRepository.getBestiaryHistory(campaignId, monsterName);
     const monster = bestiaryRepository.getMonsterByName(campaignId, monsterName);
     const currentDesc = monster?.description || "";
 
-    // Map history to simple objects
     const simpleHistory = history.map((h: any) => ({ description: h.description, event_type: h.event_type }));
     await generateBio('MONSTER', { campaignId, name: monsterName, currentDesc }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markBestiaryDirtyForSync(campaignId: number, name: string) {
+    bestiaryRepository.markBestiaryDirty(campaignId, name);
 }
 
 export const bestiaryCommand: Command = {
@@ -207,12 +211,10 @@ export const bestiaryCommand: Command = {
                 }
 
                 bestiaryRepository.updateBestiaryFields(ctx.activeCampaign!.id, monster.name, { status: mapped }, true);
-
-                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-                bestiaryRepository.addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, `Stato aggiornato a ${mapped}`, "MANUAL_UPDATE", true);
+                // NON aggiungiamo eventi per cambio stato - marca dirty per sync background
+                markBestiaryDirtyForSync(ctx.activeCampaign!.id, monster.name);
 
                 await ctx.message.reply(`✅ Stato aggiornato: **${monster.name}** → **${mapped}**`);
-                await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name);
                 return;
             }
 

@@ -35,12 +35,16 @@ import {
     startInteractiveQuestStatusChange
 } from './questInteractive';
 
-// Helper for Regen
+// Helper for Regen - usato SOLO per note narrative
 async function regenerateQuestBio(campaignId: number, title: string, status: string) {
     const history = getQuestHistory(campaignId, title);
-    // Map history to simple objects
     const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
     await generateBio('QUEST', { campaignId, name: title, role: status, currentDesc: "" }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markQuestDirtyForSync(campaignId: number, title: string) {
+    questRepository.markQuestDirty(campaignId, title);
 }
 
 export const questCommand: Command = {
@@ -109,10 +113,10 @@ export const questCommand: Command = {
             const currentSession = guildSessions.get(ctx.guildId);
             addQuest(ctx.activeCampaign!.id, title, currentSession, undefined, QuestStatus.OPEN, 'MAJOR', true);
 
-            // Add initial history event?
+            // Add initial history event
             if (currentSession) {
                 addQuestEvent(ctx.activeCampaign!.id, title, currentSession, "Quest iniziata.", "CREATION", true);
-                regenerateQuestBio(ctx.activeCampaign!.id, title, "OPEN"); // Async
+                markQuestDirtyForSync(ctx.activeCampaign!.id, title);
             }
 
             await ctx.message.reply(`🗺️ Quest aggiunta: **${title}**`);
@@ -265,12 +269,10 @@ export const questCommand: Command = {
                 }
 
                 updateQuestStatusById(quest.id, mapped as QuestStatus);
-
-                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-                addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, `Stato aggiornato a ${mapped}`, "MANUAL_UPDATE", true);
+                // NON aggiungiamo eventi per cambio stato - marca dirty per sync background
+                markQuestDirtyForSync(ctx.activeCampaign!.id, quest.title);
 
                 await ctx.message.reply(`✅ Stato aggiornato: **${quest.title}** → **${mapped}**`);
-                await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, mapped);
                 return;
             }
 
@@ -287,12 +289,10 @@ export const questCommand: Command = {
                 }
 
                 db.prepare('UPDATE quests SET type = ? WHERE id = ?').run(mapped, quest.id);
-                quest.type = mapped as 'MAJOR' | 'MINOR'; // Update local obj for bio regen? Actually bio uses history.
+                // Marca dirty per sync background
+                markQuestDirtyForSync(ctx.activeCampaign!.id, quest.title);
 
                 await ctx.message.reply(`✅ Tipo aggiornato: **${quest.title}** → **${mapped}**`);
-                // Note: Type change doesn't necessarily need bio regen unless bio uses type. Bio header usually uses type.
-                // Regenerate just in case.
-                await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, quest.status);
                 return;
             }
 
@@ -354,13 +354,10 @@ export const questCommand: Command = {
 
             updateQuestStatus(ctx.activeCampaign!.id, search, 'COMPLETED');
 
-            // Add Event
-            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            // We need exact title for event. 
-            const quest = getQuestByTitle(ctx.activeCampaign!.id, search); // Fuzzy might fail if search is partial
+            // Marca dirty per sync background - niente eventi automatici
+            const quest = getQuestByTitle(ctx.activeCampaign!.id, search);
             if (quest) {
-                addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, "La quest è stata completata con successo.", "COMPLETION", true);
-                regenerateQuestBio(ctx.activeCampaign!.id, quest.title, "COMPLETED");
+                markQuestDirtyForSync(ctx.activeCampaign!.id, quest.title);
             }
 
             await ctx.message.reply(`✅ Quest completata: **${search}**`);
@@ -391,16 +388,9 @@ export const questCommand: Command = {
                 return;
             }
 
-            // Update Status
+            // Update Status e marca dirty per sync background
             updateQuestStatus(ctx.activeCampaign!.id, quest.title, 'OPEN');
-            // Remove from RAG (or update)? regenerate will handle it.
-
-            // Add Event
-            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-            addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, "Stato riportato a OPEN (Undone).", "MANUAL_UPDATE", true);
-
-            // Regenerate
-            await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, "OPEN");
+            markQuestDirtyForSync(ctx.activeCampaign!.id, quest.title);
 
             await ctx.message.reply(`🔄 Quest riaperta: **${quest.title}**`);
             return;

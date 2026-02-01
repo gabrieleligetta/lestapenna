@@ -28,15 +28,19 @@ import {
     startInteractiveInventoryDelete
 } from './inventoryInteractive';
 
-// Helper for Regen
+// Helper for Regen - usato SOLO per note narrative
 async function regenerateItemBio(campaignId: number, itemName: string) {
     const history = getInventoryHistory(campaignId, itemName);
     const item = getInventoryItemByName(campaignId, itemName);
     const currentDesc = item?.description || "";
 
-    // Map history to simple objects
     const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
     await generateBio('ITEM', { campaignId, name: itemName, currentDesc }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markInventoryDirtyForSync(campaignId: number, itemName: string) {
+    inventoryRepository.markInventoryDirty(campaignId, itemName);
 }
 
 export const inventoryCommand: Command = {
@@ -96,10 +100,10 @@ export const inventoryCommand: Command = {
             const currentSession = guildSessions.get(ctx.guildId);
             inventoryRepository.addLoot(ctx.activeCampaign!.id, item, 1, currentSession, undefined, true);
 
-            // Add Event
+            // L'evento "Oggetto acquisito" è narrativo valido
             if (currentSession) {
                 addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto acquisito.", "LOOT", true);
-                regenerateItemBio(ctx.activeCampaign!.id, item);
+                markInventoryDirtyForSync(ctx.activeCampaign!.id, item);
             }
 
             await ctx.message.reply(`💰 Aggiunto: **${item}**`);
@@ -174,8 +178,9 @@ export const inventoryCommand: Command = {
             const removed = removeLoot(ctx.activeCampaign!.id, item, 1);
             if (removed) {
                 const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                // L'evento "Oggetto utilizzato" è narrativo valido
                 addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto utilizzato/rimosso.", "USE", true);
-                regenerateItemBio(ctx.activeCampaign!.id, item);
+                markInventoryDirtyForSync(ctx.activeCampaign!.id, item);
                 await ctx.message.reply(`📉 Rimosso/Usato: **${item}**`);
             }
             else await ctx.message.reply(`⚠️ Oggetto "${item}" non trovato nell'inventario.`);

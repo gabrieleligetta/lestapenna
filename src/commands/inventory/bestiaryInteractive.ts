@@ -19,13 +19,18 @@ import { BestiaryEntry } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
-// Helper for Bio Regen
+// Helper for Bio Regen - usato SOLO per note narrative
 async function regenerateMonsterBio(campaignId: number, monsterName: string) {
     const history = bestiaryRepository.getBestiaryHistory(campaignId, monsterName);
     const monster = bestiaryRepository.getMonsterByName(campaignId, monsterName);
     const currentDesc = monster?.description || "";
     const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
     await generateBio('MONSTER', { campaignId, name: monsterName, currentDesc }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markBestiaryDirtyForSync(campaignId: number, name: string) {
+    bestiaryRepository.markBestiaryDirty(campaignId, name);
 }
 
 export async function startInteractiveBestiaryUpdate(ctx: CommandContext) {
@@ -251,15 +256,13 @@ async function showBestiaryStatusUpdate(interaction: any, monster: BestiaryEntry
         collector.stop();
         const newStatus = i.values[0];
 
-        await i.deferUpdate();
-
+        // Aggiorna stato e marca dirty per sync in background
         bestiaryRepository.updateBestiaryFields(ctx.activeCampaign!.id, monster.name, { status: newStatus }, true);
+        markBestiaryDirtyForSync(ctx.activeCampaign!.id, monster.name);
 
-        const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-        bestiaryRepository.addBestiaryEvent(ctx.activeCampaign!.id, monster.name, session, `Stato aggiornato a ${newStatus}`, "MANUAL_UPDATE", true);
-        await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name);
+        // NON aggiungiamo eventi automatici per cambio stato - sono rumore narrativo
 
-        await i.editReply({ content: `✅ Stato di **${monster.name}** aggiornato a **${newStatus}**!`, components: [] });
+        await i.update({ content: `✅ Stato di **${monster.name}** aggiornato a **${newStatus}**!`, components: [] });
     });
 }
 

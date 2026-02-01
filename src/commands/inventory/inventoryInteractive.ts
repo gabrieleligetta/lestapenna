@@ -20,13 +20,18 @@ import { InventoryItem } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
-// Helper for Bio Regen
+// Helper for Bio Regen - usato SOLO per note narrative
 async function regenerateItemBio(campaignId: number, itemName: string) {
     const history = inventoryRepository.getInventoryHistory(campaignId, itemName);
     const item = inventoryRepository.getInventoryItemByName(campaignId, itemName);
     const currentDesc = item?.description || "";
     const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
     await generateBio('ITEM', { campaignId, name: itemName, currentDesc }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markInventoryDirtyForSync(campaignId: number, itemName: string) {
+    inventoryRepository.markInventoryDirty(campaignId, itemName);
 }
 
 export async function startInteractiveInventoryUpdate(ctx: CommandContext) {
@@ -125,8 +130,10 @@ export async function startInteractiveInventoryAdd(ctx: CommandContext) {
             inventoryRepository.addLoot(ctx.activeCampaign!.id, name, qty, currentSession, description, true);
 
             if (currentSession) {
+                // L'evento "Oggetto acquisito" è narrativo valido, lo manteniamo
                 addInventoryEvent(ctx.activeCampaign!.id, name, currentSession, `Oggetto acquisito (x${qty}).`, "LOOT", true);
-                regenerateItemBio(ctx.activeCampaign!.id, name);
+                // Marca dirty per sync in background invece di rigenerazione sincrona
+                markInventoryDirtyForSync(ctx.activeCampaign!.id, name);
             }
 
             const successRow = new ActionRowBuilder<ButtonBuilder>()

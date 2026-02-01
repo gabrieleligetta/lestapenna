@@ -20,13 +20,18 @@ import { ArtifactEntry, ArtifactStatus, ArtifactOwnerType } from '../../db/types
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
-// Helper for Bio Regen
+// Helper for Bio Regen - usato SOLO per note narrative
 async function regenerateArtifactBio(campaignId: number, name: string) {
     const history = artifactRepository.getArtifactHistory(campaignId, name);
     const artifact = artifactRepository.getArtifactByName(campaignId, name);
     const currentDesc = artifact?.description || "";
     const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
     await generateBio('ARTIFACT', { campaignId, name, currentDesc }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markArtifactDirtyForSync(campaignId: number, name: string) {
+    artifactRepository.markArtifactDirty(campaignId, name);
 }
 
 export async function startInteractiveArtifactUpdate(ctx: CommandContext) {
@@ -115,8 +120,10 @@ export async function startInteractiveArtifactAdd(ctx: CommandContext) {
             artifactRepository.upsertArtifact(ctx.activeCampaign!.id, name, 'FUNZIONANTE', currentSession, { description }, true);
 
             if (currentSession) {
+                // L'evento "Artefatto scoperto" è narrativo valido
                 addArtifactEvent(ctx.activeCampaign!.id, name, currentSession, "Artefatto scoperto/registrato.", "DISCOVERY", true);
-                regenerateArtifactBio(ctx.activeCampaign!.id, name);
+                // Marca dirty per sync in background
+                markArtifactDirtyForSync(ctx.activeCampaign!.id, name);
             }
 
             const successRow = new ActionRowBuilder<ButtonBuilder>()
@@ -364,15 +371,13 @@ async function showArtifactStatusUpdate(interaction: any, artifact: ArtifactEntr
         collector.stop();
         const newStatus = i.values[0] as ArtifactStatus;
 
-        await i.deferUpdate();
-
+        // Aggiorna stato e marca dirty per sync in background
         artifactRepository.updateArtifactFields(ctx.activeCampaign!.id, artifact.name, { status: newStatus }, true);
+        markArtifactDirtyForSync(ctx.activeCampaign!.id, artifact.name);
 
-        const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-        addArtifactEvent(ctx.activeCampaign!.id, artifact.name, session, `Stato aggiornato a ${newStatus}`, "MANUAL_UPDATE", true);
-        await regenerateArtifactBio(ctx.activeCampaign!.id, artifact.name);
+        // NON aggiungiamo eventi automatici per cambio stato - sono rumore narrativo
 
-        await i.editReply({ content: `✅ Stato di **${artifact.name}** aggiornato a **${newStatus}**!`, components: [] });
+        await i.update({ content: `✅ Stato di **${artifact.name}** aggiornato a **${newStatus}**!`, components: [] });
     });
 }
 

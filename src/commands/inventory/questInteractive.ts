@@ -24,11 +24,16 @@ import { Quest, QuestStatus } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
-// Helper for Bio Regen (duplicated from quest.ts for now, or could be moved to utils)
+// Helper for Bio Regen - usato SOLO per note narrative, non per cambio stato
 async function regenerateQuestBio(campaignId: number, title: string, status: string) {
     const history = questRepository.getQuestHistory(campaignId, title);
     const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
     await generateBio('QUEST', { campaignId, name: title, role: status, currentDesc: "" }, simpleHistory);
+}
+
+// Helper per marcare dirty (rigenerazione asincrona in background)
+function markQuestDirtyForSync(campaignId: number, title: string) {
+    questRepository.markQuestDirty(campaignId, title);
 }
 
 export async function startInteractiveQuestUpdate(ctx: CommandContext) {
@@ -123,8 +128,10 @@ export async function startInteractiveQuestAdd(ctx: CommandContext) {
 
             addQuest(ctx.activeCampaign!.id, title, currentSession, description, QuestStatus.OPEN, 'MAJOR', true);
             if (currentSession) {
+                // L'evento "Quest iniziata" è narrativo valido
                 addQuestEvent(ctx.activeCampaign!.id, title, currentSession, "Quest iniziata.", "CREATION", true);
-                regenerateQuestBio(ctx.activeCampaign!.id, title, "OPEN");
+                // Marca dirty per sync in background
+                markQuestDirtyForSync(ctx.activeCampaign!.id, title);
             }
 
             const successRow = new ActionRowBuilder<ButtonBuilder>()
@@ -331,17 +338,14 @@ async function showQuestDeleteConfirmation(interaction: any, quest: Quest, ctx: 
 }
 
 async function applyStatusChange(interaction: any, quest: Quest, newStatus: string, ctx: CommandContext) {
-    // Defer immediately because bio gen is slow
-    await interaction.deferUpdate();
-
+    // Aggiorna lo stato e marca dirty per sync in background
     questRepository.updateQuestStatusById(quest.id, newStatus as QuestStatus);
-    const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-    const note = newStatus === 'COMPLETED' ? "La quest è stata completata." : "Stato aggiornato.";
-    addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, note, "MANUAL_UPDATE", true);
+    markQuestDirtyForSync(ctx.activeCampaign!.id, quest.title);
 
-    await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, newStatus);
+    // NON aggiungiamo eventi automatici per cambio stato - sono rumore narrativo
+    // La bio verrà rigenerata dal sync in background
 
-    await interaction.editReply({
+    await interaction.update({
         content: `✅ Status di **${quest.title}** aggiornato a **${newStatus}**!`,
         components: []
     });

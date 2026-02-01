@@ -1,12 +1,28 @@
-import { TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
+import {
+    TextChannel,
+    DMChannel,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ComponentType
+} from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
+
     getActiveCampaign,
     getUserProfile,
     updateUserCharacter,
     updateLocation,
     getCampaignLocation,
-    createSession
+    createSession,
+    setCampaignYear,
+    addWorldEvent,
+    factionRepository,
+    getAtlasEntryFull,
+
+    updateAtlasEntry,
+    listAtlasEntries,
+    countAtlasEntries
 } from '../../db';
 import { monitor } from '../../monitor';
 import { audioQueue } from '../../services/queue';
@@ -16,6 +32,7 @@ import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 import { checkAutoLeave } from '../../bootstrap/voiceState';
 import { guildSessions } from '../../state/sessionState';
 import { ensureTestEnvironment } from './testEnv';
+import { startWorldConfigurationFlow } from '../utils/worldConfig';
 
 export const listenCommand: Command = {
     name: 'listen',
@@ -39,14 +56,39 @@ export const listenCommand: Command = {
             return;
         }
 
-        // --- CHECK ANNO CAMPAGNA ---
-        if (ctx.activeCampaign!.current_year === undefined || ctx.activeCampaign!.current_year === null) {
-            await message.reply(
-                `🛑 **Configurazione Temporale Mancante!**\n` +
-                `Prima di iniziare la prima sessione, devi stabilire l'Anno 0 e la data attuale.\n\n` +
-                `1. Usa \`$anno0 <Descrizione>\` per definire l'evento cardine (es. "La Caduta dell'Impero").\n` +
-                `2. Usa \`$data <Anno>\` per impostare l'anno corrente (es. 100).`
-            );
+        // --- CHECK CONFIGURAZIONE MONDO (Interattivo) ---
+        const camp = ctx.activeCampaign!;
+        const currentLoc = getCampaignLocation(message.guild!.id);
+        const partyFaction = factionRepository.getPartyFaction(camp.id);
+        const isWorldConfigured =
+            (camp.current_year !== undefined && camp.current_year !== null) &&
+            (currentLoc && (currentLoc.macro || currentLoc.micro)) &&
+            (partyFaction && partyFaction.name !== 'Heros Party');
+
+        if (!isWorldConfigured) {
+            const row = new ActionRowBuilder<ButtonBuilder>()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('btn_config_world')
+                        .setLabel('Configura Mondo')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('🌍')
+                );
+
+            const replyMsg = await message.reply({
+                content: `🛑 **Configurazione Mancante!**\nPer iniziare la cronaca, dobbiamo definire alcuni dettagli del mondo.\nClicca qui sotto per impostarli rapidamente:`,
+                components: [row]
+            });
+
+            const collector = replyMsg.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000,
+                filter: (i) => i.customId === 'btn_config_world' && i.user.id === message.author.id
+            });
+
+            collector.on('collect', async (interaction) => {
+                await startWorldConfigurationFlow(interaction, camp.id, partyFaction);
+            });
             return;
         }
 

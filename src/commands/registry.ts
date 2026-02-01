@@ -12,6 +12,7 @@ import { createCampaignCommand } from './campaigns/create';
 import { deleteCampaignCommand } from './campaigns/delete';
 import { listCampaignsCommand } from './campaigns/list';
 import { selectCampaignCommand } from './campaigns/select';
+import { setWorldCommand } from './campaigns/setWorld';
 
 // Characters
 import { bioCommand } from './characters/bio';
@@ -87,6 +88,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(deleteCampaignCommand);
     dispatcher.register(listCampaignsCommand);
     dispatcher.register(selectCampaignCommand);
+    dispatcher.register(setWorldCommand);
 
     // Characters
     dispatcher.register(bioCommand);

@@ -331,13 +331,17 @@ async function showQuestDeleteConfirmation(interaction: any, quest: Quest, ctx: 
 }
 
 async function applyStatusChange(interaction: any, quest: Quest, newStatus: string, ctx: CommandContext) {
+    // Defer immediately because bio gen is slow
+    await interaction.deferUpdate();
+
     questRepository.updateQuestStatusById(quest.id, newStatus as QuestStatus);
     const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
     const note = newStatus === 'COMPLETED' ? "La quest è stata completata." : "Stato aggiornato.";
     addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, note, "MANUAL_UPDATE", true);
+
     await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, newStatus);
 
-    await interaction.update({
+    await interaction.editReply({
         content: `✅ Status di **${quest.title}** aggiornato a **${newStatus}**!`,
         components: []
     });
@@ -453,10 +457,11 @@ async function showQuestTextModal(interaction: any, quest: Quest, field: string,
         const newValue = submission.fields.getTextInputValue('value');
 
         if (field === 'note') {
+            await submission.deferReply(); // Heavy AI stuff coming
             const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
             addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, newValue, "PROGRESS", true);
             await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, quest.status);
-            await submission.reply(`📝 Nota aggiunta a **${quest.title}**.`);
+            await submission.editReply(`📝 Nota aggiunta a **${quest.title}**.`);
         } else {
             const updates: any = { [field]: newValue };
             questRepository.updateQuestFields(quest.id, updates);

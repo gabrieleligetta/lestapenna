@@ -2,11 +2,12 @@
  * Bard Sync - Quest synchronization functions
  */
 
-import { getQuestByTitle, clearQuestDirtyFlag, getDirtyQuests } from '../../db';
+import { getQuestByTitle, clearQuestDirtyFlag, getDirtyQuests, getQuestHistory } from '../../db';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
- * Sincronizza Quest nel RAG
+ * Sincronizza Quest nel RAG (con rigenerazione bio)
  */
 export async function syncQuestEntryIfNeeded(
     campaignId: number,
@@ -22,10 +23,23 @@ export async function syncQuestEntryIfNeeded(
 
     console.log(`[Sync] Avvio sync Quest per ${questTitle}...`);
 
-    let ragContent = `[[MISSIONE/QUEST: ${questTitle}]]\n`;
+    // 1. Fetch History and Generate Bio
+    const history = getQuestHistory(campaignId, questTitle);
+    const simpleHistory = history.map((h: any) => ({ description: h.description, event_type: h.event_type }));
+
+    const newBio = await generateBio('QUEST', {
+        campaignId,
+        name: questTitle,
+        role: quest.status,
+        currentDesc: quest.description || ''
+    }, simpleHistory);
+
+    // 2. Build RAG content
+    let ragContent = `[[SCHEDA MISSIONE UFFICIALE: ${questTitle}]]\n`;
     ragContent += `TIPO: ${quest.type || 'MAJOR'}\n`;
     ragContent += `STATO: ${quest.status}\n`;
-    if (quest.description) ragContent += `DIARIO/NOTE: ${quest.description}\n`;
+    if (newBio) ragContent += `DIARIO COMPLETO: ${newBio}\n`;
+    ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
 
     await ingestGenericEvent(
         campaignId,

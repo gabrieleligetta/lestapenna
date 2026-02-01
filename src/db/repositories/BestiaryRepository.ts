@@ -270,5 +270,72 @@ export const bestiaryRepository = {
             db.prepare('DELETE FROM bestiary_history WHERE campaign_id = ? AND lower(monster_name) = lower(?)').run(campaignId, name);
         }
         return res.changes > 0;
+    },
+
+    updateBestiaryFields: (
+        campaignId: number,
+        name: string,
+        fields: Partial<{
+            status: string;
+            count: string;
+            description: string;
+            abilities: string[];
+            weaknesses: string[];
+            resistances: string[];
+            notes: string;
+            name: string;
+        }>,
+        isManual: boolean = false
+    ): boolean => {
+        const monster = bestiaryRepository.getMonsterByName(campaignId, name);
+        if (!monster) return false;
+
+        const updates: string[] = [];
+        const params: any = { id: monster.id };
+
+        if (fields.status !== undefined) {
+            updates.push('status = $status');
+            params.status = fields.status;
+        }
+        if (fields.count !== undefined) {
+            updates.push('count = $count');
+            params.count = fields.count;
+        }
+        if (fields.description !== undefined) {
+            updates.push('description = $description');
+            params.description = fields.description;
+        }
+        if (fields.abilities !== undefined) {
+            updates.push('abilities = $abilities');
+            params.abilities = JSON.stringify(fields.abilities);
+        }
+        if (fields.weaknesses !== undefined) {
+            updates.push('weaknesses = $weaknesses');
+            params.weaknesses = JSON.stringify(fields.weaknesses);
+        }
+        if (fields.resistances !== undefined) {
+            updates.push('resistances = $resistances');
+            params.resistances = JSON.stringify(fields.resistances);
+        }
+        if (fields.notes !== undefined) {
+            updates.push('notes = $notes');
+            params.notes = fields.notes;
+        }
+        if (fields.name !== undefined) {
+            updates.push('name = $newName');
+            params.newName = fields.name;
+        }
+
+        if (updates.length === 0) return false;
+
+        updates.push('rag_sync_needed = 1');
+        updates.push('last_seen = $timestamp');
+        params.timestamp = Date.now();
+        if (isManual) updates.push('is_manual = 1');
+
+        // Note: this updates the MOST RECENT entry found by getMonsterByName if they are per session.
+        // In this system, bestiary entries are somewhat per-session but grouped.
+        db.prepare(`UPDATE bestiary SET ${updates.join(', ')} WHERE id = $id`).run(params);
+        return true;
     }
 };

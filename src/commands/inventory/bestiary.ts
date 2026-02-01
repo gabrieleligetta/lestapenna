@@ -5,27 +5,25 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import {
-    listAllMonsters,
-    mergeMonsters,
-    addBestiaryEvent,
-    getMonsterByName,
-    getBestiaryHistory,
-    getMonsterByShortId,
-    deleteMonster,
+    bestiaryRepository,
     db
 } from '../../db';
 import { guildSessions } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 import { showEntityEvents } from '../utils/eventsViewer';
+import {
+    startInteractiveBestiaryUpdate,
+    startInteractiveBestiaryDelete
+} from './bestiaryInteractive';
 
 // Helper for Regen
 async function regenerateMonsterBio(campaignId: number, monsterName: string) {
-    const history = getBestiaryHistory(campaignId, monsterName);
-    const monster = getMonsterByName(campaignId, monsterName);
+    const history = bestiaryRepository.getBestiaryHistory(campaignId, monsterName);
+    const monster = bestiaryRepository.getMonsterByName(campaignId, monsterName);
     const currentDesc = monster?.description || "";
 
     // Map history to simple objects
-    const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
+    const simpleHistory = history.map((h: any) => ({ description: h.description, event_type: h.event_type }));
     await generateBio('MONSTER', { campaignId, name: monsterName, currentDesc }, simpleHistory);
 }
 
@@ -76,13 +74,18 @@ export const bestiaryCommand: Command = {
         };
 
         // SUBCOMMAND: $bestiario update <Name or ID> [| <Note> OR <field> <value>]
-        if (arg.toLowerCase().startsWith('update ')) {
+        if (arg.toLowerCase() === 'update' || arg.toLowerCase().startsWith('update ')) {
             const fullContent = arg.substring(7).trim(); // Remove 'update '
+
+            if (!fullContent) {
+                await startInteractiveBestiaryUpdate(ctx);
+                return;
+            }
 
             // 1. Identify Target (ID or Name)
             let targetIdentifier = "";
             let remainingArgs = "";
-
+            // ... rest of existing logic ...
             if (fullContent.startsWith('#')) {
                 const parts = fullContent.split(' ');
                 targetIdentifier = parts[0];
@@ -116,15 +119,15 @@ export const bestiaryCommand: Command = {
             }
 
             // Resolve Monster
-            let monster: any; // Using any because db returns plain objects mainly? No, getMonsterByName usually returns object.
+            let monster: any;
             const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const m = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (m) monster = m;
             }
             if (!monster) {
-                monster = getMonsterByName(ctx.activeCampaign!.id, targetIdentifier);
+                monster = bestiaryRepository.getMonsterByName(ctx.activeCampaign!.id, targetIdentifier);
             }
 
             if (!monster) {
@@ -132,13 +135,17 @@ export const bestiaryCommand: Command = {
                 return;
             }
 
-            // 2. Parse Actions
+            if (!remainingArgs) {
+                await startInteractiveBestiaryUpdate({ ...ctx, args: [targetIdentifier] });
+                return;
+            }
 
-            // Case A: Narrative Update
+            // 2. Parse Actions
+            // ... rest of logic ...
             if (remainingArgs.trim().startsWith('|')) {
                 const note = remainingArgs.replace('|', '').trim();
                 const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-                addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, note, "MANUAL_UPDATE", true);
+                bestiaryRepository.addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, note, "MANUAL_UPDATE", true);
 
                 await ctx.message.reply(`📝 Nota aggiunta a **${monster.name}**. Aggiornamento dossier...`);
                 await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name);
@@ -179,7 +186,7 @@ export const bestiaryCommand: Command = {
                 await ctx.message.reply({ embeds: [embed] });
             };
 
-            if (!field || !args[1]) { // args[1] check because value requires at least one word
+            if (!field || !args[1]) {
                 await showUpdateHelp();
                 return;
             }
@@ -199,24 +206,19 @@ export const bestiaryCommand: Command = {
                     return;
                 }
 
-                db.prepare('UPDATE bestiary SET status = ? WHERE id = ?').run(mapped, monster.id);
+                bestiaryRepository.updateBestiaryFields(ctx.activeCampaign!.id, monster.name, { status: mapped }, true);
 
                 const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
-                addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, `Stato aggiornato a ${mapped}`, "MANUAL_UPDATE", true);
+                bestiaryRepository.addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, `Stato aggiornato a ${mapped}`, "MANUAL_UPDATE", true);
 
                 await ctx.message.reply(`✅ Stato aggiornato: **${monster.name}** → **${mapped}**`);
-                await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name); // Regen
+                await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name);
                 return;
             }
 
             if (field === 'count' || field === 'numero' || field === 'qt') {
-                const cleanValue = args.slice(1).join(' '); // Keep original case? existing code upper cases value. 
-                // We should keep case for Count maybe? But parsed 'value' above is upper.
-                // Let's re-extract raw value.
                 const rawValue = remainingArgs.trim().split(/\s+/).slice(1).join(' ');
-
-                db.prepare('UPDATE bestiary SET count = ? WHERE id = ?').run(rawValue, monster.id);
-
+                bestiaryRepository.updateBestiaryFields(ctx.activeCampaign!.id, monster.name, { count: rawValue }, true);
                 await ctx.message.reply(`✅ Numero aggiornato: **${monster.name}** → **${rawValue}**`);
                 return;
             }
@@ -226,25 +228,30 @@ export const bestiaryCommand: Command = {
         }
 
         // SUBCOMMAND: $bestiario delete <Name>
-        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
-            let name = arg.split(' ').slice(1).join(' ');
+        if (arg.toLowerCase() === 'delete' || arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
+            let name = arg.split(' ').slice(1).join(' ').trim();
+
+            if (!name) {
+                await startInteractiveBestiaryDelete(ctx);
+                return;
+            }
 
             // ID Resolution
             const sidMatch = name.match(/^#([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                const monster = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (monster) name = monster.name;
             }
 
-            const existing = getMonsterByName(ctx.activeCampaign!.id, name);
+            const existing = bestiaryRepository.getMonsterByName(ctx.activeCampaign!.id, name);
             if (!existing) {
                 await ctx.message.reply(`❌ Mostro "${name}" non trovato.`);
                 return;
             }
 
             // Delete
-            const success = deleteMonster(ctx.activeCampaign!.id, name);
+            const success = bestiaryRepository.deleteMonster(ctx.activeCampaign!.id, name);
             if (success) {
                 await ctx.message.reply(`🗑️ Mostro **${name}** eliminato dal bestiario.`);
             } else {
@@ -262,21 +269,21 @@ export const bestiaryCommand: Command = {
             }
             let [oldName, newName] = parts;
 
-            // Resolve Old Name
+            // ID Resolution
             const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
             if (oldSidMatch) {
-                const m = getMonsterByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
+                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
                 if (m) oldName = m.name;
             }
 
             // Resolve New Name
             const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
             if (newSidMatch) {
-                const m = getMonsterByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
+                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
                 if (m) newName = m.name;
             }
 
-            const success = mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
+            const success = bestiaryRepository.mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
             if (success) {
                 await ctx.message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);
             } else {
@@ -294,7 +301,7 @@ export const bestiaryCommand: Command = {
             // Resolve short ID
             const sidMatch = monsterIdentifier.match(/^#([a-z0-9]{5})$/i);
             if (sidMatch) {
-                const m = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (m) monsterIdentifier = m.name;
                 else {
                     await ctx.message.reply(`❌ Mostro con ID \`#${sidMatch[1]}\` non trovato.`);
@@ -303,7 +310,7 @@ export const bestiaryCommand: Command = {
             }
 
             // Verify monster exists
-            const monster = getMonsterByName(ctx.activeCampaign!.id, monsterIdentifier);
+            const monster = bestiaryRepository.getMonsterByName(ctx.activeCampaign!.id, monsterIdentifier);
             if (!monster) {
                 await ctx.message.reply(`❌ Mostro **${monsterIdentifier}** non trovato.`);
                 return;
@@ -330,11 +337,11 @@ export const bestiaryCommand: Command = {
             const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const monster = getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                const monster = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (monster) search = monster.name;
             }
 
-            const monster = listAllMonsters(ctx.activeCampaign!.id).find((m: any) =>
+            const monster = bestiaryRepository.listAllMonsters(ctx.activeCampaign!.id).find((m: any) =>
                 m.name.toLowerCase().includes(search.toLowerCase())
             );
             if (!monster) {
@@ -354,7 +361,7 @@ export const bestiaryCommand: Command = {
                 initialPage = parseInt(listParts[1]);
             }
         }
-        const monsters = listAllMonsters(ctx.activeCampaign!.id);
+        const monsters = bestiaryRepository.listAllMonsters(ctx.activeCampaign!.id);
         if (monsters.length === 0) {
             await ctx.message.reply("👹 Nessun mostro incontrato in questa campagna.");
             return;

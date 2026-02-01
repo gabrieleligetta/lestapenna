@@ -22,6 +22,11 @@ import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
 import { showEntityEvents } from '../utils/eventsViewer';
+import {
+    startInteractiveInventoryAdd,
+    startInteractiveInventoryUpdate,
+    startInteractiveInventoryDelete
+} from './inventoryInteractive';
 
 // Helper for Regen
 async function regenerateItemBio(campaignId: number, itemName: string) {
@@ -82,10 +87,14 @@ export const inventoryCommand: Command = {
         }
 
         // SUBCOMMAND: $loot add <Item>
-        if (arg.toLowerCase().startsWith('add ')) {
+        if (arg.toLowerCase() === 'add' || arg.toLowerCase().startsWith('add ')) {
             const item = arg.substring(4).trim();
+            if (!item) {
+                await startInteractiveInventoryAdd(ctx);
+                return;
+            }
             const currentSession = guildSessions.get(ctx.guildId);
-            addLoot(ctx.activeCampaign!.id, item, 1, currentSession, undefined, true);
+            inventoryRepository.addLoot(ctx.activeCampaign!.id, item, 1, currentSession, undefined, true);
 
             // Add Event
             if (currentSession) {
@@ -98,11 +107,28 @@ export const inventoryCommand: Command = {
         }
 
         // SUBCOMMAND: $loot update <Item> | <Note>
-        if (arg.toLowerCase().startsWith('update ')) {
-            const content = arg.substring(7);
+        if (arg.toLowerCase() === 'update' || arg.toLowerCase().startsWith('update ')) {
+            const content = arg.substring(7).trim();
+            if (!content) {
+                await startInteractiveInventoryUpdate(ctx);
+                return;
+            }
             const parts = content.split('|');
             if (parts.length < 2) {
-                await ctx.message.reply("⚠️ Uso: `$loot update <Oggetto/ID> | <Nota/Storia>`");
+                // If only name provided, maybe start interactive update for that item?
+                let item = parts[0].trim();
+                const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    const itemEntry = inventoryRepository.getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                    if (itemEntry) item = itemEntry.item_name;
+                }
+                const existing = inventoryRepository.getInventoryItemByName(ctx.activeCampaign!.id, item);
+                if (existing) {
+                    await startInteractiveInventoryUpdate({ ...ctx, args: [item] });
+                    return;
+                }
+
+                await ctx.message.reply("⚠️ Uso: `$loot update <Oggetto/ID> | <Nota/Storia>` o `$loot update` (interattivo)");
                 return;
             }
             let item = parts[0].trim();
@@ -112,11 +138,11 @@ export const inventoryCommand: Command = {
             const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                const itemEntry = inventoryRepository.getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (itemEntry) item = itemEntry.item_name;
             }
 
-            const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
+            const existing = inventoryRepository.getInventoryItemByName(ctx.activeCampaign!.id, item);
             if (!existing) {
                 await ctx.message.reply(`❌ Oggetto non trovato: "${item}"`);
                 return;
@@ -157,18 +183,23 @@ export const inventoryCommand: Command = {
         }
 
         // SUBCOMMAND: $loot delete <Item> (Full Wipe)
-        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
-            let item = arg.split(' ').slice(1).join(' ');
+        if (arg.toLowerCase() === 'delete' || arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
+            let item = arg.split(' ').slice(1).join(' ').trim();
+
+            if (!item) {
+                await startInteractiveInventoryDelete(ctx);
+                return;
+            }
 
             // ID Resolution
             const sidMatch = item.match(/^#([a-z0-9]{5})$/i);
 
             if (sidMatch) {
-                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+                const itemEntry = inventoryRepository.getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
                 if (itemEntry) item = itemEntry.item_name;
             }
 
-            const existing = getInventoryItemByName(ctx.activeCampaign!.id, item);
+            const existing = inventoryRepository.getInventoryItemByName(ctx.activeCampaign!.id, item);
             if (!existing) {
                 await ctx.message.reply(`❌ Oggetto non trovato: "${item}"`);
                 return;
@@ -178,7 +209,7 @@ export const inventoryCommand: Command = {
             await ctx.message.reply(`🗑️ Eliminazione completa per **${item}** in corso...`);
             deleteInventoryRagSummary(ctx.activeCampaign!.id, item);
             deleteInventoryHistory(ctx.activeCampaign!.id, item);
-            removeLoot(ctx.activeCampaign!.id, item, 999999);
+            inventoryRepository.removeLoot(ctx.activeCampaign!.id, item, 999999);
 
             await ctx.message.reply(`✅ Oggetto **${item}** eliminato definitivamente (RAG, Storia, Inventario).`);
             return;

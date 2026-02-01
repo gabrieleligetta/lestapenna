@@ -168,5 +168,50 @@ export const inventoryRepository = {
 
     clearInventoryDirtyFlag: (campaignId: number, itemName: string) => {
         db.prepare('UPDATE inventory SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(item_name) = lower(?)').run(campaignId, itemName);
+    },
+
+    updateInventoryFields: (
+        campaignId: number,
+        itemName: string,
+        fields: Partial<{
+            quantity: number;
+            description: string;
+            notes: string;
+            item_name: string;
+        }>,
+        isManual: boolean = false
+    ): boolean => {
+        const item = inventoryRepository.getInventoryItemByName(campaignId, itemName);
+        if (!item) return false;
+
+        const updates: string[] = [];
+        const params: any = { id: item.id };
+
+        if (fields.quantity !== undefined) {
+            updates.push('quantity = $quantity');
+            params.quantity = fields.quantity;
+        }
+        if (fields.description !== undefined) {
+            updates.push('description = $description');
+            params.description = fields.description;
+        }
+        if (fields.notes !== undefined) {
+            updates.push('notes = $notes');
+            params.notes = fields.notes;
+        }
+        if (fields.item_name !== undefined) {
+            updates.push('item_name = $itemName');
+            params.itemName = fields.item_name;
+        }
+
+        if (updates.length === 0) return false;
+
+        updates.push('rag_sync_needed = 1');
+        updates.push('last_updated = $timestamp');
+        params.timestamp = Date.now();
+        if (isManual) updates.push('is_manual = 1');
+
+        db.prepare(`UPDATE inventory SET ${updates.join(', ')} WHERE id = $id`).run(params);
+        return true;
     }
 };

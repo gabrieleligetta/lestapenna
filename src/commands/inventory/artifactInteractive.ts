@@ -18,6 +18,16 @@ import {
 } from '../../db';
 import { ArtifactEntry, ArtifactStatus, ArtifactOwnerType } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
+import { generateBio } from '../../bard/bio';
+
+// Helper for Bio Regen
+async function regenerateArtifactBio(campaignId: number, name: string) {
+    const history = artifactRepository.getArtifactHistory(campaignId, name);
+    const artifact = artifactRepository.getArtifactByName(campaignId, name);
+    const currentDesc = artifact?.description || "";
+    const simpleHistory = history.map(h => ({ description: h.description, event_type: h.event_type }));
+    await generateBio('ARTIFACT', { campaignId, name, currentDesc }, simpleHistory);
+}
 
 export async function startInteractiveArtifactUpdate(ctx: CommandContext) {
     if (ctx.args.length > 0) {
@@ -106,6 +116,7 @@ export async function startInteractiveArtifactAdd(ctx: CommandContext) {
 
             if (currentSession) {
                 addArtifactEvent(ctx.activeCampaign!.id, name, currentSession, "Artefatto scoperto/registrato.", "DISCOVERY", true);
+                regenerateArtifactBio(ctx.activeCampaign!.id, name);
             }
 
             const successRow = new ActionRowBuilder<ButtonBuilder>()
@@ -352,8 +363,16 @@ async function showArtifactStatusUpdate(interaction: any, artifact: ArtifactEntr
     collector.on('collect', async (i: any) => {
         collector.stop();
         const newStatus = i.values[0] as ArtifactStatus;
+
+        await i.deferUpdate();
+
         artifactRepository.updateArtifactFields(ctx.activeCampaign!.id, artifact.name, { status: newStatus }, true);
-        await i.update({ content: `✅ Stato di **${artifact.name}** aggiornato a **${newStatus}**!`, components: [] });
+
+        const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+        addArtifactEvent(ctx.activeCampaign!.id, artifact.name, session, `Stato aggiornato a ${newStatus}`, "MANUAL_UPDATE", true);
+        await regenerateArtifactBio(ctx.activeCampaign!.id, artifact.name);
+
+        await i.editReply({ content: `✅ Stato di **${artifact.name}** aggiornato a **${newStatus}**!`, components: [] });
     });
 }
 
@@ -413,9 +432,11 @@ async function showArtifactTextModal(interaction: any, artifact: ArtifactEntry, 
         const newValue = submission.fields.getTextInputValue('value');
 
         if (field === 'note') {
+            await submission.deferReply();
             const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
             addArtifactEvent(ctx.activeCampaign!.id, artifact.name, session, newValue, "MANUAL_UPDATE", true);
-            await submission.reply(`📝 Nota aggiunta a **${artifact.name}**.`);
+            await regenerateArtifactBio(ctx.activeCampaign!.id, artifact.name);
+            await submission.editReply(`📝 Nota aggiunta a **${artifact.name}**.`);
         } else {
             artifactRepository.updateArtifactFields(ctx.activeCampaign!.id, artifact.name, { [field]: newValue }, true);
             await submission.reply(`✅ **${artifact.name}** aggiornato (${field}).`);

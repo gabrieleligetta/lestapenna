@@ -1015,6 +1015,38 @@ export class IngestionService {
                 timestamp
             );
 
+            // 🆕 Sincronizza artefatto con inventario in base al proprietario
+            const { inventoryRepository } = await import('../../db/repositories/InventoryRepository');
+            const previousOwnerType = existing?.owner_type;
+            const newOwnerType = ownerType;
+
+            // Se l'artefatto PASSA al party (PC) → aggiungilo all'inventario
+            if (newOwnerType === 'PC') {
+                const existingInInventory = inventoryRepository.getInventoryItemByName(campaignId, artifactName);
+
+                if (!existingInInventory) {
+                    inventoryRepository.addLoot(
+                        campaignId,
+                        artifactName,
+                        1,
+                        sessionId,
+                        artifact.description || undefined,
+                        false,
+                        timestamp
+                    );
+                    console.log(`[Artifact→Inventory] 🔮 Artefatto "${artifactName}" aggiunto all'inventario del party`);
+                }
+            }
+            // Se l'artefatto LASCIA il party (era PC, ora non più) → rimuovilo dall'inventario
+            else if (previousOwnerType === 'PC' && newOwnerType && newOwnerType !== 'PC') {
+                const existingInInventory = inventoryRepository.getInventoryItemByName(campaignId, artifactName);
+
+                if (existingInInventory) {
+                    inventoryRepository.removeLoot(campaignId, artifactName, 999999); // Rimuovi tutto
+                    console.log(`[Artifact→Inventory] 💨 Artefatto "${artifactName}" rimosso dall'inventario (nuovo proprietario: ${newOwnerType})`);
+                }
+            }
+
             console.log(`[Artifact] ➕ ${artifactName}: ${artifact.description ? artifact.description.substring(0, 50) + (artifact.description.length > 50 ? '...' : '') : 'Nessuna descrizione'} (Status: ${artifact.status || 'FUNZIONANTE'})`);
 
             console.log(`[Artifact] ✨ ${isNew ? 'Nuovo' : 'Aggiornato'}: ${artifactName}`);

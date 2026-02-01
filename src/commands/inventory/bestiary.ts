@@ -40,9 +40,63 @@ export const bestiaryCommand: Command = {
         const firstArg = ctx.args[0]?.toLowerCase();
         const arg = ctx.args.join(' ');
 
-        // 🆕 Events Subcommand: $bestiario events [nome/ID] [pagina]
+        // 🆕 Events Subcommand: $bestiario events [action] [Target]
         if (firstArg === 'events' || firstArg === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica un mostro: \`$bestiario events ${action} <Nome>\``);
+                    return;
+                }
+
+                // Resolve Monster
+                let monster: any;
+                const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    const m = bestiaryRepository.getMonsterByShortId(campaignId, sidMatch[1]);
+                    if (m) monster = m;
+                }
+                if (!monster) {
+                    monster = bestiaryRepository.getMonsterByName(campaignId, targetIdentifier);
+                }
+
+                if (!monster) {
+                    await ctx.message.reply(`❌ Mostro **${targetIdentifier}** non trovato.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'bestiary_history',
+                    entityKeyColumn: 'monster_name',
+                    entityKeyValue: monster.name,
+                    campaignId: campaignId,
+                    entityDisplayName: monster.name,
+                    entityEmoji: '👹'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -50,7 +104,7 @@ export const bestiaryCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let monsterTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

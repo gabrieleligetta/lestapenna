@@ -60,9 +60,62 @@ export const factionCommand: Command = {
             return;
         }
 
-        // 🆕 Events Subcommand: $faction events [nome/ID] [pagina]
+        // 🆕 Events Subcommand: $faction events [action] [Target]
         if (firstArg?.toLowerCase() === 'events' || firstArg?.toLowerCase() === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica una fazione: \`$faction events ${action} <Nome>\``);
+                    return;
+                }
+
+                // Resolve Faction
+                let factionName = targetIdentifier;
+                const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    const faction = factionRepository.getFactionByShortId(campaignId, sidMatch[1]);
+                    if (faction) factionName = faction.name;
+                }
+
+                const faction = factionRepository.getFaction(campaignId, factionName);
+
+                if (!faction) {
+                    await ctx.message.reply(`❌ Fazione **${targetIdentifier}** non trovata.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'faction_history',
+                    entityKeyColumn: 'faction_name',
+                    entityKeyValue: faction.name,
+                    campaignId: campaignId,
+                    entityDisplayName: faction.name,
+                    entityEmoji: FACTION_TYPE_ICONS[faction.type] || '⚔️'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -70,7 +123,7 @@ export const factionCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let factionTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

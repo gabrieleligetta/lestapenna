@@ -16,9 +16,69 @@ export const characterCommand: Command = {
         const firstArg = ctx.args[0]?.toLowerCase();
         const arg = ctx.args.join(' ');
 
-        // 🆕 Events Subcommand: $character events [nome] [pagina]
+        // 🆕 Events Subcommand: $character events [action] [Target]
         if (firstArg === 'events' || firstArg === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica un personaggio: \`$character events ${action} <Nome>\``);
+                    return;
+                }
+
+                // Resolve Character
+                let charName: string | null = null;
+                const userId = characterRepository.getCharacterUserId(campaignId, targetIdentifier);
+                if (userId) {
+                    const profile = characterRepository.getUserProfile(userId, campaignId);
+                    if (profile && profile.character_name) {
+                        charName = profile.character_name;
+                    }
+                }
+
+                // If not found by exact match, maybe try loose match from list?
+                if (!charName) {
+                    const allChars = characterRepository.getCampaignCharacters(campaignId);
+                    const match = allChars.find(c => c.character_name?.toLowerCase().includes(targetIdentifier.toLowerCase()));
+                    if (match) charName = match.character_name;
+                }
+
+                if (!charName) {
+                    await ctx.message.reply(`❌ Personaggio **${targetIdentifier}** non trovato.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'character_history',
+                    entityKeyColumn: 'character_name',
+                    entityKeyValue: charName,
+                    campaignId: campaignId,
+                    entityDisplayName: charName,
+                    entityEmoji: '👤'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -26,7 +86,7 @@ export const characterCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let charTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

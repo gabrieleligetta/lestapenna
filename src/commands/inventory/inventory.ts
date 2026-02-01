@@ -52,9 +52,62 @@ export const inventoryCommand: Command = {
         const arg = ctx.args.join(' ');
         const firstArg = ctx.args[0]?.toLowerCase();
 
-        // 🆕 Events Subcommand: $loot events [nome/ID] [pagina]
+        // 🆕 Events Subcommand: $loot events [action] [Target]
         if (firstArg === 'events' || firstArg === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica un oggetto: \`$loot events ${action} <Nome>\``);
+                    return;
+                }
+
+                // Resolve Item
+                let item: any = null;
+                const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    item = getInventoryItemByShortId(campaignId, sidMatch[1]);
+                }
+                if (!item) {
+                    item = getInventoryItemByName(campaignId, targetIdentifier);
+                }
+
+                if (!item) {
+                    await ctx.message.reply(`❌ Oggetto **${targetIdentifier}** non trovato.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'inventory_history',
+                    entityKeyColumn: 'item_name',
+                    entityKeyValue: item.item_name,
+                    campaignId: campaignId,
+                    entityDisplayName: item.item_name,
+                    entityEmoji: '📦'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -62,7 +115,7 @@ export const inventoryCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let itemTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

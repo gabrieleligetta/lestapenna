@@ -56,9 +56,62 @@ export const questCommand: Command = {
         const arg = ctx.args.join(' ');
         const firstArg = ctx.args[0]?.toLowerCase();
 
-        // 🆕 Events Subcommand: $quest events [titolo/ID] [pagina]
+        // 🆕 Events Subcommand: $quest events [action] [Target]
         if (firstArg === 'events' || firstArg === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica una quest: \`$quest events ${action} <Titolo>\``);
+                    return;
+                }
+
+                // Resolve Quest
+                let quest: Quest | null | undefined;
+                const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    quest = getQuestByShortId(campaignId, sidMatch[1]);
+                }
+                if (!quest) {
+                    quest = getQuestByTitle(campaignId, targetIdentifier);
+                }
+
+                if (!quest) {
+                    await ctx.message.reply(`❌ Quest **${targetIdentifier}** non trovata.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'quest_history',
+                    entityKeyColumn: 'quest_title',
+                    entityKeyValue: quest.title,
+                    campaignId: campaignId,
+                    entityDisplayName: quest.title,
+                    entityEmoji: '🗺️'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -66,7 +119,7 @@ export const questCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let questTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

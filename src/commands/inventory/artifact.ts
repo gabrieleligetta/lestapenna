@@ -46,9 +46,59 @@ export const artifactCommand: Command = {
             return;
         }
 
-        // 🆕 Events Subcommand: $artifact events [nome/ID] [pagina]
+        // 🆕 Events Subcommand: $artifact events [action] [nome/ID]
         if (firstArg === 'events' || firstArg === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica un artefatto: \`$artifact events ${action} <Nome>\``);
+                    return;
+                }
+
+                // Resolve Artifact
+                let artifact = getArtifactByName(campaignId, targetIdentifier);
+                if (!artifact) {
+                    const byShort = getArtifactByShortId(campaignId, targetIdentifier);
+                    if (byShort) artifact = byShort;
+                }
+
+                if (!artifact) {
+                    await ctx.message.reply(`❌ Artefatto **${targetIdentifier}** non trovato.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'artifact_history',
+                    entityKeyColumn: 'artifact_name',
+                    entityKeyValue: artifact.name,
+                    campaignId: campaignId,
+                    entityDisplayName: artifact.name,
+                    entityEmoji: '🔮'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -56,7 +106,7 @@ export const artifactCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let artifactTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

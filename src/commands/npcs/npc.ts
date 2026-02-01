@@ -51,8 +51,69 @@ export const npcCommand: Command = {
         if (subCommand === 'delete') { await startInteractiveNpcDelete(ctx); return; }
 
         // 🆕 Events Subcommand: $npc events [nome/ID] [pagina]
+        // 🆕 Events Subcommand: $npc events [action] [nome/ID]
         if (subCommand === 'events') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                // Parse Target: "$npc events add <Name>" -> remainder: ["add", "Name"]
+                // But wait, if user types "$npc events add Name | Desc", we need to split by | potentially?
+                // handleEventAdd handles the interaction, so we just need the Entity Name to build Config.
+
+                // We take everything after action as the identifier (rough guess)
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                // If empty, we might need to ask? Or default to interactive selection of NPC?
+                // Existing startInteractiveNpcUpdate selects an NPC. 
+                // Let's rely on Resolving IF provided, else fail/ask.
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica un NPC: \`$npc events ${action} <Nome>\``);
+                    return;
+                }
+
+                // Resolve NPC
+                let npcEntry = getNpcEntry(campaignId, targetIdentifier);
+                if (!npcEntry) {
+                    const byShort = getNpcByShortId(campaignId, targetIdentifier);
+                    if (byShort) npcEntry = byShort;
+                }
+
+                if (!npcEntry) {
+                    await ctx.message.reply(`❌ NPC **${targetIdentifier}** non trovato.`);
+                    return;
+                }
+
+                const config: any = { // Use any to bypass import check for now, matches EntityEventsConfig
+                    tableName: 'npc_history',
+                    entityKeyColumn: 'npc_name',
+                    entityKeyValue: npcEntry.name,
+                    campaignId: campaignId,
+                    entityDisplayName: npcEntry.name,
+                    entityEmoji: '👤'
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    // Start Update Flow (Selection list)
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {

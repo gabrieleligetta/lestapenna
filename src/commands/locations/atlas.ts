@@ -47,9 +47,70 @@ export const atlasCommand: Command = {
             return;
         }
 
-        // 🆕 Events Subcommand: $atlante events [nome/ID] [pagina]
+        // 🆕 Events Subcommand: $atlante events [action] [Target]
         if (firstArg === 'events' || firstArg === 'eventi') {
             const remainder = ctx.args.slice(1);
+            const action = remainder[0]?.toLowerCase();
+            const campaignId = ctx.activeCampaign!.id;
+
+            // Handlers for Add/Update/Delete
+            if (['add', 'update', 'delete', 'modifica', 'rimuovi', 'crea'].includes(action)) {
+                // Determine Mode
+                let mode: 'ADD' | 'UPDATE' | 'DELETE' = 'ADD';
+                if (['update', 'modifica'].includes(action)) mode = 'UPDATE';
+                if (['delete', 'rimuovi'].includes(action)) mode = 'DELETE';
+
+                let targetIdentifier = remainder.slice(1).join(' ').trim();
+
+                if (!targetIdentifier) {
+                    await ctx.message.reply(`❌ Specifica un luogo: \`$atlante events ${action} <Regione> | <Luogo>\` o \`#ID\``);
+                    return;
+                }
+
+                // Resolve Entry
+                let entry: any = null;
+                const sidMatch = targetIdentifier.match(/^#?([a-z0-9]{5})$/i);
+                if (sidMatch) {
+                    entry = getAtlasEntryByShortId(campaignId, sidMatch[1]);
+                } else if (targetIdentifier.includes('|')) {
+                    const locParts = targetIdentifier.split('|').map(s => s.trim());
+                    if (locParts.length === 2) {
+                        entry = getAtlasEntryFull(campaignId, locParts[0], locParts[1]);
+                    }
+                } else {
+                    // Try exact micro search
+                    const all = listAllAtlasEntries(campaignId);
+                    entry = all.find((e: any) => e.micro_location.toLowerCase() === targetIdentifier.toLowerCase());
+                }
+
+                if (!entry) {
+                    await ctx.message.reply(`❌ Luogo **${targetIdentifier}** non trovato.`);
+                    return;
+                }
+
+                const config: any = {
+                    tableName: 'atlas_history',
+                    entityKeyColumn: 'macro_location',
+                    entityKeyValue: entry.macro_location,
+                    campaignId: campaignId,
+                    entityDisplayName: `${entry.macro_location} - ${entry.micro_location}`,
+                    entityEmoji: '🌍',
+                    secondaryKeyColumn: 'micro_location',
+                    secondaryKeyValue: entry.micro_location
+                };
+
+                const { handleEventAdd, handleEventUpdate, handleEventDelete } = require('../utils/eventInteractive');
+
+                if (mode === 'ADD') {
+                    await handleEventAdd(ctx, config);
+                } else if (mode === 'UPDATE') {
+                    await handleEventUpdate(ctx, config);
+                } else {
+                    await handleEventDelete(ctx, config);
+                }
+                return;
+            }
+
             const target = remainder.join(' ').trim().toLowerCase();
 
             if (remainder.length === 0 || target === 'list' || target === 'lista') {
@@ -57,7 +118,7 @@ export const atlasCommand: Command = {
                 return;
             }
 
-            // Try to parse page number at the end
+            // Try to parse page number
             let page = 1;
             let locTarget = remainder.join(' ');
             const lastArg = remainder[remainder.length - 1];

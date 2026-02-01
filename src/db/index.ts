@@ -38,6 +38,7 @@ export { pendingMergeRepository } from './repositories/PendingMergeRepository';
 export { worldRepository } from './repositories/WorldRepository';
 export { factionRepository } from './repositories/FactionRepository';
 export { artifactRepository } from './repositories/ArtifactRepository';
+export { eventRepository } from './repositories/EventRepository';
 import { configRepository } from './repositories/ConfigRepository';
 import { campaignRepository } from './repositories/CampaignRepository';
 import { locationRepository } from './repositories/LocationRepository';

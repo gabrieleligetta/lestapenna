@@ -18,11 +18,7 @@ import { setWorldCommand } from './campaigns/setWorld';
 // Characters
 import { bioCommand } from './characters/bio';
 import { iamCommand } from './characters/iam';
-import { myclassCommand } from './characters/myclass';
-import { mydescCommand } from './characters/mydesc';
-import { myraceCommand } from './characters/myrace';
 import { partyCommand } from './characters/party';
-import { resetCharacterCommand } from './characters/reset';
 import { whoamiCommand } from './characters/whoami';
 
 // Config
@@ -62,11 +58,10 @@ import { factionCommand } from './factions/faction';
 import { affiliateCommand } from './factions/affiliate';
 
 // Sessions
+import { cronacaCommand } from './sessions/cronaca';
 import { downloadCommand } from './sessions/download';
 import { listCommand as listSessionsCommand } from './sessions/list'; // Renaming to avoid conflict if imported same way, though locally protected.
 import { listenCommand } from './sessions/listen';
-import { manageCommand } from './sessions/manage';
-import { noteCommand } from './sessions/note';
 import { pauseCommand } from './sessions/pause';
 import { resetCommand as resetSessionCommand } from './sessions/reset';
 import { stopCommand } from './sessions/stop';
@@ -95,11 +90,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     // Characters
     dispatcher.register(bioCommand);
     dispatcher.register(iamCommand);
-    dispatcher.register(myclassCommand);
-    dispatcher.register(mydescCommand);
-    dispatcher.register(myraceCommand);
     dispatcher.register(partyCommand);
-    dispatcher.register(resetCharacterCommand);
     dispatcher.register(whoamiCommand);
 
     // Config
@@ -139,11 +130,10 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(affiliateCommand);
 
     // Sessions
+    dispatcher.register(cronacaCommand);
     dispatcher.register(downloadCommand);
     dispatcher.register(listSessionsCommand);
     dispatcher.register(listenCommand);
-    dispatcher.register(manageCommand);
-    dispatcher.register(noteCommand);
     dispatcher.register(pauseCommand);
     dispatcher.register(resetSessionCommand);
     dispatcher.register(stopCommand);

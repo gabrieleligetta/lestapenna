@@ -89,10 +89,17 @@ export const listCommand: Command = {
             return comps;
         };
 
-        const reply = await message.reply({
+        const options = {
             embeds: [generateEmbed(currentPage)],
             components: generateComponents(currentPage)
-        });
+        };
+
+        let reply: any;
+        if (ctx.interaction) {
+            reply = await ctx.interaction.update({ ...options, fetchReply: true });
+        } else {
+            reply = await message.reply(options);
+        }
 
         const collector = reply.createMessageComponentCollector({
             time: 60000

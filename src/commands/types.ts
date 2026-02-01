@@ -1,4 +1,4 @@
-import { Message, Client } from 'discord.js';
+import { Message, Client, MessageComponentInteraction } from 'discord.js';
 import { Campaign } from '../db';
 
 /**
@@ -10,6 +10,7 @@ export interface CommandContext {
     guildId: string;
     activeCampaign: Campaign | null;
     client: Client;
+    interaction?: MessageComponentInteraction; // Optional interaction for interactive flows
 }
 
 /**

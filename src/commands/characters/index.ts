@@ -3,34 +3,22 @@
  */
 
 export { iamCommand } from './iam';
-export { myclassCommand } from './myclass';
-export { myraceCommand } from './myrace';
-export { mydescCommand } from './mydesc';
 export { whoamiCommand } from './whoami';
 export { bioCommand } from './bio';
 export { partyCommand } from './party';
-export { resetCharacterCommand } from './reset';
 export { characterCommand } from './character';
 
 import { Command } from '../types';
 import { iamCommand } from './iam';
-import { myclassCommand } from './myclass';
-import { myraceCommand } from './myrace';
-import { mydescCommand } from './mydesc';
 import { whoamiCommand } from './whoami';
 import { bioCommand } from './bio';
 import { partyCommand } from './party';
-import { resetCharacterCommand } from './reset';
 import { characterCommand } from './character';
 
 export const characterCommands: Command[] = [
     iamCommand,
-    myclassCommand,
-    myraceCommand,
-    mydescCommand,
     whoamiCommand,
     bioCommand,
     partyCommand,
-    resetCharacterCommand,
     characterCommand
 ];

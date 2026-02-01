@@ -77,10 +77,14 @@ export const listenCommand: Command = {
                         .setEmoji('🌍')
                 );
 
-            const replyMsg = await message.reply({
+            const options = {
                 content: `🛑 **Configurazione Mancante!**\nPer iniziare la cronaca, dobbiamo definire alcuni dettagli del mondo.\nClicca qui sotto per impostarli rapidamente:`,
                 components: [row]
-            });
+            };
+
+            const replyMsg = ctx.interaction
+                ? await ctx.interaction.update({ ...options, fetchReply: true })
+                : await message.reply(options);
 
             const collector = replyMsg.createMessageComponentCollector({
                 componentType: ComponentType.Button,
@@ -167,7 +171,11 @@ export const listenCommand: Command = {
             console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
 
             await connectToChannel(voiceChannel, sessionId);
-            await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${ctx.activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+            if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {
+                await ctx.interaction.update({ content: `🔊 **Cronaca Iniziata** per la campagna **${ctx.activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`, components: [], embeds: [] });
+            } else {
+                await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${ctx.activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+            }
 
             if (checkAutoLeave) checkAutoLeave(voiceChannel, client);
         };
@@ -186,7 +194,11 @@ export const listenCommand: Command = {
             }
 
             updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId);
-            await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.`);
+            if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {
+                await ctx.interaction.update({ content: `📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.`, components: [], embeds: [] });
+            } else {
+                await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.`);
+            }
             await proceedWithSessionStart();
 
         } else {
@@ -194,7 +206,11 @@ export const listenCommand: Command = {
             const currentLoc = getCampaignLocation(message.guild!.id);
             if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
                 // Location exists, use it
-                await message.reply(`📍 Riprendo dal luogo precedente: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}**.`);
+                if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {
+                    await ctx.interaction.update({ content: `📍 Riprendo dal luogo precedente: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}**.`, components: [], embeds: [] });
+                } else {
+                    await message.reply(`📍 Riprendo dal luogo precedente: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}**.`);
+                }
                 await proceedWithSessionStart();
             } else {
                 // Location missing, start interactive

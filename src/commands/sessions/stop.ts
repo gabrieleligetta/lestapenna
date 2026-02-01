@@ -25,7 +25,12 @@ export const stopCommand: Command = {
         await disconnect(message.guild!.id);
         guildSessions.delete(message.guild!.id);
 
-        await message.reply(`🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`);
+        const stopMsg = `🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`;
+        if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {
+            await ctx.interaction.update({ content: stopMsg, components: [], embeds: [] });
+        } else {
+            await message.reply(stopMsg);
+        }
 
         // 2. Ripresa coda
         await audioQueue.resume();

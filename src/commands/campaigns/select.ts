@@ -4,6 +4,7 @@
 
 import { Command, CommandContext } from '../types';
 import { getCampaigns, setActiveCampaign } from '../../db';
+import { startInteractiveCampaignSelect } from './interactiveUpdate';
 
 export const selectCampaignCommand: Command = {
     name: 'selectcampaign',
@@ -13,7 +14,7 @@ export const selectCampaignCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const nameOrId = ctx.args.join(' ');
         if (!nameOrId) {
-            await ctx.message.reply("Uso: `$selezionacampagna <Nome o ID>`");
+            await startInteractiveCampaignSelect(ctx);
             return;
         }
 

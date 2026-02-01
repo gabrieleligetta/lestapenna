@@ -56,5 +56,31 @@ export const worldRepository = {
 
     clearWorldEventDirtyFlag: (id: number) => {
         db.prepare('UPDATE world_history SET rag_sync_needed = 0 WHERE id = ?').run(id);
+    },
+
+    getWorldEventByShortId: (campaignId: number, shortId: string): any => {
+        const cleanShortId = shortId.replace('#', '');
+        return db.prepare('SELECT * FROM world_history WHERE campaign_id = ? AND short_id = ?').get(campaignId, cleanShortId);
+    },
+
+    updateWorldEvent: (id: number, updates: { description?: string, event_type?: string, year?: number }) => {
+        const fields: string[] = [];
+        const values: any[] = [];
+
+        if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
+        if (updates.event_type !== undefined) { fields.push('event_type = ?'); values.push(updates.event_type); }
+        if (updates.year !== undefined) { fields.push('year = ?'); values.push(updates.year); }
+
+        if (fields.length === 0) return;
+
+        fields.push('rag_sync_needed = 1');
+        values.push(id);
+
+        const sql = `UPDATE world_history SET ${fields.join(', ')} WHERE id = ?`;
+        db.prepare(sql).run(...values);
+    },
+
+    markWorldEventDirty: (id: number) => {
+        db.prepare('UPDATE world_history SET rag_sync_needed = 1 WHERE id = ?').run(id);
     }
 };

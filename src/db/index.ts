@@ -261,6 +261,9 @@ export const getWorldTimeline = worldRepository.getWorldTimeline;
 export const deleteWorldEvent = worldRepository.deleteWorldEvent;
 export const getDirtyWorldEvents = worldRepository.getDirtyWorldEvents;
 export const clearWorldEventDirtyFlag = worldRepository.clearWorldEventDirtyFlag;
+export const getWorldEventByShortId = worldRepository.getWorldEventByShortId;
+export const updateWorldEvent = worldRepository.updateWorldEvent;
+export const markWorldEventDirty = worldRepository.markWorldEventDirty;
 
 // Faction
 export const createFaction = factionRepository.createFaction;

@@ -4,8 +4,9 @@
 
 import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { addWorldEvent, deleteWorldEvent, getWorldTimeline, db } from '../../db';
+import { addWorldEvent, deleteWorldEvent, getWorldTimeline, db, getWorldEventByShortId } from '../../db';
 import { safeSend } from '../../utils/discordHelper';
+import { startInteractiveTimelineAdd, startInteractiveTimelineUpdate, startInteractiveTimelineDelete } from './interactiveUpdate';
 
 export const timelineCommand: Command = {
     name: 'timeline',
@@ -16,10 +17,16 @@ export const timelineCommand: Command = {
         const arg = ctx.args.join(' ');
 
         // Subcommand: $timeline add <Year> | <Type> | <Description>
-        if (arg.toLowerCase().startsWith('add ')) {
-            const parts = arg.substring(4).split('|').map(s => s.trim());
+        if (arg.toLowerCase() === 'add' || arg.toLowerCase().startsWith('add ')) {
+            const content = arg.substring(4).trim();
+            if (!content) {
+                await startInteractiveTimelineAdd(ctx);
+                return;
+            }
+
+            const parts = content.split('|').map(s => s.trim());
             if (parts.length < 3) {
-                await ctx.message.reply("Uso: `$timeline add <Anno> | <Tipo> | <Descrizione>`\nEs: `$timeline add -500 | WAR | Guerra Antica`");
+                await ctx.message.reply("Uso: `$timeline add <Anno> | <Tipo> | <Descrizione>`\nEs: `$timeline add -500 | WAR | Guerra Antica`\nOppure scrivi solo `$timeline add` per l'inserimento interattivo.");
                 return;
             }
 
@@ -37,11 +44,23 @@ export const timelineCommand: Command = {
             return;
         }
 
-        // Subcommand: $timeline delete <#ID>
-        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('remove ')) {
-            const shortId = arg.split(' ')[1].replace('#', '').trim();
+        // Subcommand: $timeline update [#ID]
+        if (arg.toLowerCase() === 'update' || arg.toLowerCase().startsWith('update ')) {
+            await startInteractiveTimelineUpdate(ctx);
+            return;
+        }
 
-            const event = db.prepare('SELECT id FROM world_history WHERE short_id = ?').get(shortId) as any;
+        // Subcommand: $timeline delete <#ID>
+        if (arg.toLowerCase() === 'delete' || arg.toLowerCase().startsWith('delete ') || arg.toLowerCase() === 'remove' || arg.toLowerCase().startsWith('remove ')) {
+            const remainder = arg.split(' ').slice(1).join(' ').trim();
+            if (!remainder) {
+                await startInteractiveTimelineDelete(ctx);
+                return;
+            }
+
+            const shortId = remainder.replace('#', '').trim();
+            const event = getWorldEventByShortId(ctx.activeCampaign!.id, shortId);
+
             if (!event) {
                 await ctx.message.reply(`❌ Evento \`#${shortId}\` non trovato.`);
                 return;
@@ -72,6 +91,11 @@ export const timelineCommand: Command = {
             'DISCOVERY': '💎',
             'CALAMITY': '🌋',
             'SUPERNATURAL': '🔮',
+            'MYTH': '🏺',
+            'RELIGION': '⚜️',
+            'BIRTH': '👶',
+            'DEATH': '💀',
+            'CONSTRUCTION': '🏛️',
             'GENERIC': '🔹'
         };
 

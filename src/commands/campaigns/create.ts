@@ -4,6 +4,7 @@
 
 import { Command, CommandContext } from '../types';
 import { createCampaign, factionRepository, getCampaigns } from '../../db';
+import { startInteractiveCampaignCreate } from './interactiveUpdate';
 
 export const createCampaignCommand: Command = {
     name: 'createcampaign',
@@ -13,7 +14,7 @@ export const createCampaignCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const name = ctx.args.join(' ');
         if (!name) {
-            await ctx.message.reply("Uso: `$creacampagna <Nome Campagna>`");
+            await startInteractiveCampaignCreate(ctx);
             return;
         }
 

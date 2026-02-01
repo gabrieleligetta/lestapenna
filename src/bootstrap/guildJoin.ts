@@ -59,6 +59,14 @@ export function buildWelcomeEmbed(): EmbedBuilder {
                 inline: false
             },
             {
+                name: "📌 PASSO 5: Configura le email (opzionale)",
+                value:
+                    "Per ricevere i recap via email:\n" +
+                    "• `$setemail email1@ex.com, email2@ex.com` — email per tutto il server\n\n" +
+                    "*Ogni giocatore può anche impostare la propria email con `$sono` → Completa Scheda.*",
+                inline: false
+            },
+            {
                 name: "🎙️ AVVIARE UNA SESSIONE",
                 value:
                     "Quando siete pronti, il DM entra nel canale vocale e scrive:\n" +

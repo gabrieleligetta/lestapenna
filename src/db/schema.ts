@@ -574,7 +574,9 @@ export const initDatabase = () => {
         "ALTER TABLE characters ADD COLUMN alignment_ethical TEXT",
         // 🆕 ALIGNMENT FOR FACTIONS
         "ALTER TABLE factions ADD COLUMN alignment_moral TEXT",          // BUONO, NEUTRALE, CATTIVO
-        "ALTER TABLE factions ADD COLUMN alignment_ethical TEXT"         // LEGALE, NEUTRALE, CAOTICO
+        "ALTER TABLE factions ADD COLUMN alignment_ethical TEXT",        // LEGALE, NEUTRALE, CAOTICO
+        // 🆕 EMAIL PER GIOCATORI (recap sessione)
+        "ALTER TABLE characters ADD COLUMN email TEXT"
     ];
 
     for (const m of migrations) {

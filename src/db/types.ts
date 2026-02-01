@@ -3,6 +3,7 @@ export interface UserProfile {
     race: string | null;
     class: string | null;
     description: string | null;
+    email?: string | null; // 🆕 Email per recap sessione
     rag_sync_needed?: number; // NUOVO
     alignment_moral?: string | null; // 🆕
     alignment_ethical?: string | null; // 🆕

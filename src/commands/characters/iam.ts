@@ -82,6 +82,7 @@ export const iamCommand: Command = {
             const currentRace = profile.race || "";
             const currentClass = profile.class || "";
             const currentDesc = profile.description || "";
+            const currentEmail = profile.email || "";
 
             const modal = new ModalBuilder()
                 .setCustomId('modal_edit_profile')
@@ -115,11 +116,20 @@ export const iamCommand: Command = {
                 .setValue(currentDesc)
                 .setRequired(false);
 
+            const emailInput = new TextInputBuilder()
+                .setCustomId('char_email')
+                .setLabel('Email per Recap (opzionale)')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder('email@esempio.com')
+                .setValue(currentEmail)
+                .setRequired(false);
+
             modal.addComponents(
                 new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput),
                 new ActionRowBuilder<TextInputBuilder>().addComponents(raceInput),
                 new ActionRowBuilder<TextInputBuilder>().addComponents(classInput),
-                new ActionRowBuilder<TextInputBuilder>().addComponents(descInput)
+                new ActionRowBuilder<TextInputBuilder>().addComponents(descInput),
+                new ActionRowBuilder<TextInputBuilder>().addComponents(emailInput)
             );
 
             await interaction.showModal(modal);
@@ -134,14 +144,17 @@ export const iamCommand: Command = {
                 const newRace = submission.fields.getTextInputValue('char_race');
                 const newClass = submission.fields.getTextInputValue('char_class');
                 const newDesc = submission.fields.getTextInputValue('char_desc');
+                const newEmail = submission.fields.getTextInputValue('char_email');
 
                 updateUserCharacter(userId, campaignId, 'character_name', newName);
                 if (newRace) updateUserCharacter(userId, campaignId, 'race', newRace);
                 if (newClass) updateUserCharacter(userId, campaignId, 'class', newClass);
                 if (newDesc) updateUserCharacter(userId, campaignId, 'description', newDesc);
+                if (newEmail) updateUserCharacter(userId, campaignId, 'email', newEmail);
 
+                const emailLine = newEmail ? `\n📧 Email: ${newEmail}` : '';
                 await submission.reply({
-                    content: `✅ **Scheda Aggiornata!**\n👤 **${newName}**\n🧬 Razza: ${newRace || "-"}\n⚔️ Classe: ${newClass || "-"}\n📜 ${newDesc || "-"}`,
+                    content: `✅ **Scheda Aggiornata!**\n👤 **${newName}**\n🧬 Razza: ${newRace || "-"}\n⚔️ Classe: ${newClass || "-"}\n📜 ${newDesc || "-"}${emailLine}`,
                     ephemeral: false
                 });
 

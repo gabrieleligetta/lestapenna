@@ -221,7 +221,7 @@ export async function sendSessionRecap(
         }
 
         const guildId = getSessionGuildId(sessionId);
-        const recipients = getRecipients('SESSION_REPORT_RECIPIENT', guildId);
+        const recipients = getRecipients('SESSION_REPORT_RECIPIENT', guildId, sessionId, campaignId);
         await sendEmail(
             recipients,
             `[Lestapenna] Recap Sessione ${sessionNum}: ${campaign?.name}`,

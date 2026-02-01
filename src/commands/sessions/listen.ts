@@ -22,7 +22,8 @@ import {
 
     updateAtlasEntry,
     listAtlasEntries,
-    countAtlasEntries
+    countAtlasEntries,
+    getGuildConfig
 } from '../../db';
 import { monitor } from '../../monitor';
 import { audioQueue } from '../../services/queue';
@@ -155,6 +156,26 @@ export const listenCommand: Command = {
         if (botMembers.size > 0) {
             const botNames = botMembers.map(b => b.displayName).join(', ');
             await (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
+        }
+
+        // --- CHECK EMAIL (Reminder) ---
+        const guildEmail = getGuildConfig(message.guild!.id, 'report_recipients');
+        const membersWithoutEmail: string[] = [];
+        humanMembers.forEach(m => {
+            const profile = getUserProfile(m.id, ctx.activeCampaign!.id);
+            if (!profile.email) {
+                membersWithoutEmail.push(m.displayName);
+            }
+        });
+
+        if (!guildEmail && membersWithoutEmail.length > 0) {
+            await (message.channel as TextChannel).send(
+                `📧 **Promemoria Email**\n` +
+                `Per ricevere i recap di sessione via email:\n` +
+                `• Admin: usa \`$setemail\` per configurare email del server\n` +
+                `• Giocatori: usa \`$sono\` → "Completa Scheda" per aggiungere la tua email\n\n` +
+                `*Giocatori senza email: ${membersWithoutEmail.join(', ')}*`
+            );
         }
 
         guildSessions.set(message.guild!.id, sessionId);

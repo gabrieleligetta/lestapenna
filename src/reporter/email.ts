@@ -3,25 +3,50 @@
  */
 
 import { transporter } from './config';
-import { getGuildConfig } from '../db';
+import { getGuildConfig, recordingRepository, characterRepository } from '../db';
 import { config } from '../config';
 
 const DEFAULT_DEVELOPER_EMAIL = 'gabligetta@gmail.com';
 
 /**
  * Helper per ottenere la lista dei destinatari per i REPORT DI SESSIONE
- * Prima cerca nella config per-guild ($setemail), poi fallback su variabili d'ambiente
+ * Combina: email guild ($setemail) + email individuali giocatori (da $sono)
+ * Usa Set per deduplicare (evita invio doppio se stessa email in entrambi)
  */
-export function getRecipients(envVarName: string, guildId?: string): string[] {
-    // 1. Cerca config per-guild (impostata con $setemail)
+export function getRecipients(envVarName: string, guildId?: string, sessionId?: string, campaignId?: number): string[] {
+    const emails = new Set<string>();
+
+    // 1. Email configurate per il server ($setemail)
     if (guildId) {
         const guildRecipients = getGuildConfig(guildId, 'report_recipients');
         if (guildRecipients) {
-            return parseRecipients(guildRecipients);
+            parseRecipients(guildRecipients).forEach(e => emails.add(e.toLowerCase()));
         }
     }
 
-    // 2. Fallback su variabili d'ambiente
+    // 2. Email individuali dei giocatori della sessione
+    if (sessionId && campaignId) {
+        try {
+            const recordings = recordingRepository.getSessionRecordings(sessionId);
+            const userIds = [...new Set(recordings.map(r => r.user_id).filter(Boolean))];
+
+            for (const userId of userIds) {
+                const profile = characterRepository.getUserProfile(userId, campaignId);
+                if (profile.email) {
+                    emails.add(profile.email.toLowerCase());
+                }
+            }
+        } catch (e) {
+            console.error('[Reporter] Errore recupero email giocatori:', e);
+        }
+    }
+
+    // 3. Se abbiamo email, restituiscile
+    if (emails.size > 0) {
+        return [...emails];
+    }
+
+    // 4. Fallback su variabili d'ambiente
     const recipientEnv = process.env[envVarName] || process.env.REPORT_RECIPIENT;
     if (!recipientEnv) return [DEFAULT_DEVELOPER_EMAIL];
 

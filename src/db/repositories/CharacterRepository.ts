@@ -51,8 +51,8 @@ export const characterRepository = {
     },
 
     getUserProfile: (userId: string, campaignId: number): UserProfile & { foundation_description: string | null } => {
-        const row = db.prepare('SELECT character_name, race, class, description, foundation_description, alignment_moral, alignment_ethical FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
-        return row || { character_name: null, race: null, class: null, description: null, foundation_description: null };
+        const row = db.prepare('SELECT character_name, race, class, description, foundation_description, alignment_moral, alignment_ethical, email FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
+        return row || { character_name: null, race: null, class: null, description: null, foundation_description: null, email: null };
     },
 
     getUserName: (userId: string, campaignId: number): string | null => {
@@ -64,18 +64,23 @@ export const characterRepository = {
         return db.prepare('SELECT user_id, character_name, race, class, description, foundation_description FROM characters WHERE campaign_id = ?').all(campaignId) as any[];
     },
 
-    updateUserCharacter: (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description' | 'foundation_description', value: string, isManual: boolean = true): void => {
+    updateUserCharacter: (userId: string, campaignId: number, field: 'character_name' | 'race' | 'class' | 'description' | 'foundation_description' | 'email', value: string, isManual: boolean = true): void => {
         // Upsert character profile
         const exists = db.prepare('SELECT 1 FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId);
 
+        // Email non richiede RAG sync
+        const needsRagSync = field !== 'email';
+
         if (exists) {
-            let sql = `UPDATE characters SET ${field} = ?, rag_sync_needed = 1`;
+            let sql = `UPDATE characters SET ${field} = ?`;
+            if (needsRagSync) sql += `, rag_sync_needed = 1`;
             if (isManual) sql += `, is_manual = 1`;
             sql += ` WHERE user_id = ? AND campaign_id = ?`;
             db.prepare(sql).run(value, userId, campaignId);
         } else {
             // Create new with just this field populated
-            db.prepare(`INSERT INTO characters (user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES (?, ?, ?, 1, ?)`).run(userId, campaignId, value, isManual ? 1 : 0);
+            const ragValue = needsRagSync ? 1 : 0;
+            db.prepare(`INSERT INTO characters (user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES (?, ?, ?, ?, ?)`).run(userId, campaignId, value, ragValue, isManual ? 1 : 0);
         }
     },
 

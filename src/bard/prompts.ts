@@ -218,7 +218,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     "world_events": [
         {
             "event": "Evento che cambia il mondo di gioco (es. scoppiata guerra, cataclisma)", 
-            "type": "POLITICS|WAR|DISASTER|DISCOVERY"
+            "type": "POLITICS|WAR|DISASTER|DISCOVERY|MYTH|RELIGION|BIRTH|DEATH|CONSTRUCTION|GENERIC"
         }
     ],
     "faction_updates": [

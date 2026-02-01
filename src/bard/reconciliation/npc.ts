@@ -2,7 +2,7 @@
  * Bard Reconciliation - NPC name reconciliation
  */
 
-import { getAllNpcs } from '../../db';
+import { getAllNpcs, npcRepository } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
 import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
@@ -78,6 +78,18 @@ export async function reconcileNpcName(
     newName: string,
     newDescription: string = ""
 ): Promise<{ canonicalName: string; existingNpc: any } | null> {
+    // 0. ID Match (Highest Priority)
+    // Cerca pattern come [#abc12] o semplicemente #abc12 se necessario, ma il formato standard è [#id]
+    const idMatch = newName.match(/\[#([a-zA-Z0-9]+)\]/);
+    if (idMatch) {
+        const shortId = idMatch[1];
+        const npcById = npcRepository.getNpcByShortId(campaignId, shortId);
+        if (npcById) {
+            console.log(`[Reconcile] 🎯 ID Match event: ${shortId} → ${npcById.name}`);
+            return { canonicalName: npcById.name, existingNpc: npcById };
+        }
+    }
+
     const existingNpcs = getAllNpcs(campaignId);
     if (existingNpcs.length === 0) return null;
 
@@ -303,4 +315,3 @@ export async function resolveIdentityCandidate(campaignId: number, name: string,
     }
     return { match: null, confidence: 0 };
 }
-

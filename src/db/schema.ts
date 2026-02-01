@@ -245,6 +245,7 @@ export const initDatabase = () => {
 
         first_session_id TEXT, -- 🆕 Tracciamento origine
         is_manual INTEGER DEFAULT 0,
+        manual_description TEXT, -- 🆕 Backup descrizione manuale
         short_id TEXT, -- 🆕 Stable ID
         UNIQUE(campaign_id, name)
     )`);
@@ -608,7 +609,9 @@ export const initDatabase = () => {
         "ALTER TABLE factions ADD COLUMN ethical_score INTEGER DEFAULT 0",
         "ALTER TABLE faction_reputation ADD COLUMN reputation_score INTEGER DEFAULT 0",
         "ALTER TABLE campaigns ADD COLUMN party_moral_score INTEGER DEFAULT 0",
-        "ALTER TABLE campaigns ADD COLUMN party_ethical_score INTEGER DEFAULT 0"
+        "ALTER TABLE campaigns ADD COLUMN party_ethical_score INTEGER DEFAULT 0",
+        // 🆕 MANUAL DESCRIPTION BACKUP
+        "ALTER TABLE npc_dossier ADD COLUMN manual_description TEXT"
     ];
 
     for (const m of migrations) {

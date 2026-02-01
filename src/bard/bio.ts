@@ -24,6 +24,7 @@ interface BioContext {
     micro?: string;      // Location
     currentDesc?: string;
     foundationDescription?: string; // PC Foundation Bio
+    manualDescription?: string; // 🆕 Guida manuale per l'AI
 }
 
 /**
@@ -39,13 +40,25 @@ function generatePrompt(type: BioEntityType, ctx: BioContext, historyText: strin
 
         case 'NPC':
             // NPC: Narrative approach
-            return REGENERATE_NPC_NOTES_PROMPT(
+            let promptText = REGENERATE_NPC_NOTES_PROMPT(
                 ctx.name,
                 ctx.role || 'Sconosciuto',
                 ctx.currentDesc || '',
                 historyText,
                 complexity
             );
+
+            if (ctx.manualDescription) {
+                promptText = `⚠️ DESCRIZIONE MANUALE VINCOLANTE (FONDAZIONE):
+"${ctx.manualDescription}"
+
+${promptText}
+
+ISTRUZIONE CRITICA:
+Non contraddire la descrizione manuale. Usala come scheletro e arricchiscila con gli eventi recenti, ma mantieni inalterati i fatti stabiliti dall'utente.`;
+            }
+
+            return promptText;
 
         case 'LOCATION':
             // LOCATION: Atmospheric approach

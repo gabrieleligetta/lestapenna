@@ -27,6 +27,7 @@ export interface NpcEntry {
     alignment_ethical?: string | null; // 🆕
     moral_score?: number; // 🆕
     ethical_score?: number; // 🆕
+    manual_description?: string | null; // 🆕 Manual Backup
 }
 
 export interface Recording {

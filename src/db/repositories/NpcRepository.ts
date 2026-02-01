@@ -14,8 +14,8 @@ export const npcRepository = {
 
         // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
-            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id, alignment_moral, alignment_ethical)
-            VALUES ($campaignId, $name, $description, $role, COALESCE($status, 'ALIVE'), CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId, $moral, $ethical)
+            INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id, alignment_moral, alignment_ethical, manual_description)
+            VALUES ($campaignId, $name, $description, $role, COALESCE($status, 'ALIVE'), CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId, $moral, $ethical, CASE WHEN $isManual = 1 THEN $description ELSE NULL END)
             ON CONFLICT(campaign_id, name)
             DO UPDATE SET
                 description = $description,
@@ -24,7 +24,8 @@ export const npcRepository = {
                 last_updated = CURRENT_TIMESTAMP,
                 last_updated_session_id = $sessionId,
                 rag_sync_needed = 1,
-                is_manual = CASE WHEN $isManual = 1 THEN 1 ELSE is_manual END,
+                is_manual = $isManual,
+                manual_description = CASE WHEN $isManual = 1 THEN $description ELSE manual_description END,
                 alignment_moral = COALESCE($moral, alignment_moral),
                 alignment_ethical = COALESCE($ethical, alignment_ethical)
         `).run({
@@ -48,7 +49,13 @@ export const npcRepository = {
         const sets: string[] = [];
         const params: any = { campaignId, name };
 
-        if (fields.description !== undefined) { sets.push('description = $description'); params.description = fields.description; }
+        if (fields.description !== undefined) {
+            sets.push('description = $description');
+            params.description = fields.description;
+            if (isManual) {
+                sets.push('manual_description = $description');
+            }
+        }
         if (fields.role !== undefined) { sets.push('role = $role'); params.role = fields.role; }
         if (fields.status !== undefined) { sets.push('status = $status'); params.status = fields.status; }
         if (fields.aliases !== undefined) { sets.push('aliases = $aliases'); params.aliases = fields.aliases; }
@@ -350,5 +357,34 @@ export const npcRepository = {
     getNpcByShortId: (campaignId: number, shortId: string): NpcEntry | null => {
         const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
         return db.prepare(`SELECT * FROM npc_dossier WHERE campaign_id = ? AND short_id = ?`).get(campaignId, cleanId) as NpcEntry | null;
+    },
+
+    restoreManualNpcDescription: (campaignId: number, name: string): boolean => {
+        const npc = npcRepository.getNpcEntry(campaignId, name);
+        if (!npc || !(npc as any).manual_description) return false;
+
+        const manualDesc = (npc as any).manual_description;
+        db.prepare(`
+            UPDATE npc_dossier 
+            SET description = ?, is_manual = 1, last_updated = CURRENT_TIMESTAMP, rag_sync_needed = 1
+            WHERE campaign_id = ? AND name = ?
+        `).run(manualDesc, campaignId, name);
+
+        console.log(`[NPC] ↩️ Ripristinata descrizione manuale per ${name}`);
+        return true;
+    },
+
+    clearManualNpcDescription: (campaignId: number, name: string): boolean => {
+        const res = db.prepare(`
+            UPDATE npc_dossier 
+            SET manual_description = NULL, last_updated = CURRENT_TIMESTAMP 
+            WHERE campaign_id = ? AND name = ?
+        `).run(campaignId, name);
+
+        if (res.changes > 0) {
+            console.log(`[NPC] 🔓 Rimossa descrizione manuale (Unlock) per ${name}`);
+            return true;
+        }
+        return false;
     }
 };

@@ -33,7 +33,8 @@ export async function syncNpcDossierIfNeeded(
     const newBio = await generateBio('NPC', {
         name: npcName,
         role: npc.role || 'Sconosciuto',
-        currentDesc: npc.description || ''
+        currentDesc: npc.description || '',
+        manualDescription: (npc as any).manual_description || undefined // 🆕 Passa la descrizione manuale come guida
     }, history);
 
     updateNpcEntry(campaignId, npcName, newBio, npc.role || undefined);

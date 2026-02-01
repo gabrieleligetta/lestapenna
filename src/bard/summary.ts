@@ -510,6 +510,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         const userIds = new Set(transcriptions.map((t: any) => t.user_id));
         let castContext = "PERSONAGGI (Usa queste info per arricchire la narrazione):\n";
 
+        // 0. PRE-FETCH DATA
+        let partyFaction: any = null;
+        if (campaignId) {
+            partyFaction = factionRepository.getPartyFaction(campaignId);
+        }
+
         if (campaignId) {
             const campaign = getCampaignById(campaignId);
             if (campaign) castContext += `CAMPAGNA: ${campaign.name}\n`;
@@ -527,7 +533,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             });
 
             // Always include party name
-            const partyFaction = factionRepository.getPartyFaction(campaignId);
             if (partyFaction) {
                 castContext += `\n🎭 GRUPPO DI EROI (PARTY): **${partyFaction.name}**\n`;
             }
@@ -559,6 +564,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni, ${entities.artifacts?.length || 0} Artefatti.`);
 
                 dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
+
+                // ... [NPC/Location/Quest hydration stays same] ...
 
                 // 2. Idratazione NPC
                 if (entities.npcs && Array.isArray(entities.npcs) && entities.npcs.length > 0) {
@@ -635,12 +642,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 }
 
                 // 5. Idratazione Fazioni (Party + Scout)
-                const partyFaction = factionRepository.getPartyFaction(campaignId);
+                // partyFaction already fetched at top scope
                 const scoutFactions = (entities.factions && Array.isArray(entities.factions)) ? entities.factions : [];
 
                 if (partyFaction || scoutFactions.length > 0) {
                     const foundFactions = new Set<string>();
                     dynamicMemoryContext += `\n⚔️ FAZIONI MENZIONATE:\n`;
+
+                    console.log(`[Bardo] 🕵️ Idratazione Fazioni - Party: ${partyFaction ? partyFaction.name : 'NULL'} (CampaignID: ${campaignId}), Scout: ${scoutFactions.join(', ')}`);
 
                     // Aggiungi SEMPRE la fazione del Party per prima
                     if (partyFaction) {
@@ -709,6 +718,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 if (entities.factions?.length) console.log(`  - Fazioni: ${entities.factions.join(', ')}`);
                 if (entities.artifacts?.length) console.log(`  - Artefatti: ${entities.artifacts.join(', ')}`);
 
+                // 🆕 DEBUG: Stampa tutto il contesto idratato
+                console.log(`[Bardo] 📝 DETTAGLIO CONTESTO IDRATO:\n${dynamicMemoryContext}\n-----------------------------------`);
+
                 // Fallback location corrente
                 const snapshot = getCampaignSnapshot(campaignId);
                 let locationContext = snapshot.location_context || 'Sconosciuto';
@@ -717,7 +729,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 if (snapshot.location_context) {
                     const [macro, micro] = snapshot.location_context.split(' - ').map((s: string) => s.trim());
                     if (macro && micro) {
-                        const atlasEntry = locationRepository.getAtlasEntry(campaignId, macro, micro);
+                        const atlasEntry = locationRepository.getAtlasEntryFull(campaignId, macro, micro);
                         if (atlasEntry) {
                             locationContext = `${snapshot.location_context} [ID: ${atlasEntry.short_id}]`;
                         }

@@ -580,11 +580,19 @@ export const factionRepository = {
     // =============================================
 
     findFactionByName: (campaignId: number, query: string): FactionEntry[] => {
+        // Normalizza la query rimuovendo articoli comuni se all'inizio (opzionale, ma aiuta)
+        // Per ora usiamo un approccio SQL bidirezionale
         return db.prepare(`
             SELECT * FROM factions
-            WHERE campaign_id = ? 
-            AND lower(name) LIKE lower(?)
+            WHERE campaign_id = $campaignId 
+            AND (
+                lower(name) LIKE '%' || lower($query) || '%' -- Name contains Query (es. "Culto del Drago" trova "Culto")
+                OR (
+                   length(name) > 3 
+                   AND lower($query) LIKE '%' || lower(name) || '%' -- Query contains Name (es. "il Culto" trova "Culto")
+                )
+            )
             LIMIT 5
-        `).all(campaignId, `%${query}%`) as FactionEntry[];
+        `).all({ campaignId, query }) as FactionEntry[];
     }
 };

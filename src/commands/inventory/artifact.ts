@@ -18,7 +18,7 @@ import {
 import { ArtifactEntry, ArtifactStatus } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { showEntityEvents } from '../utils/eventsViewer';
-import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd, startInteractiveArtifactDelete } from './interactiveUpdate';
+import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd, startInteractiveArtifactDelete } from './artifactInteractive';
 
 // Status icons and colors
 const getStatusDisplay = (status: ArtifactStatus) => {

@@ -224,11 +224,14 @@ export const artifactRepository = {
         name: string,
         fields: Partial<{
             status: ArtifactStatus;
+            description: string;
+            effects: string;
             owner_type: ArtifactOwnerType;
             owner_name: string;
             location_macro: string;
             location_micro: string;
             is_cursed: boolean;
+            curse_description: string;
         }>,
         isManual: boolean = false
     ): boolean => {
@@ -241,6 +244,14 @@ export const artifactRepository = {
         if (fields.status !== undefined) {
             updates.push('status = $status');
             params.status = fields.status;
+        }
+        if (fields.description !== undefined) {
+            updates.push('description = $description');
+            params.description = fields.description;
+        }
+        if (fields.effects !== undefined) {
+            updates.push('effects = $effects');
+            params.effects = fields.effects;
         }
         if (fields.owner_type !== undefined) {
             updates.push('owner_type = $ownerType');
@@ -261,6 +272,10 @@ export const artifactRepository = {
         if (fields.is_cursed !== undefined) {
             updates.push('is_cursed = $isCursed');
             params.isCursed = fields.is_cursed ? 1 : 0;
+        }
+        if (fields.curse_description !== undefined) {
+            updates.push('curse_description = $curseDescription');
+            params.curseDescription = fields.curse_description;
         }
 
         if (updates.length === 0) return false;

@@ -147,6 +147,23 @@ export const questRepository = {
         return result.changes > 0;
     },
 
+    updateQuestFields: (questId: number, fields: Partial<Quest>): boolean => {
+        const keys = Object.keys(fields).filter(k => k !== 'id');
+        if (keys.length === 0) return false;
+
+        const sets = keys.map(k => `${k} = ?`).join(', ');
+        const values = keys.map(k => (fields as any)[k]);
+        values.push(Date.now()); // last_updated
+        values.push(questId);
+
+        const result = db.prepare(`
+            UPDATE quests 
+            SET ${sets}, last_updated = ?, rag_sync_needed = 1 
+            WHERE id = ?
+        `).run(...values);
+        return result.changes > 0;
+    },
+
     deleteQuest: (questId: number): boolean => {
         const result = db.prepare('DELETE FROM quests WHERE id = ?').run(questId);
         return result.changes > 0;
@@ -167,18 +184,33 @@ export const questRepository = {
     },
 
     getQuestsByStatus: (campaignId: number, status: string, limit: number = 20, offset: number = 0): Quest[] => {
-        if (status.toUpperCase() === 'ALL') {
+        const s = status.toUpperCase();
+        if (s === 'ALL') {
             return db.prepare('SELECT * FROM quests WHERE campaign_id = ? ORDER BY last_updated DESC LIMIT ? OFFSET ?').all(campaignId, limit, offset) as Quest[];
         }
-        return db.prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = ? ORDER BY last_updated DESC LIMIT ? OFFSET ?').all(campaignId, status.toUpperCase(), limit, offset) as Quest[];
+        if (s === 'ACTIVE' || s === 'APERTE') {
+            return questRepository.getOpenQuests(campaignId, limit, offset);
+        }
+        if (s === 'CLOSED' || s === 'CHIUSE') {
+            return db.prepare(`SELECT * FROM quests WHERE campaign_id = ? AND status IN ('COMPLETED', 'FAILED', 'DONE', 'FALLITA') ORDER BY last_updated DESC LIMIT ? OFFSET ?`).all(campaignId, limit, offset) as Quest[];
+        }
+        return db.prepare('SELECT * FROM quests WHERE campaign_id = ? AND status = ? ORDER BY last_updated DESC LIMIT ? OFFSET ?').all(campaignId, s, limit, offset) as Quest[];
     },
 
     countQuestsByStatus: (campaignId: number, status: string): number => {
-        if (status.toUpperCase() === 'ALL') {
+        const s = status.toUpperCase();
+        if (s === 'ALL') {
             const result = db.prepare('SELECT COUNT(*) as count FROM quests WHERE campaign_id = ?').get(campaignId) as { count: number };
             return result.count;
         }
-        const result = db.prepare('SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status = ?').get(campaignId, status.toUpperCase()) as { count: number };
+        if (s === 'ACTIVE' || s === 'APERTE') {
+            return questRepository.countOpenQuests(campaignId);
+        }
+        if (s === 'CLOSED' || s === 'CHIUSE') {
+            const result = db.prepare(`SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status IN ('COMPLETED', 'FAILED', 'DONE', 'FALLITA')`).get(campaignId) as { count: number };
+            return result.count;
+        }
+        const result = db.prepare('SELECT COUNT(*) as count FROM quests WHERE campaign_id = ? AND status = ?').get(campaignId, s) as { count: number };
         return result.count;
     },
 

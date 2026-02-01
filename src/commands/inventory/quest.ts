@@ -28,6 +28,12 @@ import { guildSessions } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
 import { showEntityEvents } from '../utils/eventsViewer';
+import {
+    startInteractiveQuestAdd,
+    startInteractiveQuestUpdate,
+    startInteractiveQuestDelete,
+    startInteractiveQuestStatusChange
+} from './questInteractive';
 
 // Helper for Regen
 async function regenerateQuestBio(campaignId: number, title: string, status: string) {
@@ -95,7 +101,11 @@ export const questCommand: Command = {
 
         // SUBCOMMAND: $quest add <Title>
         if (arg.toLowerCase().startsWith('add ')) {
-            const title = arg.substring(4);
+            const title = arg.substring(4).trim();
+            if (!title) {
+                await startInteractiveQuestAdd(ctx);
+                return;
+            }
             const currentSession = guildSessions.get(ctx.guildId);
             addQuest(ctx.activeCampaign!.id, title, currentSession, undefined, QuestStatus.OPEN, 'MAJOR', true);
 
@@ -109,9 +119,19 @@ export const questCommand: Command = {
             return;
         }
 
+        if (arg.toLowerCase() === 'add') {
+            await startInteractiveQuestAdd(ctx);
+            return;
+        }
+
         // SUBCOMMAND: $quest update <Title or ID> [| <Note> OR <field> <value>]
-        if (arg.toLowerCase().startsWith('update ')) {
+        if (arg.toLowerCase().startsWith('update ') || arg.toLowerCase() === 'update') {
             const fullContent = arg.substring(7).trim(); // Remove 'update '
+
+            if (!fullContent) {
+                await startInteractiveQuestUpdate(ctx);
+                return;
+            }
 
             // 1. Identify Target (ID or Title)
             let targetIdentifier = "";
@@ -281,8 +301,13 @@ export const questCommand: Command = {
         }
 
         // SUBCOMMAND: $quest delete <Title or ID>
-        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ')) {
+        if (arg.toLowerCase().startsWith('delete ') || arg.toLowerCase().startsWith('elimina ') || arg.toLowerCase() === 'delete' || arg.toLowerCase() === 'elimina') {
             let search = arg.split(' ').slice(1).join(' ');
+
+            if (!search) {
+                await startInteractiveQuestDelete(ctx);
+                return;
+            }
 
             // ID Resolution
             const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
@@ -310,8 +335,13 @@ export const questCommand: Command = {
         }
 
         // SUBCOMMAND: $quest done <Title or ID>
-        if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ')) {
+        if (arg.toLowerCase().startsWith('done ') || arg.toLowerCase().startsWith('completata ') || arg.toLowerCase() === 'done' || arg.toLowerCase() === 'completata') {
             let search = arg.split(' ').slice(1).join(' ');
+
+            if (!search) {
+                await startInteractiveQuestStatusChange(ctx, 'COMPLETED');
+                return;
+            }
 
             // ID Resolution
             const sidMatch = search.match(/^#([a-z0-9]{5})$/i);
@@ -338,8 +368,13 @@ export const questCommand: Command = {
         }
 
         // SUBCOMMAND: $quest undone <Title or ID>
-        if (arg.toLowerCase().startsWith('undone ') || arg.toLowerCase().startsWith('riapri ')) {
+        if (arg.toLowerCase().startsWith('undone ') || arg.toLowerCase().startsWith('riapri ') || arg.toLowerCase() === 'undone' || arg.toLowerCase() === 'riapri') {
             let search = arg.split(' ').slice(1).join(' ');
+
+            if (!search) {
+                await startInteractiveQuestStatusChange(ctx, 'OPEN');
+                return;
+            }
 
             // ID Resolution
             const sidMatch = search.match(/^#([a-z0-9]{5})$/i);

@@ -50,6 +50,7 @@ export function buildWelcomeEmbed(): EmbedBuilder {
             {
                 name: "📌 PASSO 4: Configura il mondo (opzionale)",
                 value:
+                    "• `$setworld` — per impostare interattivamente anno, luogo e party\n" +
                     "• `$anno0 La Caduta dell'Impero` — evento cardine della timeline\n" +
                     "• `$data 1247` — anno corrente\n" +
                     "• `$luogo Waterdeep | Taverna del Portale` — posizione iniziale\n" +

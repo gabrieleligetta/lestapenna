@@ -38,9 +38,10 @@ export const helpCommand: Command = {
                         { name: "🏷️ Event Types", value: `Valid types: \`WAR\`, \`POLITICS\`, \`DISCOVERY\`, \`CALAMITY\`, \`SUPERNATURAL\`, \`GENERIC\`.` },
                         { name: "🗑️ Delete", value: `\`$timeline delete #ID\`: Remove an event using its Short ID.` }
                     );
-            } else if (arg === 'date' || arg === 'year0') {
-                embed.setTitle(`📅 Calendar Commands`)
+            } else if (arg === 'date' || arg === 'year0' || arg === 'setworld') {
+                embed.setTitle(`📅 Calendar & World Commands`)
                     .addFields(
+                        { name: "$setworld", value: "Interactively configure year, location, and party name." },
                         { name: "$date <Year>", value: `Sets the current campaign year. Affects timeline and recording timestamps.` },
                         { name: "$year0 <Description>", value: `Defines the pivot point of history (Year 0) and resets current year to 0.` }
                     );
@@ -175,8 +176,9 @@ export const helpCommand: Command = {
                         "`$note <Text>`: Add manual note."
                 },
                 {
-                    name: "🌍 Location",
+                    name: "🌍 Location & World",
                     value:
+                        "`$setworld`: Interactive world configuration.\n" +
                         "`$location`: Show current location.\n" +
                         "`$location <Region> | <Place>`: Set location manually.\n" +
                         "`$travels`: View campaign travel history."

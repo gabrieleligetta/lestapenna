@@ -38,9 +38,10 @@ export const aiutoCommand: Command = {
                         { name: "🏷️ Tipi di Evento", value: `Tipi validi: \`WAR\` (Guerra), \`POLITICS\` (Politica), \`DISCOVERY\` (Scoperta), \`CALAMITY\` (Calamità), \`SUPERNATURAL\` (Sovrannaturale), \`GENERIC\` (Generico).` },
                         { name: "🗑️ Elimina", value: `\`$timeline delete #ID\`: Rimuove un evento usando il suo Short ID.` }
                     );
-            } else if (arg === 'data' || arg === 'date' || arg === 'anno0' || arg === 'year0') {
-                embed.setTitle(`📅 Comandi Calendario`)
+            } else if (arg === 'data' || arg === 'date' || arg === 'anno0' || arg === 'year0' || arg === 'setworld' || arg === 'mondo') {
+                embed.setTitle(`📅 Comandi Calendario e Mondo`)
                     .addFields(
+                        { name: "$setworld", value: "Configura interattivamente anno, luogo e nome del party." },
                         { name: "$data <Anno>", value: `Imposta l'anno corrente della campagna. Influenza la timeline e le registrazioni.` },
                         { name: "$anno0 <Descrizione>", value: `Definisce il punto di svolta della storia (Anno 0) e resetta l'anno corrente a 0.` }
                     );
@@ -175,8 +176,9 @@ export const aiutoCommand: Command = {
                         "`$nota <Testo>`: Nota manuale."
                 },
                 {
-                    name: "🌍 Luogo",
+                    name: "🌍 Luogo & Mondo",
                     value:
+                        "`$setworld`: Configurazione interattiva mondo.\n" +
                         "`$luogo`: Dove siamo?\n" +
                         "`$luogo <Regione> | <Posto>`: Set manuale.\n" +
                         "`$viaggi`: Diario degli spostamenti."

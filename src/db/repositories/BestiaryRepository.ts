@@ -186,6 +186,13 @@ export const bestiaryRepository = {
                     }
                 }
             }
+
+            // Move history
+            db.prepare(`
+                UPDATE bestiary_history 
+                SET monster_name = ? 
+                WHERE campaign_id = ? AND lower(monster_name) = lower(?)
+            `).run(newName, campaignId, oldName);
         })();
 
         console.log(`[Bestiary] 🔀 Merged: ${oldName} -> ${newName}`);

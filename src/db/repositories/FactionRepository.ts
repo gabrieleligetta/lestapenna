@@ -351,20 +351,31 @@ export const factionRepository = {
         return db.prepare(query).all(entityType, entityId) as FactionAffiliation[];
     },
 
-    getFactionMembers: (factionId: number, entityType?: AffiliationEntityType, activeOnly: boolean = true): FactionAffiliation[] => {
-        let query = `SELECT * FROM faction_affiliations WHERE faction_id = ?`;
+    getFactionMembers: (factionId: number, entityType?: AffiliationEntityType, activeOnly: boolean = true): any[] => {
+        let query = `
+            SELECT fa.*, 
+                   CASE 
+                     WHEN fa.entity_type = 'npc' THEN n.name 
+                     WHEN fa.entity_type = 'location' THEN a.macro_location || ' | ' || a.micro_location
+                     ELSE 'ID:' || fa.entity_id
+                   END as entity_name
+            FROM faction_affiliations fa
+            LEFT JOIN npc_dossier n ON fa.entity_type = 'npc' AND fa.entity_id = n.id
+            LEFT JOIN location_atlas a ON fa.entity_type = 'location' AND fa.entity_id = a.id
+            WHERE fa.faction_id = ?
+        `;
         const params: any[] = [factionId];
 
         if (entityType) {
-            query += ` AND entity_type = ?`;
+            query += ` AND fa.entity_type = ?`;
             params.push(entityType);
         }
 
         if (activeOnly) {
-            query += ` AND is_active = 1`;
+            query += ` AND fa.is_active = 1`;
         }
 
-        return db.prepare(query).all(...params) as FactionAffiliation[];
+        return db.prepare(query).all(...params) as any[];
     },
 
     countFactionMembers: (factionId: number): { npcs: number; locations: number; pcs: number } => {
@@ -408,6 +419,86 @@ export const factionRepository = {
             WHERE campaign_id = ? AND lower(faction_name) = lower(?)
             ORDER BY timestamp ASC
         `).all(campaignId, factionName) as FactionHistoryEntry[];
+    },
+
+    // =============================================
+    // MERGE
+    // =============================================
+    mergeFactions: (
+        campaignId: number,
+        sourceName: string,
+        targetName: string,
+        mergedDescription?: string
+    ): boolean => {
+        const source = factionRepository.getFaction(campaignId, sourceName);
+        const target = factionRepository.getFaction(campaignId, targetName);
+
+        if (!source || !target) return false;
+        if (source.id === target.id) return true;
+
+        db.transaction(() => {
+            // 1. Unify descriptions if needed
+            if (mergedDescription) {
+                factionRepository.updateFaction(campaignId, targetName, { description: mergedDescription });
+            }
+
+            // 2. Move History (uses faction_name string)
+            db.prepare(`
+                UPDATE faction_history 
+                SET faction_name = ? 
+                WHERE campaign_id = ? AND lower(faction_name) = lower(?)
+            `).run(target.name, campaignId, source.name);
+
+            // 3. Move Affiliations (uses faction_id)
+            // Handle unique constraint manually to avoid losing metadata if possible
+            const sourceAffiliations = db.prepare('SELECT * FROM faction_affiliations WHERE faction_id = ?').all(source.id) as FactionAffiliation[];
+
+            for (const aff of sourceAffiliations) {
+                const conflict = db.prepare(`
+                    SELECT id, role, notes, is_active 
+                    FROM faction_affiliations 
+                    WHERE faction_id = ? AND entity_type = ? AND entity_id = ?
+                `).get(target.id, aff.entity_type, aff.entity_id) as any;
+
+                if (conflict) {
+                    // Conflict: Combine notes if different, maybe keep highest role?
+                    // For now, just combine notes and keep target role if set
+                    const newNotes = (conflict.notes || '') + (aff.notes ? '\n[Fusa] ' + aff.notes : '');
+                    db.prepare(`
+                        UPDATE faction_affiliations 
+                        SET notes = ?, is_active = MAX(is_active, ?)
+                        WHERE id = ?
+                    `).run(newNotes, aff.is_active, conflict.id);
+
+                    // Delete source affiliation
+                    db.prepare('DELETE FROM faction_affiliations WHERE id = ?').run(aff.id);
+                } else {
+                    // No conflict: just reassign
+                    db.prepare('UPDATE faction_affiliations SET faction_id = ? WHERE id = ?').run(target.id, aff.id);
+                }
+            }
+
+            // 4. Move Artifacts
+            db.prepare(`
+                UPDATE artifacts 
+                SET faction_id = ? 
+                WHERE campaign_id = ? AND faction_id = ?
+            `).run(target.id, campaignId, source.id);
+
+            // 5. Reassign Reputation? 
+            // If source had a specific reputation, and target has NEUTRALE, maybe move it?
+            const sourceRep = factionRepository.getFactionReputation(campaignId, source.id);
+            const targetRep = factionRepository.getFactionReputation(campaignId, target.id);
+            if (targetRep === 'NEUTRALE' && sourceRep !== 'NEUTRALE') {
+                factionRepository.setFactionReputation(campaignId, target.id, sourceRep);
+            }
+
+            // 6. Delete source faction
+            db.prepare('DELETE FROM factions WHERE id = ?').run(source.id);
+        })();
+
+        console.log(`[Faction] 🔀 Merged: ${sourceName} -> ${targetName}`);
+        return true;
     },
 
     // =============================================

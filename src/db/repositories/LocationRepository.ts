@@ -145,16 +145,19 @@ export const locationRepository = {
         `).get(campaignId, macro, micro) as AtlasEntryFull || null;
     },
 
-    getAtlasEntryById: (id: number): AtlasEntryFull | null => {
-        return db.prepare(`SELECT * FROM location_atlas WHERE id = ?`).get(id) as AtlasEntryFull || null;
-    },
-
     getAtlasEntryByShortId: (campaignId: number, shortId: string): AtlasEntryFull | null => {
         const cleanId = shortId.startsWith('#') ? shortId.substring(1) : shortId;
         return db.prepare(`
             SELECT * FROM location_atlas 
             WHERE campaign_id = ? AND short_id = ?
         `).get(campaignId, cleanId) as AtlasEntryFull || null;
+    },
+
+    getAtlasEntryById: (campaignId: number, id: number): AtlasEntryFull | null => {
+        return db.prepare(`
+            SELECT * FROM location_atlas 
+            WHERE campaign_id = ? AND id = ?
+        `).get(campaignId, id) as AtlasEntryFull || null;
     },
 
     renameAtlasEntry: (
@@ -225,6 +228,14 @@ export const locationRepository = {
                   AND lower(macro_location) = lower(?)
                   AND lower(micro_location) = lower(?)
             `).run(newMacro, newMicro, newMacro, newMicro, campaignId, oldMacro, oldMicro);
+
+            db.prepare(`
+                UPDATE atlas_history
+                SET macro_location = ?, micro_location = ?
+                WHERE campaign_id = ?
+                  AND lower(macro_location) = lower(?)
+                  AND lower(micro_location) = lower(?)
+            `).run(newMacro, newMicro, campaignId, oldMacro, oldMicro);
 
             db.prepare(`DELETE FROM location_atlas WHERE id = ?`).run(source.id);
         })();

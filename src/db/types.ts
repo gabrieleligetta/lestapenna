@@ -240,7 +240,7 @@ export const REPUTATION_SPECTRUM: ReputationLevel[] = [
 
 export type FactionType = 'PARTY' | 'GUILD' | 'KINGDOM' | 'CULT' | 'ORGANIZATION' | 'GENERIC';
 export type FactionStatus = 'ACTIVE' | 'DISBANDED' | 'DESTROYED';
-export type AffiliationRole = 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED';
+export type AffiliationRole = 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED' | 'HQ' | 'PRESENCE' | 'HOSTILE' | 'PRISONER';
 export type AffiliationEntityType = 'npc' | 'location' | 'pc';
 
 export interface FactionEntry {

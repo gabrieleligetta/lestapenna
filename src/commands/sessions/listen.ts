@@ -34,6 +34,7 @@ import { checkAutoLeave } from '../../bootstrap/voiceState';
 import { guildSessions } from '../../state/sessionState';
 import { ensureTestEnvironment } from './testEnv';
 import { startWorldConfigurationFlow } from '../utils/worldConfig';
+import { startInteractiveLocationSelection } from './listenInteractive';
 
 export const listenCommand: Command = {
     name: 'listen',
@@ -103,7 +104,76 @@ export const listenCommand: Command = {
         const locationArg = args.join(' ');
         const sessionId = uuidv4();
 
+        // Helper to proceed with session start after location is settled
+        const proceedWithSessionStart = async () => {
+            const voiceChannel = member!.voice.channel!; // We checked this earlier
+            const humanMembers = voiceChannel.members.filter(m => !m.user.bot);
+            const botMembers = voiceChannel.members.filter(m => m.user.bot);
+
+            // 3. CHECK NOMI OBBLIGATORI (Solo in modalità normale)
+            if (!isTestMode) {
+                const missingNames: string[] = [];
+                humanMembers.forEach(m => {
+                    const profile = getUserProfile(m.id, ctx.activeCampaign!.id);
+                    if (!profile.character_name) {
+                        missingNames.push(m.displayName);
+                    }
+                });
+
+                if (missingNames.length > 0) {
+                    await message.reply(
+                        `🛑 **ALT!** Non posso iniziare la cronaca per **${ctx.activeCampaign!.name}**.\n` +
+                        `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
+                        missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
+                    );
+                    return;
+                }
+            }
+
+            if (botMembers.size > 0) {
+                const botNames = botMembers.map(b => b.displayName).join(', ');
+                await (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
+            }
+
+            // --- CHECK EMAIL (Reminder) ---
+            const guildEmail = getGuildConfig(message.guild!.id, 'report_recipients');
+            const membersWithoutEmail: string[] = [];
+            humanMembers.forEach(m => {
+                const profile = getUserProfile(m.id, ctx.activeCampaign!.id);
+                if (!profile.email) {
+                    membersWithoutEmail.push(m.displayName);
+                }
+            });
+
+            if (!guildEmail && membersWithoutEmail.length > 0) {
+                await (message.channel as TextChannel).send(
+                    `📧 **Promemoria Email**\n` +
+                    `Per ricevere i recap di sessione via email:\n` +
+                    `• Admin: usa \`$setemail\` per configurare email del server\n` +
+                    `• Giocatori: usa \`$sono\` → "Completa Scheda" per aggiungere la tua email\n\n` +
+                    `*Giocatori senza email: ${membersWithoutEmail.join(', ')}*`
+                );
+            }
+
+            guildSessions.set(message.guild!.id, sessionId);
+            createSession(sessionId, message.guild!.id, ctx.activeCampaign!.id);
+
+            // 📍 Set session phase to RECORDING
+            sessionPhaseManager.setPhase(sessionId, 'RECORDING');
+
+            monitor.startSession(sessionId);
+
+            await audioQueue.pause();
+            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
+
+            await connectToChannel(voiceChannel, sessionId);
+            await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${ctx.activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
+
+            if (checkAutoLeave) checkAutoLeave(voiceChannel, client);
+        };
+
         if (locationArg) {
+            // CASE 1: Explicit Argument (High Priority)
             let newMacro = null;
             let newMicro = null;
 
@@ -116,82 +186,23 @@ export const listenCommand: Command = {
             }
 
             updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId);
-            await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.\nIl Bardo userà questo contesto per le trascrizioni.`);
+            await message.reply(`📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.`);
+            await proceedWithSessionStart();
+
         } else {
+            // CASE 2: No Argument -> Check Current or Interactive
             const currentLoc = getCampaignLocation(message.guild!.id);
             if (currentLoc && (currentLoc.macro || currentLoc.micro)) {
-                await message.reply(`📍 Luogo attuale: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}** (Se è cambiato, usa \`$ascolta Macro | Micro\`)`);
+                // Location exists, use it
+                await message.reply(`📍 Riprendo dal luogo precedente: **${currentLoc.macro || '-'}** | **${currentLoc.micro || '-'}**.`);
+                await proceedWithSessionStart();
             } else {
-                await message.reply(`⚠️ **Luogo Sconosciuto.**\nConsiglio: scrivi \`$ascolta <Città> | <Luogo>\` per aiutare il Bardo a capire meglio i nomi e l'atmosfera.`);
+                // Location missing, start interactive
+                await startInteractiveLocationSelection(ctx, async (macro, micro) => {
+                    updateLocation(ctx.activeCampaign!.id, macro, micro, sessionId);
+                    await proceedWithSessionStart();
+                });
             }
         }
-
-        const voiceChannel = member.voice.channel;
-        const humanMembers = voiceChannel.members.filter(m => !m.user.bot);
-        const botMembers = voiceChannel.members.filter(m => m.user.bot);
-
-        // 2. AUTO-ASSEGNAZIONE NOMI IN TEST MODE (Simplified or skipped if test logic missing)
-        // ...
-
-        // 3. CHECK NOMI OBBLIGATORI (Solo in modalità normale)
-        if (!isTestMode) {
-            const missingNames: string[] = [];
-            humanMembers.forEach(m => {
-                const profile = getUserProfile(m.id, ctx.activeCampaign!.id);
-                if (!profile.character_name) {
-                    missingNames.push(m.displayName);
-                }
-            });
-
-            if (missingNames.length > 0) {
-                await message.reply(
-                    `🛑 **ALT!** Non posso iniziare la cronaca per **${ctx.activeCampaign!.name}**.\n` +
-                    `I seguenti avventurieri non hanno dichiarato il loro nome in questa campagna:\n` +
-                    missingNames.map(n => `- **${n}** (Usa: \`$sono NomePersonaggio\`)`).join('\n')
-                );
-                return;
-            }
-        }
-
-        if (botMembers.size > 0) {
-            const botNames = botMembers.map(b => b.displayName).join(', ');
-            await (message.channel as TextChannel).send(`🤖 Noto la presenza di costrutti magici (${botNames}). Le loro voci saranno ignorate.`);
-        }
-
-        // --- CHECK EMAIL (Reminder) ---
-        const guildEmail = getGuildConfig(message.guild!.id, 'report_recipients');
-        const membersWithoutEmail: string[] = [];
-        humanMembers.forEach(m => {
-            const profile = getUserProfile(m.id, ctx.activeCampaign!.id);
-            if (!profile.email) {
-                membersWithoutEmail.push(m.displayName);
-            }
-        });
-
-        if (!guildEmail && membersWithoutEmail.length > 0) {
-            await (message.channel as TextChannel).send(
-                `📧 **Promemoria Email**\n` +
-                `Per ricevere i recap di sessione via email:\n` +
-                `• Admin: usa \`$setemail\` per configurare email del server\n` +
-                `• Giocatori: usa \`$sono\` → "Completa Scheda" per aggiungere la tua email\n\n` +
-                `*Giocatori senza email: ${membersWithoutEmail.join(', ')}*`
-            );
-        }
-
-        guildSessions.set(message.guild!.id, sessionId);
-        createSession(sessionId, message.guild!.id, ctx.activeCampaign!.id);
-
-        // 📍 Set session phase to RECORDING
-        sessionPhaseManager.setPhase(sessionId, 'RECORDING');
-
-        monitor.startSession(sessionId);
-
-        await audioQueue.pause();
-        console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
-
-        await connectToChannel(voiceChannel, sessionId);
-        await message.reply(`🔊 **Cronaca Iniziata** per la campagna **${ctx.activeCampaign!.name}**.\nID Sessione: \`${sessionId}\`.\nI bardi stanno ascoltando ${humanMembers.size} eroi.`);
-
-        if (checkAutoLeave) checkAutoLeave(voiceChannel, client);
     }
 };

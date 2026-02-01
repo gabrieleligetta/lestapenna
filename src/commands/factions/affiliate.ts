@@ -11,13 +11,24 @@ import {
 } from '../../db';
 import { AffiliationRole } from '../../db/types';
 import { safeReply } from '../../utils/discordHelper';
+import {
+    startInteractiveAffiliate,
+    startInteractiveAffiliateAdd,
+    startInteractiveAffiliateRemove,
+    getRoleLabel
+} from './affiliateInteractive';
+import { EmbedBuilder } from 'discord.js';
 
 const ROLE_ICONS: Record<AffiliationRole, string> = {
     'LEADER': '👑',
     'MEMBER': '👤',
     'ALLY': '🤝',
     'ENEMY': '⚔️',
-    'CONTROLLED': '🏛️'
+    'CONTROLLED': '🏛️',
+    'HQ': '🏰',
+    'PRESENCE': '📍',
+    'HOSTILE': '💢',
+    'PRISONER': '⛓️'
 };
 
 // Helper: Get NPC by ID (for internal use)
@@ -48,22 +59,19 @@ export const affiliateCommand: Command = {
         const campaignId = ctx.activeCampaign!.id;
         const argsStr = ctx.args.join(' ');
 
-        // Show help if no args
+        // Interactive Mode Entry Points
         if (!argsStr.trim()) {
-            await ctx.message.reply(
-                '**📌 Gestione Affiliazioni Fazioni**\n\n' +
-                '**Affiliare:**\n' +
-                '`$affiliate npc <NPC> | <Fazione> [| <Ruolo>]`\n' +
-                '`$affiliate location <Luogo> | <Fazione> [| <Ruolo>]`\n' +
-                '`$affiliate pc <Personaggio> | <Fazione> [| <Ruolo>]`\n\n' +
-                '**Rimuovere:**\n' +
-                '`$affiliate remove npc <NPC> | <Fazione>`\n' +
-                '`$affiliate remove location <Luogo> | <Fazione>`\n\n' +
-                '**Visualizzare:**\n' +
-                '`$affiliate list <Fazione>` - Membri di una fazione\n' +
-                "`$affiliate of <NPC/Luogo>` - Fazioni di un'entità\n\n" +
-                '**Ruoli:** LEADER, MEMBER, ALLY, ENEMY, CONTROLLED'
-            );
+            await startInteractiveAffiliate(ctx);
+            return;
+        }
+
+        if (argsStr.toLowerCase() === 'add') {
+            await startInteractiveAffiliateAdd(ctx);
+            return;
+        }
+
+        if (argsStr.toLowerCase() === 'remove') {
+            await startInteractiveAffiliateRemove(ctx);
             return;
         }
 
@@ -157,7 +165,9 @@ export const affiliateCommand: Command = {
                 return;
             }
 
-            let msg = `**📋 Membri di "${faction.name}":**\n\n`;
+            const embed = new EmbedBuilder()
+                .setTitle(`📋 Membri di "${faction.name}"`)
+                .setColor("#E67E22");
 
             // Group by entity type
             const npcs = members.filter(m => m.entity_type === 'npc');
@@ -165,34 +175,33 @@ export const affiliateCommand: Command = {
             const pcs = members.filter(m => m.entity_type === 'pc');
 
             if (npcs.length > 0) {
-                msg += '**👤 NPC:**\n';
-                for (const m of npcs) {
-                    const npc = getNpcById(m.entity_id);
-                    const roleIcon = ROLE_ICONS[m.role] || '👤';
-                    msg += `${roleIcon} ${npc?.name || `ID:${m.entity_id}`} (${m.role})\n`;
-                }
-                msg += '\n';
+                const lines = npcs.map(m => {
+                    const icon = ROLE_ICONS[m.role as AffiliationRole] || '👤';
+                    const label = getRoleLabel(m.role);
+                    return `${icon} **${m.entity_name || `ID:${m.entity_id}`}** (${label})`;
+                }).join('\n');
+                embed.addFields({ name: "👤 NPC", value: lines });
             }
 
             if (locations.length > 0) {
-                msg += '**📍 Luoghi:**\n';
-                for (const m of locations) {
-                    const loc = getAtlasEntryById(m.entity_id);
-                    const roleIcon = ROLE_ICONS[m.role] || '📍';
-                    msg += `${roleIcon} ${loc ? `${loc.macro_location} - ${loc.micro_location}` : `ID:${m.entity_id}`} (${m.role})\n`;
-                }
-                msg += '\n';
+                const lines = locations.map(m => {
+                    const icon = ROLE_ICONS[m.role as AffiliationRole] || '📍';
+                    const label = getRoleLabel(m.role);
+                    return `${icon} **${m.entity_name || `ID:${m.entity_id}`}** (${label})`;
+                }).join('\n');
+                embed.addFields({ name: "📍 Luoghi", value: lines });
             }
 
             if (pcs.length > 0) {
-                msg += '**🎭 Personaggi:**\n';
-                for (const m of pcs) {
-                    const roleIcon = ROLE_ICONS[m.role] || '🎭';
-                    msg += `${roleIcon} PG ID:${m.entity_id} (${m.role})\n`;
-                }
+                const lines = pcs.map(m => {
+                    const icon = ROLE_ICONS[m.role as AffiliationRole] || '🎭';
+                    const label = getRoleLabel(m.role);
+                    return `${icon} **PG ID:${m.entity_id}** (${label})`;
+                }).join('\n');
+                embed.addFields({ name: "🎭 Personaggi", value: lines });
             }
 
-            await safeReply(ctx.message, msg);
+            await ctx.message.reply({ embeds: [embed] });
             return;
         }
 
@@ -213,12 +222,18 @@ export const affiliateCommand: Command = {
                     return;
                 }
 
-                let msg = `**👤 Fazioni di "${npc.name}":**\n\n`;
-                for (const a of affiliations) {
-                    const roleIcon = ROLE_ICONS[a.role] || '👤';
-                    msg += `${roleIcon} **${a.faction_name}** (${a.role})\n`;
-                }
-                await ctx.message.reply(msg);
+                const embed = new EmbedBuilder()
+                    .setTitle(`👤 Fazioni di "${npc.name}"`)
+                    .setColor("#3498DB");
+
+                const list = affiliations.map(a => {
+                    const icon = ROLE_ICONS[a.role as AffiliationRole] || '🏴';
+                    const label = getRoleLabel(a.role);
+                    return `${icon} **${a.faction_name}** (${label})`;
+                }).join('\n');
+
+                embed.setDescription(list);
+                await ctx.message.reply({ embeds: [embed] });
                 return;
             }
 
@@ -231,12 +246,18 @@ export const affiliateCommand: Command = {
                     return;
                 }
 
-                let msg = `**📍 Fazioni di "${loc.macro_location} - ${loc.micro_location}":**\n\n`;
-                for (const a of affiliations) {
-                    const roleIcon = ROLE_ICONS[a.role] || '📍';
-                    msg += `${roleIcon} **${a.faction_name}** (${a.role})\n`;
-                }
-                await ctx.message.reply(msg);
+                const embed = new EmbedBuilder()
+                    .setTitle(`📍 Fazioni di "${loc.micro_location}"`)
+                    .setColor("#3498DB");
+
+                const list = affiliations.map(a => {
+                    const icon = ROLE_ICONS[a.role as AffiliationRole] || '🏴';
+                    const label = getRoleLabel(a.role);
+                    return `${icon} **${a.faction_name}** (${label})`;
+                }).join('\n');
+
+                embed.setDescription(list);
+                await ctx.message.reply({ embeds: [embed] });
                 return;
             }
 
@@ -255,7 +276,7 @@ export const affiliateCommand: Command = {
                 '`$affiliate npc <NPC> | <Fazione> [| <Ruolo>]`\n' +
                 '`$affiliate location <Luogo> | <Fazione> [| <Ruolo>]`\n' +
                 '`$affiliate pc <Personaggio> | <Fazione> [| <Ruolo>]`\n\n' +
-                'Ruoli: LEADER, MEMBER, ALLY, ENEMY, CONTROLLED'
+                'Ruoli: LEADER, MEMBER, ALLY, ENEMY, CONTROLLED, HQ, PRESENCE, HOSTILE, PRISONER'
             );
             return;
         }
@@ -273,7 +294,7 @@ export const affiliateCommand: Command = {
         const factionName = parts[1];
         const role = (parts[2]?.toUpperCase() || 'MEMBER') as AffiliationRole;
 
-        const validRoles: AffiliationRole[] = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED'];
+        const validRoles: AffiliationRole[] = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED', 'HQ', 'PRESENCE', 'HOSTILE', 'PRISONER'];
         if (!validRoles.includes(role)) {
             await ctx.message.reply(`❌ Ruolo non valido. Usa: ${validRoles.join(', ')}`);
             return;
@@ -328,7 +349,8 @@ export const affiliateCommand: Command = {
             );
 
             const roleIcon = ROLE_ICONS[role];
-            await ctx.message.reply(`✅ **${resolvedName}** è ora affiliato a **${faction.name}** come ${roleIcon} ${role}.`);
+            const label = getRoleLabel(role);
+            await ctx.message.reply(`✅ **${resolvedName}** è ora affiliato a **${faction.name}** come ${roleIcon} **${label}**.`);
         } else {
             await ctx.message.reply("❌ Errore durante l'affiliazione.");
         }

@@ -656,7 +656,7 @@ async function showTextModal(interaction: any, faction: any, field: string, ctx:
     else if (field === 'hq') {
         // Try to get current hq short id or name
         if (faction.headquarters_location_id) {
-            const hq = locationRepository.getAtlasEntryById(faction.headquarters_location_id);
+            const hq = locationRepository.getAtlasEntryById(ctx.activeCampaign!.id, faction.headquarters_location_id);
             if (hq) currentValue = `#${hq.short_id}`;
         }
         label = "Nome o Short ID (#abc12) della Sede";

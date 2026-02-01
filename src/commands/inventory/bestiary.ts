@@ -15,6 +15,7 @@ import {
     startInteractiveBestiaryUpdate,
     startInteractiveBestiaryDelete
 } from './bestiaryInteractive';
+import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 
 // Helper for Regen - usato SOLO per note narrative
 async function regenerateMonsterBio(campaignId: number, monsterName: string) {
@@ -343,35 +344,44 @@ export const bestiaryCommand: Command = {
             return;
         }
 
-        // SUBCOMMAND: $bestiario merge <old> | <new>
-        if (arg.toLowerCase().startsWith('merge ')) {
-            const parts = arg.substring(6).split('|').map(s => s.trim());
-            if (parts.length !== 2) {
-                await ctx.message.reply("Uso: `$bestiario merge <nome vecchio/ID> | <nome nuovo/ID>`");
-                return;
-            }
-            let [oldName, newName] = parts;
+        // SUBCOMMAND: $bestiario merge [Source] | [Target]
+        if (firstArg === 'merge' || firstArg === 'unisci') {
+            const content = arg.substring(firstArg.length).trim();
 
-            // ID Resolution
-            const oldSidMatch = oldName.match(/^#([a-z0-9]{5})$/i);
-            if (oldSidMatch) {
-                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, oldSidMatch[1]);
-                if (m) oldName = m.name;
-            }
+            const mergeConfig: MergeConfig = {
+                entityType: 'Mostro',
+                emoji: '👹',
+                campaignId: ctx.activeCampaign!.id,
+                listEntities: (cid) => bestiaryRepository.listAllMonsters(cid).map(m => ({
+                    id: m.name,
+                    shortId: m.short_id || '?????',
+                    name: m.name,
+                    description: m.description || '',
+                    metadata: m.status
+                })),
+                resolveEntity: (cid, query) => {
+                    const sidMatch = query.match(/^#?([a-z0-9]{5})$/i);
+                    let monster = null;
+                    if (sidMatch) {
+                        monster = bestiaryRepository.getMonsterByShortId(cid, sidMatch[1]);
+                    } else {
+                        monster = bestiaryRepository.getMonsterByName(cid, query);
+                    }
+                    if (!monster) return null;
+                    return {
+                        id: monster.name,
+                        shortId: monster.short_id || '?????',
+                        name: monster.name,
+                        description: monster.description || '',
+                        metadata: monster.status
+                    };
+                },
+                executeMerge: async (cid, source, target, mergedDesc) => {
+                    return bestiaryRepository.mergeMonsters(cid, source.name as string, target.name as string, mergedDesc || undefined);
+                }
+            };
 
-            // Resolve New Name
-            const newSidMatch = newName.match(/^#([a-z0-9]{5})$/i);
-            if (newSidMatch) {
-                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, newSidMatch[1]);
-                if (m) newName = m.name;
-            }
-
-            const success = bestiaryRepository.mergeMonsters(ctx.activeCampaign!.id, oldName, newName);
-            if (success) {
-                await ctx.message.reply(`✅ **Mostro unito!**\n👹 **${oldName}** è stato integrato in **${newName}**`);
-            } else {
-                await ctx.message.reply(`❌ Impossibile unire. Verifica che "${oldName}" esista nel bestiario.`);
-            }
+            await startInteractiveMerge(ctx, mergeConfig, content);
             return;
         }
 

@@ -242,7 +242,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "entity_name": "Nome dell'NPC o Luogo",
             "faction_id": "ID della fazione dal CONTESTO (es. 'fw32d'). OMETTI se nuova.",
             "faction_name": "Nome della fazione",
-            "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED",
+            "role": "LEADER|MEMBER|ALLY|ENEMY|CONTROLLED|HQ|PRESENCE|HOSTILE|PRISONER (Usa HQ/CONTROLLED/PRESENCE/HOSTILE per luoghi, LEADER/MEMBER/ALLY/ENEMY/PRISONER per NPC)",
             "action": "JOIN|LEAVE"
         }
     ],

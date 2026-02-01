@@ -34,6 +34,7 @@ import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveNpcAdd, startInteractiveNpcUpdate, startInteractiveNpcDelete, startInteractiveEventsAdd, startInteractiveEventsUpdate, startInteractiveEventsDelete } from './interactiveUpdate';
+import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -342,59 +343,74 @@ export const npcCommand: Command = {
         }
 
         // SUBCOMMAND: merge
-        if (argsStr.toLowerCase().startsWith('merge ')) {
-            const parts = argsStr.substring(6).split('|').map(s => s.trim());
-            if (parts.length !== 2) {
-                await ctx.message.reply("Uso: `$npc merge <Vecchio Nome> | <Nuovo Nome>`");
-                return;
-            }
+        if (argsStr.toLowerCase().startsWith('merge')) {
+            const content = argsStr.substring(5).trim();
 
-            let sourceName = parts[0];
-            let targetName = parts[1];
+            const mergeConfig: MergeConfig = {
+                entityType: 'NPC',
+                emoji: '👤',
+                campaignId: ctx.activeCampaign!.id,
+                listEntities: (cid) => listNpcs(cid, 100, 0).map(n => ({
+                    id: n.name,
+                    shortId: n.short_id || '?????',
+                    name: n.name,
+                    description: n.description || '',
+                    metadata: n.role || ''
+                })),
+                resolveEntity: (cid, query) => {
+                    const sidMatch = query.match(/^#([a-z0-9]{5})$/i);
+                    let npc = null;
+                    if (sidMatch) {
+                        npc = getNpcByShortId(cid, sidMatch[1]);
+                    } else {
+                        npc = getNpcEntry(cid, query);
+                    }
+                    if (!npc) return null;
+                    return {
+                        id: npc.name,
+                        shortId: npc.short_id || '?????',
+                        name: npc.name,
+                        description: npc.description || '',
+                        metadata: npc.role || ''
+                    };
+                },
+                executeMerge: async (cid, source, target, mergedDesc) => {
+                    db.transaction(() => {
+                        // 1. Move History
+                        db.prepare(`UPDATE npc_history SET npc_name = ? WHERE campaign_id = ? AND lower(npc_name) = lower(?)`)
+                            .run(target.name, cid, source.name);
 
-            // Resolve Source ID
-            const sourceSidMatch = sourceName.match(/^#([a-z0-9]{5})$/i);
+                        // 2. Metadata (smart merge bio)
+                        if (mergedDesc) {
+                            updateNpcEntry(cid, target.name as string, mergedDesc, undefined, undefined, undefined, true);
+                        }
 
-            if (sourceSidMatch) {
-                const npc = getNpcByShortId(ctx.activeCampaign!.id, sourceSidMatch[1]);
-                if (npc) sourceName = npc.name;
-            }
+                        // 3. Move Affiliations
+                        const sourceAffiliations = db.prepare('SELECT id, faction_id FROM faction_affiliations WHERE entity_type = "npc" AND entity_id = (SELECT id FROM npc_dossier WHERE campaign_id = ? AND name = ?)').all(cid, source.name) as any[];
+                        const targetId = (db.prepare('SELECT id FROM npc_dossier WHERE campaign_id = ? AND name = ?').get(cid, target.name) as any).id;
 
-            // Resolve Target ID
-            const targetSidMatch = targetName.match(/^#([a-z0-9]{5})$/i);
+                        for (const aff of sourceAffiliations) {
+                            const conflict = db.prepare('SELECT id FROM faction_affiliations WHERE faction_id = ? AND entity_type = "npc" AND entity_id = ?').get(aff.faction_id, targetId) as any;
+                            if (conflict) {
+                                db.prepare('DELETE FROM faction_affiliations WHERE id = ?').run(aff.id);
+                            } else {
+                                db.prepare('UPDATE faction_affiliations SET entity_id = ? WHERE id = ?').run(targetId, aff.id);
+                            }
+                        }
 
-            if (targetSidMatch) {
-                const npc = getNpcByShortId(ctx.activeCampaign!.id, targetSidMatch[1]);
-                if (npc) targetName = npc.name;
-            }
+                        // 4. Migrate RAG
+                        migrateKnowledgeFragments(cid, source.name as string, target.name as string);
 
-            const sourceNpc = getNpcEntry(ctx.activeCampaign!.id, sourceName);
-            const targetNpc = getNpcEntry(ctx.activeCampaign!.id, targetName);
+                        // 5. Delete source
+                        deleteNpcRagSummary(cid, source.name as string);
+                        deleteNpcHistory(cid, source.name as string);
+                        deleteNpcEntry(cid, source.name as string);
+                    })();
+                    return true;
+                }
+            };
 
-            if (!sourceNpc) {
-                await ctx.message.reply(`❌ Impossibile unire: NPC "${sourceName}" non trovato.`);
-                return;
-            }
-
-            if (targetNpc) {
-                await ctx.message.reply(`⏳ **Smart Merge:** Unione intelligente di "${sourceName}" in "${targetName}"...`);
-
-                const mergedDesc = await smartMergeBios(targetName, targetNpc.description || "", sourceNpc.description || "");
-
-                db.prepare(`UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?`)
-                    .run(mergedDesc, targetNpc.id);
-
-                db.prepare(`UPDATE npc_history SET npc_name = ? WHERE campaign_id = ? AND lower(npc_name) = lower(?)`)
-                    .run(targetName, ctx.activeCampaign!.id, sourceName);
-
-                db.prepare(`DELETE FROM npc_dossier WHERE id = ?`).run(sourceNpc.id);
-
-                await ctx.message.reply(`✅ **Unito!**\n📜 **Nuova Bio:**\n> *${mergedDesc}*`);
-            } else {
-                const success = renameNpcEntry(ctx.activeCampaign!.id, sourceName, targetName);
-                if (success) await ctx.message.reply(`✅ NPC rinominato: **${sourceName}** è ora **${targetName}**.`);
-                else await ctx.message.reply(`❌ Errore durante la rinomina.`);
-            }
+            await startInteractiveMerge(ctx, mergeConfig, content);
             return;
         }
 

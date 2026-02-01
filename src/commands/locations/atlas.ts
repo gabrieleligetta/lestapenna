@@ -30,6 +30,7 @@ import {
     syncAtlasEntryIfNeeded
 } from '../../bard';
 import { startInteractiveAtlasUpdate, startInteractiveAtlasAdd, startInteractiveAtlasDelete } from './interactiveUpdate';
+import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { showEntityEvents } from '../utils/eventsViewer';
 
@@ -44,6 +45,59 @@ export const atlasCommand: Command = {
 
         if (firstArg === 'delete') {
             await startInteractiveAtlasDelete(ctx);
+            return;
+        }
+
+        // SUBCOMMAND: $atlante merge [Source] | [Target]
+        if (firstArg === 'merge' || firstArg === 'unisci') {
+            const content = argsStr.substring(firstArg.length).trim();
+
+            const mergeConfig: MergeConfig = {
+                entityType: 'Luogo',
+                emoji: '📍',
+                campaignId: ctx.activeCampaign!.id,
+                listEntities: (cid) => listAllAtlasEntries(cid).map(e => ({
+                    id: e.id,
+                    shortId: e.short_id || '?????',
+                    name: `${e.macro_location} | ${e.micro_location}`,
+                    description: e.description || '',
+                    metadata: ''
+                })),
+                resolveEntity: (cid, query) => {
+                    const sidMatch = query.match(/^#([a-z0-9]{5})$/i);
+                    let entry = null;
+                    if (sidMatch) {
+                        entry = getAtlasEntryByShortId(cid, sidMatch[1]);
+                    } else if (query.includes('|')) {
+                        const [macro, micro] = query.split('|').map(s => s.trim());
+                        entry = getAtlasEntryFull(cid, macro, micro);
+                    } else {
+                        // Try simple name search
+                        const all = listAllAtlasEntries(cid);
+                        entry = all.find(e =>
+                            e.micro_location?.toLowerCase() === query.toLowerCase() ||
+                            e.macro_location?.toLowerCase() === query.toLowerCase()
+                        );
+                    }
+                    if (!entry) return null;
+                    return {
+                        id: entry.id,
+                        shortId: entry.short_id || '?????',
+                        name: `${entry.macro_location} | ${entry.micro_location}`,
+                        description: entry.description || '',
+                        metadata: ''
+                    };
+                },
+                executeMerge: async (cid, source, target, mergedDesc) => {
+                    const s = getAtlasEntryFull(cid, ...source.name.split('|').map(x => x.trim()) as [string, string]);
+                    const t = getAtlasEntryByShortId(cid, target.shortId);
+
+                    if (!s || !t) return false;
+                    return mergeAtlasEntry(cid, s.macro_location, s.micro_location, t.macro_location, t.micro_location, mergedDesc || t.description || s.description || '');
+                }
+            };
+
+            await startInteractiveMerge(ctx, mergeConfig, content);
             return;
         }
 

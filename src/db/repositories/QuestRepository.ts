@@ -230,7 +230,8 @@ export const questRepository = {
     mergeQuests: (
         campaignId: number,
         oldTitle: string,
-        newTitle: string
+        newTitle: string,
+        mergedDescription?: string
     ): boolean => {
         const source = questRepository.getQuestByTitle(campaignId, oldTitle);
         if (!source) return false;
@@ -241,11 +242,28 @@ export const questRepository = {
             if (target) {
                 // Merge: Delete source, keep target
                 db.prepare('DELETE FROM quests WHERE id = ?').run(source.id);
+
+                if (mergedDescription) {
+                    db.prepare('UPDATE quests SET description = ?, last_updated = ?, rag_sync_needed = 1 WHERE id = ?')
+                        .run(mergedDescription, Date.now(), target.id);
+                }
             } else {
                 // Rename
                 db.prepare('UPDATE quests SET title = ?, last_updated = ?, rag_sync_needed = 1 WHERE id = ?')
                     .run(newTitle, Date.now(), source.id);
+
+                if (mergedDescription) {
+                    db.prepare('UPDATE quests SET description = ?, last_updated = ?, rag_sync_needed = 1 WHERE id = ?')
+                        .run(mergedDescription, Date.now(), source.id);
+                }
             }
+
+            // Move history
+            db.prepare(`
+                UPDATE quest_history 
+                SET quest_title = ? 
+                WHERE campaign_id = ? AND lower(quest_title) = lower(?)
+            `).run(newTitle, campaignId, oldTitle);
         })();
 
         console.log(`[Quest] 🔀 Merge/Rename: ${oldTitle} -> ${newTitle}`);

@@ -34,6 +34,7 @@ import {
     startInteractiveQuestDelete,
     startInteractiveQuestStatusChange
 } from './questInteractive';
+import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 
 // Helper for Regen - usato SOLO per note narrative
 async function regenerateQuestBio(campaignId: number, title: string, status: string) {
@@ -150,6 +151,47 @@ export const questCommand: Command = {
 
             return embed;
         };
+
+        // SUBCOMMAND: $quest merge [Source] | [Target]
+        if (firstArg === 'merge' || firstArg === 'unisci') {
+            const content = arg.substring(firstArg.length).trim();
+
+            const mergeConfig: MergeConfig = {
+                entityType: 'Quest',
+                emoji: '🗺️',
+                campaignId: ctx.activeCampaign!.id,
+                listEntities: (cid) => questRepository.listAllQuests(cid).map(q => ({
+                    id: q.title,
+                    shortId: q.short_id || '?????',
+                    name: q.title,
+                    description: q.description || '',
+                    metadata: q.status
+                })),
+                resolveEntity: (cid, query) => {
+                    const sidMatch = query.match(/^#?([a-z0-9]{5})$/i);
+                    let quest = null;
+                    if (sidMatch) {
+                        quest = getQuestByShortId(cid, sidMatch[1]);
+                    } else {
+                        quest = getQuestByTitle(cid, query);
+                    }
+                    if (!quest) return null;
+                    return {
+                        id: quest.title,
+                        shortId: quest.short_id || '?????',
+                        name: quest.title,
+                        description: quest.description || '',
+                        metadata: quest.status
+                    };
+                },
+                executeMerge: async (cid, source, target, mergedDesc) => {
+                    return questRepository.mergeQuests(cid, source.name as string, target.name as string, mergedDesc || undefined);
+                }
+            };
+
+            await startInteractiveMerge(ctx, mergeConfig, content);
+            return;
+        }
 
         // --- SESSION SPECIFIC: $quest <session_id> [all] ---
         if (firstArg && isSessionId(firstArg)) {
@@ -752,20 +794,41 @@ export const mergeQuestCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const arg = ctx.args.join(' ');
-        const parts = arg.split('|').map(s => s.trim());
 
-        if (parts.length !== 2) {
-            await ctx.message.reply("Uso: `$unisciquest <titolo vecchio> | <titolo nuovo>`\nEsempio: `$unisciquest Trova l'artefatto | Trovare l'artefatto antico`");
-            return;
-        }
+        const mergeConfig: MergeConfig = {
+            entityType: 'Quest',
+            emoji: '🗺️',
+            campaignId: ctx.activeCampaign!.id,
+            listEntities: (cid) => questRepository.listAllQuests(cid).map(q => ({
+                id: q.title,
+                shortId: q.short_id || '?????',
+                name: q.title,
+                description: q.description || '',
+                metadata: q.status
+            })),
+            resolveEntity: (cid, query) => {
+                const sidMatch = query.match(/^#?([a-z0-9]{5})$/i);
+                let quest = null;
+                if (sidMatch) {
+                    quest = getQuestByShortId(cid, sidMatch[1]);
+                } else {
+                    quest = getQuestByTitle(cid, query);
+                }
+                if (!quest) return null;
+                return {
+                    id: quest.title,
+                    shortId: quest.short_id || '?????',
+                    name: quest.title,
+                    description: quest.description || '',
+                    metadata: quest.status
+                };
+            },
+            executeMerge: async (cid, source, target, mergedDesc) => {
+                return questRepository.mergeQuests(cid, source.name as string, target.name as string, mergedDesc || undefined);
+            }
+        };
 
-        const [oldTitle, newTitle] = parts;
-        const success = mergeQuests(ctx.activeCampaign!.id, oldTitle, newTitle);
-        if (success) {
-            await ctx.message.reply(`✅ **Quest unite!**\n🗺️ **${oldTitle}** è stata integrata in **${newTitle}**`);
-        } else {
-            await ctx.message.reply(`❌ Impossibile unire. Verifica che "${oldTitle}" esista tra le quest.`);
-        }
+        await startInteractiveMerge(ctx, mergeConfig, arg);
     }
 };
 

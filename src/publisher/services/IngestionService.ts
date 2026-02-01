@@ -28,6 +28,7 @@ import {
     addBestiaryEvent,
     addAtlasEvent,
     factionRepository,
+    locationRepository,
     getNpcByAlias
 } from '../../db';
 import {
@@ -860,7 +861,7 @@ export class IngestionService {
 
                 if (npc) {
                     const role = affiliation.role?.toUpperCase() || 'MEMBER';
-                    const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED'];
+                    const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED', 'HQ', 'PRESENCE', 'HOSTILE', 'PRISONER'];
                     if (validRoles.includes(role)) {
                         factionRepository.addAffiliation(faction.id, 'npc', npc.id, { role: role as any });
                         factionRepository.addFactionEvent(
@@ -874,8 +875,36 @@ export class IngestionService {
                         console.log(`[Faction] 🤝 ${entityName} → ${factionName} (${role})`);
                     }
                 }
+            } else if (entityType === 'location') {
+                const { getAtlasEntryFull } = await import('../../db');
+                // Locations usually have "Macro | Micro" or just "Micro" in entity_name
+                let loc = null;
+                if (entityName.includes('|')) {
+                    const [macro, micro] = entityName.split('|').map(s => s.trim());
+                    loc = getAtlasEntryFull(campaignId, macro, micro);
+                } else {
+                    const allLocs = locationRepository.listAllAtlasEntries(campaignId);
+                    const match = allLocs.find((l: any) => l.micro_location.toLowerCase() === entityName.toLowerCase());
+                    if (match) loc = getAtlasEntryFull(campaignId, match.macro_location, match.micro_location);
+                }
+
+                if (loc) {
+                    const role = affiliation.role?.toUpperCase() || 'CONTROLLED';
+                    const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED', 'HQ', 'PRESENCE', 'HOSTILE', 'PRISONER'];
+                    if (validRoles.includes(role)) {
+                        factionRepository.addAffiliation(faction.id, 'location', loc.id, { role: role as any });
+                        factionRepository.addFactionEvent(
+                            campaignId,
+                            factionName,
+                            sessionId,
+                            `Luogo "${entityName}" affiliato come ${role}`,
+                            'GENERIC', // Or a more specific event if available
+                            false
+                        );
+                        console.log(`[Faction] 📍 ${entityName} → ${factionName} (${role})`);
+                    }
+                }
             }
-            // Location affiliations could be added here similarly if needed
         }
     }
 

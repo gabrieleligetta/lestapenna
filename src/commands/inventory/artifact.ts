@@ -19,6 +19,7 @@ import { ArtifactEntry, ArtifactStatus } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd, startInteractiveArtifactDelete } from './artifactInteractive';
+import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 
 // Status icons and colors
 const getStatusDisplay = (status: ArtifactStatus) => {
@@ -350,22 +351,43 @@ export const artifactCommand: Command = {
         }
 
         // SUBCOMMAND: $artifact merge <old> | <new>
-        if (arg.toLowerCase().startsWith('merge ') || arg.toLowerCase().startsWith('unisci ')) {
-            const content = arg.replace(/^(merge|unisci)\s+/i, '').trim();
-            const parts = content.split('|').map(p => p.trim());
+        if (arg.toLowerCase().startsWith('merge') || arg.toLowerCase().startsWith('unisci')) {
+            const content = arg.replace(/^(merge|unisci)\s*/i, '').trim();
 
-            if (parts.length !== 2) {
-                await ctx.message.reply("❌ Uso: `$artifact merge <NomeVecchio> | <NomeNuovo>`");
-                return;
-            }
+            const mergeConfig: MergeConfig = {
+                entityType: 'Artefatto',
+                emoji: '✨',
+                campaignId: ctx.activeCampaign!.id,
+                listEntities: (cid) => listAllArtifacts(cid).map(a => ({
+                    id: a.name,
+                    shortId: a.short_id || '?????',
+                    name: a.name,
+                    description: a.description || '',
+                    metadata: a.status || ''
+                })),
+                resolveEntity: (cid, query) => {
+                    const sidMatch = query.match(/^#([a-z0-9]{5})$/i);
+                    let art = null;
+                    if (sidMatch) {
+                        art = getArtifactByShortId(cid, sidMatch[1]);
+                    } else {
+                        art = getArtifactByName(cid, query);
+                    }
+                    if (!art) return null;
+                    return {
+                        id: art.name,
+                        shortId: art.short_id || '?????',
+                        name: art.name,
+                        description: art.description || '',
+                        metadata: art.status || ''
+                    };
+                },
+                executeMerge: async (cid, source, target, mergedDesc) => {
+                    return mergeArtifacts(cid, source.name as string, target.name as string, mergedDesc || undefined);
+                }
+            };
 
-            const [oldName, newName] = parts;
-            const success = mergeArtifacts(ctx.activeCampaign!.id, oldName, newName);
-            if (success) {
-                await ctx.message.reply(`✅ Artefatto **${oldName}** unito a **${newName}**.`);
-            } else {
-                await ctx.message.reply(`❌ Impossibile unire: artefatto **${oldName}** non trovato.`);
-            }
+            await startInteractiveMerge(ctx, mergeConfig, content);
             return;
         }
 

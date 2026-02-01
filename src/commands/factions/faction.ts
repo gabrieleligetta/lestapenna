@@ -15,6 +15,7 @@ import { syncFactionEntryIfNeeded, syncAllDirtyFactions } from '../../bard';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveFactionUpdate, startInteractiveFactionAdd, startInteractiveFactionDelete } from './interactiveUpdate';
+import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 
 // Helper: Get NPC by ID (for internal use)
 function getNpcById(npcId: number): { id: number; name: string; role?: string } | null {
@@ -375,6 +376,51 @@ export const factionCommand: Command = {
             } else {
                 await ctx.message.reply(`❌ Impossibile rinominare. Verifica che la fazione esista e il nuovo nome non sia già in uso.`);
             }
+            return;
+        }
+
+        // =============================================
+        // SUBCOMMAND: merge
+        // =============================================
+        if (/^merge\s/i.test(argsStr) || /^unisci\s/i.test(argsStr)) {
+            const content = argsStr.replace(/^(merge|unisci)\s*/i, '').trim();
+
+            const mergeConfig: MergeConfig = {
+                entityType: 'Fazione',
+                emoji: '🛡️',
+                campaignId: ctx.activeCampaign!.id,
+                listEntities: (cid) => factionRepository.listFactions(cid).map(f => ({
+                    id: f.name,
+                    shortId: f.short_id || '?????',
+                    name: f.name,
+                    description: f.description || '',
+                    metadata: f.type
+                })),
+                resolveEntity: (cid, query) => {
+                    const sidMatch = query.match(/^#?([a-z0-9]{5})$/i);
+                    let faction = null;
+                    if (sidMatch) {
+                        faction = factionRepository.getFactionByShortId(cid, sidMatch[1]);
+                    } else if (query.toLowerCase() === 'party') {
+                        faction = factionRepository.getPartyFaction(cid);
+                    } else {
+                        faction = factionRepository.getFaction(cid, query);
+                    }
+                    if (!faction) return null;
+                    return {
+                        id: faction.name,
+                        shortId: faction.short_id || '?????',
+                        name: faction.name,
+                        description: faction.description || '',
+                        metadata: faction.type
+                    };
+                },
+                executeMerge: async (cid, source, target, mergedDesc) => {
+                    return factionRepository.mergeFactions(cid, source.name as string, target.name as string, mergedDesc || undefined);
+                }
+            };
+
+            await startInteractiveMerge(ctx, mergeConfig, content);
             return;
         }
 

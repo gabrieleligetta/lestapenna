@@ -213,5 +213,98 @@ export const inventoryRepository = {
 
         db.prepare(`UPDATE inventory SET ${updates.join(', ')} WHERE id = $id`).run(params);
         return true;
+    },
+
+    /**
+     * Ottiene l'inventario con info sugli artefatti collegati
+     * Fa un LEFT JOIN con artifacts per identificare quali item sono artefatti
+     */
+    getInventoryWithArtifactInfo: (campaignId: number, limit: number = 20, offset: number = 0): (InventoryItem & {
+        is_artifact: boolean;
+        artifact_status?: string;
+        artifact_short_id?: string;
+        is_cursed?: boolean;
+    })[] => {
+        const items = db.prepare(`
+            SELECT
+                i.*,
+                CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END as is_artifact,
+                a.status as artifact_status,
+                a.short_id as artifact_short_id,
+                a.is_cursed
+            FROM inventory i
+            LEFT JOIN artifacts a ON i.campaign_id = a.campaign_id
+                AND lower(i.item_name) = lower(a.name)
+            WHERE i.campaign_id = ? AND i.quantity > 0
+            ORDER BY i.item_name
+            LIMIT ? OFFSET ?
+        `).all(campaignId, limit, offset);
+
+        return items.map((item: any) => ({
+            ...item,
+            is_artifact: item.is_artifact === 1,
+            is_cursed: item.is_cursed === 1
+        }));
+    },
+
+    /**
+     * Lista completa inventario con info artefatti
+     */
+    listAllInventoryWithArtifacts: (campaignId: number): (InventoryItem & {
+        is_artifact: boolean;
+        artifact_status?: string;
+        artifact_short_id?: string;
+        is_cursed?: boolean;
+    })[] => {
+        const items = db.prepare(`
+            SELECT
+                i.*,
+                CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END as is_artifact,
+                a.status as artifact_status,
+                a.short_id as artifact_short_id,
+                a.is_cursed
+            FROM inventory i
+            LEFT JOIN artifacts a ON i.campaign_id = a.campaign_id
+                AND lower(i.item_name) = lower(a.name)
+            WHERE i.campaign_id = ?
+            ORDER BY i.item_name
+        `).all(campaignId);
+
+        return items.map((item: any) => ({
+            ...item,
+            is_artifact: item.is_artifact === 1,
+            is_cursed: item.is_cursed === 1
+        }));
+    },
+
+    /**
+     * Ottiene un singolo item con info artefatto
+     */
+    getInventoryItemWithArtifactInfo: (campaignId: number, itemName: string): (InventoryItem & {
+        is_artifact: boolean;
+        artifact_status?: string;
+        artifact_short_id?: string;
+        is_cursed?: boolean;
+    }) | null => {
+        const item = db.prepare(`
+            SELECT
+                i.*,
+                CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END as is_artifact,
+                a.status as artifact_status,
+                a.short_id as artifact_short_id,
+                a.is_cursed
+            FROM inventory i
+            LEFT JOIN artifacts a ON i.campaign_id = a.campaign_id
+                AND lower(i.item_name) = lower(a.name)
+            WHERE i.campaign_id = ? AND lower(i.item_name) = lower(?)
+        `).get(campaignId, itemName) as any;
+
+        if (!item) return null;
+
+        return {
+            ...item,
+            is_artifact: item.is_artifact === 1,
+            is_cursed: item.is_cursed === 1
+        };
     }
 };

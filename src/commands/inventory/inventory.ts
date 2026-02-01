@@ -52,14 +52,30 @@ export const inventoryCommand: Command = {
         const arg = ctx.args.join(' ');
 
         const generateItemDetailEmbed = (item: any) => {
+            // Controlla se è un artefatto
+            const itemWithArtifact = inventoryRepository.getInventoryItemWithArtifactInfo(ctx.activeCampaign!.id, item.item_name);
+            const isArtifact = itemWithArtifact?.is_artifact || false;
+            const isCursed = itemWithArtifact?.is_cursed || false;
+
+            const icon = isArtifact ? (isCursed ? '☠️' : '🔮') : '📦';
+            const color = isArtifact ? (isCursed ? "#8B0000" : "#9B59B6") : "#F1C40F";
+
             const embed = new EmbedBuilder()
-                .setTitle(`📦 ${item.item_name}`)
-                .setColor("#F1C40F")
+                .setTitle(`${icon} ${item.item_name}`)
+                .setColor(color)
                 .setDescription(item.description || "*Nessuna descrizione.*")
                 .addFields(
                     { name: "Quantità", value: item.quantity.toString(), inline: true },
                     { name: "ID", value: `\`#${item.short_id}\``, inline: true }
                 );
+
+            if (isArtifact) {
+                embed.addFields({
+                    name: "🔮 Artefatto",
+                    value: `Stato: ${itemWithArtifact?.artifact_status || 'Sconosciuto'}${isCursed ? ' | ⚠️ **MALEDETTO**' : ''}`,
+                    inline: false
+                });
+            }
 
             if (item.notes) {
                 embed.addFields({ name: "📝 Note", value: item.notes });
@@ -299,21 +315,25 @@ export const inventoryCommand: Command = {
 
         const generateEmbed = (page: number) => {
             const offset = page * ITEMS_PER_PAGE;
-            const items = getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+            // Usa la nuova funzione che include info artefatti
+            const items = inventoryRepository.getInventoryWithArtifactInfo(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
             const total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
             const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
             if (items.length === 0 && total > 0 && page > 0) {
-                return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE) };
+                return { embed: new EmbedBuilder().setDescription("❌ Pagina inesistente."), totalPages: Math.ceil(total / ITEMS_PER_PAGE), items: [] };
             }
 
             if (total === 0) {
-                return { embed: new EmbedBuilder().setDescription("Lo zaino è vuoto."), totalPages: 0 };
+                return { embed: new EmbedBuilder().setDescription("Lo zaino è vuoto."), totalPages: 0, items: [] };
             }
 
             const list = items.map((i: any) => {
+                // Icona diversa per artefatti
+                const icon = i.is_artifact ? (i.is_cursed ? '☠️' : '🔮') : '📦';
+                const artifactBadge = i.is_artifact ? ' `[ARTEFATTO]`' : '';
                 const desc = i.description ? `\n> *${i.description.substring(0, 80)}${i.description.length > 80 ? '...' : ''}*` : '';
-                return `\`#${i.short_id}\` 📦 **${i.item_name}** ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
+                return `\`#${i.short_id}\` ${icon} **${i.item_name}**${artifactBadge} ${i.quantity > 1 ? `(x${i.quantity})` : ''}${desc}`;
             }).join('\n\n');
 
             const embed = new EmbedBuilder()
@@ -322,7 +342,7 @@ export const inventoryCommand: Command = {
                 .setDescription(list)
                 .setFooter({ text: `Pagina ${page + 1} di ${totalPages} • Totale: ${total}` });
 
-            return { embed, totalPages };
+            return { embed, totalPages, items };
         };
 
         const generateButtons = (page: number, totalPages: number) => {
@@ -349,21 +369,23 @@ export const inventoryCommand: Command = {
                 .setCustomId('select_item')
                 .setPlaceholder('🔍 Seleziona un oggetto per i dettagli...')
                 .addOptions(
-                    items.map((i: any) =>
-                        new StringSelectMenuOptionBuilder()
+                    items.map((i: any) => {
+                        // Icona diversa per artefatti
+                        const emoji = i.is_artifact ? (i.is_cursed ? '☠️' : '🔮') : '📦';
+                        const artifactTag = i.is_artifact ? ' [Artefatto]' : '';
+                        return new StringSelectMenuOptionBuilder()
                             .setLabel(i.item_name.substring(0, 100))
-                            .setDescription(`ID: #${i.short_id} | Quantità: ${i.quantity}`)
+                            .setDescription(`ID: #${i.short_id} | Quantità: ${i.quantity}${artifactTag}`)
                             .setValue(i.item_name)
-                            .setEmoji('📦')
-                    )
+                            .setEmoji(emoji);
+                    })
                 );
 
             return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
         };
 
         const initialData = generateEmbed(currentPage);
-        const offset = currentPage * ITEMS_PER_PAGE;
-        const currentItems = getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+        const currentItems = initialData.items || [];
 
         if (initialData.totalPages === 0 || !initialData.embed.data.title) {
             await ctx.message.reply({ embeds: [initialData.embed] });
@@ -399,8 +421,7 @@ export const inventoryCommand: Command = {
                     }
 
                     const newData = generateEmbed(currentPage);
-                    const newOffset = currentPage * ITEMS_PER_PAGE;
-                    const newItems = getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, newOffset);
+                    const newItems = newData.items || [];
 
                     const newComponents: any[] = [];
                     if (newData.totalPages > 1) newComponents.push(generateButtons(currentPage, newData.totalPages));

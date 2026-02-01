@@ -183,28 +183,32 @@ async function showInventorySelection(
 ) {
     const ITEMS_PER_PAGE = 20;
     const offset = page * ITEMS_PER_PAGE;
-    let items: InventoryItem[] = [];
+    let items: any[] = [];
     let total = 0;
 
     if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        const all = inventoryRepository.listAllInventory(ctx.activeCampaign!.id);
+        // Usa funzione con info artefatti
+        const all = inventoryRepository.listAllInventoryWithArtifacts(ctx.activeCampaign!.id);
         const filtered = all.filter(i => i.item_name.toLowerCase().includes(q) || (i.description && i.description.toLowerCase().includes(q)));
         total = filtered.length;
         items = filtered.slice(offset, offset + ITEMS_PER_PAGE);
     } else {
         total = inventoryRepository.countInventory(ctx.activeCampaign!.id);
-        items = inventoryRepository.getInventory(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
+        items = inventoryRepository.getInventoryWithArtifactInfo(ctx.activeCampaign!.id, ITEMS_PER_PAGE, offset);
     }
 
     const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
     const options = items.map(i => {
+        // Icona diversa per artefatti
+        const emoji = i.is_artifact ? (i.is_cursed ? '☠️' : '🔮') : '📦';
+        const artifactTag = i.is_artifact ? ' [Artefatto]' : '';
         return new StringSelectMenuOptionBuilder()
             .setLabel(i.item_name.substring(0, 100))
-            .setDescription(`ID: #${i.short_id} | Qt: ${i.quantity}`)
+            .setDescription(`ID: #${i.short_id} | Qt: ${i.quantity}${artifactTag}`)
             .setValue(i.item_name)
-            .setEmoji('📦');
+            .setEmoji(emoji);
     });
 
     if (page === 0 && options.length < 25) {

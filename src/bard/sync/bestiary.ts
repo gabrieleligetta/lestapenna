@@ -4,9 +4,10 @@
 
 import { getMonsterByName, clearBestiaryDirtyFlag, getDirtyBestiaryEntries, deleteBestiaryRagSummary } from '../../db';
 import { ingestGenericEvent } from '../rag';
+import { generateBio } from '../bio';
 
 /**
- * Sincronizza Monster Entry nel RAG
+ * Sincronizza Monster Entry nel RAG (con rigenerazione bio)
  */
 export async function syncBestiaryEntryIfNeeded(
     campaignId: number,
@@ -22,8 +23,20 @@ export async function syncBestiaryEntryIfNeeded(
 
     console.log(`[Sync] Avvio sync Bestiario per ${monsterName}...`);
 
-    let ragContent = `[[BESTIARIO: ${monsterName}]]\n`;
-    if (monster.description) ragContent += `DESCRIZIONE: ${monster.description}\n`;
+    // 1. Fetch History and Generate Bio
+    const { bestiaryRepository } = await import('../../db/repositories/BestiaryRepository');
+    const history = bestiaryRepository.getBestiaryHistory(campaignId, monsterName);
+    const simpleHistory = history.map((h: any) => ({ description: h.description, event_type: h.event_type }));
+
+    const newBio = await generateBio('MONSTER', {
+        campaignId,
+        name: monsterName,
+        currentDesc: monster.description || ''
+    }, simpleHistory);
+
+    // 2. Build RAG content
+    let ragContent = `[[SCHEDA BESTIARIO UFFICIALE: ${monsterName}]]\n`;
+    if (newBio) ragContent += `DOSSIER ECOLOGICO: ${newBio}\n`;
     if (monster.count) ragContent += `QUANTITÀ/DETTAGLI: ${monster.count}\n`;
     if (monster.status) ragContent += `STATO: ${monster.status}\n`;
 
@@ -46,6 +59,8 @@ export async function syncBestiaryEntryIfNeeded(
             if (res.length > 0) ragContent += `RESISTENZE: ${res.join(', ')}\n`;
         } catch (e) { }
     }
+
+    ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
 
     await ingestGenericEvent(
         campaignId,

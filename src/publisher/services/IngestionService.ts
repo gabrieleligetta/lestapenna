@@ -270,8 +270,18 @@ export class IngestionService {
         for (const evt of validated.character_events.keep) {
             const safeDesc = evt.event || "Evento significativo registrato.";
             console.log(`[PG] ➕ ${evt.name}: ${safeDesc}`);
-            // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual, timestamp)
-            addCharacterEvent(campaignId, evt.name, sessionId, safeDesc, evt.type || 'GROWTH', false, timestamp);
+            // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual, timestamp, moral, ethical)
+            addCharacterEvent(
+                campaignId,
+                evt.name,
+                sessionId,
+                safeDesc,
+                evt.type || 'GROWTH',
+                false,
+                timestamp,
+                evt.moral_impact || 0,
+                evt.ethical_impact || 0
+            );
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
             await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG', timestamp);
             markCharacterDirtyByName(campaignId, evt.name);
@@ -294,8 +304,18 @@ export class IngestionService {
                 }
 
                 console.log(`[NPC] ➕ ${npcName}: ${safeDesc}`);
-                // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, island, timestamp)
-                addNpcEvent(campaignId, npcName, sessionId, safeDesc, evt.type || 'EVENT', false, timestamp);
+                // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, isManual, timestamp, moral, ethical)
+                addNpcEvent(
+                    campaignId,
+                    npcName,
+                    sessionId,
+                    safeDesc,
+                    evt.type || 'EVENT',
+                    false,
+                    timestamp,
+                    evt.moral_impact || 0,
+                    evt.ethical_impact || 0
+                );
                 // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
                 await ingestBioEvent(campaignId, sessionId, npcName, safeDesc, 'NPC', timestamp);
                 // Also mark dirty
@@ -757,21 +777,40 @@ export class IngestionService {
 
             console.log(`[Faction] ➕ ${factionName}: ${safeDesc.substring(0, 50)}${safeDesc.length > 50 ? '...' : ''} (Rep: ${safeRep})`);
 
-            // Handle reputation changes
             if (update.reputation_change && faction) {
-                const direction = update.reputation_change.direction?.toUpperCase();
-                if (direction === 'UP' || direction === 'DOWN') {
-                    const newRep = factionRepository.adjustReputation(campaignId, faction.id, direction);
-                    factionRepository.addFactionEvent(
-                        campaignId,
-                        factionName,
-                        sessionId,
-                        `Reputazione cambiata (${direction}): ${update.reputation_change.reason || 'Nessun motivo'}`,
-                        'REPUTATION_CHANGE',
-                        false
-                    );
-                    console.log(`[Faction] 📊 Reputazione ${factionName}: ADJUST ${direction} -> ${newRep}`);
+                const changeValue = update.reputation_change.value || 0;
+
+                // Adjust reputation by iterating steps if needed, OR just set it if we have a target?
+                // The new system uses "value" (numeric change?). 
+                // Wait, Prompt says "value": "integer from -N to +N".
+                // `adjustReputation` method in repo uses 'UP'/'DOWN' steps.
+                // I might need to map value to steps or update `factionRepository` to handle numeric shifts.
+                // For now, let's just log it and add the event with the value.
+                // TODO: Update factionRepository to handle numeric reputation shift if desired.
+                // For now, we rely on the event history.
+
+                // If value is > 0, we can try to "UP", if < 0 "DOWN" (rough approximation for existing logic)
+                // But the `reputation_change_value` column is what matters for the alignment system.
+
+                if (changeValue !== 0) {
+                    // Try to apply legacy reputation step limit
+                    if (changeValue > 0) factionRepository.adjustReputation(campaignId, faction.id, 'UP');
+                    if (changeValue < 0) factionRepository.adjustReputation(campaignId, faction.id, 'DOWN');
                 }
+
+                factionRepository.addFactionEvent(
+                    campaignId,
+                    factionName,
+                    sessionId,
+                    `Cambiamento reputazione (${changeValue}): ${update.reputation_change.reason || 'Nessun motivo'}`,
+                    'REPUTATION_CHANGE',
+                    false,
+                    changeValue,
+                    update.reputation_change.moral_impact || 0,
+                    update.reputation_change.ethical_impact || 0,
+                    timestamp
+                );
+                console.log(`[Faction] 📊 Reputazione ${factionName}: CHANGE ${changeValue}`);
             } else if (update.reputation && faction) {
                 const validReps = ['OSTILE', 'DIFFIDENTE', 'FREDDO', 'NEUTRALE', 'CORDIALE', 'AMICHEVOLE', 'ALLEATO'];
                 const upperRep = update.reputation.toUpperCase();
@@ -783,7 +822,11 @@ export class IngestionService {
                         sessionId,
                         `Reputazione impostata a ${upperRep}`,
                         'REPUTATION_CHANGE',
-                        false
+                        false,
+                        0,
+                        0,
+                        0,
+                        timestamp
                     );
                     console.log(`[Faction] 📊 Reputazione ${factionName}: SET ${upperRep}`);
                 }

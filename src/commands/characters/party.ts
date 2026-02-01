@@ -4,7 +4,7 @@
 
 import { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { getCampaignCharacters, getUserProfile, getCharacterUserId } from '../../db';
+import { getCampaignCharacters, getUserProfile, getCharacterUserId, getPartyFaction } from '../../db';
 
 export const partyCommand: Command = {
     name: 'party',
@@ -28,13 +28,17 @@ export const partyCommand: Command = {
         const alignMoral = ctx.activeCampaign!.party_alignment_moral || "NEUTRALE";
         const alignEthical = ctx.activeCampaign!.party_alignment_ethical || "NEUTRALE";
 
+        // Recupera il nome del party se esiste una fazione associata
+        const partyFaction = getPartyFaction(ctx.activeCampaign!.id);
+        const partyName = partyFaction ? partyFaction.name : ctx.activeCampaign!.name;
+
         const embed = new EmbedBuilder()
-            .setTitle(`🛡️ Party: ${ctx.activeCampaign!.name}`)
+            .setTitle(`🛡️ Party: ${partyName}`)
             .setColor("#9B59B6")
             .setDescription(list)
             .addFields({
                 name: "⚖️ Allineamento del Gruppo",
-                value: `**${alignEthical} ${alignMoral}**\n*(Lo spettro etico e morale delle azioni del gruppo)*`,
+                value: `**${alignEthical} ${alignMoral}**\n*(E: ${ctx.activeCampaign!.party_ethical_score ?? 0}, M: ${ctx.activeCampaign!.party_moral_score ?? 0})*`,
                 inline: false
             });
 
@@ -92,9 +96,13 @@ export const partyCommand: Command = {
                         );
 
                     if (p.alignment_moral || p.alignment_ethical) {
+                        const scoreText = (p.moral_score !== undefined || p.ethical_score !== undefined)
+                            ? `\n*(E: ${p.ethical_score ?? 0}, M: ${p.moral_score ?? 0})*`
+                            : '';
+
                         profileEmbed.addFields({
                             name: "⚖️ Allineamento",
-                            value: `${p.alignment_ethical || 'NEUTRALE'} ${p.alignment_moral || 'NEUTRALE'}`,
+                            value: `${p.alignment_ethical || 'NEUTRALE'} ${p.alignment_moral || 'NEUTRALE'}${scoreText}`,
                             inline: true
                         });
                     }

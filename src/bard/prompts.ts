@@ -106,7 +106,10 @@ ${memoryContext}
 5. **QUEST**: Estrai solo se c'è un progresso attivo.
 6. **GLOSSARIO**: Usa i nomi esatti del Contesto di Riferimento se corrispondesi.
 7. **CONFLICT RESOLUTION**: Se il "Testo da Analizzare" CONTRADDICE il "Contesto" (es. il contesto dice che X è "Affidabile" ma nel testo X "Tradisce" o "Attacca"), IL TESTO VINCE SEMPRE. Registra il cambiamento in npc_events e npc_dossier_updates.
-8. **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
+8. **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). 
+    - Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change.
+    - **REGOLA HOSTILITY**: Se un membro confermato di una fazione (es. "Leosin del Culto") attacca o tradisce il party, REGISTRA SEMPRE un reputation_change NEGATIVO per la fazione (es. -10, "Membro della fazione ha attaccato il party"), A MENO CHE non sia chiaro che agisce da rinnegato contro la sua stessa fazione.
+    - Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
 
 ## 2.5 ISTRUZIONI ID (CRITICHE)
 Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratteri alfanumerici).
@@ -162,8 +165,8 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "description": "Descrizione fisica/personalità basata su ciò che emerge dal testo. Inserisci QUI eventuali dettagli descrittivi che metteresti tra parentesi.",
             "role": "Ruolo (es. 'Mercante', 'Guardia')",
             "status": "ALIVE|DEAD|MISSING",
-            "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Protegge/Cura/uccide cattivi -> BUONO, Uccide/Tradisce/uccide innocenti -> CATTIVO)",
-            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Tradisce patti/leggi/alleanze -> CAOTICO, Rispetta ordini/leggi/alleanze -> LEGALE)"
+            "role": "Ruolo (es. 'Mercante', 'Guardia')",
+            "status": "ALIVE|DEAD|MISSING"
         }
     ],
     // AVVISO AI: Includi qui anche CREATURE NON UMANOIDI (es. Draghi, Ent, Bestie intelligenti) 
@@ -191,28 +194,26 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "id": "ID del PG (es. 'p_abc12'). OMETTI se non disponibile.",
             "name": "Nome PG",
             "event": "Evento significativo per il personaggio",
-            "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE"
+            "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE",
+            "moral_impact": "numero intero da -10 (Malvagio) a +10 (Buono). 0 se neutro.",
+            "ethical_impact": "numero intero da -10 (Caotico) a +10 (Legale). 0 se neutro."
         }
     ],
-    "character_updates": [
-        {
-            "name": "Nome PG (esatto dal CONTESTO)",
-            "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Sacrifica sé stesso per altri -> BUONO, Uccide innocenti per profitto -> CATTIVO)",
-            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Rispetta codici/patti -> LEGALE, Infrange leggi/tradisce -> CAOTICO)"
-        }
-    ],
-    // AVVISO AI CHARACTER_UPDATES:
-    // 1. Estrai allineamento SOLO per PG (Personaggi Giocanti) elencati nel CONTESTO.
-    // 2. Deduci l'allineamento dalle AZIONI osservate nel TESTO DA ANALIZZARE.
-    // 3. NON estrarre se non ci sono azioni significative che rivelino l'allineamento.
-    // 4. Questo è SEPARATO da character_growth (che traccia eventi). Qui tracci SOLO moral/ethical.
+    // Rimosso character_updates per alignment, ora usiamo gli eventi
+    // AVVISO AI CHARACTER_GROWTH:
+    // 1. Estrai eventi solo se significativi.
+    // 2. Assegna moral_impact/ethical_impact SOLO se l'evento ha una chiara valenza morale/etica.
+    //    - MORAL: -10 (Crudeltà estrema) ... 0 ... +10 (Sacrificio supremo)
+    //    - ETHICAL: -10 (Tradimento/Caos totale) ... 0 ... +10 (Adesione rigida alla legge/patto)
     
     "npc_events": [
         {
             "id": "ID dell'NPC (es. 'zpvbh'). OMETTI se non noto.",
             "name": "Nome NPC",
             "event": "Evento chiave che coinvolge questo NPC (es. cambiato fazione, morto, rivelato segreto)",
-            "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE"
+            "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE",
+            "moral_impact": "numero intero da -10 a +10. 0 se neutro.",
+            "ethical_impact": "numero intero da -10 a +10. 0 se neutro."
         }
     ],
     "world_events": [
@@ -223,14 +224,14 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     ],
     "faction_updates": [
         {
-            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'fw32d'). OMETTI se nuova.",
+            "id": "ID esatto di 5 caratteri dal CONTESTO (es. 'fw32d'). CRITICO: Se la fazione è nel contesto, DEVI inserire l'ID.",
             "name": "Nome della fazione (es. 'Gilda dei Ladri', 'Regno di Cormyr')",
             "description": "Descrizione della fazione se nuova o aggiornata",
             "type": "GUILD|KINGDOM|CULT|ORGANIZATION|GENERIC",
             "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Protegge innocenti -> BUONO, Stermina villaggi -> CATTIVO)",
             "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Segue codici rigidi -> LEGALE, Opera nell'ombra -> CAOTICO)",
             "reputation_change": {
-                "direction": "UP|DOWN",
+                "value": "numero intero negativo o positivo (es. -15, +10)",
                 "reason": "Motivo del cambio reputazione (es. 'Abbiamo salvato un loro membro')"
             }
         }
@@ -287,9 +288,10 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     // 7. GENERIC: Altri eventi significativi che non rientrano nelle categorie sopra.
     
     "party_alignment_change": {
-        "moral": "BUONO|NEUTRALE|CATTIVO (opzionale, solo se cambia)",
-        "ethical": "LEGALE|NEUTRALE|CAOTICO (opzionale, solo se cambia)",
-        "reason": "Spiegazione sintetica del cambio di allineamento basato sulle azioni"
+        "id": "ID della Fazione Party dal CONTESTO (se disponibile, es. 'px92a')",
+        "moral_impact": "numero intero da -10 a +10 (impatto sulle azioni del gruppo)",
+        "ethical_impact": "numero intero da -10 a +10 (impatto sulle azioni del gruppo)",
+        "reason": "Spiegazione sintetica del cambio basato su eventi della Fazione Party"
     }
 }
 
@@ -308,13 +310,13 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     - Se un NPC viene ACCUSATO o RIVELATO come traditore da qualcun altro (e il fatto sembra vero), REGISTRA UN EVENTO "REVELATION" ANCHE PER L'NPC ACCUSATO.
     - **ECCEZIONE**: Se un NPC alleato (es. Scaglia grigia) attacca un altro NPC (es. Leosin) perché *quest'ultimo* è un traditore, l'attaccante NON è un traditore. È un evento di "REVELATION" per la vittima (Leosin) e "ALLIANCE" o "HEROIC" per l'attaccante.
 - **MONSTER vs NPC**: Se una creatura ha un NOME PROPRIO ed è AMICHEVOLE/ALLEATA (es. "Scagliagrigia il Drago"), mettila in NPC, NON in MONSTERS.
-- **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change. Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
+- **FAZIONI**: Estrai SEMPRE fazioni rilevanti. Se il party aiuta/ostacola la fazione -> reputation_change. **IMPORTANTE**: Se un MEMBRO della fazione attacca il party, la reputazione CALA (es. -10), a meno che non sia un rinnegato.
 - **ALLINEAMENTO PARTY**: Analizza se le azioni COLLETTIVE del gruppo spostano il loro asse morale (BUONO/CATTIVO) o etico (LEGALE/CAOTICO).
-    - **BUONO**: Altruismo, sacrificio, protezione dei deboli.
-    - **CATTIVO**: Crudeltà gratuita, egoismo distruttivo, uccisione di innocenti.
-    - **LEGALE**: Rispetto di leggi, codici d'onore, patti.
-    - **CAOTICO**: Libertà assoluta, ribellione all'autorità, imprevedibilità.
-    - Registra un cambiamento SOLO se c'è una **svolta significativa** o una **conferma forte** di un nuovo comportamento. Se rimangono coerenti, NON generare l'output.
+    - **BUONO**: Altruismo, sacrificio, protezione dei deboli. (+Impact)
+    - **CATTIVO**: Crudeltà gratuita, egoismo distruttivo, uccisione di innocenti. (-Impact)
+    - **LEGALE**: Rispetto di leggi, codici d'onore, patti. (+Impact)
+    - **CAOTICO**: Libertà assoluta, ribellione all'autorità, imprevedibilità. (-Impact)
+    - Usa 'moral_impact' e 'ethical_impact' in character_growth, npc_events e party_alignment_change per quantificare.
 - **ARTEFATTI**: Estrai SOLO oggetti MAGICI, LEGGENDARI o IMPORTANTI per la trama. NON estrarre oggetti comuni. Estrai se l'oggetto ha un NOME PROPRIO o è descritto come significativo/unico. Se un artefatto cambia proprietario o stato, aggiornalo.
 - **ARTIFACT EVENTS**: Registra eventi SIGNIFICATIVI per artefatti (attivazione poteri, distruzione, trasferimento, rivelazioni, maledizioni). NON registrare semplici osservazioni o menzioni.
 
@@ -695,7 +697,8 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     if (input.npc_events && input.npc_events.length > 0) {
         prompt += `**Eventi NPC (${input.npc_events.length}):**\n`;
         input.npc_events.forEach((e: any, i: number) => {
-            prompt += `${i + 1}. ${e.name}: [${e.type}] ${e.event}\n`;
+            const idTag = e.id ? `[ID: ${e.id}] ` : '';
+            prompt += `${i + 1}. ${idTag}${e.name}: [${e.type}] ${e.event}\n`;
         });
         prompt += "\n";
     }
@@ -704,7 +707,8 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
     if (input.character_events && input.character_events.length > 0) {
         prompt += `**Eventi PG (${input.character_events.length}):**\n`;
         input.character_events.forEach((e: any, i: number) => {
-            prompt += `${i + 1}. ${e.name}: [${e.type}] ${e.event}\n`;
+            const idTag = e.id ? `[ID: ${e.id}] ` : '';
+            prompt += `${i + 1}. ${idTag}${e.name}: [${e.type}] ${e.event}\n`;
         });
         prompt += "\n";
     }
@@ -755,8 +759,10 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
 **REGOLE DI VALIDAZIONE:**
 
 **Eventi (NPC/PG/World):**
+**Eventi (NPC/PG/World):**
 - SKIP se: duplicato semantico della storia recente, evento banale (es. "ha parlato", "ha mangiato", "ha camminato"), dialoghi senza conseguenze, spostamenti minori.
 - KEEP se: cambio di status significativo, rivelazione importante, impatto sulla trama, ferite gravi, acquisizione abilità/oggetti unici.
+- **ID**: Se un evento ha un [ID: xxxxx] nell'input, COPIALO ESATTAMENTE nel campo "id" dell'output.
 - CRITERIO: "Se questo evento non fosse scritto, la storia cambierebbe?" Se NO -> SKIP.
 - Per eventi KEEP: riscrivi in modo conciso (max 1 frase chiara)
 
@@ -784,11 +790,11 @@ export const VALIDATION_PROMPT = (context: any, input: any) => {
 **OUTPUT JSON RICHIESTO:**
 {
   "npc_events": {
-    "keep": [{"name": "NomeNPC", "event": "evento riscritto conciso", "type": "TIPO"}],
+    "keep": [{"id": "xxxxx", "name": "NomeNPC", "event": "evento riscritto conciso", "type": "TIPO"}],
     "skip": ["motivo scarto 1", "motivo scarto 2"]
   },
   "character_events": {
-    "keep": [{"name": "NomePG", "event": "evento riscritto", "type": "TIPO"}],
+    "keep": [{"id": "xxxxx", "name": "NomePG", "event": "evento riscritto", "type": "TIPO"}],
     "skip": ["motivo"]
   },
   "world_events": {

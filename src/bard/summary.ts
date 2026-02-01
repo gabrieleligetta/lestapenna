@@ -634,13 +634,29 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     dynamicMemoryContext += `\n⚔️ NESSUNA QUEST MENZIONATA.\n`;
                 }
 
-                // 5. Idratazione Fazioni (solo quelle trovate dallo Scout)
-                if (entities.factions && Array.isArray(entities.factions) && entities.factions.length > 0) {
-                    const foundFactions = new Set<string>();
+                // 5. Idratazione Fazioni (Party + Scout)
+                const partyFaction = factionRepository.getPartyFaction(campaignId);
+                const scoutFactions = (entities.factions && Array.isArray(entities.factions)) ? entities.factions : [];
 
+                if (partyFaction || scoutFactions.length > 0) {
+                    const foundFactions = new Set<string>();
                     dynamicMemoryContext += `\n⚔️ FAZIONI MENZIONATE:\n`;
 
-                    for (const name of entities.factions) {
+                    // Aggiungi SEMPRE la fazione del Party per prima
+                    if (partyFaction) {
+                        foundFactions.add(partyFaction.name);
+                        const members = factionRepository.countFactionMembers(partyFaction.id);
+                        const totalMembers = members.npcs + members.locations + members.pcs;
+                        const reputation = factionRepository.getFactionReputation(campaignId, partyFaction.id);
+
+                        let factionInfo = `- **${partyFaction.name}** [ID: ${partyFaction.short_id || 'N/A'}] (${partyFaction.type || 'ORGANIZATION'}): ${partyFaction.description || 'Nessuna descrizione.'}`;
+                        if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
+                        if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
+                        factionInfo += ` [FAZIONE PARTY]`; // Tag esplicito
+                        dynamicMemoryContext += factionInfo + '\n';
+                    }
+
+                    for (const name of scoutFactions) {
                         try {
                             const factions = factionRepository.findFactionByName(campaignId, name);
                             const faction = factions.length > 0 ? factions[0] : null;
@@ -649,7 +665,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 const members = factionRepository.countFactionMembers(faction.id);
                                 const totalMembers = members.npcs + members.locations + members.pcs;
                                 const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
-                                // 🆕 Include shortId for ID-based matching
+
                                 let factionInfo = `- **${faction.name}** [ID: ${faction.short_id || 'N/A'}] (${faction.type || 'ORGANIZATION'}): ${faction.description || 'Nessuna descrizione.'}`;
                                 if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
                                 if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
@@ -695,7 +711,19 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
                 // Fallback location corrente
                 const snapshot = getCampaignSnapshot(campaignId);
-                dynamicMemoryContext += `\n📍 LUOGO CORRENTE: ${snapshot.location_context || 'Sconosciuto'}\n`;
+                let locationContext = snapshot.location_context || 'Sconosciuto';
+
+                // 🆕 Try to resolve ID for current location
+                if (snapshot.location_context) {
+                    const [macro, micro] = snapshot.location_context.split(' - ').map((s: string) => s.trim());
+                    if (macro && micro) {
+                        const atlasEntry = locationRepository.getAtlasEntry(campaignId, macro, micro);
+                        if (atlasEntry) {
+                            locationContext = `${snapshot.location_context} [ID: ${atlasEntry.short_id}]`;
+                        }
+                    }
+                }
+                dynamicMemoryContext += `\n📍 LUOGO CORRENTE: ${locationContext}\n`;
 
             } catch (e) {
                 console.error("[Bardo] ⚠️ Errore fase Scout, fallback a contesto base:", e);

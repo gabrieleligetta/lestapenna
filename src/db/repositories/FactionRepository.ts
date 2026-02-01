@@ -12,6 +12,7 @@ import {
     REPUTATION_SPECTRUM
 } from '../types';
 import { generateShortId } from '../utils/idGenerator';
+import { getMoralAlignment, getEthicalAlignment } from '../../utils/alignmentUtils';
 
 export const factionRepository = {
     // =============================================
@@ -405,12 +406,69 @@ export const factionRepository = {
         sessionId: string | null,
         description: string,
         eventType: FactionHistoryEntry['event_type'],
-        isManual: boolean = false
+        isManual: boolean = false,
+        reputationChange: number = 0,
+        moralWeight: number = 0,
+        ethicalWeight: number = 0,
+        timestamp?: number
     ): void => {
-        db.prepare(`
-            INSERT INTO faction_history (campaign_id, faction_name, session_id, event_type, description, timestamp, is_manual)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(campaignId, factionName, sessionId, eventType, description, Date.now(), isManual ? 1 : 0);
+        db.transaction(() => {
+            // 1. Insert Event
+            db.prepare(`
+                INSERT INTO faction_history (campaign_id, faction_name, session_id, event_type, description, timestamp, is_manual, reputation_change_value, moral_weight, ethical_weight)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                campaignId,
+                factionName,
+                sessionId,
+                eventType,
+                description,
+                timestamp || Date.now(),
+                isManual ? 1 : 0,
+                reputationChange,
+                moralWeight,
+                ethicalWeight
+            );
+
+            // 2. Update Scores if needed
+            if (moralWeight !== 0 || ethicalWeight !== 0) {
+                // Update faction scores
+                db.prepare(`
+                    UPDATE factions 
+                    SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?, 
+                        ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+                        last_updated = CURRENT_TIMESTAMP,
+                        rag_sync_needed = 1
+                    WHERE campaign_id = ? AND lower(name) = lower(?)
+                `).run(moralWeight, ethicalWeight, campaignId, factionName);
+
+                // 3. Recalculate Alignment Labels & Update Campaign if Party
+                const faction = factionRepository.getFaction(campaignId, factionName);
+                if (faction) {
+                    // const { getMoralAlignment, getEthicalAlignment } = require('../../utils/alignmentUtils');
+                    const mLabel = getMoralAlignment(faction.moral_score || 0);
+                    const eLabel = getEthicalAlignment(faction.ethical_score || 0);
+
+                    db.prepare(`
+                       UPDATE factions
+                       SET alignment_moral = ?, alignment_ethical = ?
+                       WHERE id = ?
+                   `).run(mLabel, eLabel, faction.id);
+
+                    console.log(`[Faction] ⚖️ Alignment Updated for ${factionName}: ${eLabel} ${mLabel} (M:${faction.moral_score}, E:${faction.ethical_score})`);
+
+                    // If Party, update campaign scores
+                    if (faction.is_party) {
+                        db.prepare(`
+                           UPDATE campaigns 
+                           SET party_moral_score = ?, party_ethical_score = ?
+                           WHERE id = ?
+                       `).run(faction.moral_score, faction.ethical_score, campaignId);
+                        console.log(`[Faction] ⚖️ Party Scores Updated for Campaign #${campaignId}`);
+                    }
+                }
+            }
+        })();
     },
 
     getFactionHistory: (campaignId: number, factionName: string): FactionHistoryEntry[] => {

@@ -25,7 +25,9 @@ import {
     markFactionDirty,
     markWorldEventDirty,
     markArtifactDirty,
-    markQuestDirty
+    markQuestDirty,
+    npcRepository,
+    factionRepository
 } from '../../db';
 import { EntityEventsConfig, showEntityEvents, EVENT_TYPE_ICONS } from './eventsViewer';
 
@@ -331,8 +333,27 @@ async function showAddModal_Final(interaction: any, config: EntityEventsConfig, 
         .setRequired(true);
 
     if (preFilledContent) descInput.setValue(preFilledContent.slice(0, 4000));
-
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(descInput));
+
+    // Optional Alignment Fields for NPC/Faction
+    if (config.tableName === 'npc_history' || config.tableName === 'faction_history') {
+        const moralInput = new TextInputBuilder()
+            .setCustomId('moral_weight')
+            .setLabel("Peso Morale (-100 a +100)")
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("Es: 10 (Buono) o -10 (Malvagio)")
+            .setRequired(false);
+
+        const ethicalInput = new TextInputBuilder()
+            .setCustomId('ethical_weight')
+            .setLabel("Peso Etico (-100 a +100)")
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("Es: 10 (Legale) o -10 (Caotico)")
+            .setRequired(false);
+
+        modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(moralInput));
+        modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(ethicalInput));
+    }
 
     await interaction.showModal(modal);
     await handleModalSubmit(interaction, config, modalId, 'ADD');
@@ -400,18 +421,60 @@ async function handleModalSubmit(interaction: MessageComponentInteraction, confi
         if (session === 'UNKNOWN_SESSION' || session === 'undefined') session = undefined;
 
         if (mode === 'ADD') {
-            eventRepository.addEvent(
-                config.tableName,
-                config.entityKeyColumn,
-                config.entityKeyValue,
-                config.campaignId,
-                description,
-                type || 'NOTE',
-                session,
-                undefined, // timestamp
-                config.secondaryKeyColumn,
-                config.secondaryKeyValue
-            );
+            // Check for weights
+            let moralWeight = 0;
+            let ethicalWeight = 0;
+            if (config.tableName === 'npc_history' || config.tableName === 'faction_history') {
+                try {
+                    const mVal = submission.fields.getTextInputValue('moral_weight');
+                    const eVal = submission.fields.getTextInputValue('ethical_weight');
+                    if (mVal) moralWeight = parseInt(mVal) || 0;
+                    if (eVal) ethicalWeight = parseInt(eVal) || 0;
+                } catch (e) { }
+            }
+
+            if (config.tableName === 'npc_history') {
+                // Use specific repo for live updates
+                npcRepository.addNpcEvent(
+                    config.campaignId,
+                    config.entityKeyValue, // name
+                    session || null as any, // fix type mismatch if needed, usually string|null
+                    description,
+                    type || 'NOTE',
+                    true, // manual
+                    undefined,
+                    moralWeight,
+                    ethicalWeight
+                );
+            } else if (config.tableName === 'faction_history') {
+                // Use specific repo
+                factionRepository.addFactionEvent(
+                    config.campaignId,
+                    config.entityKeyValue,
+                    session || null,
+                    description,
+                    type || 'NOTE' as any,
+                    true, // manual 
+                    0, // rep change (handled separately or 0)
+                    moralWeight,
+                    ethicalWeight
+                );
+            } else {
+                // Generic fallback
+                eventRepository.addEvent(
+                    config.tableName,
+                    config.entityKeyColumn,
+                    config.entityKeyValue,
+                    config.campaignId,
+                    description,
+                    type || 'NOTE',
+                    session,
+                    undefined, // timestamp
+                    config.secondaryKeyColumn,
+                    config.secondaryKeyValue
+                );
+            }
+
             await submission.reply({ content: `✅ Evento aggiunto a **${config.entityDisplayName}**!`, ephemeral: false });
         } else if (mode === 'UPDATE' && eventId) {
             eventRepository.updateEvent(config.tableName, eventId, description, session, type);

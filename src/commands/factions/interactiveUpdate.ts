@@ -397,8 +397,7 @@ async function showFieldSelection(interaction: any, faction: any, ctx: CommandCo
             new StringSelectMenuOptionBuilder().setLabel('Status').setValue('status').setDescription('Attiva, Distrutta, Sciolta...').setEmoji('💓'),
             new StringSelectMenuOptionBuilder().setLabel('Descrizione').setValue('description').setDescription('Modifica la descrizione').setEmoji('📜'),
             new StringSelectMenuOptionBuilder().setLabel('Leader').setValue('leader').setDescription('Imposta NPC capo').setEmoji('👑'),
-            new StringSelectMenuOptionBuilder().setLabel('Allineamento (B/M)').setValue('alignment_moral').setDescription('Buono, Neutrale, Malvagio').setEmoji('⚖️'),
-            new StringSelectMenuOptionBuilder().setLabel('Allineamento (L/C)').setValue('alignment_ethical').setDescription('Legale, Neutrale, Caotico').setEmoji('🏛️'),
+            // Alignment options removed - now event-driven
             new StringSelectMenuOptionBuilder().setLabel('Sede Principale').setValue('hq').setDescription('Imposta luogo HQ').setEmoji('📍')
         );
 
@@ -435,8 +434,6 @@ async function showFieldSelection(interaction: any, faction: any, ctx: CommandCo
 
         if (field === 'type') await showTypeSelection(i, faction, ctx);
         else if (field === 'status') await showStatusSelection(i, faction, ctx);
-        else if (field === 'alignment_moral') await showAlignmentSelection(i, faction, 'moral', ctx);
-        else if (field === 'alignment_ethical') await showAlignmentSelection(i, faction, 'ethical', ctx);
         else await showTextModal(i, faction, field, ctx);
     });
 }

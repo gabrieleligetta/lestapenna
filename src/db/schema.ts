@@ -67,6 +67,12 @@ export const initDatabase = () => {
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
 
+    // Migrazione colonne alignment history
+    try {
+        db.exec("ALTER TABLE character_history ADD COLUMN moral_weight INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE character_history ADD COLUMN ethical_weight INTEGER DEFAULT 0");
+    } catch (e) { /* ignore */ }
+
     // --- TABELLA STORIA NPC ---
     db.exec(`CREATE TABLE IF NOT EXISTS npc_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +85,11 @@ export const initDatabase = () => {
         is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
+    // Migrazione colonne alignment history
+    try {
+        db.exec("ALTER TABLE npc_history ADD COLUMN moral_weight INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE npc_history ADD COLUMN ethical_weight INTEGER DEFAULT 0");
+    } catch (e) { /* ignore */ }
 
     // --- TABELLA STORIA DEL MONDO (TIMELINE) ---
     db.exec(`CREATE TABLE IF NOT EXISTS world_history (
@@ -95,6 +106,11 @@ export const initDatabase = () => {
         short_id TEXT, -- 🆕 Stable ID
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
+    // Migrazione colonne alignment history
+    try {
+        db.exec("ALTER TABLE world_history ADD COLUMN moral_weight INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE world_history ADD COLUMN ethical_weight INTEGER DEFAULT 0");
+    } catch (e) { /* ignore */ }
 
     // --- TABELLA REGISTRAZIONI ---
     db.exec(`CREATE TABLE IF NOT EXISTS recordings (
@@ -402,6 +418,12 @@ export const initDatabase = () => {
         is_manual INTEGER DEFAULT 0,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )`);
+    // Migrazione colonne alignment history
+    try {
+        db.exec("ALTER TABLE faction_history ADD COLUMN reputation_change_value INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE faction_history ADD COLUMN moral_weight INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE faction_history ADD COLUMN ethical_weight INTEGER DEFAULT 0");
+    } catch (e) { /* ignore */ }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_faction_history_name ON faction_history (campaign_id, faction_name)`);
 
     // --- TABELLA ARTEFATTI ---
@@ -576,7 +598,17 @@ export const initDatabase = () => {
         "ALTER TABLE factions ADD COLUMN alignment_moral TEXT",          // BUONO, NEUTRALE, CATTIVO
         "ALTER TABLE factions ADD COLUMN alignment_ethical TEXT",        // LEGALE, NEUTRALE, CAOTICO
         // 🆕 EMAIL PER GIOCATORI (recap sessione)
-        "ALTER TABLE characters ADD COLUMN email TEXT"
+        "ALTER TABLE characters ADD COLUMN email TEXT",
+        // 🆕 ALIGNMENT SCORES (Cache)
+        "ALTER TABLE characters ADD COLUMN moral_score INTEGER DEFAULT 0",
+        "ALTER TABLE characters ADD COLUMN ethical_score INTEGER DEFAULT 0",
+        "ALTER TABLE npc_dossier ADD COLUMN moral_score INTEGER DEFAULT 0",
+        "ALTER TABLE npc_dossier ADD COLUMN ethical_score INTEGER DEFAULT 0",
+        "ALTER TABLE factions ADD COLUMN moral_score INTEGER DEFAULT 0",
+        "ALTER TABLE factions ADD COLUMN ethical_score INTEGER DEFAULT 0",
+        "ALTER TABLE faction_reputation ADD COLUMN reputation_score INTEGER DEFAULT 0",
+        "ALTER TABLE campaigns ADD COLUMN party_moral_score INTEGER DEFAULT 0",
+        "ALTER TABLE campaigns ADD COLUMN party_ethical_score INTEGER DEFAULT 0"
     ];
 
     for (const m of migrations) {

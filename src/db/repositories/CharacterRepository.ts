@@ -2,19 +2,21 @@ import { db } from '../client';
 import { UserProfile } from '../types';
 
 export const characterRepository = {
-    addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
+    addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number, moral_weight: number = 0, ethical_weight: number = 0) => {
         db.prepare(`
-            INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp, is_manual)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(campaignId, charName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
+            INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp, is_manual, moral_weight, ethical_weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, charName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0, moral_weight, ethical_weight);
     },
+
+
 
     getCharacterHistory: (campaignId: number, charName: string): { description: string, event_type: string, session_id: string }[] => {
         return db.prepare(`
             SELECT description, event_type, session_id 
             FROM character_history 
             WHERE campaign_id = ? AND character_name = ?
-            ORDER BY timestamp ASC
+    ORDER BY timestamp ASC
         `).all(campaignId, charName) as { description: string, event_type: string, session_id: string }[];
     },
 
@@ -27,7 +29,7 @@ export const characterRepository = {
             SELECT id, description, event_type, session_id 
             FROM character_history 
             WHERE campaign_id = ? AND character_name = ? AND id > ?
-            ORDER BY id ASC
+    ORDER BY id ASC
         `).all(campaignId, charName, lastSyncedId) as { id: number, description: string, event_type: string, session_id: string }[];
 
         const maxId = events.length > 0 ? events[events.length - 1].id : lastSyncedId;
@@ -40,13 +42,13 @@ export const characterRepository = {
             UPDATE characters 
             SET last_synced_history_id = ?, rag_sync_needed = 0
             WHERE user_id = ? AND campaign_id = ?
-        `).run(historyId, userId, campaignId);
+    `).run(historyId, userId, campaignId);
     },
 
     getCharacterUserId: (campaignId: number, characterName: string): string | null => {
         const row = db.prepare(`
             SELECT user_id FROM characters WHERE campaign_id = ? AND lower(character_name) = lower(?)
-        `).get(campaignId, characterName) as { user_id: string } | undefined;
+    `).get(campaignId, characterName) as { user_id: string } | undefined;
         return row ? row.user_id : null;
     },
 
@@ -75,12 +77,12 @@ export const characterRepository = {
             let sql = `UPDATE characters SET ${field} = ?`;
             if (needsRagSync) sql += `, rag_sync_needed = 1`;
             if (isManual) sql += `, is_manual = 1`;
-            sql += ` WHERE user_id = ? AND campaign_id = ?`;
+            sql += ` WHERE user_id = ? AND campaign_id = ? `;
             db.prepare(sql).run(value, userId, campaignId);
         } else {
             // Create new with just this field populated
             const ragValue = needsRagSync ? 1 : 0;
-            db.prepare(`INSERT INTO characters (user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES (?, ?, ?, ?, ?)`).run(userId, campaignId, value, ragValue, isManual ? 1 : 0);
+            db.prepare(`INSERT INTO characters(user_id, campaign_id, ${field}, rag_sync_needed, is_manual) VALUES(?, ?, ?, ?, ?)`).run(userId, campaignId, value, ragValue, isManual ? 1 : 0);
         }
     },
 
@@ -97,14 +99,14 @@ export const characterRepository = {
              UPDATE characters 
              SET rag_sync_needed = 1 
              WHERE campaign_id = ? AND lower(character_name) = lower(?)
-         `).run(campaignId, characterName);
+    `).run(campaignId, characterName);
     },
 
     getDirtyCharacters: (campaignId: number): any[] => {
         return db.prepare(`
-            SELECT * FROM characters 
+SELECT * FROM characters 
             WHERE campaign_id = ? AND rag_sync_needed = 1
-        `).all(campaignId);
+    `).all(campaignId);
     },
 
     markCharacterDirty: (campaignId: number, userId: string): void => {
@@ -112,7 +114,7 @@ export const characterRepository = {
              UPDATE characters 
              SET rag_sync_needed = 1 
              WHERE campaign_id = ? AND user_id = ?
-         `).run(campaignId, userId);
+    `).run(campaignId, userId);
     },
 
     clearCharacterDirtyFlag: (campaignId: number, userId: string): void => {
@@ -120,13 +122,13 @@ export const characterRepository = {
              UPDATE characters 
              SET rag_sync_needed = 0 
              WHERE campaign_id = ? AND user_id = ?
-         `).run(campaignId, userId);
+    `).run(campaignId, userId);
     },
 
     updateCharacterAlignment: (campaignId: number, characterName: string, moral?: string, ethical?: string): void => {
         const userId = characterRepository.getCharacterUserId(campaignId, characterName);
         if (!userId) {
-            console.log(`[DB] ⚠️ Impossibile aggiornare allineamento per PG sconosciuto: ${characterName}`);
+            console.log(`[DB] ⚠️ Impossibile aggiornare allineamento per PG sconosciuto: ${characterName} `);
             return;
         }
 
@@ -149,7 +151,7 @@ export const characterRepository = {
         params.push(userId);
         params.push(campaignId);
 
-        db.prepare(`UPDATE characters SET ${updates.join(', ')} WHERE user_id = ? AND campaign_id = ?`).run(...params);
+        db.prepare(`UPDATE characters SET ${updates.join(', ')} WHERE user_id = ? AND campaign_id = ? `).run(...params);
         console.log(`[DB] ⚖️ Allineamento PG ${characterName} aggiornato: ${moral || '-'} / ${ethical || '-'}`);
     }
 };

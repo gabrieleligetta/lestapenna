@@ -396,8 +396,7 @@ async function showFieldSelection(interaction: any, npc: any, ctx: CommandContex
             new StringSelectMenuOptionBuilder().setLabel('Ruolo').setValue('role').setDescription('Aggiorna il ruolo o professione').setEmoji('🎭'),
             new StringSelectMenuOptionBuilder().setLabel('Status').setValue('status').setDescription('Imposta Vivo, Morto, Disperso...').setEmoji('💓'),
             new StringSelectMenuOptionBuilder().setLabel('Descrizione').setValue('description').setDescription('Modifica la biografia/descrizione').setEmoji('📜'),
-            new StringSelectMenuOptionBuilder().setLabel('Allineamento (B/M)').setValue('alignment_moral').setDescription('Buono, Neutrale, Malvagio').setEmoji('⚖️'),
-            new StringSelectMenuOptionBuilder().setLabel('Allineamento (L/C)').setValue('alignment_ethical').setDescription('Legale, Neutrale, Caotico').setEmoji('🏛️'),
+            // Alignment options removed - now event-driven
             new StringSelectMenuOptionBuilder().setLabel('Affiliazione Fazione').setValue('faction').setDescription('Collega a una fazione').setEmoji('⚔️'),
             new StringSelectMenuOptionBuilder().setLabel('Alias / Soprannomi').setValue('aliases').setDescription('Aggiungi alias per RAG').setEmoji('📇'),
             new StringSelectMenuOptionBuilder().setLabel('Ultima Posizione').setValue('last_seen_location').setDescription('Dove è stato visto l\'ultima volta?').setEmoji('📍')
@@ -430,10 +429,6 @@ async function showFieldSelection(interaction: any, npc: any, ctx: CommandContex
 
         if (field === 'status') {
             await showStatusSelection(i, npc, ctx);
-        } else if (field === 'alignment_moral') {
-            await showAlignmentSelection(i, npc, 'moral', ctx);
-        } else if (field === 'alignment_ethical') {
-            await showAlignmentSelection(i, npc, 'ethical', ctx);
         } else if (field === 'faction') {
             await showFactionSelection(i, npc, ctx);
         } else {

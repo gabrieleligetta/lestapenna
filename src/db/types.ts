@@ -7,6 +7,26 @@ export interface UserProfile {
     rag_sync_needed?: number; // NUOVO
     alignment_moral?: string | null; // 🆕
     alignment_ethical?: string | null; // 🆕
+    moral_score?: number; // 🆕
+    ethical_score?: number; // 🆕
+}
+
+export interface NpcEntry {
+    id: number;
+    campaign_id: number;
+    name: string;
+    role: string | null;
+    description: string | null;
+    status: string;
+    last_seen_location: string | null;
+    last_updated: string;
+    aliases?: string | null; // 🆕 Sistema Ibrido RAG (soprannomi, titoli)
+    first_session_id?: string | null; // 🆕 Tracciamento origine
+    short_id?: string; // 🆕 Stable ID
+    alignment_moral?: string | null; // 🆕
+    alignment_ethical?: string | null; // 🆕
+    moral_score?: number; // 🆕
+    ethical_score?: number; // 🆕
 }
 
 export interface Recording {
@@ -57,8 +77,10 @@ export interface Campaign {
     current_micro_location?: string;
     current_year?: number; // NUOVO
     allow_auto_character_update?: number; // NUOVO
-    party_alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO'; // 🆕
-    party_alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO'; // 🆕
+    party_alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
+    party_alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+    party_moral_score?: number; // 🆕
+    party_ethical_score?: number; // 🆕
 }
 
 export interface KnowledgeFragment {
@@ -260,6 +282,8 @@ export interface FactionEntry {
     short_id?: string;
     alignment_moral?: string | null;   // 🆕 BUONO, NEUTRALE, CATTIVO
     alignment_ethical?: string | null; // 🆕 LEGALE, NEUTRALE, CAOTICO
+    moral_score?: number; // 🆕
+    ethical_score?: number; // 🆕
 }
 
 export interface FactionReputation {
@@ -267,6 +291,7 @@ export interface FactionReputation {
     campaign_id: number;
     faction_id: number;
     reputation: ReputationLevel;
+    reputation_score: number; // 🆕
     last_updated: string;
     // Joined fields (optional, for queries with JOIN)
     faction_name?: string;
@@ -295,6 +320,33 @@ export interface FactionHistoryEntry {
     description: string;
     timestamp: number;
     is_manual: number;
+    reputation_change_value?: number; // 🆕
+    moral_weight?: number; // 🆕
+    ethical_weight?: number; // 🆕
+}
+
+export interface LocationHistoryEntry {
+    id: number;
+    campaign_id: number;
+    location: string;
+    session_id?: string;
+    description?: string;
+    timestamp: number;
+    is_manual?: number;
+    reason?: string;
+}
+
+export interface WorldHistoryEntry {
+    id: number;
+    campaign_id: number;
+    session_id?: string;
+    event_type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
+    description: string;
+    timestamp: number;
+    year?: number;
+    is_manual?: number;
+    moral_weight?: number; // 🆕
+    ethical_weight?: number; // 🆕
 }
 
 // =============================================
@@ -310,6 +362,44 @@ export type ArtifactStatus = 'FUNZIONANTE' | 'DISTRUTTO' | 'PERDUTO' | 'SIGILLAT
  * Tipi di proprietario per un artefatto
  */
 export type ArtifactOwnerType = 'PC' | 'NPC' | 'FACTION' | 'LOCATION' | 'NONE';
+
+export interface QuestHistoryEntry {
+    id: number;
+    campaign_id: number;
+    quest_name: string;
+    session_id?: string;
+    event_type: 'STARTED' | 'UPDATED' | 'COMPLETED' | 'FAILED' | 'ABANDONED';
+    description: string;
+    timestamp: number;
+    moral_weight?: number; // 🆕
+    ethical_weight?: number; // 🆕
+}
+
+export interface CharacterHistoryEntry {
+    id: number;
+    campaign_id: number;
+    character_name: string;
+    session_id?: string;
+    event_type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
+    description: string;
+    timestamp: number;
+    is_manual?: number;
+    moral_weight?: number; // 🆕
+    ethical_weight?: number; // 🆕
+}
+
+export interface NpcHistoryEntry {
+    id: number;
+    campaign_id: number;
+    npc_name: string;
+    session_id?: string;
+    event_type: 'REVELATION' | 'BETRAYAL' | 'DEATH' | 'ALLIANCE' | 'STATUS_CHANGE';
+    description: string;
+    timestamp: number;
+    is_manual?: number;
+    moral_weight?: number; // 🆕
+    ethical_weight?: number; // 🆕
+}
 
 export interface ArtifactEntry {
     id: number;

@@ -53,9 +53,14 @@ export const whoamiCommand: Command = {
             if (p.alignment_moral || p.alignment_ethical) {
                 const moralIcon = p.alignment_moral === 'BUONO' ? '😇' : p.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
                 const ethicalIcon = p.alignment_ethical === 'LEGALE' ? '📜' : p.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
+
+                const scoreText = (p.moral_score !== undefined || p.ethical_score !== undefined)
+                    ? `\n*(E: ${p.ethical_score ?? 0}, M: ${p.moral_score ?? 0})*`
+                    : '';
+
                 embed.addFields({
                     name: "⚖️ Allineamento",
-                    value: `${moralIcon} ${p.alignment_moral || 'NEUTRALE'} ${ethicalIcon} ${p.alignment_ethical || 'NEUTRALE'}`,
+                    value: `${moralIcon} ${p.alignment_ethical || 'NEUTRALE'} ${p.alignment_moral || 'NEUTRALE'}${scoreText}`,
                     inline: true
                 });
             }

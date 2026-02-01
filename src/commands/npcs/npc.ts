@@ -159,10 +159,15 @@ export const npcCommand: Command = {
             }
 
             // 🆕 Aglignment
+            // 🆕 Aglignment
             if (npc.alignment_moral || npc.alignment_ethical) {
+                const scoreText = (npc.moral_score !== undefined || npc.ethical_score !== undefined)
+                    ? `\n*(E: ${npc.ethical_score ?? 0}, M: ${npc.moral_score ?? 0})*`
+                    : '';
+
                 embed.addFields({
                     name: "⚖️ Allineamento",
-                    value: `${npc.alignment_ethical || 'NEUTRALE'} ${npc.alignment_moral || 'NEUTRALE'}`,
+                    value: `${npc.alignment_ethical || 'NEUTRALE'} ${npc.alignment_moral || 'NEUTRALE'}${scoreText}`,
                     inline: true
                 });
             }
@@ -637,9 +642,13 @@ export const npcCommand: Command = {
                 } else if (fieldKey === 'desc' || fieldKey === 'description') {
                     updates.description = value;
                 } else if (fieldKey === 'moral' || fieldKey === 'morale') {
-                    updates.alignment_moral = value.toUpperCase();
+                    // updates.alignment_moral = value.toUpperCase();
+                    await ctx.message.reply(`❌ L'allineamento morale è ora calcolato automaticamente dagli eventi. Usa \`$npc events add\` per registrare azioni che influenzano l'allineamento.`);
+                    return;
                 } else if (fieldKey === 'ethical' || fieldKey === 'ethic' || fieldKey === 'etica') {
-                    updates.alignment_ethical = value.toUpperCase();
+                    // updates.alignment_ethical = value.toUpperCase();
+                    await ctx.message.reply(`❌ L'allineamento etico è ora calcolato automaticamente dagli eventi. Usa \`$npc events add\` per registrare azioni che influenzano l'allineamento.`);
+                    return;
                 } else if (fieldKey === 'faction' || fieldKey === 'fazione') {
                     // Special handling for faction relations
                     const [factionName, roleInput] = value.split('|').map(s => s.trim());

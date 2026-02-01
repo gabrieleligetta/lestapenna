@@ -8,6 +8,7 @@ import {
     factionRepository,
     npcRepository,
     locationRepository,
+    campaignRepository,
     db
 } from '../../db';
 import { FactionEntry, ReputationLevel, REPUTATION_SPECTRUM } from '../../db/types';
@@ -169,12 +170,18 @@ export const factionCommand: Command = {
             }
 
             // 🆕 Alignment (Always show for PARTY, otherwise if set)
+            // 🆕 Alignment (Always show for PARTY, otherwise if set)
             if (faction.is_party || faction.alignment_moral || faction.alignment_ethical) {
                 const moralIcon = faction.alignment_moral === 'BUONO' ? '😇' : faction.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
                 const ethicalIcon = faction.alignment_ethical === 'LEGALE' ? '📜' : faction.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
+
+                const scoreText = (faction.moral_score !== undefined || faction.ethical_score !== undefined)
+                    ? `\n*(E: ${faction.ethical_score ?? 0}, M: ${faction.moral_score ?? 0})*`
+                    : '';
+
                 embed.addFields({
                     name: "⚖️ Allineamento",
-                    value: `${moralIcon} ${faction.alignment_moral || 'NEUTRALE'} ${ethicalIcon} ${faction.alignment_ethical || 'NEUTRALE'}`,
+                    value: `${moralIcon} ${faction.alignment_moral || 'NEUTRALE'} ${ethicalIcon} ${faction.alignment_ethical || 'NEUTRALE'}${scoreText}`,
                     inline: true
                 });
             }
@@ -623,37 +630,13 @@ export const factionCommand: Command = {
 
             // moral / alignment_moral
             if (field === 'moral' || field === 'allineamento') {
-                const map: Record<string, string> = {
-                    'BUONO': 'BUONO', 'GOOD': 'BUONO', 'BENE': 'BUONO',
-                    'NEUTRALE': 'NEUTRALE', 'NEUTRAL': 'NEUTRALE',
-                    'CATTIVO': 'CATTIVO', 'EVIL': 'CATTIVO', 'MALE': 'CATTIVO'
-                };
-                const mapped = map[value];
-                if (!mapped) {
-                    await showUpdateHelp(`Valore non valido per '${field}': "${value}". Usa BUONO, NEUTRALE, CATTIVO.`);
-                    return;
-                }
-                factionRepository.updateFaction(campaignId, faction.name, { alignment_moral: mapped });
-                const icon = mapped === 'BUONO' ? '😇' : mapped === 'CATTIVO' ? '😈' : '⚖️';
-                await ctx.message.reply(`✅ Allineamento morale di **${faction.name}** impostato su ${icon} **${mapped}**.`);
+                await ctx.message.reply(`❌ L'allineamento è ora calcolato automaticamente dagli eventi. Usa \`$faction events add\` per registrare azioni che influenzano l'allineamento.`);
                 return;
             }
 
             // ethical / alignment_ethical
             if (field === 'ethical' || field === 'etico') {
-                const map: Record<string, string> = {
-                    'LEGALE': 'LEGALE', 'LAWFUL': 'LEGALE',
-                    'NEUTRALE': 'NEUTRALE', 'NEUTRAL': 'NEUTRALE',
-                    'CAOTICO': 'CAOTICO', 'CHAOTIC': 'CAOTICO'
-                };
-                const mapped = map[value];
-                if (!mapped) {
-                    await showUpdateHelp(`Valore non valido per '${field}': "${value}". Usa LEGALE, NEUTRALE, CAOTICO.`);
-                    return;
-                }
-                factionRepository.updateFaction(campaignId, faction.name, { alignment_ethical: mapped });
-                const icon = mapped === 'LEGALE' ? '📜' : mapped === 'CAOTICO' ? '🌀' : '⚖️';
-                await ctx.message.reply(`✅ Allineamento etico di **${faction.name}** impostato su ${icon} **${mapped}**.`);
+                await ctx.message.reply(`❌ L'allineamento è ora calcolato automaticamente dagli eventi. Usa \`$faction events add\` per registrare azioni che influenzano l'allineamento.`);
                 return;
             }
 

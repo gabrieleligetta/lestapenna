@@ -1,6 +1,7 @@
 import { db } from '../client';
 import { NpcEntry } from '../types';
 import { generateShortId } from '../utils/idGenerator';
+import { getMoralAlignment, getEthicalAlignment } from '../../utils/alignmentUtils';
 
 export const npcRepository = {
     updateNpcEntry: (campaignId: number, name: string, description: string, role?: string, status?: string, sessionId?: string, isManual: boolean = false, moral?: string, ethical?: string) => {
@@ -84,11 +85,58 @@ export const npcRepository = {
         return result.count;
     },
 
-    addNpcEvent: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number) => {
-        db.prepare(`
-            INSERT INTO npc_history (campaign_id, npc_name, session_id, description, event_type, timestamp, is_manual)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(campaignId, npcName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0);
+    addNpcEvent: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number, moral_weight: number = 0, ethical_weight: number = 0) => {
+        db.transaction(() => {
+            // 1. Insert Event
+            db.prepare(`
+                INSERT INTO npc_history (campaign_id, npc_name, session_id, description, event_type, timestamp, is_manual, moral_weight, ethical_weight)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(campaignId, npcName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0, moral_weight, ethical_weight);
+
+            // 2. Update Scores if needed
+            if (moral_weight !== 0 || ethical_weight !== 0) {
+                // Update numerical scores
+                db.prepare(`
+                    UPDATE npc_dossier 
+                    SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?, 
+                        ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+                        last_updated = CURRENT_TIMESTAMP,
+                        rag_sync_needed = 1
+                    WHERE campaign_id = ? AND lower(name) = lower(?)
+                `).run(moral_weight, ethical_weight, campaignId, npcName);
+
+                // 3. Recalculate Alignment Labels
+                const npc = npcRepository.getNpcEntry(campaignId, npcName);
+                if (npc) {
+                    // Import dynamically or assume util functions exist (I will add import on top)
+                    // For now, I'll hardcode or use helper if imported. 
+                    // To be safe with 'replace_file_content' in one go, I should use imports.
+                    // But I haven't added imports yet. 
+                    // I will stick to simple logic here or duplicate logic to avoid import errors if I can't edit top file.
+                    // Actually, I can use multi_replace to add import.
+
+                    // Let's use hardcoded logic for now to be safe and fast, or better:
+                    // I will use multi_replace next to add import.
+                    // For now, I will just update scores. The labels require reading the new score.
+
+                    /* 
+                       Wait, to do this correctly I should fetch the updated NPC, calculate strings, and update again.
+                    */
+
+                    // const { getMoralAlignment, getEthicalAlignment } = require('../../utils/alignmentUtils');
+                    const mLabel = getMoralAlignment(npc.moral_score || 0);
+                    const eLabel = getEthicalAlignment(npc.ethical_score || 0);
+
+                    db.prepare(`
+                       UPDATE npc_dossier
+                       SET alignment_moral = ?, alignment_ethical = ?
+                       WHERE id = ?
+                   `).run(mLabel, eLabel, npc.id);
+
+                    console.log(`[NPC] ⚖️ Alignment Updated for ${npcName}: ${eLabel} ${mLabel} (M:${npc.moral_score}, E:${npc.ethical_score})`);
+                }
+            }
+        })();
     },
 
     getNpcHistory: (campaignId: number, npcName: string): any[] => {

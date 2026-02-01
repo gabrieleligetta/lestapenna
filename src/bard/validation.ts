@@ -122,11 +122,43 @@ export async function validateBatch(
             console.log(`[Validator] ⚠️ Campo 'quests' mancante o malformato nella risposta IA. Applicato fallback conservativo.`);
         }
 
+        // Helper to merge Validator output (Description/Type) with Analyst input (ID/Alignments)
+        const mergeValidationResults = (outputItems: any[], inputItems: any[]) => {
+            if (!outputItems || !inputItems) return outputItems;
+            return outputItems.map(outItem => {
+                // Try to find matching input item by name (case-insensitive)
+                const match = inputItems.find(inItem =>
+                    inItem.name && outItem.name &&
+                    inItem.name.toLowerCase() === outItem.name.toLowerCase()
+                );
+
+                if (match) {
+                    return {
+                        ...outItem,
+                        // Preserve Critical Metadata from Analyst if missing in Validator output
+                        id: outItem.id || match.id,
+                        moral_impact: outItem.moral_impact ?? match.moral_impact,
+                        ethical_impact: outItem.ethical_impact ?? match.ethical_impact
+                    };
+                }
+                return outItem;
+            });
+        };
+
         return {
-            npc_events: result.npc_events || { keep: input.npc_events || [], skip: [] },
-            character_events: result.character_events || { keep: input.character_events || [], skip: [] },
+            npc_events: {
+                keep: mergeValidationResults(result.npc_events?.keep || [], input.npc_events || []),
+                skip: result.npc_events?.skip || []
+            },
+            character_events: {
+                keep: mergeValidationResults(result.character_events?.keep || [], input.character_events || []),
+                skip: result.character_events?.skip || []
+            },
             world_events: result.world_events || { keep: input.world_events || [], skip: [] },
-            artifact_events: result.artifact_events || { keep: input.artifact_events || [], skip: [] },
+            artifact_events: {
+                keep: mergeValidationResults(result.artifact_events?.keep || [], input.artifact_events || []),
+                skip: result.artifact_events?.skip || []
+            },
             loot: result.loot || { keep: input.loot || [], skip: [] },
             loot_removed: result.loot_removed || { keep: input.loot_removed || [], skip: [] },
             quests: normalizedQuests,

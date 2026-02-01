@@ -33,7 +33,7 @@ import {
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
-import { startInteractiveNpcUpdate, startInteractiveNpcAdd } from './interactiveUpdate';
+import { startInteractiveNpcAdd, startInteractiveNpcUpdate, startInteractiveNpcDelete } from './interactiveUpdate';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -43,6 +43,12 @@ export const npcCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const firstArg = ctx.args[0];
         const argsStr = ctx.args.join(' ');
+        const subCommand = firstArg?.toLowerCase();
+
+        // 🆕 Interactive Subcommands
+        if (subCommand === 'add') { await startInteractiveNpcAdd(ctx); return; }
+        if (subCommand === 'update') { await startInteractiveNpcUpdate(ctx); return; }
+        if (subCommand === 'delete') { await startInteractiveNpcDelete(ctx); return; }
 
         const generateDossierEmbed = (npc: any) => {
             const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';

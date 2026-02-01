@@ -18,7 +18,7 @@ import {
 export async function startInteractiveAtlasUpdate(ctx: CommandContext) {
     if (ctx.args.length > 0) {
         const query = ctx.args.join(' ');
-        let loc;
+        let loc = null;
         const shortIdMatch = query.match(/^#?([a-z0-9]{5})$/i);
         if (shortIdMatch) {
             loc = locationRepository.getAtlasEntryByShortId(ctx.activeCampaign!.id, shortIdMatch[1]);
@@ -30,7 +30,8 @@ export async function startInteractiveAtlasUpdate(ctx: CommandContext) {
             const cleanQuery = query.toLowerCase();
             loc = all.find(l =>
                 l.micro_location.toLowerCase() === cleanQuery ||
-                l.macro_location.toLowerCase() === cleanQuery
+                l.macro_location.toLowerCase() === cleanQuery ||
+                `${l.macro_location} ${l.micro_location}`.toLowerCase() === cleanQuery
             );
         }
 
@@ -41,7 +42,32 @@ export async function startInteractiveAtlasUpdate(ctx: CommandContext) {
     }
 
     // 2. Build Location Select Menu
-    await showLocationSelection(ctx, null, null);
+    await showLocationSelection(ctx, null, null, 'UPDATE');
+}
+
+export async function startInteractiveAtlasDelete(ctx: CommandContext) {
+    if (ctx.args.length > 0) {
+        const query = ctx.args.join(' ');
+        let loc = null;
+        if (query.startsWith('#')) {
+            loc = locationRepository.getAtlasEntryByShortId(ctx.activeCampaign!.id, query.replace('#', ''));
+        } else {
+            // Basic name search
+            const all = locationRepository.listAllAtlasEntries(ctx.activeCampaign!.id);
+            loc = all.find(l =>
+                l.macro_location.toLowerCase() === query.toLowerCase() ||
+                l.micro_location.toLowerCase() === query.toLowerCase() ||
+                `${l.macro_location} ${l.micro_location}`.toLowerCase() === query.toLowerCase()
+            );
+        }
+
+        if (loc) {
+            await showAtlasDeleteConfirmation(ctx.message as any, loc, ctx, true);
+            return;
+        }
+    }
+
+    await showLocationSelection(ctx, null, null, 'DELETE');
 }
 
 export async function startInteractiveAtlasAdd(ctx: CommandContext) {
@@ -166,7 +192,7 @@ export async function startInteractiveAtlasAdd(ctx: CommandContext) {
     });
 }
 
-async function showLocationSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null) {
+async function showLocationSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null, mode: 'UPDATE' | 'DELETE' = 'UPDATE') {
     let locations: any[] = [];
 
     if (searchQuery) {
@@ -200,15 +226,16 @@ async function showLocationSelection(ctx: CommandContext, searchQuery: string | 
             .setEmoji('🔍')
     );
 
+    const actionText = mode === 'DELETE' ? "Eliminazione" : "Aggiornamento";
     const locSelect = new StringSelectMenuBuilder()
         .setCustomId('atlas_update_select_entity')
-        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : '🔍 Seleziona un luogo da modificare...')
+        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : `🔍 Seleziona un luogo per ${actionText.toLowerCase()}...`)
         .addOptions(options);
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(locSelect);
     const content = searchQuery
-        ? `**🛠️ Aggiornamento Atlante**\nRisultati ricerca per "${searchQuery}":`
-        : "**🛠️ Aggiornamento Atlante Interattivo**\nSeleziona un luogo dalla lista o usa Cerca:";
+        ? `**🛠️ ${actionText} Atlante**\nRisultati ricerca per "${searchQuery}":`
+        : `**🛠️ ${actionText} Atlante Interattivo**\nSeleziona un luogo dalla lista o usa Cerca:`;
 
     let response;
     if (interactionToUpdate) {
@@ -252,30 +279,75 @@ async function showLocationSelection(ctx: CommandContext, searchQuery: string | 
                 });
 
                 const query = submission.fields.getTextInputValue('search_query');
-
-                // We must reply or update to resolve the modal interaction. 
-                // But we want to update the original message.
-                // Modal submission gives us an interaction we can use to update the message if we passed it correctly?
-                // Actually awaitModalSubmit returns an interaction that can be used to update.
-
-                await showLocationSelection(ctx, query, submission);
+                await showLocationSelection(ctx, query, submission, mode);
 
             } catch (e) {
                 // timeout
             }
-
         } else {
             collector.stop();
-            const selectedId = val.replace('#', '');
-            const location = locationRepository.getAtlasEntryByShortId(ctx.activeCampaign!.id, selectedId);
+            // Value is #short_id
+            const shortId = val.replace('#', '');
+            const loc = locationRepository.getAtlasEntryByShortId(ctx.activeCampaign!.id, shortId);
 
-            if (!location) {
-                await interaction.reply({ content: `❌ Errore: Luogo ${selectedId} non trovato.`, ephemeral: true });
+            if (!loc) {
+                await interaction.reply({ content: `❌ Errore: Luogo ${shortId} non trovato.`, ephemeral: true });
                 return;
             }
 
-            // 4. Show Field Selection
-            await showFieldSelection(interaction, location, ctx);
+            if (mode === 'DELETE') {
+                await showAtlasDeleteConfirmation(interaction, loc, ctx);
+            } else {
+                await showFieldSelection(interaction, loc, ctx);
+            }
+        }
+    });
+}
+
+async function showAtlasDeleteConfirmation(interaction: any, loc: any, ctx: CommandContext, isNewMessage: boolean = false) {
+    const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_confirm_delete')
+                .setLabel('CONFERMA ELIMINAZIONE')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🗑️'),
+            new ButtonBuilder()
+                .setCustomId('btn_cancel_delete')
+                .setLabel('Annulla')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌')
+        );
+
+    const content = `⚠️ **ATTENZIONE** ⚠️\nSei sicuro di voler eliminare definitivamente il luogo **${loc.macro_location} - ${loc.micro_location}**?\nQuesta azione è irreversibile.`;
+
+    let message;
+    if (isNewMessage) {
+        message = await interaction.reply({ content, components: [row] });
+    } else {
+        await interaction.update({ content, components: [row] });
+        message = interaction.message;
+    }
+
+    const targetMessage = isNewMessage ? message : interaction.message;
+
+    const collector = targetMessage.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 30000,
+        filter: (i: any) => i.user.id === ctx.message.author.id && ['btn_confirm_delete', 'btn_cancel_delete'].includes(i.customId)
+    });
+
+    collector.on('collect', async (i: any) => {
+        collector.stop();
+        if (i.customId === 'btn_confirm_delete') {
+            const success = locationRepository.deleteAtlasEntry(ctx.activeCampaign!.id, loc.macro_location, loc.micro_location);
+            if (success) {
+                await i.update({ content: `✅ Luogo **${loc.macro_location} - ${loc.micro_location}** eliminato correttamente.`, components: [] });
+            } else {
+                await i.update({ content: `❌ Errore durante l'eliminazione.`, components: [] });
+            }
+        } else {
+            await i.update({ content: `❌ Operazione annullata.`, components: [] });
         }
     });
 }

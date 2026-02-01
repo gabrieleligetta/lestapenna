@@ -18,7 +18,7 @@ import {
 import { ArtifactEntry, ArtifactStatus } from '../../db/types';
 import { guildSessions } from '../../state/sessionState';
 import { showEntityEvents } from '../utils/eventsViewer';
-import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd } from './interactiveUpdate';
+import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd, startInteractiveArtifactDelete } from './interactiveUpdate';
 
 // Status icons and colors
 const getStatusDisplay = (status: ArtifactStatus) => {
@@ -38,7 +38,13 @@ export const artifactCommand: Command = {
     requiresCampaign: true,
 
     async execute(ctx: CommandContext): Promise<void> {
+        const firstArg = ctx.args[0]?.toLowerCase();
         const arg = ctx.args.join(' ');
+
+        if (firstArg === 'delete') {
+            await startInteractiveArtifactDelete(ctx);
+            return;
+        }
 
         const generateArtifactDetailEmbed = (artifact: ArtifactEntry) => {
             const statusDisplay = getStatusDisplay(artifact.status);

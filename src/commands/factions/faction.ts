@@ -14,7 +14,7 @@ import { FactionEntry, ReputationLevel, REPUTATION_SPECTRUM } from '../../db/typ
 import { syncFactionEntryIfNeeded, syncAllDirtyFactions } from '../../bard';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
-import { startInteractiveFactionUpdate, startInteractiveFactionAdd } from './interactiveUpdate';
+import { startInteractiveFactionUpdate, startInteractiveFactionAdd, startInteractiveFactionDelete } from './interactiveUpdate';
 
 // Helper: Get NPC by ID (for internal use)
 function getNpcById(npcId: number): { id: number; name: string; role?: string } | null {
@@ -54,6 +54,11 @@ export const factionCommand: Command = {
         const campaignId = ctx.activeCampaign!.id;
         const firstArg = ctx.args[0];
         const argsStr = ctx.args.join(' ');
+
+        if (firstArg?.toLowerCase() === 'delete') {
+            await startInteractiveFactionDelete(ctx);
+            return;
+        }
 
         // Helper: Generate faction detail embed
         const generateFactionEmbed = (faction: FactionEntry) => {

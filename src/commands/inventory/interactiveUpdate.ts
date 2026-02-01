@@ -17,30 +17,19 @@ import {
     markArtifactDirty,
     getArtifactByShortId,
     addArtifactEvent,
-    upsertArtifact
+    upsertArtifact,
+    deleteArtifact
 } from '../../db'; // Check correct imports from index
 import { ArtifactEntry, ArtifactStatus } from '../../db/types';
 
 export async function startInteractiveArtifactUpdate(ctx: CommandContext) {
     if (ctx.args.length > 0) {
         const query = ctx.args.join(' ');
-        let art;
-
-        // Try Short ID
-        const shortIdMatch = query.match(/^#?([a-z0-9]{5})$/i);
-        if (shortIdMatch) {
-            art = getArtifactByShortId(ctx.activeCampaign!.id, shortIdMatch[1]);
-        }
-
+        let art = getArtifactByName(ctx.activeCampaign!.id, query);
         if (!art) {
-            // Try Exact Name
-            art = getArtifactByName(ctx.activeCampaign!.id, query);
-        }
-
-        if (!art) {
-            // Try Case Insensitive Name
+            const clean = query.replace('#', '').toLowerCase();
             const all = listAllArtifacts(ctx.activeCampaign!.id);
-            art = all.find(a => a.name.toLowerCase() === query.toLowerCase());
+            art = all.find(a => a.short_id && a.short_id.toLowerCase() === clean) || null;
         }
 
         if (art) {
@@ -49,7 +38,27 @@ export async function startInteractiveArtifactUpdate(ctx: CommandContext) {
         }
     }
 
-    await showArtifactSelection(ctx, null, null);
+    // 2. Build Selection
+    await showArtifactSelection(ctx, null, null, 'UPDATE');
+}
+
+export async function startInteractiveArtifactDelete(ctx: CommandContext) {
+    if (ctx.args.length > 0) {
+        const query = ctx.args.join(' ');
+        let art = getArtifactByName(ctx.activeCampaign!.id, query);
+        if (!art) {
+            const clean = query.replace('#', '').toLowerCase();
+            const all = listAllArtifacts(ctx.activeCampaign!.id);
+            art = all.find(a => a.short_id && a.short_id.toLowerCase() === clean) || null;
+        }
+
+        if (art) {
+            await showArtifactDeleteConfirmation(ctx.message as any, art, ctx, true);
+            return;
+        }
+    }
+
+    await showArtifactSelection(ctx, null, null, 'DELETE');
 }
 
 export async function startInteractiveArtifactAdd(ctx: CommandContext) {
@@ -169,7 +178,7 @@ export async function startInteractiveArtifactAdd(ctx: CommandContext) {
     });
 }
 
-async function showArtifactSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null) {
+async function showArtifactSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null, mode: 'UPDATE' | 'DELETE' = 'UPDATE') {
     let artifacts: ArtifactEntry[] = [];
 
     // We fetch all because listAllArtifacts usually returns all. 
@@ -209,25 +218,21 @@ async function showArtifactSelection(ctx: CommandContext, searchQuery: string | 
             .setEmoji('🔍')
     );
 
+    const actionText = mode === 'DELETE' ? "Eliminazione" : "Aggiornamento";
     const select = new StringSelectMenuBuilder()
         .setCustomId('artifact_update_select_entity')
-        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : '🔍 Seleziona un artefatto...')
+        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : `🔍 Seleziona un artefatto per ${actionText.toLowerCase()}...`)
         .addOptions(options);
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 
     const content = searchQuery
-        ? `**🛠️ Aggiornamento Artefatto**\nRisultati ricerca per "${searchQuery}":`
-        : "**🛠️ Aggiornamento Artefatto Interattivo**\nSeleziona un oggetto dalla lista o usa Cerca:";
+        ? `**🛠️ ${actionText} Artefatto**\nRisultati ricerca per "${searchQuery}":`
+        : `**🛠️ ${actionText} Artefatto Interattivo**\nSeleziona un oggetto dalla lista o usa Cerca:`;
 
     let response;
     if (interactionToUpdate) {
-        // If it's a modal submit, we need to reply or update? 
-        // Modal submit interaction supports update if it was triggered from a component on the message.
-        // But if we came from startInteractive, interactionToUpdate is null.
         if (interactionToUpdate.isModalSubmit && interactionToUpdate.isModalSubmit()) {
-            // We can update the message that spawned the modal? 
-            // Actually, usually we use update() on the modal submission provided we want to update the original message.
             await interactionToUpdate.update({ content, components: [row] });
             response = interactionToUpdate.message;
         } else {
@@ -248,7 +253,7 @@ async function showArtifactSelection(ctx: CommandContext, searchQuery: string | 
         const val = interaction.values[0];
 
         if (val === 'SEARCH_ACTION') {
-            collector.stop(); // Stop this collector as we move to modal
+            collector.stop();
             const modal = new ModalBuilder()
                 .setCustomId('modal_artifact_search')
                 .setTitle("🔍 Cerca Artefatto");
@@ -270,21 +275,73 @@ async function showArtifactSelection(ctx: CommandContext, searchQuery: string | 
                 });
 
                 const query = submission.fields.getTextInputValue('search_query');
-                await showArtifactSelection(ctx, query, submission);
+                await showArtifactSelection(ctx, query, submission, mode);
             } catch (e) { }
         } else {
             collector.stop();
-            // Selected an artifact
-            const identifier = val;
-            let artifact = getArtifactByShortId(ctx.activeCampaign!.id, identifier);
-            if (!artifact) artifact = getArtifactByName(ctx.activeCampaign!.id, identifier);
+            const selectedVal = val;
+            // Try by ID first if looks like ID, or name
+            let artifact = getArtifactByShortId(ctx.activeCampaign!.id, selectedVal);
+            if (!artifact) artifact = getArtifactByName(ctx.activeCampaign!.id, selectedVal);
 
             if (!artifact) {
                 await interaction.reply({ content: `❌ Errore: Artefatto non trovato.`, ephemeral: true });
                 return;
             }
 
-            await showFieldSelection(interaction, artifact, ctx);
+            if (mode === 'DELETE') {
+                await showArtifactDeleteConfirmation(interaction, artifact, ctx);
+            } else {
+                await showFieldSelection(interaction, artifact, ctx);
+            }
+        }
+    });
+}
+
+async function showArtifactDeleteConfirmation(interaction: any, art: any, ctx: CommandContext, isNewMessage: boolean = false) {
+    const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_confirm_delete')
+                .setLabel('CONFERMA ELIMINAZIONE')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🗑️'),
+            new ButtonBuilder()
+                .setCustomId('btn_cancel_delete')
+                .setLabel('Annulla')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌')
+        );
+
+    const content = `⚠️ **ATTENZIONE** ⚠️\nSei sicuro di voler eliminare definitivamente l'artefatto **${art.name}**?\nQuesta azione è irreversibile.`;
+
+    let message;
+    if (isNewMessage) {
+        message = await interaction.reply({ content, components: [row] });
+    } else {
+        await interaction.update({ content, components: [row] });
+        message = interaction.message;
+    }
+
+    const targetMessage = isNewMessage ? message : interaction.message;
+
+    const collector = targetMessage.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 30000,
+        filter: (i: any) => i.user.id === ctx.message.author.id && ['btn_confirm_delete', 'btn_cancel_delete'].includes(i.customId)
+    });
+
+    collector.on('collect', async (i: any) => {
+        collector.stop();
+        if (i.customId === 'btn_confirm_delete') {
+            const success = deleteArtifact(ctx.activeCampaign!.id, art.name);
+            if (success) {
+                await i.update({ content: `✅ Artefatto **${art.name}** eliminato correttamente.`, components: [] });
+            } else {
+                await i.update({ content: `❌ Errore durante l'eliminazione.`, components: [] });
+            }
+        } else {
+            await i.update({ content: `❌ Operazione annullata.`, components: [] });
         }
     });
 }

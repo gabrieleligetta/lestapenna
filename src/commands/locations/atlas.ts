@@ -28,7 +28,7 @@ import {
     syncAllDirtyAtlas,
     syncAtlasEntryIfNeeded
 } from '../../bard';
-import { startInteractiveAtlasUpdate, startInteractiveAtlasAdd } from './interactiveUpdate';
+import { startInteractiveAtlasUpdate, startInteractiveAtlasAdd, startInteractiveAtlasDelete } from './interactiveUpdate';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { showEntityEvents } from '../utils/eventsViewer';
 
@@ -38,8 +38,13 @@ export const atlasCommand: Command = {
     requiresCampaign: true,
 
     async execute(ctx: CommandContext): Promise<void> {
-        const firstArg = ctx.args[0];
+        const firstArg = ctx.args[0]?.toLowerCase();
         const argsStr = ctx.args.join(' ');
+
+        if (firstArg === 'delete') {
+            await startInteractiveAtlasDelete(ctx);
+            return;
+        }
 
         const generateLocationDetailEmbed = (entry: any) => {
             const lastUpdate = new Date(entry.last_updated).toLocaleDateString('it-IT');

@@ -16,7 +16,8 @@ import {
     updateNpcEntry,
     getNpcEntry,
     markNpcDirty,
-    factionRepository
+    factionRepository,
+    deleteNpcEntry // Ensure this is imported
 } from '../../db';
 
 export async function startInteractiveNpcUpdate(ctx: CommandContext) {
@@ -28,7 +29,7 @@ export async function startInteractiveNpcUpdate(ctx: CommandContext) {
             // Try ID search
             const cleanQuery = query.replace('#', '').toLowerCase();
             const all = listNpcs(ctx.activeCampaign!.id);
-            npc = all.find(n => n.short_id && n.short_id.toLowerCase() === cleanQuery) || null;
+            npc = all.find(n => n.short_id && n.short_id.toLowerCase() === cleanQuery) || undefined;
         }
 
         if (npc) {
@@ -38,7 +39,28 @@ export async function startInteractiveNpcUpdate(ctx: CommandContext) {
     }
 
     // 2. Build NPC Select Menu
-    await showNpcSelection(ctx, null, null);
+    await showNpcSelection(ctx, null, null, 'UPDATE');
+}
+
+export async function startInteractiveNpcDelete(ctx: CommandContext) {
+    if (ctx.args.length > 0) {
+        // Direct delete attempt
+        const query = ctx.args.join(' ');
+        let npc = getNpcEntry(ctx.activeCampaign!.id, query);
+
+        if (!npc) {
+            const cleanQuery = query.replace('#', '').toLowerCase();
+            const all = listNpcs(ctx.activeCampaign!.id);
+            npc = all.find(n => n.short_id && n.short_id.toLowerCase() === cleanQuery) || undefined;
+        }
+
+        if (npc) {
+            await showDeleteConfirmation(ctx.message as any, npc, ctx, true);
+            return;
+        }
+    }
+
+    await showNpcSelection(ctx, null, null, 'DELETE');
 }
 
 export async function startInteractiveNpcAdd(ctx: CommandContext) {
@@ -163,17 +185,11 @@ export async function startInteractiveNpcAdd(ctx: CommandContext) {
     });
 }
 
-async function showNpcSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null) {
+async function showNpcSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null, mode: 'UPDATE' | 'DELETE') {
     let npcs: any[] = [];
 
     if (searchQuery) {
         const query = searchQuery.toLowerCase();
-        // Since listNpcs handles pagination but not filtering by name in the repository query (usually),
-        // we might need to fetch all and filter, or add search support to repository.
-        // For now, let's fetch a larger batch or all if possible. 
-        // listNpcs signature: (campaignId, limit, offset)
-        // Let's assume for now we filter in memory from a larger fetch or add a proper search capability later.
-        // Or if listNpcs supports search? It doesn't seem to based on arg names.
         // Let's list 100 recent and filter, or rely on precise search if user types it.
         // A better approach for scalability would be adding searchNpcs to repository, but let's stick to in-memory filter of a reasonable set for now
         // OR better: use listNpcs(id, 100, 0) and filter.
@@ -205,16 +221,17 @@ async function showNpcSelection(ctx: CommandContext, searchQuery: string | null,
             .setEmoji('🔍')
     );
 
+    const actionText = mode === 'DELETE' ? "Eliminazione" : "Aggiornamento";
     const npcSelect = new StringSelectMenuBuilder()
         .setCustomId('npc_update_select_entity')
-        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : '🔍 Seleziona un NPC da modificare...')
+        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : `🔍 Seleziona un NPC per ${actionText.toLowerCase()}...`)
         .addOptions(options);
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(npcSelect);
 
     const content = searchQuery
-        ? `**🛠️ Aggiornamento NPC**\nRisultati ricerca per "${searchQuery}":`
-        : "**🛠️ Aggiornamento NPC Interattivo**\nSeleziona un personaggio dalla lista o usa Cerca:";
+        ? `**🛠️ ${actionText} NPC**\nRisultati ricerca per "${searchQuery}":`
+        : `**🛠️ ${actionText} NPC Interattivo**\nSeleziona un personaggio dalla lista o usa Cerca:`;
 
     let response;
     if (interactionToUpdate) {
@@ -257,7 +274,7 @@ async function showNpcSelection(ctx: CommandContext, searchQuery: string | null,
                 });
 
                 const query = submission.fields.getTextInputValue('search_query');
-                await showNpcSelection(ctx, query, submission);
+                await showNpcSelection(ctx, query, submission, mode);
             } catch (e) { }
         } else {
             collector.stop();
@@ -269,7 +286,64 @@ async function showNpcSelection(ctx: CommandContext, searchQuery: string | null,
                 return;
             }
 
-            await showFieldSelection(interaction, npc, ctx);
+            // Refetch fresh to be safe
+            const freshNpc = getNpcEntry(ctx.activeCampaign!.id, npc.name);
+
+            if (mode === 'DELETE') {
+                // Clean up the selection message first? Or replace it.
+                // showDeleteConfirmation usually updates the interaction.
+                if (freshNpc) await showDeleteConfirmation(interaction, freshNpc, ctx);
+            } else {
+                if (freshNpc) await showFieldSelection(interaction, freshNpc, ctx);
+            }
+        }
+    });
+}
+
+async function showDeleteConfirmation(interaction: any, npc: any, ctx: CommandContext, isNewMessage: boolean = false) {
+    const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_confirm_delete')
+                .setLabel('CONFERMA ELIMINAZIONE')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🗑️'),
+            new ButtonBuilder()
+                .setCustomId('btn_cancel_delete')
+                .setLabel('Annulla')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌')
+        );
+
+    const content = `⚠️ **ATTENZIONE** ⚠️\nSei sicuro di voler eliminare definitivamente l'NPC **${npc.name}**?\nQuesta azione è irreversibile e cancellerà anche la cronologia associata.`;
+
+    let message;
+    if (isNewMessage) {
+        message = await interaction.reply({ content, components: [row] });
+    } else {
+        await interaction.update({ content, components: [row] });
+        message = interaction.message;
+    }
+
+    const targetMessage = isNewMessage ? message : interaction.message;
+
+    const collector = targetMessage.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 30000,
+        filter: (i: any) => i.user.id === ctx.message.author.id && ['btn_confirm_delete', 'btn_cancel_delete'].includes(i.customId)
+    });
+
+    collector.on('collect', async (i: any) => {
+        collector.stop();
+        if (i.customId === 'btn_confirm_delete') {
+            const success = deleteNpcEntry(ctx.activeCampaign!.id, npc.name);
+            if (success) {
+                await i.update({ content: `✅ NPC **${npc.name}** eliminato correttamente.`, components: [] });
+            } else {
+                await i.update({ content: `❌ Errore durante l'eliminazione di **${npc.name}**.`, components: [] });
+            }
+        } else {
+            await i.update({ content: `❌ Operazione annullata.`, components: [] });
         }
     });
 }

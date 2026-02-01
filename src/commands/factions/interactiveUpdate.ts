@@ -69,7 +69,20 @@ export async function startInteractiveFactionUpdate(ctx: CommandContext) {
     }
 
     // 2. Build Faction Select Menu
-    await showFactionSelectionMain(ctx, null, null);
+    await showFactionSelectionMain(ctx, null, null, 'UPDATE');
+}
+
+export async function startInteractiveFactionDelete(ctx: CommandContext) {
+    if (ctx.args.length > 0) {
+        const query = ctx.args.join(' ');
+        const faction = factionRepository.getFaction(ctx.activeCampaign!.id, query);
+        if (faction) {
+            await showFactionDeleteConfirmation(ctx.message as any, faction, ctx, true);
+            return;
+        }
+    }
+
+    await showFactionSelectionMain(ctx, null, null, 'DELETE');
 }
 
 export async function startInteractiveFactionAdd(ctx: CommandContext) {
@@ -211,7 +224,7 @@ export async function startInteractiveFactionAdd(ctx: CommandContext) {
     });
 }
 
-async function showFactionSelectionMain(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null) {
+async function showFactionSelectionMain(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null, mode: 'UPDATE' | 'DELETE' = 'UPDATE') {
     let factions: any[] = [];
 
     if (searchQuery) {
@@ -242,16 +255,17 @@ async function showFactionSelectionMain(ctx: CommandContext, searchQuery: string
             .setEmoji('🔍')
     );
 
+    const actionText = mode === 'DELETE' ? "Eliminazione" : "Aggiornamento";
     const factionSelect = new StringSelectMenuBuilder()
         .setCustomId('faction_update_select_entity')
-        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : '🔍 Seleziona una fazione da modificare...')
+        .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : `🔍 Seleziona una fazione per ${actionText.toLowerCase()}...`)
         .addOptions(options);
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(factionSelect);
 
     const content = searchQuery
-        ? `**🛠️ Aggiornamento Fazione**\nRisultati ricerca per "${searchQuery}":`
-        : "**🛠️ Aggiornamento Fazione Interattivo**\nSeleziona una fazione dalla lista o usa Cerca:";
+        ? `**🛠️ ${actionText} Fazione**\nRisultati ricerca per "${searchQuery}":`
+        : `**🛠️ ${actionText} Fazione Interattivo**\nSeleziona una fazione dalla lista o usa Cerca:`;
 
     let response;
     if (interactionToUpdate) {
@@ -294,11 +308,8 @@ async function showFactionSelectionMain(ctx: CommandContext, searchQuery: string
                 });
 
                 const query = submission.fields.getTextInputValue('search_query');
-                await showFactionSelectionMain(ctx, query, submission);
-
-            } catch (e) {
-                // timeout
-            }
+                await showFactionSelectionMain(ctx, query, submission, mode);
+            } catch (e) { }
         } else {
             collector.stop();
             const selectedName = val;
@@ -309,8 +320,69 @@ async function showFactionSelectionMain(ctx: CommandContext, searchQuery: string
                 return;
             }
 
-            // 4. Show Field Selection
-            await showFieldSelection(interaction, faction, ctx);
+            // Fresh fetch
+            const freshFaction = factionRepository.getFaction(ctx.activeCampaign!.id, faction.name);
+
+            if (mode === 'DELETE') {
+                if (freshFaction) await showFactionDeleteConfirmation(interaction, freshFaction, ctx);
+            } else {
+                if (freshFaction) await showFieldSelection(interaction, freshFaction, ctx);
+            }
+        }
+    });
+}
+
+async function showFactionDeleteConfirmation(interaction: any, faction: any, ctx: CommandContext, isNewMessage: boolean = false) {
+    if (faction.is_party) {
+        const warning = "❌ Non è possibile eliminare la fazione **Party**.";
+        if (isNewMessage) await interaction.reply({ content: warning, ephemeral: true });
+        else await interaction.update({ content: warning, components: [] });
+        return;
+    }
+
+    const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_confirm_delete')
+                .setLabel('CONFERMA ELIMINAZIONE')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🗑️'),
+            new ButtonBuilder()
+                .setCustomId('btn_cancel_delete')
+                .setLabel('Annulla')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌')
+        );
+
+    const content = `⚠️ **ATTENZIONE** ⚠️\nSei sicuro di voler eliminare definitivamente la fazione **${faction.name}**?\nQuesta azione è irreversibile.`;
+
+    let message;
+    if (isNewMessage) {
+        message = await interaction.reply({ content, components: [row] });
+    } else {
+        await interaction.update({ content, components: [row] });
+        message = interaction.message;
+    }
+
+    const targetMessage = isNewMessage ? message : interaction.message;
+
+    const collector = targetMessage.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 30000,
+        filter: (i: any) => i.user.id === ctx.message.author.id && ['btn_confirm_delete', 'btn_cancel_delete'].includes(i.customId)
+    });
+
+    collector.on('collect', async (i: any) => {
+        collector.stop();
+        if (i.customId === 'btn_confirm_delete') {
+            const success = factionRepository.deleteFaction(ctx.activeCampaign!.id, faction.name);
+            if (success) {
+                await i.update({ content: `✅ Fazione **${faction.name}** eliminata correttamente.`, components: [] });
+            } else {
+                await i.update({ content: `❌ Errore durante l'eliminazione (o impossibile eliminare).`, components: [] });
+            }
+        } else {
+            await i.update({ content: `❌ Operazione annullata.`, components: [] });
         }
     });
 }

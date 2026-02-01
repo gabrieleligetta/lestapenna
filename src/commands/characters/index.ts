@@ -10,6 +10,7 @@ export { whoamiCommand } from './whoami';
 export { bioCommand } from './bio';
 export { partyCommand } from './party';
 export { resetCharacterCommand } from './reset';
+export { characterCommand } from './character';
 
 import { Command } from '../types';
 import { iamCommand } from './iam';
@@ -20,6 +21,7 @@ import { whoamiCommand } from './whoami';
 import { bioCommand } from './bio';
 import { partyCommand } from './party';
 import { resetCharacterCommand } from './reset';
+import { characterCommand } from './character';
 
 export const characterCommands: Command[] = [
     iamCommand,
@@ -29,5 +31,6 @@ export const characterCommands: Command[] = [
     whoamiCommand,
     bioCommand,
     partyCommand,
-    resetCharacterCommand
+    resetCharacterCommand,
+    characterCommand
 ];

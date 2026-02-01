@@ -46,6 +46,32 @@ export const artifactCommand: Command = {
             return;
         }
 
+        // 🆕 Events Subcommand: $artifact events [nome/ID] [pagina]
+        if (firstArg === 'events' || firstArg === 'eventi') {
+            const remainder = ctx.args.slice(1);
+            const target = remainder.join(' ').trim().toLowerCase();
+
+            if (remainder.length === 0 || target === 'list' || target === 'lista') {
+                await startArtifactEventsInteractiveSelection(ctx);
+                return;
+            }
+
+            // Try to parse page number at the end
+            let page = 1;
+            let artifactTarget = remainder.join(' ');
+            const lastArg = remainder[remainder.length - 1];
+            if (remainder.length > 1 && !isNaN(parseInt(lastArg))) {
+                page = parseInt(lastArg);
+                artifactTarget = remainder.slice(0, -1).join(' ');
+            }
+
+            const found = await showArtifactEventsByIdentifier(ctx, artifactTarget, page);
+            if (!found) {
+                await ctx.message.reply(`❌ Artefatto **${artifactTarget}** non trovato.`);
+            }
+            return;
+        }
+
         const generateArtifactDetailEmbed = (artifact: ArtifactEntry) => {
             const statusDisplay = getStatusDisplay(artifact.status);
 
@@ -295,34 +321,15 @@ export const artifactCommand: Command = {
 
         // SUBCOMMAND: $artifact [name/#id] events [page]
         if (arg.toLowerCase().includes(' events') || arg.toLowerCase().includes(' eventi')) {
-            const match = arg.match(/(.+?)\s+(events|eventi)(?:\s+(\d+))?/i);
+            const match = arg.match(/(.+?)\s+(events|eventi)(?:\s+(\d+))?$/i);
             if (match) {
                 const identifier = match[1].trim();
                 const page = match[3] ? parseInt(match[3]) : 1;
 
-                let artifact: ArtifactEntry | null = null;
-                const sidMatch = identifier.match(/^#?([a-z0-9]{5})$/i);
-                if (sidMatch) {
-                    artifact = getArtifactByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                }
-                if (!artifact) {
-                    artifact = getArtifactByName(ctx.activeCampaign!.id, identifier);
-                }
-
-                if (!artifact) {
+                const found = await showArtifactEventsByIdentifier(ctx, identifier, page);
+                if (!found) {
                     await ctx.message.reply(`❌ Artefatto "${identifier}" non trovato.`);
-                    return;
                 }
-
-                const history = getArtifactHistory(ctx.activeCampaign!.id, artifact.name);
-                await showEntityEvents(ctx, {
-                    tableName: 'artifact_history',
-                    entityKeyColumn: 'artifact_name',
-                    entityKeyValue: artifact.name,
-                    campaignId: ctx.activeCampaign!.id,
-                    entityDisplayName: artifact.name,
-                    entityEmoji: '🔮'
-                }, page);
                 return;
             }
         }
@@ -451,3 +458,100 @@ export const artifactCommand: Command = {
         await ctx.message.reply({ embeds: [generateArtifactDetailEmbed(artifact)] });
     }
 };
+
+/**
+ * Helper: Resolve artifact identifier and show events
+ */
+async function showArtifactEventsByIdentifier(ctx: CommandContext, identifier: string, page: number = 1): Promise<boolean> {
+    const campaignId = ctx.activeCampaign!.id;
+    let artifact: ArtifactEntry | null = null;
+
+    const sidMatch = identifier.trim().match(/^#?([a-z0-9]{5})$/i);
+    if (sidMatch) {
+        artifact = getArtifactByShortId(campaignId, sidMatch[1]);
+    }
+
+    if (!artifact) {
+        artifact = getArtifactByName(campaignId, identifier.trim());
+    }
+
+    if (!artifact) return false;
+
+    await showEntityEvents(ctx, {
+        tableName: 'artifact_history',
+        entityKeyColumn: 'artifact_name',
+        entityKeyValue: artifact.name,
+        campaignId: campaignId,
+        entityDisplayName: artifact.name,
+        entityEmoji: '🔮'
+    }, page);
+
+    return true;
+}
+
+/**
+ * Helper: Interactive selection for artifact events
+ */
+async function startArtifactEventsInteractiveSelection(ctx: CommandContext) {
+    const campaignId = ctx.activeCampaign!.id;
+    const artifacts = listAllArtifacts(campaignId);
+
+    if (artifacts.length === 0) {
+        await ctx.message.reply("📦 Nessun artefatto registrato in questa campagna.");
+        return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_artifact_events')
+        .setPlaceholder('🔍 Seleziona un artefatto...')
+        .addOptions(
+            artifacts.slice(0, 25).map(a => {
+                const statusDisplay = getStatusDisplay(a.status);
+                return new StringSelectMenuOptionBuilder()
+                    .setLabel(a.name.substring(0, 100))
+                    .setDescription(`#${a.short_id} - ${statusDisplay.label}`)
+                    .setValue(a.name)
+                    .setEmoji(statusDisplay.icon);
+            })
+        );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    const reply = await ctx.message.reply({
+        content: "📜 **Seleziona un artefatto per vederne la cronologia:**",
+        components: [row]
+    });
+
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000,
+        filter: (i) => i.customId === 'select_artifact_events' && i.user.id === ctx.message.author.id
+    });
+
+    collector.on('collect', async (interaction) => {
+        const artifactName = interaction.values[0];
+        const artifact = getArtifactByName(campaignId, artifactName);
+
+        if (artifact) {
+            // Remove components and show events
+            await interaction.update({ content: `⏳ Caricamento eventi per **${artifact.name}**...`, components: [] });
+
+            await showEntityEvents(ctx, {
+                tableName: 'artifact_history',
+                entityKeyColumn: 'artifact_name',
+                entityKeyValue: artifact.name,
+                campaignId: campaignId,
+                entityDisplayName: artifact.name,
+                entityEmoji: '🔮'
+            }, 1);
+        } else {
+            await interaction.reply({ content: "❌ Artefatto non trovato.", ephemeral: true });
+        }
+    });
+
+    collector.on('end', async (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            await reply.edit({ content: "⏱️ Tempo scaduto per la selezione.", components: [] }).catch(() => { });
+        }
+    });
+}

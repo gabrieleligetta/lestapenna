@@ -50,6 +50,33 @@ export const inventoryCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const arg = ctx.args.join(' ');
+        const firstArg = ctx.args[0]?.toLowerCase();
+
+        // 🆕 Events Subcommand: $loot events [nome/ID] [pagina]
+        if (firstArg === 'events' || firstArg === 'eventi') {
+            const remainder = ctx.args.slice(1);
+            const target = remainder.join(' ').trim().toLowerCase();
+
+            if (remainder.length === 0 || target === 'list' || target === 'lista') {
+                await startInventoryEventsInteractiveSelection(ctx);
+                return;
+            }
+
+            // Try to parse page number at the end
+            let page = 1;
+            let itemTarget = remainder.join(' ');
+            const lastArg = remainder[remainder.length - 1];
+            if (remainder.length > 1 && !isNaN(parseInt(lastArg))) {
+                page = parseInt(lastArg);
+                itemTarget = remainder.slice(0, -1).join(' ');
+            }
+
+            const found = await showInventoryEventsByIdentifier(ctx, itemTarget, page);
+            if (!found) {
+                await ctx.message.reply(`❌ Oggetto **${itemTarget}** non trovato.`);
+            }
+            return;
+        }
 
         const generateItemDetailEmbed = (item: any) => {
             // Controlla se è un artefatto
@@ -237,37 +264,15 @@ export const inventoryCommand: Command = {
         }
 
         // SUBCOMMAND: events - $loot <name/#id> events [page]
-        const eventsMatch = arg.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        const eventsMatch = arg.match(/^(.+?)\s+(events|eventi)(?:\s+(\d+))?$/i);
         if (eventsMatch) {
             let itemIdentifier = eventsMatch[1].trim();
-            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+            const page = eventsMatch[3] ? parseInt(eventsMatch[3]) : 1;
 
-            // Resolve short ID
-            const sidMatch = itemIdentifier.match(/^#([a-z0-9]{5})$/i);
-            if (sidMatch) {
-                const itemEntry = getInventoryItemByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (itemEntry) itemIdentifier = itemEntry.item_name;
-                else {
-                    await ctx.message.reply(`❌ Oggetto con ID \`#${sidMatch[1]}\` non trovato.`);
-                    return;
-                }
-            }
-
-            // Verify item exists
-            const item = getInventoryItemByName(ctx.activeCampaign!.id, itemIdentifier);
-            if (!item) {
+            const found = await showInventoryEventsByIdentifier(ctx, itemIdentifier, page);
+            if (!found) {
                 await ctx.message.reply(`❌ Oggetto **${itemIdentifier}** non trovato.`);
-                return;
             }
-
-            await showEntityEvents(ctx, {
-                tableName: 'inventory_history',
-                entityKeyColumn: 'item_name',
-                entityKeyValue: item.item_name,
-                campaignId: ctx.activeCampaign!.id,
-                entityDisplayName: item.item_name,
-                entityEmoji: '📦'
-            }, page);
             return;
         }
 
@@ -491,3 +496,99 @@ export const mergeItemCommand: Command = {
         }
     }
 };
+
+/**
+ * Helper: Resolve item identifier and show events
+ */
+async function showInventoryEventsByIdentifier(ctx: CommandContext, identifier: string, page: number = 1): Promise<boolean> {
+    const campaignId = ctx.activeCampaign!.id;
+    let item: any = null;
+
+    // Resolve short ID
+    const sidMatch = identifier.trim().match(/^#?([a-z0-9]{5})$/i);
+    if (sidMatch) {
+        item = getInventoryItemByShortId(campaignId, sidMatch[1]);
+    }
+
+    if (!item) {
+        item = getInventoryItemByName(campaignId, identifier.trim());
+    }
+
+    if (!item) return false;
+
+    await showEntityEvents(ctx, {
+        tableName: 'inventory_history',
+        entityKeyColumn: 'item_name',
+        entityKeyValue: item.item_name,
+        campaignId: campaignId,
+        entityDisplayName: item.item_name,
+        entityEmoji: '📦'
+    }, page);
+
+    return true;
+}
+
+/**
+ * Helper: Interactive selection for inventory events
+ */
+async function startInventoryEventsInteractiveSelection(ctx: CommandContext) {
+    const campaignId = ctx.activeCampaign!.id;
+    const inventory = getInventory(campaignId, 25, 0);
+
+    if (inventory.length === 0) {
+        await ctx.message.reply("📦 L'inventario è vuoto.");
+        return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_inventory_events')
+        .setPlaceholder('🔍 Seleziona un oggetto...')
+        .addOptions(
+            inventory.slice(0, 25).map(i => {
+                return new StringSelectMenuOptionBuilder()
+                    .setLabel(i.item_name.substring(0, 100))
+                    .setDescription(`#${i.short_id} - Qta: ${i.quantity}`)
+                    .setValue(i.item_name)
+                    .setEmoji('📦');
+            })
+        );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    const reply = await ctx.message.reply({
+        content: "📜 **Seleziona un oggetto per vederne la cronologia:**",
+        components: [row]
+    });
+
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000,
+        filter: (i) => i.customId === 'select_inventory_events' && i.user.id === ctx.message.author.id
+    });
+
+    collector.on('collect', async (interaction) => {
+        const itemName = interaction.values[0];
+        const item = getInventoryItemByName(campaignId, itemName);
+
+        if (item) {
+            await interaction.update({ content: `⏳ Caricamento eventi per **${item.item_name}**...`, components: [] });
+
+            await showEntityEvents(ctx, {
+                tableName: 'inventory_history',
+                entityKeyColumn: 'item_name',
+                entityKeyValue: item.item_name,
+                campaignId: campaignId,
+                entityDisplayName: item.item_name,
+                entityEmoji: '📦'
+            }, 1);
+        } else {
+            await interaction.reply({ content: "❌ Oggetto non trovato.", ephemeral: true });
+        }
+    });
+
+    collector.on('end', async (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            await reply.edit({ content: "⏱️ Tempo scaduto per la selezione.", components: [] }).catch(() => { });
+        }
+    });
+}

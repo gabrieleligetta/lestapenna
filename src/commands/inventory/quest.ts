@@ -54,7 +54,33 @@ export const questCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const arg = ctx.args.join(' ');
-        const firstArg = ctx.args[0];
+        const firstArg = ctx.args[0]?.toLowerCase();
+
+        // 🆕 Events Subcommand: $quest events [titolo/ID] [pagina]
+        if (firstArg === 'events' || firstArg === 'eventi') {
+            const remainder = ctx.args.slice(1);
+            const target = remainder.join(' ').trim().toLowerCase();
+
+            if (remainder.length === 0 || target === 'list' || target === 'lista') {
+                await startQuestEventsInteractiveSelection(ctx);
+                return;
+            }
+
+            // Try to parse page number at the end
+            let page = 1;
+            let questTarget = remainder.join(' ');
+            const lastArg = remainder[remainder.length - 1];
+            if (remainder.length > 1 && !isNaN(parseInt(lastArg))) {
+                page = parseInt(lastArg);
+                questTarget = remainder.slice(0, -1).join(' ');
+            }
+
+            const found = await showQuestEventsByIdentifier(ctx, questTarget, page);
+            if (!found) {
+                await ctx.message.reply(`❌ Quest **${questTarget}** non trovata.`);
+            }
+            return;
+        }
 
         const generateQuestDetailEmbed = (quest: any) => {
             const typeIcon = quest.type === 'MAJOR' ? '👑' : '📜';
@@ -397,37 +423,15 @@ export const questCommand: Command = {
         }
 
         // SUBCOMMAND: events - $quest <title/#id> events [page]
-        const eventsMatch = arg.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        const eventsMatch = arg.match(/^(.+?)\s+(events|eventi)(?:\s+(\d+))?$/i);
         if (eventsMatch) {
             let questIdentifier = eventsMatch[1].trim();
-            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+            const page = eventsMatch[3] ? parseInt(eventsMatch[3]) : 1;
 
-            // Resolve short ID
-            const sidMatch = questIdentifier.match(/^#([a-z0-9]{5})$/i);
-            if (sidMatch) {
-                const quest = getQuestByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (quest) questIdentifier = quest.title;
-                else {
-                    await ctx.message.reply(`❌ Quest con ID \`#${sidMatch[1]}\` non trovata.`);
-                    return;
-                }
-            }
-
-            // Verify quest exists
-            const quest = getQuestByTitle(ctx.activeCampaign!.id, questIdentifier);
-            if (!quest) {
+            const found = await showQuestEventsByIdentifier(ctx, questIdentifier, page);
+            if (!found) {
                 await ctx.message.reply(`❌ Quest **${questIdentifier}** non trovata.`);
-                return;
             }
-
-            await showEntityEvents(ctx, {
-                tableName: 'quest_history',
-                entityKeyColumn: 'quest_title',
-                entityKeyValue: quest.title,
-                campaignId: ctx.activeCampaign!.id,
-                entityDisplayName: quest.title,
-                entityEmoji: '🗺️'
-            }, page);
             return;
         }
 
@@ -711,3 +715,105 @@ export const mergeQuestCommand: Command = {
         }
     }
 };
+
+/**
+ * Helper: Resolve quest identifier and show events
+ */
+async function showQuestEventsByIdentifier(ctx: CommandContext, identifier: string, page: number = 1): Promise<boolean> {
+    const campaignId = ctx.activeCampaign!.id;
+    let quest: Quest | null | undefined;
+
+    // Resolve short ID
+    const sidMatch = identifier.trim().match(/^#?([a-z0-9]{5})$/i);
+    if (sidMatch) {
+        quest = getQuestByShortId(campaignId, sidMatch[1]);
+    }
+
+    if (!quest) {
+        quest = getQuestByTitle(campaignId, identifier.trim());
+    }
+
+    if (!quest) return false;
+
+    await showEntityEvents(ctx, {
+        tableName: 'quest_history',
+        entityKeyColumn: 'quest_title',
+        entityKeyValue: quest.title,
+        campaignId: campaignId,
+        entityDisplayName: quest.title,
+        entityEmoji: '🗺️'
+    }, page);
+
+    return true;
+}
+
+/**
+ * Helper: Interactive selection for quest events
+ */
+async function startQuestEventsInteractiveSelection(ctx: CommandContext) {
+    const campaignId = ctx.activeCampaign!.id;
+    // Fallback to getOpenQuests if getAllQuestsSorted is missing
+    const quests = questRepository.getOpenQuests(campaignId, 25, 0);
+
+    if (quests.length === 0) {
+        await ctx.message.reply("🗺️ Nessuna quest attiva registrata in questa campagna.");
+        return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_quest_events')
+        .setPlaceholder('🔍 Seleziona una quest...')
+        .addOptions(
+            quests.slice(0, 25).map(q => {
+                const s = q.status as string;
+                const statusIcon = (s === QuestStatus.IN_PROGRESS || s === 'IN CORSO') ? '⏳' :
+                    (s === QuestStatus.COMPLETED || s === 'DONE') ? '✅' :
+                        (s === QuestStatus.FAILED) ? '❌' : '🔹';
+
+                return new StringSelectMenuOptionBuilder()
+                    .setLabel(q.title.substring(0, 100))
+                    .setDescription(`#${q.short_id} - ${q.status}`)
+                    .setValue(q.title)
+                    .setEmoji(statusIcon);
+            })
+        );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    const reply = await ctx.message.reply({
+        content: "📜 **Seleziona una quest per vederne la cronologia:**",
+        components: [row]
+    });
+
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000,
+        filter: (i) => i.customId === 'select_quest_events' && i.user.id === ctx.message.author.id
+    });
+
+    collector.on('collect', async (interaction) => {
+        const questTitle = interaction.values[0];
+        const quest = getQuestByTitle(campaignId, questTitle);
+
+        if (quest) {
+            await interaction.update({ content: `⏳ Caricamento eventi per **${quest.title}**...`, components: [] });
+
+            await showEntityEvents(ctx, {
+                tableName: 'quest_history',
+                entityKeyColumn: 'quest_title',
+                entityKeyValue: quest.title,
+                campaignId: campaignId,
+                entityDisplayName: quest.title,
+                entityEmoji: '🗺️'
+            }, 1);
+        } else {
+            await interaction.reply({ content: "❌ Quest non trovata.", ephemeral: true });
+        }
+    });
+
+    collector.on('end', async (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            await reply.edit({ content: "⏱️ Tempo scaduto per la selezione.", components: [] }).catch(() => { });
+        }
+    });
+}

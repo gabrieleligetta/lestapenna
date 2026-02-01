@@ -37,7 +37,34 @@ export const bestiaryCommand: Command = {
     requiresCampaign: true,
 
     async execute(ctx: CommandContext): Promise<void> {
+        const firstArg = ctx.args[0]?.toLowerCase();
         const arg = ctx.args.join(' ');
+
+        // 🆕 Events Subcommand: $bestiario events [nome/ID] [pagina]
+        if (firstArg === 'events' || firstArg === 'eventi') {
+            const remainder = ctx.args.slice(1);
+            const target = remainder.join(' ').trim().toLowerCase();
+
+            if (remainder.length === 0 || target === 'list' || target === 'lista') {
+                await startBestiaryEventsInteractiveSelection(ctx);
+                return;
+            }
+
+            // Try to parse page number at the end
+            let page = 1;
+            let monsterTarget = remainder.join(' ');
+            const lastArg = remainder[remainder.length - 1];
+            if (remainder.length > 1 && !isNaN(parseInt(lastArg))) {
+                page = parseInt(lastArg);
+                monsterTarget = remainder.slice(0, -1).join(' ');
+            }
+
+            const found = await showBestiaryEventsByIdentifier(ctx, monsterTarget, page);
+            if (!found) {
+                await ctx.message.reply(`❌ Mostro **${monsterTarget}** non trovato.`);
+            }
+            return;
+        }
 
         const generateMonsterDetailEmbed = (monster: any) => {
             const formatCount = (c: string) => {
@@ -295,37 +322,15 @@ export const bestiaryCommand: Command = {
         }
 
         // SUBCOMMAND: events - $bestiario <name/#id> events [page]
-        const eventsMatch = arg.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        const eventsMatch = arg.match(/^(.+?)\s+(events|eventi)(?:\s+(\d+))?$/i);
         if (eventsMatch) {
             let monsterIdentifier = eventsMatch[1].trim();
-            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+            const page = eventsMatch[3] ? parseInt(eventsMatch[3]) : 1;
 
-            // Resolve short ID
-            const sidMatch = monsterIdentifier.match(/^#([a-z0-9]{5})$/i);
-            if (sidMatch) {
-                const m = bestiaryRepository.getMonsterByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (m) monsterIdentifier = m.name;
-                else {
-                    await ctx.message.reply(`❌ Mostro con ID \`#${sidMatch[1]}\` non trovato.`);
-                    return;
-                }
-            }
-
-            // Verify monster exists
-            const monster = bestiaryRepository.getMonsterByName(ctx.activeCampaign!.id, monsterIdentifier);
-            if (!monster) {
+            const found = await showBestiaryEventsByIdentifier(ctx, monsterIdentifier, page);
+            if (!found) {
                 await ctx.message.reply(`❌ Mostro **${monsterIdentifier}** non trovato.`);
-                return;
             }
-
-            await showEntityEvents(ctx, {
-                tableName: 'bestiary_history',
-                entityKeyColumn: 'monster_name',
-                entityKeyValue: monster.name,
-                campaignId: ctx.activeCampaign!.id,
-                entityDisplayName: monster.name,
-                entityEmoji: '👹'
-            }, page);
             return;
         }
 
@@ -510,3 +515,103 @@ export const bestiaryCommand: Command = {
         }
     }
 };
+
+/**
+ * Helper: Resolve monster identifier and show events
+ */
+async function showBestiaryEventsByIdentifier(ctx: CommandContext, identifier: string, page: number = 1): Promise<boolean> {
+    const campaignId = ctx.activeCampaign!.id;
+    let monster: any = null;
+
+    // Resolve short ID
+    const sidMatch = identifier.trim().match(/^#?([a-z0-9]{5})$/i);
+    if (sidMatch) {
+        monster = bestiaryRepository.getMonsterByShortId(campaignId, sidMatch[1]);
+    }
+
+    if (!monster) {
+        monster = bestiaryRepository.getMonsterByName(campaignId, identifier.trim());
+    }
+
+    if (!monster) return false;
+
+    await showEntityEvents(ctx, {
+        tableName: 'bestiary_history',
+        entityKeyColumn: 'monster_name',
+        entityKeyValue: monster.name,
+        campaignId: campaignId,
+        entityDisplayName: monster.name,
+        entityEmoji: '👹'
+    }, page);
+
+    return true;
+}
+
+/**
+ * Helper: Interactive selection for bestiary events
+ */
+async function startBestiaryEventsInteractiveSelection(ctx: CommandContext) {
+    const campaignId = ctx.activeCampaign!.id;
+    const monsters = bestiaryRepository.listAllMonsters(campaignId);
+
+    if (monsters.length === 0) {
+        await ctx.message.reply("👹 Il Bestiario è vuoto.");
+        return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_bestiary_events')
+        .setPlaceholder('🔍 Seleziona un mostro...')
+        .addOptions(
+            monsters.slice(0, 25).map((m: any) => {
+                const statusIcon = m.status === 'ALIVE' ? '⚔️' :
+                    m.status === 'DEFEATED' ? '💀' :
+                        m.status === 'FLED' ? '🏃' : '👹';
+
+                return new StringSelectMenuOptionBuilder()
+                    .setLabel(m.name.substring(0, 100))
+                    .setDescription(`#${m.short_id} - ${m.status}`)
+                    .setValue(m.name)
+                    .setEmoji(statusIcon);
+            })
+        );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    const reply = await ctx.message.reply({
+        content: "📜 **Seleziona un mostro per vederne la cronologia:**",
+        components: [row]
+    });
+
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000,
+        filter: (i) => i.customId === 'select_bestiary_events' && i.user.id === ctx.message.author.id
+    });
+
+    collector.on('collect', async (interaction) => {
+        const monsterName = interaction.values[0];
+        const monster = bestiaryRepository.getMonsterByName(campaignId, monsterName);
+
+        if (monster) {
+            await interaction.update({ content: `⏳ Caricamento eventi per **${monster.name}**...`, components: [] });
+
+            await showEntityEvents(ctx, {
+                tableName: 'bestiary_history',
+                entityKeyColumn: 'monster_name',
+                entityKeyValue: monster.name,
+                campaignId: campaignId,
+                entityDisplayName: monster.name,
+                entityEmoji: '👹'
+            }, 1);
+        } else {
+            await interaction.reply({ content: "❌ Mostro non trovato.", ephemeral: true });
+        }
+    });
+
+    collector.on('end', async (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            await reply.edit({ content: "⏱️ Tempo scaduto per la selezione.", components: [] }).catch(() => { });
+        }
+    });
+}

@@ -3,7 +3,7 @@
  * Reusable paginated events listing for all entity types
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { CommandContext } from '../types';
 import { db } from '../../db';
 
@@ -174,19 +174,60 @@ export async function showEntityEvents(
 
     const initialData = generateEmbed(currentPage);
 
+    const generateSelectMenu = (events: HistoryEvent[]) => {
+        if (events.length === 0) return null;
+
+        return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('select_event_detail')
+                .setPlaceholder('🔍 Seleziona un evento per i dettagli...')
+                .addOptions(
+                    events.map(evt => {
+                        const icon = EVENT_TYPE_ICONS[evt.event_type] || EVENT_TYPE_ICONS['default'];
+                        const date = evt.timestamp
+                            ? new Date(evt.timestamp).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
+                            : '—';
+
+                        // Clean description for label
+                        const cleanDesc = evt.description.replace(/[*_`#]/g, '').substring(0, 100);
+
+                        return new StringSelectMenuOptionBuilder()
+                            .setLabel(cleanDesc || `Evento ${evt.event_type}`)
+                            .setDescription(`Data: ${date} | Sessione: ${evt.session_id || '—'}`)
+                            .setValue(evt.id.toString())
+                            .setEmoji(icon);
+                    })
+                )
+        );
+    };
+
+    const getEventsForPage = (page: number) => {
+        const offset = page * ITEMS_PER_PAGE;
+        const query = `
+            SELECT id, description, event_type, session_id, timestamp, is_manual 
+            FROM ${config.tableName} 
+            WHERE ${whereClause}
+            ORDER BY COALESCE(timestamp, 0) DESC, id DESC
+            LIMIT ? OFFSET ?
+        `;
+        return db.prepare(query).all(...whereParams, ITEMS_PER_PAGE, offset) as HistoryEvent[];
+    };
+
+    const currentEvents = getEventsForPage(currentPage);
     const components: any[] = [];
     if (totalPages > 1) {
         components.push(generateButtons(currentPage));
     }
+    const selectMenu = generateSelectMenu(currentEvents);
+    if (selectMenu) components.push(selectMenu);
 
     const reply = await ctx.message.reply({
         embeds: [initialData.embed],
         components
     });
 
-    if (totalPages > 1) {
+    if (totalPages > 1 || currentEvents.length > 0) {
         const collector = reply.createMessageComponentCollector({
-            componentType: ComponentType.Button,
             time: 60000 * 5 // 5 minutes
         });
 
@@ -196,17 +237,55 @@ export async function showEntityEvents(
                 return;
             }
 
-            if (interaction.customId === 'events_prev_page') {
-                currentPage = Math.max(0, currentPage - 1);
-            } else if (interaction.customId === 'events_next_page') {
-                currentPage = Math.min(totalPages - 1, currentPage + 1);
-            }
+            if (interaction.isButton()) {
+                if (interaction.customId === 'events_prev_page') {
+                    currentPage = Math.max(0, currentPage - 1);
+                } else if (interaction.customId === 'events_next_page') {
+                    currentPage = Math.min(totalPages - 1, currentPage + 1);
+                }
 
-            const newData = generateEmbed(currentPage);
-            await interaction.update({
-                embeds: [newData.embed],
-                components: totalPages > 1 ? [generateButtons(currentPage)] : []
-            });
+                const newData = generateEmbed(currentPage);
+                const newEvents = getEventsForPage(currentPage);
+
+                const nextComponents: any[] = [];
+                if (totalPages > 1) nextComponents.push(generateButtons(currentPage));
+                const nextSelect = generateSelectMenu(newEvents);
+                if (nextSelect) nextComponents.push(nextSelect);
+
+                await interaction.update({
+                    embeds: [newData.embed],
+                    components: nextComponents
+                });
+            } else if (interaction.isStringSelectMenu()) {
+                if (interaction.customId === 'select_event_detail') {
+                    const eventId = parseInt(interaction.values[0]);
+                    const query = `SELECT * FROM ${config.tableName} WHERE id = ?`;
+                    const event = db.prepare(query).get(eventId) as HistoryEvent;
+
+                    if (event) {
+                        const icon = EVENT_TYPE_ICONS[event.event_type] || EVENT_TYPE_ICONS['default'];
+                        const date = event.timestamp
+                            ? new Date(event.timestamp).toLocaleString('it-IT', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                            : '—';
+                        const manualTag = event.is_manual ? ' (Inserito manualmente)' : '';
+
+                        const detailEmbed = new EmbedBuilder()
+                            .setTitle(`${icon} Dettaglio Evento: ${event.event_type}`)
+                            .setColor("#9B59B6")
+                            .setDescription(event.description)
+                            .addFields(
+                                { name: "📅 Data", value: date, inline: true },
+                                { name: "🎬 Sessione", value: event.session_id || '—', inline: true },
+                                { name: "🔖 Tipo", value: `${event.event_type}${manualTag}`, inline: true }
+                            )
+                            .setFooter({ text: `Relativo a: ${config.entityDisplayName}` });
+
+                        await interaction.reply({ embeds: [detailEmbed], ephemeral: true });
+                    } else {
+                        await interaction.reply({ content: "❌ Evento non trovato.", ephemeral: true });
+                    }
+                }
+            }
         });
 
         collector.on('end', () => {

@@ -50,6 +50,32 @@ export const npcCommand: Command = {
         if (subCommand === 'update') { await startInteractiveNpcUpdate(ctx); return; }
         if (subCommand === 'delete') { await startInteractiveNpcDelete(ctx); return; }
 
+        // 🆕 Events Subcommand: $npc events [nome/ID] [pagina]
+        if (subCommand === 'events') {
+            const remainder = ctx.args.slice(1);
+            const target = remainder.join(' ').trim().toLowerCase();
+
+            if (remainder.length === 0 || target === 'list' || target === 'lista') {
+                await startEventsInteractiveSelection(ctx);
+                return;
+            }
+
+            // Try to parse page number at the end
+            let page = 1;
+            let npcTarget = remainder.join(' ');
+            const lastArg = remainder[remainder.length - 1];
+            if (remainder.length > 1 && !isNaN(parseInt(lastArg))) {
+                page = parseInt(lastArg);
+                npcTarget = remainder.slice(0, -1).join(' ');
+            }
+
+            const found = await showNpcEventsByIdentifier(ctx, npcTarget, page);
+            if (!found) {
+                await ctx.message.reply(`❌ NPC **${npcTarget}** non trovato.`);
+            }
+            return;
+        }
+
         const generateDossierEmbed = (npc: any) => {
             const statusIcon = npc.status === 'DEAD' ? '💀' : npc.status === 'MISSING' ? '❓' : '👤';
             const statusColor = npc.status === 'DEAD' ? "#FF0000" : npc.status === 'MISSING' ? "#FFFF00" : "#00FF00";
@@ -640,39 +666,15 @@ export const npcCommand: Command = {
         }
 
         // SUBCOMMAND: events - $npc <name/#id> events [page]
-        // Pattern: last arg is 'events' or second-to-last is 'events' followed by page number
+        // Pattern: something events [page]
         const eventsMatch = argsStr.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
         if (eventsMatch) {
-            let npcIdentifier = eventsMatch[1].trim();
+            const target = eventsMatch[1].trim();
             const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
 
-            // Resolve short ID
-            const sidMatch = npcIdentifier.match(/^#([a-z0-9]{5})$/i);
-            if (sidMatch) {
-                const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
-                if (npc) npcIdentifier = npc.name;
-                else {
-                    await ctx.message.reply(`❌ NPC con ID \`#${sidMatch[1]}\` non trovato.`);
-                    return;
-                }
-            }
-
-            // Verify NPC exists
-            const npc = getNpcEntry(ctx.activeCampaign!.id, npcIdentifier);
-            if (!npc) {
-                await ctx.message.reply(`❌ NPC **${npcIdentifier}** non trovato.`);
-                return;
-            }
-
-            await showEntityEvents(ctx, {
-                tableName: 'npc_history',
-                entityKeyColumn: 'npc_name',
-                entityKeyValue: npc.name,
-                campaignId: ctx.activeCampaign!.id,
-                entityDisplayName: npc.name,
-                entityEmoji: '👤'
-            }, page);
-            return;
+            const found = await showNpcEventsByIdentifier(ctx, target, page);
+            if (found) return;
+            // If not found, fall through - maybe it's an NPC named "something events"?
         }
 
         // SETTER: $npc Nome | Descrizione
@@ -686,6 +688,12 @@ export const npcCommand: Command = {
         // --- GETTER: $npc Nome / #abcde ---
         // Check if it's a list command first
         if (!firstArg || firstArg === 'list' || firstArg === 'lista') {
+            // Check if user specifically asked for events list
+            if (ctx.args.includes('events')) {
+                await startEventsInteractiveSelection(ctx);
+                return;
+            }
+
             let initialPage = 1;
             if (argsStr) {
                 const listParts = argsStr.split(' ');
@@ -853,3 +861,95 @@ export const npcCommand: Command = {
         await ctx.message.reply({ embeds: [dossierEmbed] });
     }
 };
+
+/**
+ * Helper to show events for an NPC by name or ID
+ */
+async function showNpcEventsByIdentifier(ctx: CommandContext, identifier: string, page: number = 1): Promise<boolean> {
+    let npcIdentifier = identifier.trim();
+
+    // Resolve short ID
+    const sidMatch = npcIdentifier.match(/^#([a-z0-9]{5})$/i);
+    if (sidMatch) {
+        const npc = getNpcByShortId(ctx.activeCampaign!.id, sidMatch[1]);
+        if (npc) npcIdentifier = npc.name;
+        else {
+            await ctx.message.reply(`❌ NPC con ID \`#${sidMatch[1]}\` non trovato.`);
+            return true;
+        }
+    }
+
+    // Verify NPC exists
+    const npc = getNpcEntry(ctx.activeCampaign!.id, npcIdentifier);
+    if (!npc) return false;
+
+    await showEntityEvents(ctx, {
+        tableName: 'npc_history',
+        entityKeyColumn: 'npc_name',
+        entityKeyValue: npc.name,
+        campaignId: ctx.activeCampaign!.id,
+        entityDisplayName: npc.name,
+        entityEmoji: '👤'
+    }, page);
+    return true;
+}
+
+/**
+ * Interactive selection for NPC events
+ */
+async function startEventsInteractiveSelection(ctx: CommandContext) {
+    const ITEMS_PER_PAGE = 25;
+    const npcs = listNpcs(ctx.activeCampaign!.id, ITEMS_PER_PAGE, 0);
+    const total = countNpcs(ctx.activeCampaign!.id);
+
+    if (total === 0) {
+        await ctx.message.reply("L'archivio NPC è vuoto.");
+        return;
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle("👤 Selezione NPC per Cronologia")
+        .setColor("#9B59B6")
+        .setDescription("Seleziona un NPC dal menu a tendina per vederne la cronologia degli eventi.");
+
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_npc_events')
+        .setPlaceholder('🔍 Seleziona un NPC...')
+        .addOptions(
+            npcs.map((n: any) =>
+                new StringSelectMenuOptionBuilder()
+                    .setLabel(n.name)
+                    .setDescription(n.role || 'Senza ruolo')
+                    .setValue(n.name)
+                    .setEmoji(n.status === 'DEAD' ? '💀' : n.status === 'MISSING' ? '❓' : '👤')
+            )
+        );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    const reply = await ctx.message.reply({
+        embeds: [embed],
+        components: [row]
+    });
+
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000 * 5
+    });
+
+    collector.on('collect', async (interaction: MessageComponentInteraction) => {
+        if (interaction.user.id !== ctx.message.author.id) {
+            await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
+            return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_npc_events') {
+            const selectedName = interaction.values[0];
+            const npc = getNpcEntry(ctx.activeCampaign!.id, selectedName);
+            if (npc) {
+                await interaction.update({ content: `✅ Mostro eventi per **${npc.name}**...`, embeds: [], components: [] });
+                await showNpcEventsByIdentifier(ctx, npc.name, 1);
+            }
+        }
+    });
+}

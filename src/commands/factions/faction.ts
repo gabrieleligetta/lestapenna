@@ -60,6 +60,32 @@ export const factionCommand: Command = {
             return;
         }
 
+        // 🆕 Events Subcommand: $faction events [nome/ID] [pagina]
+        if (firstArg?.toLowerCase() === 'events' || firstArg?.toLowerCase() === 'eventi') {
+            const remainder = ctx.args.slice(1);
+            const target = remainder.join(' ').trim().toLowerCase();
+
+            if (remainder.length === 0 || target === 'list' || target === 'lista') {
+                await startFactionEventsInteractiveSelection(ctx);
+                return;
+            }
+
+            // Try to parse page number at the end
+            let page = 1;
+            let factionTarget = remainder.join(' ');
+            const lastArg = remainder[remainder.length - 1];
+            if (remainder.length > 1 && !isNaN(parseInt(lastArg))) {
+                page = parseInt(lastArg);
+                factionTarget = remainder.slice(0, -1).join(' ');
+            }
+
+            const found = await showFactionEventsByIdentifier(ctx, factionTarget, page);
+            if (!found) {
+                await ctx.message.reply(`❌ Fazione **${factionTarget}** non trovata.`);
+            }
+            return;
+        }
+
         // Helper: Generate faction detail embed
         const generateFactionEmbed = (faction: FactionEntry) => {
             const typeIcon = FACTION_TYPE_ICONS[faction.type] || '⚔️';
@@ -727,39 +753,17 @@ export const factionCommand: Command = {
         }
 
         // =============================================
-        // SUBCOMMAND: events
+        // SUBCOMMAND: events - $faction <nome/#id> events [page]
         // =============================================
-        const eventsMatch = argsStr.match(/^(.+?)\s+events(?:\s+(\d+))?$/i);
+        const eventsMatch = argsStr.match(/^(.+?)\s+(events|eventi)(?:\s+(\d+))?$/i);
         if (eventsMatch) {
             let factionIdentifier = eventsMatch[1].trim();
-            const page = eventsMatch[2] ? parseInt(eventsMatch[2]) : 1;
+            const page = eventsMatch[3] ? parseInt(eventsMatch[3]) : 1;
 
-            // Resolve short ID
-            const sidMatch = factionIdentifier.match(/^#([a-z0-9]{5})$/i);
-            if (sidMatch) {
-                const faction = factionRepository.getFactionByShortId(campaignId, sidMatch[1]);
-                if (faction) factionIdentifier = faction.name;
-                else {
-                    await ctx.message.reply(`❌ Fazione con ID \`#${sidMatch[1]}\` non trovata.`);
-                    return;
-                }
-            }
-
-            // Verify faction exists
-            const faction = factionRepository.getFaction(campaignId, factionIdentifier);
-            if (!faction) {
+            const found = await showFactionEventsByIdentifier(ctx, factionIdentifier, page);
+            if (!found) {
                 await ctx.message.reply(`❌ Fazione **${factionIdentifier}** non trovata.`);
-                return;
             }
-
-            await showEntityEvents(ctx, {
-                tableName: 'faction_history',
-                entityKeyColumn: 'faction_name',
-                entityKeyValue: faction.name,
-                campaignId: campaignId,
-                entityDisplayName: faction.name,
-                entityEmoji: '⚔️'
-            }, page);
             return;
         }
 
@@ -889,3 +893,100 @@ export const factionCommand: Command = {
         await ctx.message.reply({ embeds: [embed] });
     }
 };
+
+/**
+ * Helper: Resolve faction identifier and show events
+ */
+async function showFactionEventsByIdentifier(ctx: CommandContext, identifier: string, page: number = 1): Promise<boolean> {
+    const campaignId = ctx.activeCampaign!.id;
+    let faction: FactionEntry | null = null;
+
+    // Resolve short ID
+    const sidMatch = identifier.trim().match(/^#?([a-z0-9]{5})$/i);
+    if (sidMatch) {
+        faction = factionRepository.getFactionByShortId(campaignId, sidMatch[1]);
+    }
+
+    if (!faction) {
+        faction = factionRepository.getFaction(campaignId, identifier.trim());
+    }
+
+    if (!faction) return false;
+
+    await showEntityEvents(ctx, {
+        tableName: 'faction_history',
+        entityKeyColumn: 'faction_name',
+        entityKeyValue: faction.name,
+        campaignId: campaignId,
+        entityDisplayName: faction.name,
+        entityEmoji: '⚔️'
+    }, page);
+
+    return true;
+}
+
+/**
+ * Helper: Interactive selection for faction events
+ */
+async function startFactionEventsInteractiveSelection(ctx: CommandContext) {
+    const campaignId = ctx.activeCampaign!.id;
+    const factions = factionRepository.listFactions(campaignId);
+
+    if (factions.length === 0) {
+        await ctx.message.reply("🛡️ Nessuna fazione registrata in questa campagna.");
+        return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_faction_events')
+        .setPlaceholder('🔍 Seleziona una fazione...')
+        .addOptions(
+            factions.slice(0, 25).map(f => {
+                const icon = FACTION_TYPE_ICONS[f.type] || '⚔️';
+                return new StringSelectMenuOptionBuilder()
+                    .setLabel(f.name.substring(0, 100))
+                    .setDescription(`#${f.short_id} - ${f.type}`)
+                    .setValue(f.name)
+                    .setEmoji(icon);
+            })
+        );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    const reply = await ctx.message.reply({
+        content: "📜 **Seleziona una fazione per vederne la cronologia:**",
+        components: [row]
+    });
+
+    const collector = reply.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000,
+        filter: (i) => i.customId === 'select_faction_events' && i.user.id === ctx.message.author.id
+    });
+
+    collector.on('collect', async (interaction) => {
+        const factionName = interaction.values[0];
+        const faction = factionRepository.getFaction(campaignId, factionName);
+
+        if (faction) {
+            await interaction.update({ content: `⏳ Caricamento eventi per **${faction.name}**...`, components: [] });
+
+            await showEntityEvents(ctx, {
+                tableName: 'faction_history',
+                entityKeyColumn: 'faction_name',
+                entityKeyValue: faction.name,
+                campaignId: campaignId,
+                entityDisplayName: faction.name,
+                entityEmoji: '⚔️'
+            }, 1);
+        } else {
+            await interaction.reply({ content: "❌ Fazione non trovata.", ephemeral: true });
+        }
+    });
+
+    collector.on('end', async (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            await reply.edit({ content: "⏱️ Tempo scaduto per la selezione.", components: [] }).catch(() => { });
+        }
+    });
+}

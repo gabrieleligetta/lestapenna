@@ -23,6 +23,13 @@ export const eventRepository = {
             params.timestamp = timestamp;
         }
 
+        if (tableName === 'world_history') {
+            sets.push('rag_sync_needed = 1');
+        }
+        // World history is handled directly by EventRepository (it sets rag_sync_needed on the row)
+
+        // Character history sync is complex, often manual or strictly session based.
+
         const res = db.prepare(`
             UPDATE ${tableName} 
             SET ${sets.join(', ')} 
@@ -77,6 +84,11 @@ export const eventRepository = {
             columns += `, ${secondaryEntityColumn}`;
             values += `, @secondaryEntityValue`;
             params.secondaryEntityValue = secondaryEntityValue;
+        }
+
+        if (tableName === 'world_history') {
+            columns += `, rag_sync_needed`;
+            values += `, 1`;
         }
 
         columns += `)`;

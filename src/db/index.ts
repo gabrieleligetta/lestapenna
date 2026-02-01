@@ -163,6 +163,7 @@ export const getQuestHistory = questRepository.getQuestHistory;
 export const getDirtyQuests = questRepository.getDirtyQuests;
 export const clearQuestDirtyFlag = questRepository.clearQuestDirtyFlag;
 export const getQuestByShortId = questRepository.getQuestByShortId;
+export const markQuestDirty = questRepository.markQuestDirty;
 
 // Inventory
 export const addLoot = inventoryRepository.addLoot;
@@ -177,6 +178,7 @@ export const getInventoryHistory = inventoryRepository.getInventoryHistory;
 export const getDirtyInventoryItems = inventoryRepository.getDirtyInventoryItems;
 export const clearInventoryDirtyFlag = inventoryRepository.clearInventoryDirtyFlag;
 export const getInventoryItemByShortId = inventoryRepository.getInventoryItemByShortId;
+export const markInventoryDirty = inventoryRepository.markInventoryDirty;
 export const deleteInventoryHistory = inventoryRepository.deleteInventoryHistory;
 
 // Character

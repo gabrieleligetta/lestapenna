@@ -15,7 +15,18 @@ import {
     CollectorFilter
 } from 'discord.js';
 import { CommandContext } from '../types';
-import { db, eventRepository, sessionRepository } from '../../db';
+import {
+    db,
+    eventRepository,
+    sessionRepository,
+    markNpcDirty,
+    markAtlasDirty,
+    markInventoryDirty,
+    markFactionDirty,
+    markWorldEventDirty,
+    markArtifactDirty,
+    markQuestDirty
+} from '../../db';
 import { EntityEventsConfig, showEntityEvents, EVENT_TYPE_ICONS } from './eventsViewer';
 
 // Helper to get event types based on table name
@@ -36,6 +47,60 @@ function getEventTypesForEntity(tableName: string): string[] {
         return ['REPUTATION_CHANGE', 'MEMBER_JOIN', 'MEMBER_LEAVE', 'NOTE'];
     }
     return ['NOTE', 'EVENT', 'UPDATE'];
+}
+
+/**
+ * Helper to mark entity as dirty for RAG Sync based on table name
+ */
+function markEntityDirty(tableName: string, campaignId: number, entityValue: string) {
+    try {
+        if (tableName === 'npc_history') {
+            markNpcDirty(campaignId, entityValue);
+        } else if (tableName === 'location_history') {
+            // location_history uses macro_location usually, but Atlas functions might need macro or both.
+            // EntityKeyValue for Atlas in these configs is usually "Macro - Micro" or just Macro depending on setup.
+            // BUT `atlas.ts` config sets `entityKeyColumn: 'macro_location', entityKeyValue: entry.macro_location`
+            // AND `secondaryKeyColumn: 'micro_location', secondaryKeyValue: entry.micro_location`
+            // markAtlasDirty needs (campaignId, macro, micro).
+            // We need access to secondary value if available.
+            // This helper receives `entityValue` which matches `entityKeyValue` from config.
+            // For Atlas, that's Macro Location.
+            // We need to fetch the config context or pass it in.
+            // Let's refactor this to take the whole config object.
+        }
+    } catch (e) {
+        console.error(`Error marking dirty for ${tableName}:`, e);
+    }
+}
+
+/**
+ * Marks an entity as dirty based on configuration
+ */
+function markDirtyByConfig(config: EntityEventsConfig) {
+    try {
+        if (config.tableName === 'npc_history') {
+            markNpcDirty(config.campaignId, config.entityKeyValue);
+        } else if (config.tableName === 'location_history') {
+            // Atlas requires Macro + Micro
+            if (config.secondaryKeyValue) {
+                markAtlasDirty(config.campaignId, config.entityKeyValue, config.secondaryKeyValue);
+            }
+        } else if (config.tableName === 'item_history' || config.tableName === 'inventory_history') {
+            markInventoryDirty(config.campaignId, config.entityKeyValue);
+        } else if (config.tableName === 'artifact_history') {
+            // Artifacts usually share item_history but if separate table:
+            markArtifactDirty(config.campaignId, config.entityKeyValue);
+        } else if (config.tableName === 'faction_history') {
+            markFactionDirty(config.campaignId, config.entityKeyValue);
+        } else if (config.tableName === 'quest_history') {
+            markQuestDirty(config.campaignId, config.entityKeyValue);
+        } else if (config.tableName === 'world_history') {
+            // Handled by EventRepository
+        }
+        // Character history sync is complex, often manual or strictly session based.
+    } catch (e) {
+        console.error(`[EventInteractive] Failed to mark dirty:`, e);
+    }
 }
 
 /**
@@ -353,6 +418,9 @@ async function handleModalSubmit(interaction: MessageComponentInteraction, confi
             await submission.reply({ content: `✅ Evento aggiornato!`, ephemeral: false });
         }
 
+        // Mark Dirty for RAG Sync
+        markDirtyByConfig(config);
+
     } catch (e) {
         console.error("Modal error", e);
     }
@@ -556,6 +624,9 @@ async function confirmAndDelete(ctx: CommandContext, config: EntityEventsConfig,
         if (i.customId === 'confirm_del') {
             eventRepository.deleteEvent(config.tableName, event.id);
             await i.update({ content: `✅ Evento eliminato.`, components: [] });
+
+            // Mark Dirty for RAG Sync
+            markDirtyByConfig(config);
         } else {
             await i.update({ content: "Operazione annullata.", components: [] });
         }

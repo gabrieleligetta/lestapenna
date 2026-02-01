@@ -8,7 +8,7 @@ import { CommandContext } from '../types';
 import { db } from '../../db';
 
 // Event type icons mapping
-const EVENT_TYPE_ICONS: Record<string, string> = {
+export const EVENT_TYPE_ICONS: Record<string, string> = {
     // NPC events
     'ALLIANCE': '🤝',
     'BETRAYAL': '🗡️',

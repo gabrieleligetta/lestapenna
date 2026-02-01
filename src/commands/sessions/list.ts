@@ -1,6 +1,6 @@
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { getAvailableSessions } from '../../db';
+import { getAvailableSessions, getSessionAIOutput } from '../../db';
 
 export const listCommand: Command = {
     name: 'list',
@@ -63,38 +63,90 @@ export const listCommand: Command = {
             return row;
         };
 
+        const generateSelectMenu = (page: number) => {
+            const start = page * ITEMS_PER_PAGE;
+            const end = start + ITEMS_PER_PAGE;
+            const currentSessions = sessions.slice(start, end);
+
+            const select = new StringSelectMenuBuilder()
+                .setCustomId('select_session')
+                .setPlaceholder('🔍 Seleziona sessione per dettagli...')
+                .addOptions(
+                    currentSessions.map(s => ({
+                        label: s.title ? s.title.substring(0, 100) : `Sessione ${new Date(s.start_time).toLocaleDateString()}`,
+                        description: `ID: ${s.session_id} | Frammenti: ${s.fragments}`,
+                        value: s.session_id,
+                        emoji: '📜'
+                    }))
+                );
+            return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+        };
+
+        const generateComponents = (page: number) => {
+            const comps: any[] = [];
+            if (totalPages > 1) comps.push(generateButtons(page));
+            comps.push(generateSelectMenu(page));
+            return comps;
+        };
+
         const reply = await message.reply({
             embeds: [generateEmbed(currentPage)],
-            components: totalPages > 1 ? [generateButtons(currentPage)] : []
+            components: generateComponents(currentPage)
         });
 
-        if (totalPages > 1) {
-            const collector = reply.createMessageComponentCollector({
-                componentType: ComponentType.Button,
-                time: 60000
-            });
+        const collector = reply.createMessageComponentCollector({
+            time: 60000
+        });
 
-            collector.on('collect', async (interaction: MessageComponentInteraction) => {
-                if (interaction.user.id !== message.author.id) {
-                    await interaction.reply({ content: "Solo chi ha invocato il comando può sfogliare le pagine.", ephemeral: true });
-                    return;
-                }
+        collector.on('collect', async (interaction: MessageComponentInteraction) => {
+            if (interaction.user.id !== message.author.id) {
+                await interaction.reply({ content: "Solo chi ha invocato il comando può interagire.", ephemeral: true });
+                return;
+            }
 
+            if (interaction.isButton()) {
                 if (interaction.customId === 'prev_page') {
-                    currentPage--;
+                    currentPage = Math.max(0, currentPage - 1);
                 } else if (interaction.customId === 'next_page') {
-                    currentPage++;
+                    currentPage = Math.min(totalPages - 1, currentPage + 1);
                 }
 
                 await interaction.update({
                     embeds: [generateEmbed(currentPage)],
-                    components: [generateButtons(currentPage)]
+                    components: generateComponents(currentPage)
                 });
-            });
+            } else if (interaction.isStringSelectMenu()) {
+                if (interaction.customId === 'select_session') {
+                    const selectedId = interaction.values[0];
+                    const session = sessions.find(s => s.session_id === selectedId);
 
-            collector.on('end', () => {
-                reply.edit({ components: [] }).catch(() => { });
-            });
-        }
+                    if (session) {
+                        // Fetch detailed summary data
+                        const aiData = getSessionAIOutput(session.session_id);
+                        const narrativeBrief = aiData?.summaryData?.narrativeBrief;
+
+                        const embed = new EmbedBuilder()
+                            .setTitle(session.title ? `📜 ${session.title.substring(0, 250)}` : "📜 Dettagli Sessione")
+                            .setColor("#3498DB")
+                            .setDescription(narrativeBrief ? `### 📝 Riassunto\n${narrativeBrief}` : "*Nessun riassunto disponibile.*")
+                            .addFields(
+                                { name: "🆔 ID", value: `\`${session.session_id}\``, inline: true },
+                                { name: "📅 Data", value: new Date(session.start_time).toLocaleString(), inline: true },
+                                { name: "🧩 Frammenti", value: session.fragments.toString(), inline: true },
+                                { name: "🌍 Campagna", value: session.campaign_name || "N/A", inline: true }
+                            )
+                            .setFooter({ text: "Usa $transcript per il verbale completo." });
+
+                        await interaction.reply({ embeds: [embed], ephemeral: true });
+                    } else {
+                        await interaction.reply({ content: "Sessione non trovata.", ephemeral: true });
+                    }
+                }
+            }
+        });
+
+        collector.on('end', () => {
+            reply.edit({ components: [] }).catch(() => { });
+        });
     }
 };

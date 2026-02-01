@@ -33,7 +33,7 @@ import {
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
-import { startInteractiveNpcAdd, startInteractiveNpcUpdate, startInteractiveNpcDelete } from './interactiveUpdate';
+import { startInteractiveNpcAdd, startInteractiveNpcUpdate, startInteractiveNpcDelete, startInteractiveEventsAdd, startInteractiveEventsUpdate, startInteractiveEventsDelete } from './interactiveUpdate';
 
 export const npcCommand: Command = {
     name: 'npc',
@@ -76,7 +76,9 @@ export const npcCommand: Command = {
                 // Let's rely on Resolving IF provided, else fail/ask.
 
                 if (!targetIdentifier) {
-                    await ctx.message.reply(`❌ Specifica un NPC: \`$npc events ${action} <Nome>\``);
+                    if (mode === 'ADD') await startInteractiveEventsAdd(ctx);
+                    else if (mode === 'UPDATE') await startInteractiveEventsUpdate(ctx);
+                    else await startInteractiveEventsDelete(ctx);
                     return;
                 }
 

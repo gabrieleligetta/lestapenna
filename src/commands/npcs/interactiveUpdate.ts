@@ -17,8 +17,10 @@ import {
     getNpcEntry,
     markNpcDirty,
     factionRepository,
-    deleteNpcEntry // Ensure this is imported
+    deleteNpcEntry, // Ensure this is imported
 } from '../../db';
+import { handleEventAdd, handleEventUpdate, handleEventDelete } from '../utils/eventInteractive';
+import { EntityEventsConfig } from '../utils/eventsViewer';
 
 export async function startInteractiveNpcUpdate(ctx: CommandContext) {
     if (ctx.args.length > 0) {
@@ -61,6 +63,18 @@ export async function startInteractiveNpcDelete(ctx: CommandContext) {
     }
 
     await showNpcSelection(ctx, null, null, 'DELETE');
+}
+
+export async function startInteractiveEventsAdd(ctx: CommandContext) {
+    await showNpcSelection(ctx, null, null, 'EVENTS_ADD');
+}
+
+export async function startInteractiveEventsUpdate(ctx: CommandContext) {
+    await showNpcSelection(ctx, null, null, 'EVENTS_UPDATE');
+}
+
+export async function startInteractiveEventsDelete(ctx: CommandContext) {
+    await showNpcSelection(ctx, null, null, 'EVENTS_DELETE');
 }
 
 export async function startInteractiveNpcAdd(ctx: CommandContext) {
@@ -185,7 +199,7 @@ export async function startInteractiveNpcAdd(ctx: CommandContext) {
     });
 }
 
-async function showNpcSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null, mode: 'UPDATE' | 'DELETE') {
+async function showNpcSelection(ctx: CommandContext, searchQuery: string | null, interactionToUpdate: any | null, mode: 'UPDATE' | 'DELETE' | 'EVENTS_ADD' | 'EVENTS_UPDATE' | 'EVENTS_DELETE') {
     let npcs: any[] = [];
 
     if (searchQuery) {
@@ -221,7 +235,11 @@ async function showNpcSelection(ctx: CommandContext, searchQuery: string | null,
             .setEmoji('🔍')
     );
 
-    const actionText = mode === 'DELETE' ? "Eliminazione" : "Aggiornamento";
+    const actionText = mode === 'DELETE' ? "Eliminazione" :
+        mode === 'EVENTS_ADD' ? "Aggiunta Evento" :
+            mode === 'EVENTS_UPDATE' ? "Modifica Evento" :
+                mode === 'EVENTS_DELETE' ? "Eliminazione Evento" :
+                    "Aggiornamento";
     const npcSelect = new StringSelectMenuBuilder()
         .setCustomId('npc_update_select_entity')
         .setPlaceholder(searchQuery ? `Risultati per: ${searchQuery}` : `🔍 Seleziona un NPC per ${actionText.toLowerCase()}...`)
@@ -288,11 +306,32 @@ async function showNpcSelection(ctx: CommandContext, searchQuery: string | null,
 
             // Refetch fresh to be safe
             const freshNpc = getNpcEntry(ctx.activeCampaign!.id, npc.name);
-
             if (mode === 'DELETE') {
                 // Clean up the selection message first? Or replace it.
                 // showDeleteConfirmation usually updates the interaction.
                 if (freshNpc) await showDeleteConfirmation(interaction, freshNpc, ctx);
+            } else if (['EVENTS_ADD', 'EVENTS_UPDATE', 'EVENTS_DELETE'].includes(mode)) {
+                if (freshNpc) {
+                    await interaction.deferUpdate(); // Acknowledge
+                    await interaction.message.delete().catch(() => { });
+
+                    const config: EntityEventsConfig = {
+                        tableName: 'npc_history',
+                        entityKeyColumn: 'npc_name',
+                        entityKeyValue: freshNpc.name,
+                        campaignId: ctx.activeCampaign!.id,
+                        entityDisplayName: freshNpc.name,
+                        entityEmoji: '👤'
+                    };
+
+                    if (mode === 'EVENTS_ADD') {
+                        await handleEventAdd(ctx, config);
+                    } else if (mode === 'EVENTS_UPDATE') {
+                        await handleEventUpdate(ctx, config);
+                    } else {
+                        await handleEventDelete(ctx, config);
+                    }
+                }
             } else {
                 if (freshNpc) await showFieldSelection(interaction, freshNpc, ctx);
             }

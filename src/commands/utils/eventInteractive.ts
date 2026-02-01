@@ -16,7 +16,27 @@ import {
 } from 'discord.js';
 import { CommandContext } from '../types';
 import { db, eventRepository, sessionRepository } from '../../db';
-import { EntityEventsConfig, showEntityEvents } from './eventsViewer';
+import { EntityEventsConfig, showEntityEvents, EVENT_TYPE_ICONS } from './eventsViewer';
+
+// Helper to get event types based on table name
+function getEventTypesForEntity(tableName: string): string[] {
+    if (tableName === 'npc_history') {
+        return ['ALLIANCE', 'BETRAYAL', 'DEATH', 'REVELATION', 'STATUS_CHANGE', 'NOTE'];
+    } else if (tableName === 'character_history') {
+        return ['GROWTH', 'TRAUMA', 'ACHIEVEMENT', 'GOAL_CHANGE', 'BACKGROUND', 'RELATIONSHIP', 'NOTE'];
+    } else if (tableName === 'item_history' || tableName === 'artifact_history') {
+        return ['LOOT', 'USE', 'TRADE', 'LOST', 'NOTE', 'DISCOVERY'];
+    } else if (tableName === 'quest_history') {
+        return ['PROGRESS', 'COMPLETE', 'FAIL', 'OPEN', 'CLOSED', 'NOTE'];
+    } else if (tableName === 'bestiary_history') {
+        return ['ENCOUNTER', 'KILL', 'NOTE'];
+    } else if (tableName === 'location_history') {
+        return ['VISIT', 'DISCOVERY', 'NOTE'];
+    } else if (tableName === 'faction_history') {
+        return ['REPUTATION_CHANGE', 'MEMBER_JOIN', 'MEMBER_LEAVE', 'NOTE'];
+    }
+    return ['NOTE', 'EVENT', 'UPDATE'];
+}
 
 /**
  * Handles the main `$entity events` command routing
@@ -144,7 +164,8 @@ export async function handleEventAdd(ctx: CommandContext, config: EntityEventsCo
     // Create collector
     const collector = reply.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
-        time: 60000
+        time: 60000,
+        filter: i => i.customId === 'select_session_add_event' && i.user.id === ctx.message.author.id
     });
 
     collector.on('collect', async (i: any) => {
@@ -153,16 +174,15 @@ export async function handleEventAdd(ctx: CommandContext, config: EntityEventsCo
             return;
         }
 
+        // Stop this collector so it doesn't process subsequent interactions (like Type Selection)
+        collector.stop('selected');
+
         const sessionId = i.values[0];
 
-        // Show Modal
-        // Note: showModal MUST be called directly on an interaction that hasn't been replied/deferred to yet.
-        // We catch it here.
-        await showAddModalOnInteraction(i, config, sessionId, preFilledContent);
+        // Step 2: Select Event Type
+        await showTypeSelection(i, config, sessionId, 'ADD', preFilledContent);
 
-        // Clean up the selector message
-        await reply.delete().catch(() => { });
-
+        // Do NOT delete `reply` here, as showTypeSelection updates it.
     });
 
     collector.on('end', (collected: any, reason: any) => {
@@ -172,12 +192,71 @@ export async function handleEventAdd(ctx: CommandContext, config: EntityEventsCo
     });
 }
 
-// Helper to show modal on an existing interaction (Select Menu click)
-async function showAddModalOnInteraction(interaction: any, config: EntityEventsConfig, sessionId: string, preFilledContent?: string) {
-    const modalId = `event_add_${sessionId}_${Date.now()}`;
+// Step 2: Type Selection
+async function showTypeSelection(interaction: any, config: EntityEventsConfig, sessionId: string, mode: 'ADD' | 'UPDATE', preFilledContent?: string, eventId?: number) {
+    const types = getEventTypesForEntity(config.tableName);
+
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`select_type_${mode}`)
+        .setPlaceholder('🏷️ Seleziona il tipo di evento...')
+        .addOptions(types.map(t => {
+            const icon = EVENT_TYPE_ICONS[t] || '📋';
+            return new StringSelectMenuOptionBuilder()
+                .setLabel(t)
+                .setValue(t)
+                .setEmoji(icon);
+        }));
+
+    // Add "Custom / Manual" option
+    select.addOptions(new StringSelectMenuOptionBuilder()
+        .setLabel('Altro / Manuale')
+        .setValue('MANUAL')
+        .setEmoji('✏️')
+    );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
+    const content = mode === 'ADD'
+        ? `🏷️ **Che tipo di evento è successo?**`
+        : `🏷️ **Modifica Tipo Evento:**`;
+
+    if (interaction.replied || interaction.deferred) {
+        await interaction.editReply({ content, components: [row] });
+    } else {
+        await interaction.update({ content, components: [row] });
+    }
+
+    const collector = interaction.message.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 60000,
+        filter: (i: any) => i.user.id === interaction.user.id && (i.customId === `select_type_${mode}`)
+    });
+
+    collector.on('collect', async (i: any) => {
+        collector.stop('selected');
+        const selectedType = i.values[0];
+
+        if (mode === 'ADD') {
+            await showAddModal_Final(i, config, sessionId, selectedType, preFilledContent);
+        } else {
+            // Update flow - show modal with pre-filled stuff
+            await showEditModal_Final(i, config, eventId!, selectedType, preFilledContent || "", sessionId);
+        }
+    });
+}
+
+// Final Step: Modal for Description (Add)
+async function showAddModal_Final(interaction: any, config: EntityEventsConfig, sessionId: string, eventType: string, preFilledContent?: string) {
+    // Encode session, type and timestamp in the modal ID for stateless handling
+    const safeType = eventType.substring(0, 20);
+    const modalId = `ev_add|${sessionId}|${safeType}|${Date.now()}`;
+
+    const baseTitle = `Agg. Evento: ${config.entityDisplayName} (S: ${sessionId === 'UNKNOWN_SESSION' ? 'No' : sessionId})`;
+    const title = baseTitle.length > 45 ? baseTitle.substring(0, 42) + '...' : baseTitle;
+
     const modal = new ModalBuilder()
         .setCustomId(modalId)
-        .setTitle(`Agg. Evento: ${config.entityDisplayName} (S: ${sessionId === 'UNKNOWN_SESSION' ? 'No' : sessionId})`);
+        .setTitle(title);
 
     const descInput = new TextInputBuilder()
         .setCustomId('event_description')
@@ -188,27 +267,15 @@ async function showAddModalOnInteraction(interaction: any, config: EntityEventsC
 
     if (preFilledContent) descInput.setValue(preFilledContent.slice(0, 4000));
 
-    const typeInput = new TextInputBuilder()
-        .setCustomId('event_type')
-        .setLabel("Tipo Evento (opzionale)")
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder("Es. ENCOUNTER, NOTE, DISCOVERY")
-        .setRequired(false);
-
-    // No session input needed in modal anymore, it's in the ID
-
-    modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(descInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(typeInput)
-    );
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(descInput));
 
     await interaction.showModal(modal);
-    await handleModalSubmit(interaction, config, modalId, 'ADD', undefined, sessionId);
+    await handleModalSubmit(interaction, config, modalId, 'ADD');
 }
 
 // Fallback helper for text-only invocation if needed (but currently we force flow via select mainly)
 async function showAddModal(ctx: CommandContext, config: EntityEventsConfig, sessionId: string, preFilledContent?: string) {
-    // This needs a button trigger if not interaction based, similar to previous implementation
+    // This needs a button trigger if not interaction based
     const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId('open_event_add_modal_fb')
@@ -226,7 +293,10 @@ async function showAddModal(ctx: CommandContext, config: EntityEventsConfig, ses
             filter: i => i.user.id === ctx.message.author.id && i.customId === 'open_event_add_modal_fb',
             time: 60000
         });
-        await showAddModalOnInteraction(interaction, config, sessionId, preFilledContent);
+
+        // Jump to Type Selection
+        await showTypeSelection(interaction, config, sessionId, 'ADD', preFilledContent);
+
         await reply.delete().catch(() => { });
     } catch (e) {
         await reply.edit({ content: "⏱️ Tempo scaduto.", components: [] });
@@ -234,23 +304,35 @@ async function showAddModal(ctx: CommandContext, config: EntityEventsConfig, ses
 }
 
 
-async function handleModalSubmit(interaction: MessageComponentInteraction, config: EntityEventsConfig, modalId: string, mode: 'ADD' | 'UPDATE', eventId?: number, sessionIdArg?: string) {
+async function handleModalSubmit(interaction: MessageComponentInteraction, config: EntityEventsConfig, modalId: string, mode: 'ADD' | 'UPDATE', eventId?: number) {
     const filter = (i: ModalSubmitInteraction) => i.customId === modalId && i.user.id === interaction.user.id;
     try {
         const submission = await interaction.awaitModalSubmit({ filter, time: 300000 });
 
         const description = submission.fields.getTextInputValue('event_description');
-        const type = submission.fields.getTextInputValue('event_type') || (mode === 'ADD' ? 'MANUAL_NOTE' : undefined);
 
-        // For ADD, sessionId comes from arg. For UPDATE, it might come from modal if we allowed editing it (re-add field if useful?)
-        // In previous implementation UPDATE had session input. Let's keep it for UPDATE.
+        // Extract Session and Type from Modal ID for ADD
+        // Encode format: ev_add|sessionId|type|timestamp
+        let session: string | undefined;
+        let type: string | undefined;
 
-        let session = sessionIdArg;
-        if (mode === 'UPDATE') {
-            try { session = submission.fields.getTextInputValue('event_session'); } catch (e) { }
+        if (mode === 'ADD') {
+            const parts = modalId.split('|');
+            if (parts.length >= 3) {
+                session = parts[1];
+                type = parts[2];
+            }
+        } else {
+            // UPDATE: id is ev_upd|id|type|session|ts
+            const parts = modalId.split('|');
+            if (parts.length >= 4) {
+                // eventId is passed as arg, but let's trust arg
+                type = parts[2];
+                session = parts[3];
+            }
         }
 
-        if (session === 'UNKNOWN_SESSION') session = undefined;
+        if (session === 'UNKNOWN_SESSION' || session === 'undefined') session = undefined;
 
         if (mode === 'ADD') {
             eventRepository.addEvent(
@@ -259,7 +341,7 @@ async function handleModalSubmit(interaction: MessageComponentInteraction, confi
                 config.entityKeyValue,
                 config.campaignId,
                 description,
-                type!,
+                type || 'NOTE',
                 session,
                 undefined, // timestamp
                 config.secondaryKeyColumn,
@@ -322,41 +404,16 @@ export async function handleEventDelete(ctx: CommandContext, config: EntityEvent
 
 // --- Helpers ---
 
+// Show EDIT Options (Type Select)
 async function showEditModal(ctx: CommandContext, config: EntityEventsConfig, event: any) {
-    const modalId = `event_edit_${event.id}_${Date.now()}`;
-    const modal = new ModalBuilder()
-        .setCustomId(modalId)
-        .setTitle(`Modifica Evento #${event.id}`);
+    // We reuse showTypeSelection logic
+    // Just create a dummy interaction or something?
+    // Start with a reply with button to Edit
 
-    const descInput = new TextInputBuilder()
-        .setCustomId('event_description')
-        .setLabel("Descrizione")
-        .setStyle(TextInputStyle.Paragraph)
-        .setValue(event.description)
-        .setRequired(true);
+    // Actually, we can just call showTypeSelection directly if we have an interaction.
+    // If we came from Command line ($npc events update ID), we reply first.
 
-    const typeInput = new TextInputBuilder()
-        .setCustomId('event_type')
-        .setLabel("Tipo")
-        .setStyle(TextInputStyle.Short)
-        .setValue(event.event_type || '')
-        .setRequired(false);
-
-    const sessionInput = new TextInputBuilder()
-        .setCustomId('event_session')
-        .setLabel("Sessione")
-        .setStyle(TextInputStyle.Short)
-        .setValue(event.session_id || '')
-        .setRequired(false);
-
-    modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(descInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(typeInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(sessionInput)
-    );
-
-    // Trigger via button since we are in text command context
-    const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId(`trigger_edit_${event.id}`)
             .setLabel(`📝 Modifica Evento #${event.id}`)
@@ -364,8 +421,8 @@ async function showEditModal(ctx: CommandContext, config: EntityEventsConfig, ev
     );
 
     const reply = await ctx.message.reply({
-        content: `Clicca per modificare l'evento:`,
-        components: [btnRow]
+        content: `Clicca per modificare l'evento #${event.id}:`,
+        components: [row]
     });
 
     try {
@@ -373,12 +430,41 @@ async function showEditModal(ctx: CommandContext, config: EntityEventsConfig, ev
             filter: i => i.user.id === ctx.message.author.id && i.customId === `trigger_edit_${event.id}`,
             time: 60000
         });
-        await interaction.showModal(modal as any);
-        await handleModalSubmit(interaction, config, modalId, 'UPDATE', event.id);
+
+        // Go to Type Selection
+        // Pre-fill content is description.
+        await showTypeSelection(interaction, config, event.session_id || 'UNKNOWN_SESSION', 'UPDATE', event.description, event.id);
+
         await reply.delete().catch(() => { });
+
     } catch (e) {
         await reply.edit({ content: "⏱️ Tempo scaduto.", components: [] });
     }
+}
+
+async function showEditModal_Final(interaction: any, config: EntityEventsConfig, eventId: number, type: string, description: string, session: string) {
+    const safeType = type.substring(0, 20);
+    // Encode UPDATE: ev_upd|id|type|session|ts
+    const modalId = `ev_upd|${eventId}|${safeType}|${session}|${Date.now()}`;
+
+    const baseTitle = `Modifica Evento #${eventId}`;
+    const title = baseTitle.length > 45 ? baseTitle.substring(0, 42) + '...' : baseTitle;
+
+    const modal = new ModalBuilder()
+        .setCustomId(modalId)
+        .setTitle(title);
+
+    const descInput = new TextInputBuilder()
+        .setCustomId('event_description')
+        .setLabel("Descrizione")
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(description)
+        .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(descInput));
+
+    await interaction.showModal(modal);
+    await handleModalSubmit(interaction, config, modalId, 'UPDATE', eventId);
 }
 
 async function startEventSelectionFlow(ctx: CommandContext, config: EntityEventsConfig, mode: 'UPDATE' | 'DELETE') {
@@ -417,7 +503,8 @@ async function startEventSelectionFlow(ctx: CommandContext, config: EntityEvents
 
     const collector = reply.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
-        time: 60000
+        time: 60000,
+        filter: i => i.user.id === ctx.message.author.id && i.customId === `select_event_${mode}`
     });
 
     collector.on('collect', async (i) => {
@@ -435,9 +522,11 @@ async function startEventSelectionFlow(ctx: CommandContext, config: EntityEvents
         }
 
         if (mode === 'UPDATE') {
-            await i.deferUpdate(); // Acknowledge selection
-            await reply.delete().catch(() => { }); // Cleanup selection menu
-            await showEditModal(ctx, config, event); // Launch modal flow
+            collector.stop('selected');
+            // Update Flow
+            // Pass interaction directly to showTypeSelection to update the menu in-place
+            // Note: showTypeSelection will handle update/editReply.
+            await showTypeSelection(i, config, event.session_id || 'UNKNOWN_SESSION', 'UPDATE', event.description, event.id);
         } else {
             // DELETE
             await i.deferUpdate();
@@ -508,36 +597,25 @@ export async function startEventsInteractiveList(ctx: CommandContext, config: En
             time: 60000
         });
 
-        await msg.delete().catch(() => { });
+        // await msg.delete().catch(() => { });
         // We can't use `showModal` on a message component from a *different* interaction easily if we want to chain it 
         // properly without "This interaction has already been acknowledged".
         // But here we just caught the button click. We MUST show modal on THIS interaction.
 
-        const modalId = `event_add_quick_${Date.now()}`;
-        const modal = new ModalBuilder()
-            .setCustomId(modalId)
-            .setTitle(`Aggiungi Evento: ${config.entityDisplayName}`);
+        // Quick Add Flow
+        // 1. Session? Defaults to UNKNOWN or we ask? 
+        // Quick add usually implies fast entry. Let's ask session or default to None if "Quick" is truly quick.
+        // But code re-use: `handleEventAdd` asks session.
+        // Let's just call `handleEventAdd` logic but starting from button click?
 
-        const descInput = new TextInputBuilder()
-            .setCustomId('event_description')
-            .setLabel("Descrizione")
-            .setStyle(TextInputStyle.Paragraph)
-            .setRequired(true);
+        // Actually `startEventsInteractiveList` adds a button.
+        // Upon click, we have an interaction.
+        // We can just call `showTypeSelection` with UNKNOWN_SESSION? 
+        // Or if we want full flow, we can't easily jump back to session select without sending new message.
 
-        const typeInput = new TextInputBuilder()
-            .setCustomId('event_type')
-            .setLabel("Tipo")
-            .setStyle(TextInputStyle.Short)
-            .setValue('MANUAL')
-            .setRequired(false);
+        // Let's do: Type Select (Unknown Session) -> Modal.
 
-        modal.addComponents(
-            new ActionRowBuilder<TextInputBuilder>().addComponents(descInput),
-            new ActionRowBuilder<TextInputBuilder>().addComponents(typeInput)
-        );
-
-        await i.showModal(modal as any);
-        await handleModalSubmit(i as any, config, modalId, 'ADD');
+        await showTypeSelection(i, config, 'UNKNOWN_SESSION', 'ADD'); // Type select will update the message of the button
 
     } catch (e) {
         // Timeout, just remove button

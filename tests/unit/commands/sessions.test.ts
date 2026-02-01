@@ -1,5 +1,5 @@
-
 import { cronacaCommand } from '../../../src/commands/characters/../sessions/cronaca';
+import { listCommand } from '../../../src/commands/sessions/list';
 import { CommandContext } from '../../../src/commands/types';
 import { guildSessions } from '../../../src/state/sessionState';
 
@@ -21,6 +21,10 @@ jest.mock('../../../src/db', () => ({
         getPartyFaction: jest.fn()
     },
     getUserProfile: jest.fn()
+}));
+
+jest.mock('../../../src/services/backup', () => ({
+    getPresignedUrl: jest.fn().mockResolvedValue('https://mocked-url.com')
 }));
 
 // Mock Commands to avoid side effects like Redis
@@ -51,6 +55,7 @@ describe('Session Dashboard (Unified $session)', () => {
             message: {
                 reply: replyMock,
                 author: { id: 'user-123' },
+                guild: { id: 'guild-456' },
             } as any,
             args: [],
             guildId: 'guild-456',
@@ -80,6 +85,27 @@ describe('Session Dashboard (Unified $session)', () => {
                 data: expect.objectContaining({ title: '📜 Archivio Cronache' })
             })],
             components: expect.any(Array)
+        }));
+    });
+
+    it('should show session list and support detailed view with download buttons', async () => {
+        const listMockReply = {
+            createMessageComponentCollector: jest.fn().mockReturnValue({
+                on: jest.fn(),
+                stop: jest.fn()
+            }),
+            edit: jest.fn()
+        };
+        const listReplyMock = jest.fn().mockResolvedValue(listMockReply);
+        const listCtx = { ...mockContext, message: { ...mockContext.message, reply: listReplyMock } as any };
+
+        await listCommand.execute(listCtx);
+
+        // Verify initial list is shown
+        expect(listReplyMock).toHaveBeenCalledWith(expect.objectContaining({
+            embeds: [expect.objectContaining({
+                data: expect.objectContaining({ title: expect.stringContaining('Cronache') })
+            })]
         }));
     });
 });

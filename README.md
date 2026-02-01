@@ -61,21 +61,21 @@ docker-compose up -d
 *Comandi essenziali per l'uso quotidiano durante la sessione.*
 
 #### ℹ️ Generale
-*   `$aiuto` / `$help`: Mostra la lista rapida dei comandi.
-*   `$stato`: Verifica lo stato delle code di elaborazione (es. trascrizioni in corso).
-*   `$metriche`: Visualizza statistiche tecniche della sessione (utilizzo token, costi, durata).
+*   `$aiuto` / `$help`: Guida rapida e interattiva ai comandi.
+*   `$stato`: Verifica lo stato del sistema e delle code di elaborazione (es. trascrizioni).
+*   `$metriche`: Statistiche tecniche (utilizzo token, costi IA, durata).
 
 #### 🎙️ Sessione
-*   `$ascolta [Luogo]` (o `$listen`): Il bot entra in vocale e inizia a registrare.
-    *   Es: `$ascolta Locanda del Puledro Impennato`
+*   `$ascolta` (o `$listen`): Avvia la registrazione con setup interattivo del luogo.
+*   `$stop` (o `$termina`): Chiude la sessione, avvia trascrizione e generazione riassunto.
+*   `$listasessioni` (o `$listsessions`): Sfoglia l'archivio, vedi riassunti e scarica file (audio/testo).
 *   `$pausa` / `$riprendi`: Sospende e riprende la registrazione audio.
-*   `$nota <Testo>`: Inserisce una nota manuale nel log (utile per aiutare l'AI sui nomi propri o eventi chiave).
-*   `$stop` / `$termina`: Chiude la sessione, avvia trascrizione e generazione riassunto.
+*   `$nota <Testo>`: Inserisce una nota rapida nel log per aiutare l'AI.
 
-#### 🌍 Luogo e Atmosfera
-*   `$luogo`: Mostra dove si trova il gruppo attualmente.
-*   `$luogo <Regione> | <Dettaglio>`: Imposta manualmente la posizione attuale.
-    *   Es: `$luogo Neverwinter | I Quartieri Alti`
+#### 🌍 Mondo e Calendario
+*   `$setworld` (o `$mondo`): **Menu Configurazione** (Anno, Luogo attuale, Nome Party).
+*   `$luogo`: Mostra la posizione attuale del gruppo.
+*   `$timeline` (o `$cronologia`): Sfoglia la storia del mondo.
 
 #### 📜 Narrazione e Storia
 *   `$racconta <ID> [tono] [force]`: Rigenera il riassunto di una sessione passata. Aggiungi `force` per rigenerare anche il testo AI.
@@ -96,56 +96,24 @@ docker-compose up -d
 *Strumenti di world-building per il DM. Interfaccia unificata per tutte le entità.*
 
 #### 🧩 Sintassi Unificata Entità
-Le entità (**NPC, Quest, Luoghi, Oggetti, Mostri, Fazioni**) condividono gli stessi comandi base:
-*   `$comando list`: Elenco completo.
-*   `$comando #ID`: Vedi dettagli scheda (es. `$npc 1`).
-*   `$comando <Nome>`: Cerca per nome (es. `$npc Garlon`).
-*   `$comando update <Nome/ID> | <Nota>`: Aggiunge un evento/osservazione alla storia dell'entità.
-*   `$comando delete <Nome/ID>`: Elimina l'entità.
-*   `$comando merge <Old> | <New>`: Unisce due entità (trasferisce storia e dettagli).
-*   `$comando events [page]`: Visualizza lo storico eventi paginato dell'entità.
+Le entità (**NPC, Quest, Atlante, Loot, Bestiario, Fazione**) condividono un'interfaccia interattiva:
+*   `$comando`: Lista e ricerca interattiva di record.
+*   `$comando add`: Creazione guidata di un nuovo elemento.
+*   `$comando update`: Modifica interattiva di campi e note.
+*   `$comando merge`: Unione intelligente di duplicati (interattivo).
+*   `$comando delete`: Eliminazione sicura (interattiva).
+*   `$comando events`: Sfoglia la cronologia degli eventi (interattivo).
+*   `$comando #ID`: Visualizzazione rapida della scheda tramite Short ID.
 
-#### ⚔️ `$faction` (Fazioni)
-*   **Gestione**: `$faction create <Nome> | <Tipo>`, `$faction delete`, `$faction rename`.
-*   **Reputazione**: `$faction rep <Nome> | <Livello>` (OSTILE...ALLEATO).
-*   **Affiliazioni**: Usa `$affiliate npc <NomeNPC> | <Fazione> | <Ruolo>` per legare entità alle fazioni.
-
-#### 👥 `$npc` (Personaggi Non Giocanti)
-*   **Creazione**: `$npc add <Nome> | <Ruolo> | <Descrizione>`
-*   **Alias**: `$npc alias <Nome> | add | <Soprannome>` (es. "Il Rosso").
-*   **Metadati**: `$npc update <Nome> field:<campo> <valore>`
-    *   `field:status`: `ALIVE`, `DEAD`, `MISSING`.
-    *   `field:role`: Cambia ruolo (es. "Re").
-    *   `field:name`: Rinomina e aggiorna RAG.
-*   **Rigenerazione**: `$npc regen <Nome>` (Riscrive la scheda basandosi sulla storia).
-
-#### 🗺️ `$atlante` (Luoghi)
-*   **Aggiornamento**: `$atlante update <Regione> | <Luogo> | <Nota>`
-    *   Es: `$atlante Costa della Spada | Neverwinter | La città è in festa.`
-*   Non richiede creazione esplicita: il primo update o `$luogo` crea la voce.
-
-#### ⚔️ `$quest` (Missioni)
-*   **Nuova**: `$quest add <Titolo>`
-*   **Aggiornamento**: `$quest update <Titolo> | <Progresso>`
-*   **Completamento**: `$quest done <Titolo>` (La segna come completata e la narra).
-
-#### 🎒 `$loot` (Inventario di Gruppo)
-*   **Aggiungi**: `$loot add <Oggetto>`
-*   **Usa/Consuma**: `$loot use <Oggetto>` (Rimuove una quantità).
-*   **Dettagli**: `$loot update <Oggetto> | <Descrizione>`
-
-#### 👹 `$bestiario` (Mostri)
-*   **Aggiornamento**: `$bestiario update <Mostro> | <Osservazione tattica>`
-*   **Lista**: Mostra automaticamente i mostri divisi per stato (Vivi, Sconfitti, Fuggiti).
+> [!TIP]
+> Puoi ancora usare la sintassi rapida per gli aggiornamenti narrativi:
+> `$npc update Garlon | È stato visto parlare con una spia.`
 
 #### 🛡️ `$affiliate` (Affiliazioni)
-*   Collegare NPC o Luoghi a Fazioni:
-    *   `$affiliate npc <Nome> | <Fazione> | <Ruolo>` (MEMBER, LEADER, ALLY, ENEMY, PRISONER).
-    *   `$affiliate location <Luogo> | <Fazione> | <Ruolo>` (CONTROLLED, PRESENCE, BASE).
-    *   `$affiliate remove npc <Nome> | <Fazione>`: Rimuove l'affiliazione.
-*   **Listing**:
-    *   `$affiliate list <Fazione>`: Vedi tutti i membri di una fazione.
-    *   `$affiliate of <NomeNPC/Luogo>`: Vedi le fazioni a cui appartiene un'entità.
+Gestisci i legami tra personaggi/luoghi e le organizzazioni del mondo.
+*   `$affiliate`: Avvia il flusso interattivo di associazione.
+*   `$affiliate list <Fazione>`: Elenca tutti i membri associati.
+*   `$affiliate of <Nome/ID>`: Vedi a quali fazioni appartiene un'entità.
 
 #### ⏳ Timeline e Data
 *   `$data <Anno>`: Imposta l'anno corrente (D.E. positivi, P.E. negativi).

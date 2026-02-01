@@ -1,6 +1,7 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageComponentInteraction, StringSelectMenuBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { getAvailableSessions, getSessionAIOutput } from '../../db';
+import { getPresignedUrl } from '../../services/backup';
 
 export const listCommand: Command = {
     name: 'list',
@@ -132,17 +133,30 @@ export const listCommand: Command = {
                         const aiData = getSessionAIOutput(session.session_id);
                         const narrativeBrief = aiData?.summaryData?.narrativeBrief;
 
+                        // Generate download links
+                        const audioKey = `recordings/${session.session_id}/session_${session.session_id}_master.mp3`;
+                        const transcriptKey = `transcripts/${session.session_id}/transcript_cleaned.txt`;
+
+                        const audioUrl = await getPresignedUrl(audioKey, undefined, 3600 * 24);
+                        const transcriptUrl = await getPresignedUrl(transcriptKey, undefined, 3600 * 24);
+
+                        let downloadLinks = "";
+                        if (audioUrl) downloadLinks += `[🔊 Scarica Audio](${audioUrl}) `;
+                        if (transcriptUrl) downloadLinks += `[📄 Scarica Verbale](${transcriptUrl})`;
+
                         const embed = new EmbedBuilder()
                             .setTitle(session.title ? `📜 ${session.title.substring(0, 250)}` : "📜 Dettagli Sessione")
                             .setColor("#3498DB")
-                            .setDescription(narrativeBrief ? `### 📝 Riassunto\n${narrativeBrief}` : "*Nessun riassunto disponibile.*")
+                            .setDescription(
+                                (narrativeBrief ? `### 📝 Riassunto\n${narrativeBrief}\n\n` : "*Nessun riassunto disponibile.*\n\n") +
+                                (downloadLinks ? `🔗 **Download**\n${downloadLinks}` : "")
+                            )
                             .addFields(
                                 { name: "🆔 ID", value: `\`${session.session_id}\``, inline: true },
                                 { name: "📅 Data", value: new Date(session.start_time).toLocaleString(), inline: true },
                                 { name: "🧩 Frammenti", value: session.fragments.toString(), inline: true },
                                 { name: "🌍 Campagna", value: session.campaign_name || "N/A", inline: true }
-                            )
-                            .setFooter({ text: "Usa $transcript per il verbale completo." });
+                            );
 
                         await interaction.reply({ embeds: [embed], ephemeral: true });
                     } else {

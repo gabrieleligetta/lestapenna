@@ -27,8 +27,8 @@ describe('Help Command', () => {
         const callArgs = replyMock.mock.calls[0][0];
         const embed = callArgs.embeds[0] as EmbedBuilder;
 
-        expect(embed.data.title).toContain('Basic Commands');
-        expect(embed.data.description).toContain('Essential commands');
+        expect(embed.data.title).toContain('Quick Start');
+        expect(embed.data.description).toContain('Welcome to Lestapenna');
     });
 
     it('should show advanced help when "advanced" arg provided', async () => {
@@ -39,11 +39,11 @@ describe('Help Command', () => {
         const callArgs = replyMock.mock.calls[0][0];
         const embed = callArgs.embeds[0] as EmbedBuilder;
 
-        expect(embed.data.title).toContain('Advanced Commands');
+        expect(embed.data.title).toContain('Advanced Tools');
         expect(embed.data.fields).toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ name: expect.stringContaining('Campaigns') }),
-                expect.objectContaining({ name: expect.stringContaining('Danger Zone') })
+                expect.objectContaining({ name: expect.stringContaining('Campaign Management') }),
+                expect.objectContaining({ name: expect.stringContaining('Maintenance & Admin') })
             ])
         );
     });

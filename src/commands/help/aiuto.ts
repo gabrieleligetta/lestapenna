@@ -20,14 +20,20 @@ export const aiutoCommand: Command = {
 
             if (['npc', 'quest', 'atlante', 'loot', 'bestiario', 'atlas', 'faction', 'fazione'].includes(arg)) {
                 embed.setTitle(`🧩 Entità Unificata: $${arg}`)
-                    .setDescription(`Interfaccia comune per la gestione di entità come NPC, Missioni, Luoghi, Oggetti, Mostri e Fazioni.`)
+                    .setDescription(`Interfaccia comune per la gestione di entità. La maggior parte dei sottocomandi è **interattiva**.`)
                     .addFields(
-                        { name: "📋 Lista", value: `\`$${arg}\`: Vede tutti gli elementi (dossier).\n\`$${arg} list\`: Listing esplicito.\n\`$${arg} #ID\`: Visualizza i dettagli di un'entità specifica.` },
-                        { name: "📝 Aggiornamento Narrativo", value: `\`$${arg} update <ID> | <Nota>\`\nAggiunge un aggiornamento o un'osservazione. Innesca la rigenerazione bio via IA.` },
-                        { name: "⚙️ Aggiornamento Metadati", value: `\`$${arg} update <ID> field:<chiave> <valore>\`\nModifica direttamente i campi (es. \`field:status SCONFITTO\`).` },
-                        { name: "🔀 Unione (Merge)", value: `\`$${arg} merge <VecchioID/Nome> | <NuovoID/Nome>\`\nUnisce i duplicati in un unico record.` },
-                        { name: "📜 Storico Eventi", value: `\`$${arg} events [pagina]\`: Visualizza lo storico eventi paginato.` },
-                        { name: "🗑️ Eliminazione", value: `\`$${arg} delete <ID>\`\nRimuove permanentemente l'entità.` }
+                        { name: "🔍 Esplorazione", value: `\`$${arg}\`: Lista e ricerca interattiva.\n\`$${arg} #ID\`: Visualizza il dossier dettagliato.` },
+                        { name: "⚡ Azioni Interattive", value: `\`$${arg} add\`: Crea nuovo.\n\`$${arg} update\`: Modifica campi/narrativa.\n\`$${arg} merge\`: Unisci duplicati.\n\`$${arg} delete\`: Flusso eliminazione.` },
+                        { name: "📜 Gestione Eventi", value: `\`$${arg} events\`: Sfoglia lo storico.\n\`$${arg} events add\`: Aggiungi manualmente un evento.\n\`$${arg} events update\`: Modifica eventi passati.\n\`$${arg} events delete\`: Rimuovi errori dallo storico.\n*Esempio: \`$${arg} events add Garlon\`*` },
+                        { name: "📝 Aggiornamento Rapido Narrativo", value: `\`$${arg} update <ID> | <Nota>\`\nAggiungi un aggiornamento per innescare la rigenerazione bio via IA.` }
+                    );
+            } else if (arg === 'affiliate' || arg === 'affilia') {
+                embed.setTitle(`🛡️ Affiliazioni: $affiliate`)
+                    .setDescription("Gestisci le relazioni tra entità (NPC/Luoghi) e Fazioni.")
+                    .addFields(
+                        { name: "🔍 Consultazione", value: `\`$affiliate list <Fazione>\`: Elenca tutti i membri.\n\`$affiliate of <Entità>\`: Vedi a quali fazioni appartiene un personaggio/luogo.` },
+                        { name: "🤝 Gestione (Interattiva)", value: `\`$affiliate\`: Avvia il flusso di associazione interattiva.` },
+                        { name: "📝 Uso Manuale", value: `\`$affiliate <Tipo> <Nome> | <Fazione> | <Ruolo>\`\nes. \`$affiliate npc Frodo | Compagnia | MEMBER\`` }
                     );
             } else if (arg === 'timeline' || arg === 'cronologia') {
                 embed.setTitle(`⏳ Comando: $timeline`)
@@ -35,47 +41,13 @@ export const aiutoCommand: Command = {
                     .addFields(
                         { name: "📜 Mostra Cronologia", value: `\`$timeline\`: Visualizza la storia cronologica.` },
                         { name: "➕ Aggiungi Evento", value: `\`$timeline add <Anno> | <Tipo> | <Descrizione>\`\nAggiungi una pietra miliare storica.` },
-                        { name: "🏷️ Tipi di Evento", value: `Tipi validi: \`WAR\` (Guerra), \`POLITICS\` (Politica), \`DISCOVERY\` (Scoperta), \`CALAMITY\` (Calamità), \`SUPERNATURAL\` (Sovrannaturale), \`GENERIC\` (Generico).` },
                         { name: "🗑️ Elimina", value: `\`$timeline delete #ID\`: Rimuove un evento usando il suo Short ID.` }
                     );
-            } else if (arg === 'data' || arg === 'date' || arg === 'anno0' || arg === 'year0' || arg === 'setworld' || arg === 'mondo') {
-                embed.setTitle(`📅 Comandi Calendario e Mondo`)
+            } else if (arg === 'setworld' || arg === 'mondo') {
+                embed.setTitle(`🌍 Comando: $setworld`)
+                    .setDescription("Il modo principale per configurare l'ambientazione della tua campagna.")
                     .addFields(
-                        { name: "$setworld", value: "Configura interattivamente anno, luogo e nome del party." },
-                        { name: "$data <Anno>", value: `Imposta l'anno corrente della campagna. Influenza la timeline e le registrazioni.` },
-                        { name: "$anno0 <Descrizione>", value: `Definisce il punto di svolta della storia (Anno 0) e resetta l'anno corrente a 0.` }
-                    );
-            } else if (arg === 'npc') {
-                // Special case for npc alias
-                embed.setTitle(`👥 Speciale NPC: $npc alias`)
-                    .addFields(
-                        { name: "Gestione Soprannomi", value: `\`$npc alias <ID> add <Alias>\`: Aggiunge un nome riconosciuto.\n\`$npc alias <ID> remove <Alias>\`: Rimuove un alias.` }
-                    );
-            } else if (arg === 'loot' || arg === 'unisciitem' || arg === 'mergeitem') {
-                embed.setTitle(`📦 Speciale Inventario`)
-                    .addFields(
-                        { name: "$loot use <ID>", value: `Consuma un oggetto (decrementa il numero o lo rimuove).` },
-                        { name: "$unisciitem <ID1> | <ID2>", value: `Comando legacy per unire oggetti (usa \`$loot merge\` invece).` }
-                    );
-            } else if (arg === 'viaggi' || arg === 'travels') {
-                embed.setTitle(`🗺️ Registro Viaggi: $viaggi fix`)
-                    .addFields(
-                        { name: "Correggi Storico", value: `\`$viaggi fix #ID | <NuovaRegione> | <NuovoLuogo>\`\nCorregge un errore nel registro degli spostamenti.` }
-                    );
-            } else if (arg === 'affiliate' || arg === 'affilia') {
-                embed.setTitle(`🛡️ Affiliazioni: $affiliate`)
-                    .addFields(
-                        { name: "Uso", value: `\`$affiliate <Tipo> <Nome> | <Fazione> | <Ruolo>\`` },
-                        { name: "Listing", value: `\`$affiliate list <Fazione>\`: Vedi membri.\n\`$affiliate of <Entità>\`: Vedi fazioni dell'entità.` },
-                        { name: "Esempi", value: `\`$affiliate npc Frodo | Compagnia | MEMBER\`\n\`$affiliate location Imladris | Elfi | CONTROLLED\`` },
-                        { name: "Ruoli", value: `NPC: MEMBER, LEADER, ALLY, ENEMY, PRISONER\nLocation: CONTROLLED, PRESENCE, BASE` }
-                    );
-            } else if (arg === 'presenze') {
-                embed.setTitle(`👥 NPC in Sessione: $presenze`)
-                    .setDescription(`Visualizza quali NPC erano presenti o hanno interagito durante una sessione.`)
-                    .addFields(
-                        { name: "Sessione Corrente", value: `\`$presenze\`: Mostra gli NPC della sessione attiva.` },
-                        { name: "Sessione Specifica", value: `\`$presenze session_xxxx\`: Mostra gli NPC di una sessione passata.` }
+                        { name: "⚙️ Configurazione Interattiva", value: "Scrivi `$setworld` per aprire il menu di configurazione. Puoi impostare:\n• Anno Corrente\n• Luogo Corrente (Regione e Posto)\n• Nome Fazione del Party" }
                     );
             } else {
                 await ctx.message.reply(`❌ Aiuto dettagliato per \`$${arg}\` non trovato. Usa \`$aiuto\` o \`$aiuto avanzato\`.`);
@@ -89,133 +61,95 @@ export const aiutoCommand: Command = {
         const embed = new EmbedBuilder()
             .setColor("#D4AF37")
             .setFooter({ text: "🇬🇧 For English version: $help" })
-            .setTitle(isAdvanced ? "🔧 Lestapenna - Comandi Avanzati" : "🖋️ Lestapenna - Comandi Base")
+            .setTitle(isAdvanced ? "🔧 Lestapenna - Strumenti Avanzati" : "🖋️ Lestapenna - Guida Rapida")
             .setDescription(isAdvanced
-                ? "Strumenti di potere per Dungeon Master e Admin.\nPer l'uso quotidiano, scrivi `$aiuto`."
-                : "Comandi essenziali per giocatori e consultazione rapida.\nPer strumenti di modifica e admin, scrivi `$aiuto avanzato`.");
+                ? "Strumenti di gestione e amministrazione per i DM."
+                : "Benvenuti su Lestapenna! Ecco i comandi essenziali per iniziare.");
 
         if (isAdvanced) {
             // --- VISTA AVANZATA ---
             embed.addFields(
                 {
-                    name: "🗺️ Campagne",
+                    name: "🗺️ Gestione Campagna",
                     value:
-                        "`$listacampagne`: Lista campagne.\n" +
-                        "`$creacampagna <Nome>`: Nuova campagna.\n" +
-                        "`$selezionacampagna <Nome>`: Attiva campagna."
+                        "`$listacampagne`: Elenco di tutte le campagne.\n" +
+                        "`$creacampagna <Nome>`: Crea una nuova campagna.\n" +
+                        "`$selezionacampagna <Nome>`: Cambia campagna attiva."
                 },
                 {
-                    name: "🧩 Interfaccia Unificata Entità",
+                    name: "🧩 Manutenzione e Admin",
                     value:
-                        "**Entità:** `$npc`, `$quest`, `$atlante`, `$loot`, `$bestiario`, `$faction`\n" +
-                        "• `$cmd list` / `$cmd #ID`: Gestione record.\n" +
-                        "• `$cmd events`: Vedi eventi.\n" +
-                        "• `$cmd update`: Aggiornamenti narrativi o tecnici.\n" +
-                        "• `$cmd merge` / `$cmd delete`: Manutenzione.\n" +
-                        "💡 *Scrivi `$aiuto <entità>` (es. `$aiuto npc`) per i dettagli.*"
+                        "`$setcmd`: Imposta il canale dei comandi.\n" +
+                        "`$autoaggiorna on/off`: Attiva/disattiva aggiornamenti bio auto.\n" +
+                        "`$sync all`: Forza la sincronizzazione RAG per tutti gli NPC.\n" +
+                        "`$metriche`: Visualizza utilizzo e costi IA."
                 },
                 {
-                    name: "👥 Comandi Specifici",
+                    name: "🛠️ Comandi Specializzati",
                     value:
-                        "`$npc alias`: Gestione soprannomi.\n" +
-                        "`$loot use`: Consuma oggetto.\n" +
-                        "`$quest done`: Completa missione.\n" +
-                        "`$viaggi fix`: Correggi storico.\n" +
-                        "`$timeline add`: Crea la storia.\n" +
-                        "`$data` / `$anno0`: Gestione calendario.\n" +
-                        "💡 *Scrivi `$aiuto <comando>` per i dettagli.*"
-                },
-                {
-                    name: "🔧 Admin & Config",
-                    value:
-                        "`$setcmd`: Imposta canale comandi.\n" +
-                        "`$impostasessione <N>`: Forza num sessione.\n" +
-                        "`$autoaggiorna on/off`: Bio PG auto.\n" +
-                        "`$presenze <ID>`: Lista NPC sessione."
+                        "`$timeline add`: Crea eventi storici manuali.\n" +
+                        "`$data <Anno>`: Imposta l'anno corrente.\n" +
+                        "`$anno0 <Desc>`: Definisce il punto di svolta storico.\n" +
+                        "💡 *Scrivi `$aiuto <comando>` (es. `$aiuto affiliate`) per i dettagli.*"
                 }
             );
         } else if (arg === 'dev') {
             // --- VISTA DEVELOPER ---
             embed.setTitle("👨‍💻 Strumenti Sviluppatore")
-                .setDescription("Strumenti di debug e manutenzione. Usa con cautela.")
                 .addFields(
                     {
-                        name: "🧪 Debug & Test",
-                        value:
-                            "`$debug teststream <URL>`: Simula sessione da link.\n" +
-                            "`$debug testmail`: Invia report test via email.\n" +
-                            "`$rebuild CONFIRM`: Re-indicizza intero DB (SOLO DEV).\n" +
-                            "`$stato`: Mostra salute code interna."
+                        name: "🧪 Debug",
+                        value: "`$stato`: Salute code.\n`$debug teststream <URL>`: Simulazione.\n`$rebuild CONFIRM`: Re-indicizza DB."
                     },
                     {
-                        name: "🛠️ Basso Livello",
-                        value:
-                            "`$wipe softwipe`: Pulisce RAG/dati derivati.\n" +
-                            "`$wipe wipe`: DISTRUZIONE TOTALE DATABASE.\n" +
-                            "`$resetpg`: Cancella la tua scheda PG."
+                        name: "⚠️ Danger Zone",
+                        value: "`$wipe softwipe`: Pulisci RAG.\n`$wipe wipe`: DISTRUZIONE DB.\n`$resetpg`: Reset della tua scheda."
                     }
                 );
         } else {
             // --- VISTA BASE ---
             embed.addFields(
                 {
-                    name: "ℹ️ Generale",
+                    name: "🎙️ Sessioni",
                     value:
-                        "`$aiuto`: Mostra questa lista.\n" +
-                        "`$stato`: Salute sistema e code.\n" +
-                        "`$metriche`: Costi e token sessione.\n" +
-                        "`$listasessioni`: Elenco di tutte le sessioni."
+                        "• `$ascolta`: Avvia registrazione (setup interattivo).\n" +
+                        "• `$termina`: Chiudi sessione e genera riassunto.\n" +
+                        "• `$listasessioni`: Sfoglia archivi e scarica verbali."
                 },
                 {
-                    name: "🎙️ Sessione",
+                    name: "🌍 Tracking Mondo",
                     value:
-                        "`$ascolta [Luogo]`: Avvia reg.\n" +
-                        "`$termina`: Chiudi e trascrivi.\n" +
-                        "`$listasessioni`: Elenco sessioni.\n" +
-                        "`$pausa` / `$riprendi`: Controllo reg.\n" +
-                        "`$nota <Testo>`: Nota manuale."
+                        "• `$setworld`: **Menu config** (Anno, Luogo, Party).\n" +
+                        "• `$luogo`: Dove ci troviamo ora?\n" +
+                        "• `$timeline`: Sfoglia la cronologia del mondo."
                 },
                 {
-                    name: "🌍 Luogo & Mondo",
+                    name: "👤 Personaggi e Party",
                     value:
-                        "`$setworld`: Configurazione interattiva mondo.\n" +
-                        "`$luogo`: Dove siamo?\n" +
-                        "`$luogo <Regione> | <Posto>`: Set manuale.\n" +
-                        "`$viaggi`: Diario degli spostamenti."
+                        "• `$sono <Nome>`: Collega te stesso a un personaggio.\n" +
+                        "• `$chisono`: Visualizza la tua scheda.\n" +
+                        "• `$compagni`: Vedi i tuoi alleati."
                 },
                 {
-                    name: "📜 Narrazione",
+                    name: "🧩 Record Unificati (Interattivi)",
                     value:
-                        "`$chiedialbardo <Domanda>`: Chiedi al Bardo.\n" +
-                        "`$wiki <Termine>`: Cerca archivio.\n" +
-                        "`$racconta <ID> [tono]`: Rigenera riassunto.\n" +
-                        "`$timeline`: Mostra storia."
+                        "Gestisci le entità del mondo con questi comandi:\n" +
+                        "**`$npc`, `$quest`, `$loot`, `$atlante`, `$fazione`, `$bestiario`**\n" +
+                        "• Sottocomandi: `add`, `update`, `delete`, `merge`, `events`"
                 },
                 {
-                    name: "👤 Personaggio",
-                    value:
-                        "`$sono <Nome>`: Collega utente-PG.\n" +
-                        "`$chisono`: Vedi tua scheda.\n" +
-                        "`$compagni`: Vedi gruppo.\n" +
-                        "`$miaclasse` / `$miarazza`: Imposta scheda.\n" +
-                        "`$miadesc <Testo>`: Imposta bio manuale.\n" +
-                        "`$storia <Nome>`: Leggi storia PG.\n" +
-                        "`$bio reset [Name]`: Rigenera bio PG.\n" +
-                        "`$presenze`: NPC incontrati in sessione."
+                    name: "🛡️ Legami Fazione",
+                    value: "• `$affiliate`: Gestisci chi appartiene a cosa."
                 },
                 {
-                    name: "🧩 Dossier e Liste",
+                    name: "📖 Narrazione",
                     value:
-                        "`$npc`: Elenco degli NPC.\n" +
-                        "`$quest`: Lista delle missioni.\n" +
-                        "`$loot`: Inventario di gruppo.\n" +
-                        "`$atlante`: Luoghi del mondo.\n" +
-                        "`$bestiario`: Mostri incontrati.\n" +
-                        "`$fazione`: Fazioni e reputazioni."
+                        "• `$chiedialbardo <Argomento>`: Chiedi al Bardo informazioni sul lore.\n" +
+                        "• `$wiki <Termine>`: Cerca negli archivi."
                 },
                 {
-                    name: "🔧 Strumenti Avanzati",
-                    value: "Devi gestire entità, inventario o admin tools?\n👉 **Scrivi `$aiuto avanzato`**"
+                    name: "🔧 Altro",
+                    value: "Per strumenti DM e gestione campagna, scrivi **`$aiuto avanzato`**."
                 }
             );
         }

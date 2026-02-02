@@ -202,7 +202,8 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "event": "Evento significativo per il personaggio",
             "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE",
             "moral_impact": "numero intero da -10 (Malvagio) a +10 (Buono). 0 se neutro.",
-            "ethical_impact": "numero intero da -10 (Caotico) a +10 (Legale). 0 se neutro."
+            "ethical_impact": "numero intero da -10 (Caotico) a +10 (Legale). 0 se neutro.",
+            "faction_id": "ID di 5 caratteri se l'evento riguarda una fazione specifica."
         }
     ],
     // Rimosso character_updates per alignment, ora usiamo gli eventi
@@ -219,7 +220,8 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "event": "Evento chiave che coinvolge questo NPC (es. cambiato fazione, morto, rivelato segreto)",
             "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE",
             "moral_impact": "numero intero da -10 a +10. 0 se neutro.",
-            "ethical_impact": "numero intero da -10 a +10. 0 se neutro."
+            "ethical_impact": "numero intero da -10 a +10. 0 se neutro.",
+            "faction_id": "ID di 5 caratteri se l'evento riguarda una fazione specifica."
         }
     ],
     "world_events": [

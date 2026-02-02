@@ -211,8 +211,31 @@ export async function ingestSessionComplete(
         const chunkText = textToIngest.substring(i, end).trim();
 
         if (chunkText.length > 50) {
+            // NEW: Append Known Entities Metadata to the text (visible to LLM/Search)
+            // This allows searching for "Leosin" and finding "Leosin [#abc12]"
+            let enrichedText = chunkText;
+            const contextAdditions: string[] = [];
+
+            if (summaryResult.present_npcs && summaryResult.present_npcs.length > 0) {
+                // Find NPCs mentioned in this chunk (approximate)
+                const mentionedNpcs = summaryResult.present_npcs.filter(name =>
+                    chunkText.toLowerCase().includes(name.toLowerCase())
+                );
+
+                for (const npcName of mentionedNpcs) {
+                    const npc = getNpcEntry(campaignId, npcName);
+                    if (npc && npc.short_id) {
+                        contextAdditions.push(`${npc.name} [${npc.short_id}]`);
+                    }
+                }
+            }
+
+            if (contextAdditions.length > 0) {
+                enrichedText += `\n\n[ENTITIES: ${contextAdditions.join(', ')}]`;
+            }
+
             chunks.push({
-                text: chunkText,
+                text: enrichedText,
                 timestamp: startTime,
                 macro: mainMacro,
                 micro: mainMicro,

@@ -44,6 +44,9 @@ jest.mock('../../../src/db', () => ({
     },
     getSessionAIOutput: jest.fn(),
     saveSessionAIOutput: jest.fn(),
+    factionRepository: {
+        getPartyFaction: jest.fn().mockReturnValue(null),
+    },
 }));
 
 // Mock Bard Config (AI Clients)

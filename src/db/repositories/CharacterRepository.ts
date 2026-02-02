@@ -1,23 +1,29 @@
 import { db } from '../client';
-import { UserProfile } from '../types';
+import { UserProfile, CharacterHistoryEntry } from '../types';
 
 export const characterRepository = {
-    addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number, moral_weight: number = 0, ethical_weight: number = 0) => {
+    addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number, moral_weight: number = 0, ethical_weight: number = 0, factionId?: number) => {
+        const { factionRepository } = require('../index'); // Lazy load
+
         db.prepare(`
-            INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp, is_manual, moral_weight, ethical_weight)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(campaignId, charName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0, moral_weight, ethical_weight);
+            INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp, is_manual, moral_weight, ethical_weight, faction_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(campaignId, charName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0, moral_weight, ethical_weight, factionId || null);
+
+        // 🆕 Update Faction Alignment if linked
+        if (factionId && (moral_weight !== 0 || ethical_weight !== 0)) {
+            factionRepository.updateFactionAlignmentScore(campaignId, factionId, moral_weight, ethical_weight);
+        }
     },
 
 
 
-    getCharacterHistory: (campaignId: number, charName: string): { description: string, event_type: string, session_id: string }[] => {
+    getCharacterHistory: (campaignId: number, charName: string): CharacterHistoryEntry[] => {
         return db.prepare(`
-            SELECT description, event_type, session_id 
-            FROM character_history 
-            WHERE campaign_id = ? AND character_name = ?
-    ORDER BY timestamp ASC
-        `).all(campaignId, charName) as { description: string, event_type: string, session_id: string }[];
+            SELECT * FROM character_history
+            WHERE campaign_id = ? AND lower(character_name) = lower(?)
+            ORDER BY timestamp ASC
+        `).all(campaignId, charName) as CharacterHistoryEntry[];
     },
 
     getNewCharacterHistory: (

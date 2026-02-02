@@ -304,7 +304,8 @@ export async function validateBatch(
                         // Preserve Critical Metadata from Analyst if missing in Validator output
                         id: outItem.id || match.id,
                         moral_impact: outItem.moral_impact ?? match.moral_impact,
-                        ethical_impact: outItem.ethical_impact ?? match.ethical_impact
+                        ethical_impact: outItem.ethical_impact ?? match.ethical_impact,
+                        faction_id: outItem.faction_id ?? match.faction_id // 🆕 Preserve Faction ID
                     };
                 }
                 return outItem;

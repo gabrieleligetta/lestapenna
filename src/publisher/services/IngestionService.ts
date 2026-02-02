@@ -280,7 +280,8 @@ export class IngestionService {
                 false,
                 timestamp,
                 evt.moral_impact || 0,
-                evt.ethical_impact || 0
+                evt.ethical_impact || 0,
+                evt.faction_id // 🆕 Faction Context
             );
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
             await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG', timestamp);
@@ -314,7 +315,8 @@ export class IngestionService {
                     false,
                     timestamp,
                     evt.moral_impact || 0,
-                    evt.ethical_impact || 0
+                    evt.ethical_impact || 0,
+                    evt.faction_id // 🆕 Faction Context
                 );
                 // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
                 await ingestBioEvent(campaignId, sessionId, npcName, safeDesc, 'NPC', timestamp);

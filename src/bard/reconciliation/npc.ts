@@ -20,19 +20,28 @@ async function aiConfirmSamePersonExtended(
     newName: string,
     newDescription: string,
     candidateName: string,
-    candidateDescription: string
+    candidateDescription: string,
+    cachedContext?: string[] // NEW: Optional cached context from previous search
 ): Promise<boolean> {
 
-    const ragQuery = `Chi è ${newName}? ${newDescription}`;
-    const ragContext = await searchKnowledge(campaignId, ragQuery, 2);
+    let ragContextText = "";
 
-    const relevantFragments = ragContext.filter(f =>
-        f.toLowerCase().includes(candidateName.toLowerCase())
-    );
+    if (cachedContext && cachedContext.length > 0) {
+        // Use pre-fetched context directly (trusting the caller filter)
+        ragContextText = `\nMEMORIA STORICA RILEVANTE (Context Hit):\n${cachedContext.join('\n')}`;
+    } else {
+        // Fallback to internal search
+        const ragQuery = `Chi è ${newName}? ${newDescription}`;
+        const ragContext = await searchKnowledge(campaignId, ragQuery, 2);
 
-    const ragContextText = relevantFragments.length > 0
-        ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
-        : "";
+        const relevantFragments = ragContext.filter(f =>
+            f.toLowerCase().includes(candidateName.toLowerCase())
+        );
+
+        ragContextText = relevantFragments.length > 0
+            ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
+            : "";
+    }
 
     const prompt = AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT(newName, newDescription, candidateName, candidateDescription, ragContextText);
 
@@ -102,7 +111,7 @@ export async function reconcileNpcName(
     }
 
     const newNameClean = stripPrefix(newName.toLowerCase());
-    const candidates: Array<{ npc: any; similarity: number; reason: string }> = [];
+    const candidates: Array<{ npc: any; similarity: number; reason: string; ragEvidence?: string[] }> = [];
 
     for (const npc of existingNpcs) {
         const existingName = npc.name;
@@ -181,10 +190,30 @@ export async function reconcileNpcName(
                 if (candidates.some(c => c.npc.name === npc.name)) continue;
 
                 // Check if this NPC is mentioned in the retrieved context
-                const foundInContext = ragContext.some(chunk => chunk.toLowerCase().includes(npc.name.toLowerCase()));
+                const matchingChunks = ragContext.filter(chunk => chunk.toLowerCase().includes(npc.name.toLowerCase()));
 
-                if (foundInContext) {
-                    candidates.push({ npc, similarity: 0.75, reason: 'rag_context_match' });
+                if (matchingChunks.length > 0) {
+                    // NEW: Check for Explicit ShortID Match in RAG text
+                    // Format: "Name [#shortId]"
+                    // If we find "[#shortId]" in the text associated with this NPC, it is a very strong match.
+                    let score = 0.75; // Default "context match" score
+                    let reason = 'rag_context_match';
+
+                    if (npc.short_id) {
+                        const shortIdPattern = `[#${npc.short_id}]`;
+                        const hasShortIdMatch = matchingChunks.some(chunk => chunk.includes(shortIdPattern));
+                        if (hasShortIdMatch) {
+                            score = 0.95; // Almost certain
+                            reason = 'rag_short_id_match';
+                        }
+                    }
+
+                    candidates.push({
+                        npc,
+                        similarity: score,
+                        reason,
+                        ragEvidence: matchingChunks // Store evidence for confirmation
+                    });
                 }
             }
         } catch (e) {
@@ -215,7 +244,8 @@ export async function reconcileNpcName(
             newName,
             newDescription,
             candidate.npc.name,
-            candidate.npc.description || ""
+            candidate.npc.description || "",
+            candidate.ragEvidence // Pass the evidence we found!
         );
 
         if (isSame) {

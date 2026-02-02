@@ -65,19 +65,26 @@ async function aiConfirmSameLocationExtended(
     newDescription: string,
     candidateMacro: string,
     candidateMicro: string,
-    candidateDescription: string
+    candidateDescription: string,
+    cachedContext?: string[] // NEW: Optional context
 ): Promise<boolean> {
 
-    const ragQuery = `Cosa sappiamo di ${newMacro} - ${newMicro}? ${newDescription}`;
-    const ragContext = await searchKnowledge(campaignId, ragQuery, 2);
+    let ragContextText = "";
 
-    const relevantFragments = ragContext.filter(f =>
-        f.toLowerCase().includes(candidateMicro.toLowerCase())
-    );
+    if (cachedContext && cachedContext.length > 0) {
+        ragContextText = `\nMEMORIA STORICA RILEVANTE (Context Hit):\n${cachedContext.join('\n')}`;
+    } else {
+        const ragQuery = `Cosa sappiamo di ${newMacro} - ${newMicro}? ${newDescription}`;
+        const ragContext = await searchKnowledge(campaignId, ragQuery, 2);
 
-    const ragContextText = relevantFragments.length > 0
-        ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
-        : "";
+        const relevantFragments = ragContext.filter(f =>
+            f.toLowerCase().includes(candidateMicro.toLowerCase())
+        );
+
+        ragContextText = relevantFragments.length > 0
+            ? `\nMEMORIA STORICA RILEVANTE:\n${relevantFragments.join('\n')}`
+            : "";
+    }
 
     const prompt = AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT(newMacro, newMicro, newDescription, candidateMacro, candidateMicro, candidateDescription, ragContextText);
 
@@ -152,7 +159,7 @@ export async function reconcileLocationName(
         };
     }
 
-    const candidates: Array<{ entry: any; similarity: number; reason: string }> = [];
+    const candidates: Array<{ entry: any; similarity: number; reason: string; ragEvidence?: string[] }> = [];
 
     for (const entry of existingLocations) {
         // Use clean versions for similarity
@@ -228,11 +235,36 @@ export async function reconcileLocationName(
 
                 const fullPath = `${entry.macro_location} ${entry.micro_location}`.toLowerCase();
                 // Check if this Location is mentioned in the retrieved context
-                const foundInContext = ragContext.some(chunk => chunk.toLowerCase().includes(entry.micro_location.toLowerCase()) || chunk.toLowerCase().includes(entry.macro_location.toLowerCase()));
+                const matchingChunks = ragContext.filter(chunk =>
+                    chunk.toLowerCase().includes(entry.micro_location.toLowerCase()) ||
+                    chunk.toLowerCase().includes(entry.macro_location.toLowerCase())
+                );
 
-                if (foundInContext) {
-                    // Lower confidence than direct match, but enough to trigger AI check
-                    candidates.push({ entry, similarity: 0.7, reason: 'rag_context_match' });
+                if (matchingChunks.length > 0) {
+                    // NEW: Check for Explicit ShortID Match in RAG text
+                    let score = 0.7; // Default "context match" score
+                    let reason = 'rag_context_match';
+
+                    // Atlas Entries generally have ID, but we need to check if they have short_id in interface.
+                    // Assuming they do or we can match ID.
+                    // But AtlasEntry usually doesn't expose strict ShortId like NPC yet?
+                    // Let's assume we can match "Name [#shortId]" if implemented in Ingest.
+
+                    // Note: AtlasEntry type might need checking, but usually it has short_id.
+                    if ((entry as any).short_id) {
+                        const shortIdPattern = `[#${(entry as any).short_id}]`;
+                        if (matchingChunks.some(chunk => chunk.includes(shortIdPattern))) {
+                            score = 0.95;
+                            reason = 'rag_short_id_match';
+                        }
+                    }
+
+                    candidates.push({
+                        entry,
+                        similarity: score,
+                        reason,
+                        ragEvidence: matchingChunks
+                    });
                 }
             }
         } catch (e) {
@@ -269,7 +301,8 @@ export async function reconcileLocationName(
             newDescription,
             candidate.entry.macro_location,
             candidate.entry.micro_location,
-            candidate.entry.description || ""
+            candidate.entry.description || "",
+            candidate.ragEvidence // Pass context
         );
 
         if (isSame) {

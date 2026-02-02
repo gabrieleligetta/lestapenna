@@ -739,4 +739,17 @@ export const initDatabase = () => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_history_name ON npc_history (campaign_id, npc_name)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_campaign ON world_history (campaign_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_year ON world_history (year)`);
+
+    // 7.4. Add Faction ID to History (New)
+    try {
+        db.exec("ALTER TABLE character_history ADD COLUMN faction_id INTEGER REFERENCES factions(id) ON DELETE SET NULL");
+        console.log("[Schema] 🆕 Added faction_id to character_history");
+    } catch (e) { /* existing */ }
+
+    try {
+        db.exec("ALTER TABLE npc_history ADD COLUMN faction_id INTEGER REFERENCES factions(id) ON DELETE SET NULL");
+        console.log("[Schema] 🆕 Added faction_id to npc_history");
+    } catch (e) { /* existing */ }
+
+    console.log("[DB] ✅ Database initialized successfully");
 };

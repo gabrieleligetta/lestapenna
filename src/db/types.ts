@@ -393,6 +393,7 @@ export interface CharacterHistoryEntry {
     is_manual?: number;
     moral_weight?: number; // 🆕
     ethical_weight?: number; // 🆕
+    faction_id?: number; // 🆕 Added
 }
 
 export interface NpcHistoryEntry {
@@ -406,6 +407,7 @@ export interface NpcHistoryEntry {
     is_manual?: number;
     moral_weight?: number; // 🆕
     ethical_weight?: number; // 🆕
+    faction_id?: number; // 🆕 Added
 }
 
 export interface ArtifactEntry {

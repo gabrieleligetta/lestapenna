@@ -479,6 +479,51 @@ export const factionRepository = {
         })();
     },
 
+    /**
+     * Incrementally updates faction alignment scores and recalculates labels.
+     */
+    updateFactionAlignmentScore: (campaignId: number, factionId: number, moralDelta: number, ethicalDelta: number): void => {
+        if (moralDelta === 0 && ethicalDelta === 0) return;
+
+        const faction = factionRepository.getFactionById(factionId);
+        if (!faction) return;
+
+        db.prepare(`
+            UPDATE factions 
+            SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?, 
+                ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+                last_updated = CURRENT_TIMESTAMP,
+                rag_sync_needed = 1
+            WHERE id = ?
+        `).run(moralDelta, ethicalDelta, factionId);
+
+        // Recalculate Labels
+        const updated = factionRepository.getFactionById(factionId);
+        if (updated) {
+            const mLabel = getMoralAlignment(updated.moral_score || 0);
+            const eLabel = getEthicalAlignment(updated.ethical_score || 0);
+
+            db.prepare(`
+               UPDATE factions
+               SET alignment_moral = ?, alignment_ethical = ?
+               WHERE id = ?
+           `).run(mLabel, eLabel, factionId);
+
+            console.log(`[Faction] ⚖️ Alignment Updated for ${faction.name}: ${eLabel} ${mLabel} (M:${updated.moral_score}, E:${updated.ethical_score})`);
+
+            // If Party, update campaign scores
+            if (updated.is_party) {
+                const { campaignRepository } = require('../index'); // Lazy load to avoid circular dependency
+                // Or execute SQL directly if repo not available
+                db.prepare(`
+                   UPDATE campaigns 
+                   SET party_moral_score = ?, party_ethical_score = ?
+                   WHERE id = ?
+               `).run(updated.moral_score, updated.ethical_score, campaignId);
+            }
+        }
+    },
+
     getFactionHistory: (campaignId: number, factionName: string): FactionHistoryEntry[] => {
         return db.prepare(`
             SELECT * FROM faction_history 

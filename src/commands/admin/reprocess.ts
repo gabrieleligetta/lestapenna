@@ -15,19 +15,24 @@ export const reprocessCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args, client } = ctx;
         const targetSessionId = args[0];
-        const forceRegeneration = args[1]?.toUpperCase() === 'FORCE';
+        const isForce = args.some(arg => arg.toUpperCase() === 'FORCE');
+        const isSilent = args.some(arg => arg.toUpperCase() === 'SILENT' || arg.toUpperCase() === 'SHHH');
 
         if (!targetSessionId) {
-            await message.reply("Uso: `$riprocessa <ID_SESSIONE>` - Rigenera memoria e dati senza ritrascrivere.");
+            await message.reply("Uso: `$riprocessa <ID_SESSIONE> [FORCE] [SILENT]` - Rigenera memoria e dati senza ritrascrivere.");
             return;
         }
 
         const channel = message.channel as TextChannel;
 
-        if (forceRegeneration) {
+        if (isForce) {
             await channel.send("⚠️ **MODALITÀ FORCE ATTIVA**: Verrà forzata la rigenerazione AI del riassunto.");
         } else {
             await channel.send("ℹ️ **MODALITÀ SMART**: Uso dati salvati se disponibili (Zero costi).");
+        }
+
+        if (isSilent) {
+            await channel.send("🤫 **MODALITÀ SILINTE**: Notifiche Discord e Email disabilitate.");
         }
 
         await channel.send(`🔄 **Riprocessamento Logico** avviato per sessione \`${targetSessionId}\`...\n1. Pulizia dati derivati (Loot, Quest, Storia, RAG)...`);
@@ -53,22 +58,28 @@ export const reprocessCommand: Command = {
             await channel.send(`2. Preparazione testo e Analisi Eventi...`);
 
             // 2. Generate Summary (Pipeline)
-            const result = await pipelineService.generateSessionSummary(targetSessionId, campaignId, 'DM', { forceRegeneration });
+            const result = await pipelineService.generateSessionSummary(targetSessionId, campaignId, 'DM', { forceRegeneration: isForce });
 
             // 3. Ingest to RAG & DB
             await ingestionService.ingestSummary(targetSessionId, result);
             ingestionService.updateSessionTitle(targetSessionId, result.title);
 
             // 4. Process Batch Events
-            await ingestionService.processBatchEvents(campaignId, targetSessionId, result, channel);
+            await ingestionService.processBatchEvents(campaignId, targetSessionId, result, channel, isSilent);
 
-            // 5. Publish
-            await notificationService.publishToDiscord(client, targetSessionId, result, channel);
-            await notificationService.sendEmailRecap(targetSessionId, campaignId, result);
+            // 5. Publish (Skip if silent)
+            if (!isSilent) {
+                await notificationService.publishToDiscord(client, targetSessionId, result, channel);
+                await notificationService.sendEmailRecap(targetSessionId, campaignId, result);
+            }
 
-            // 6. Metrics & Report
+            // 6. Metrics & Report (Skip report if silent)
             if (monitorStartedByUs) {
-                await notificationService.reportMetrics();
+                if (!isSilent) {
+                    await notificationService.reportMetrics();
+                } else {
+                    await monitor.endSession();
+                }
             } else {
                 console.log(`[Riprocessa] Costi confluiti nella sessione attiva monitorata.`);
             }

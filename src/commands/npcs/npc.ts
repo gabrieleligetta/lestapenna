@@ -390,11 +390,11 @@ export const npcCommand: Command = {
                         }
 
                         // 3. Move Affiliations
-                        const sourceAffiliations = db.prepare('SELECT id, faction_id FROM faction_affiliations WHERE entity_type = "npc" AND entity_id = (SELECT id FROM npc_dossier WHERE campaign_id = ? AND name = ?)').all(cid, source.name) as any[];
+                        const sourceAffiliations = db.prepare('SELECT id, faction_id FROM faction_affiliations WHERE entity_type = \'npc\' AND entity_id = (SELECT id FROM npc_dossier WHERE campaign_id = ? AND name = ?)').all(cid, source.name) as any[];
                         const targetId = (db.prepare('SELECT id FROM npc_dossier WHERE campaign_id = ? AND name = ?').get(cid, target.name) as any).id;
 
                         for (const aff of sourceAffiliations) {
-                            const conflict = db.prepare('SELECT id FROM faction_affiliations WHERE faction_id = ? AND entity_type = "npc" AND entity_id = ?').get(aff.faction_id, targetId) as any;
+                            const conflict = db.prepare('SELECT id FROM faction_affiliations WHERE faction_id = ? AND entity_type = \'npc\' AND entity_id = ?').get(aff.faction_id, targetId) as any;
                             if (conflict) {
                                 db.prepare('DELETE FROM faction_affiliations WHERE id = ?').run(aff.id);
                             } else {

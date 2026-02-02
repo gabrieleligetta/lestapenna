@@ -88,7 +88,8 @@ export class IngestionService {
         campaignId: number,
         sessionId: string,
         result: any,
-        channel?: TextChannel
+        channel?: TextChannel,
+        isSilent: boolean = false
     ): Promise<void> {
         // Prepare batch input
         const batchInput: any = {};
@@ -258,7 +259,7 @@ export class IngestionService {
         sessionPhaseManager.setPhase(sessionId, 'SYNCING');
 
         // Sync dirty entities to RAG
-        await this.syncDirtyEntities(campaignId, validated, result, channel);
+        await this.syncDirtyEntities(campaignId, validated, result, channel, isSilent);
     }
 
     /**
@@ -657,7 +658,7 @@ export class IngestionService {
     /**
      * Syncs dirty entities to RAG
      */
-    async syncDirtyEntities(campaignId: number, validated: any, result: any, channel?: TextChannel): Promise<void> {
+    async syncDirtyEntities(campaignId: number, validated: any, result: any, channel?: TextChannel, isSilent: boolean = false): Promise<void> {
         const hasValidatedEvents = validated && (validated.npc_events.keep.length > 0 || validated.character_events.keep.length > 0);
         const hasNewMetadata = (result.npc_dossier_updates?.length || 0) > 0 || (result.location_updates?.length || 0) > 0;
 
@@ -678,7 +679,7 @@ export class IngestionService {
                 console.log(`[Sync] ✅ Sincronizzati ${charSyncResult.synced} PG: ${charSyncResult.names.join(', ')}`);
 
                 // Notify in channel
-                if (channel && charSyncResult.names.length > 0) {
+                if (channel && charSyncResult.names.length > 0 && !isSilent) {
                     channel.send(`📜 **Schede Aggiornate Automaticamente**\n${charSyncResult.names.map(n => `• ${n}`).join('\n')}`).catch(() => { });
                 }
             }

@@ -107,7 +107,8 @@ ${memoryContext}
 6. **GLOSSARIO**: Usa i nomi esatti del Contesto di Riferimento se corrispondesi.
 7. **CONFLICT RESOLUTION**: Se il "Testo da Analizzare" CONTRADDICE il "Contesto" (es. il contesto dice che X è "Affidabile" ma nel testo X "Tradisce" o "Attacca"), IL TESTO VINCE SEMPRE. Registra il cambiamento in npc_events e npc_dossier_updates.
 8. **FAZIONI**: Estrai SEMPRE fazioni rilevanti anche se indicate con nomi comuni (es. "il Culto", "l'Impero", "la Gilda"). Capitalizzale (es. "Culto del Drago", "Impero"). 
-    - Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change.
+    - Se il party compie azioni che migliorano/peggiorano la sua reputazione con una fazione, registra reputation_change sulla fazione COINVOLTA (es. se il party attacca il "Culto", il calo va sul "Culto").
+    - **REGOLA FONDAMENTALE**: NON registrare MAI un reputation_change sulla fazione del PARTY stesso (es. se il party è "Insonni", non scrivere mai reputation_change dentro l'entry degli "Insonni"). La reputazione è sempre un valore relativo verso gli ALTRI.
     - **REGOLA HOSTILITY**: Se un membro confermato di una fazione (es. "Leosin del Culto") attacca o tradisce il party, REGISTRA SEMPRE un reputation_change NEGATIVO per la fazione (es. -10, "Membro della fazione ha attaccato il party"), A MENO CHE non sia chiaro che agisce da rinnegato contro la sua stessa fazione.
     - Se un NPC o luogo viene rivelato appartenere a una fazione, registra faction_affiliations.
 

@@ -81,12 +81,43 @@ export async function aiConfirmSamePerson(name1: string, name2: string, context:
 
 /**
  * Trova il nome canonico se esiste un NPC simile nel dossier.
+ * @param playerCharacters - Lista opzionale di nomi dei PG da escludere (non sono NPC)
  */
 export async function reconcileNpcName(
     campaignId: number,
     newName: string,
-    newDescription: string = ""
-): Promise<{ canonicalName: string; existingNpc: any } | null> {
+    newDescription: string = "",
+    playerCharacters: string[] = []
+): Promise<{ canonicalName: string; existingNpc: any; isPlayerCharacter?: boolean } | null> {
+    // -1. PC Check (Highest Priority) - Skip if this is a player character
+    if (playerCharacters.length > 0) {
+        const newNameLower = newName.toLowerCase().trim();
+        const pcNamesLower = playerCharacters.map(n => n.toLowerCase().trim());
+
+        for (const pcName of pcNamesLower) {
+            // Exact match
+            if (newNameLower === pcName) {
+                console.log(`[Reconcile] 🎮 "${newName}" è un PG (match esatto) - SKIP`);
+                return { canonicalName: newName, existingNpc: null, isPlayerCharacter: true };
+            }
+
+            // Levenshtein similarity for typos (e.g., "Fainar" vs "Sainar")
+            const similarity = levenshteinSimilarity(newNameLower, pcName);
+            if (similarity >= 0.7) {
+                const pcOriginal = playerCharacters.find(p => p.toLowerCase().trim() === pcName);
+                console.log(`[Reconcile] 🎮 "${newName}" sembra il PG "${pcOriginal}" (sim=${similarity.toFixed(2)}) - SKIP`);
+                return { canonicalName: pcOriginal || newName, existingNpc: null, isPlayerCharacter: true };
+            }
+
+            // Substring check for partial names
+            if (newNameLower.includes(pcName) || pcName.includes(newNameLower)) {
+                const pcOriginal = playerCharacters.find(p => p.toLowerCase().trim() === pcName);
+                console.log(`[Reconcile] 🎮 "${newName}" contiene/è contenuto in PG "${pcOriginal}" - SKIP`);
+                return { canonicalName: pcOriginal || newName, existingNpc: null, isPlayerCharacter: true };
+            }
+        }
+    }
+
     // 0. ID Match (Highest Priority)
     // Cerca pattern come [#abc12] o semplicemente #abc12 se necessario, ma il formato standard è [#id]
     const idMatch = newName.match(/\[#([a-zA-Z0-9]+)\]/);
@@ -110,17 +141,29 @@ export async function reconcileNpcName(
         return { canonicalName: exactMatch.name, existingNpc: exactMatch };
     }
 
-    const newNameClean = stripPrefix(newName.toLowerCase());
+    const newNameClean = stripPrefix(newName.toLowerCase()).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const candidates: Array<{ npc: any; similarity: number; reason: string; ragEvidence?: string[] }> = [];
 
     for (const npc of existingNpcs) {
         const existingName = npc.name;
-        const existingNameClean = stripPrefix(existingName.toLowerCase());
+        const existingNameClean = stripPrefix(existingName.toLowerCase()).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
         // FIX: Check Exact Levenshtein Distance for typos
         // Se distanza = 1 e lunghezza >= 4 (es. "Siri" vs "Ciri"), è quasi certamente un match
         const dist = levenshteinDistance(newNameClean, existingNameClean);
+
+        // 🆕 Special case: First character substitution (very common in transcription errors)
+        // Es. "Siri" vs "Ciri", "Fainar" vs "Sainar" - same length, only first char different
+        if (newNameClean.length === existingNameClean.length &&
+            newNameClean.length >= 4 &&
+            newNameClean.slice(1) === existingNameClean.slice(1)) {
+            console.log(`[Reconcile] 🔤 First-char typo: "${newName}" ≈ "${existingName}" (solo prima lettera diversa)`);
+            candidates.push({ npc, similarity: 0.95, reason: `first_char_typo` });
+            continue;
+        }
+
         if (dist === 1 && newNameClean.length >= 4 && existingNameClean.length >= 4) {
+             console.log(`[Reconcile] 🔤 Typo dist=1: "${newName}" ≈ "${existingName}"`);
              candidates.push({ npc, similarity: 0.92, reason: `typo_dist_1` });
              continue;
         }

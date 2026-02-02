@@ -516,12 +516,16 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             partyFaction = factionRepository.getPartyFaction(campaignId);
         }
 
+        // Collect player character names for Scout exclusion
+        const playerCharacterNames: string[] = [];
+
         if (campaignId) {
             const campaign = getCampaignById(campaignId);
             if (campaign) castContext += `CAMPAGNA: ${campaign.name}\n`;
             userIds.forEach(uid => {
                 const p = getUserProfile(uid, campaignId);
                 if (p.character_name) {
+                    playerCharacterNames.push(p.character_name); // 🆕 Collect for Scout
                     let charInfo = `- **${p.character_name}**`;
                     const details = [];
                     if (p.race) details.push(p.race);
@@ -553,10 +557,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             console.log(`[Bardo] 🧠 Avvio Scout Phase...`);
 
             try {
-                // 1. Eseguiamo lo Scout
+                // 1. Eseguiamo lo Scout (con esclusione PG)
+                console.log(`[Bardo] 🕵️ Scout esclude PG: ${playerCharacterNames.join(', ') || 'nessuno'}`);
                 const scoutResponse = await metadataClient.chat.completions.create({
                     model: METADATA_MODEL,
-                    messages: [{ role: "user", content: SCOUT_PROMPT(fullDialogue) }],
+                    messages: [{ role: "user", content: SCOUT_PROMPT(fullDialogue, playerCharacterNames) }],
                     response_format: { type: "json_object" }
                 });
 
@@ -574,11 +579,28 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 if (entities.npcs && Array.isArray(entities.npcs) && entities.npcs.length > 0) {
                     const foundNpcs = new Set<string>();
 
+                    // 🆕 Filtra PG che potrebbero essere sfuggiti allo Scout
+                    const pcNamesLower = playerCharacterNames.map(n => n.toLowerCase());
+                    const filteredNpcs = entities.npcs.filter((name: string) => {
+                        const nameLower = name.toLowerCase();
+                        const isPC = pcNamesLower.some(pc =>
+                            pc === nameLower ||
+                            nameLower.includes(pc) ||
+                            pc.includes(nameLower)
+                        );
+                        if (isPC) {
+                            console.log(`[Bardo] 🚫 Filtrato PG dalla lista NPC: "${name}"`);
+                        }
+                        return !isPC;
+                    });
+
                     dynamicMemoryContext += `\n👥 NPC PRESENTI (Dati Storici):\n`;
 
-                    for (const name of entities.npcs) {
+                    for (const name of filteredNpcs) {
                         try {
-                            const reconciled = await reconcileNpcName(campaignId, name);
+                            const reconciled = await reconcileNpcName(campaignId, name, "", playerCharacterNames);
+                            // Skip if reconciliation determined this is a PC
+                            if (reconciled?.isPlayerCharacter) continue;
                             if (reconciled && !foundNpcs.has(reconciled.canonicalName)) {
                                 foundNpcs.add(reconciled.canonicalName);
                                 const npc = reconciled.existingNpc;

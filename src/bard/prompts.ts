@@ -60,11 +60,15 @@ Restituisci un JSON con array "queries": ["query1", "query2", "query3"]`;
 
 // --- SCOUT (NER) ---
 
-export const SCOUT_PROMPT = (text: string) => `
+export const SCOUT_PROMPT = (text: string, playerCharacters: string[] = []) => `
 Sei uno SCOUT di lettura veloce.
 Scansiona questa trascrizione di D&D e identifica le ENTITÀ SPECIFICHE citate che sono FISICAMENTE PRESENTI o che richiedono contesto immediato.
 Analizza il testo e estrai i nomi propri.
-
+${playerCharacters.length > 0 ? `
+**PERSONAGGI GIOCANTI (PG) DA ESCLUDERE:**
+I seguenti nomi sono PERSONAGGI DEI GIOCATORI, NON NPC. NON includerli in "npcs":
+${playerCharacters.map(name => `- ${name}`).join('\n')}
+` : ''}
 TESTO (Primi 40k caratteri):
 ${text.substring(0, 40000)}...
 
@@ -75,6 +79,7 @@ Restituisci un JSON con array di stringhe.
     2. Sono FISICAMENTE PRESENTI nella scena (anche se passivi o descritti dal narratore).
     3. NOTA: Identifica l'entità anche se il nome è leggermente diverso (varianti fonetiche) o se ha cambiato forma/età (trasformazioni magiche).
     4. IGNORA: Personaggi citati solo come ricordi, obiettivi lontani o divinità non presenti.
+    5. **CRITICO**: ESCLUDI i Personaggi Giocanti (PG) elencati sopra! Questi NON sono NPC.
 - "locations": Nomi di luoghi specifici visitati o menzionati come destinazione immediata.
 - "quests": Parole chiave o titoli di missioni citate.
 - "factions": Nomi di fazioni, gilde, regni, culti, organizzazioni menzionate nel testo (es. "Culto del Drago", "Gilda dei Ladri", "Impero"). Includi anche riferimenti generici se chiari (es. "il Culto", "la Gilda").

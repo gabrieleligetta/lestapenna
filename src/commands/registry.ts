@@ -16,7 +16,9 @@ import { selectCampaignCommand } from './campaigns/select';
 import { setWorldCommand } from './campaigns/setWorld';
 
 // Characters
+// Characters
 import { bioCommand } from './characters/bio';
+import { characterCommand } from './characters/character';
 import { iamCommand } from './characters/iam';
 import { partyCommand } from './characters/party';
 import { whoamiCommand } from './characters/whoami';
@@ -89,6 +91,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
 
     // Characters
     dispatcher.register(bioCommand);
+    dispatcher.register(characterCommand);
     dispatcher.register(iamCommand);
     dispatcher.register(partyCommand);
     dispatcher.register(whoamiCommand);

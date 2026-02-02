@@ -27,7 +27,7 @@ import {
 
 export const iamCommand: Command = {
     name: 'iam',
-    aliases: ['sono', 'profilo', 'profile', 'pg', 'character', 'personaggio'],
+    aliases: ['sono', 'profilo', 'profile'],
     requiresCampaign: true,
 
     async execute(ctx: CommandContext): Promise<void> {

@@ -4,7 +4,7 @@
 
 import { getAllNpcs, npcRepository } from '../../db';
 import { metadataClient, METADATA_MODEL } from '../config';
-import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
+import { levenshteinDistance, levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
 import {
     AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT,
@@ -117,6 +117,14 @@ export async function reconcileNpcName(
         const existingName = npc.name;
         const existingNameClean = stripPrefix(existingName.toLowerCase());
 
+        // FIX: Check Exact Levenshtein Distance for typos
+        // Se distanza = 1 e lunghezza >= 4 (es. "Siri" vs "Ciri"), è quasi certamente un match
+        const dist = levenshteinDistance(newNameClean, existingNameClean);
+        if (dist === 1 && newNameClean.length >= 4 && existingNameClean.length >= 4) {
+             candidates.push({ npc, similarity: 0.92, reason: `typo_dist_1` });
+             continue;
+        }
+
         // 1. Clean Levenshtein
         const similarity = levenshteinSimilarity(newNameClean, existingNameClean);
         const minLen = Math.min(newNameClean.length, existingNameClean.length);
@@ -135,7 +143,8 @@ export async function reconcileNpcName(
         if (shorter.length >= 4 && longer.startsWith(shorter)) {
             // Verifica che il prefisso sia seguito da spazio per evitare "Leo" in "Leonidas" (se non è tutto il nome)
             if (longer.length === shorter.length || longer[shorter.length] === ' ') {
-                candidates.push({ npc, similarity: 0.95, reason: 'strong_prefix_match' });
+                // Lowered slightly to allow for more robust prefix matching
+                candidates.push({ npc, similarity: 0.92, reason: 'strong_prefix_match' });
                 continue;
             }
         }
@@ -189,30 +198,25 @@ export async function reconcileNpcName(
                 // Skip if already in candidates
                 if (candidates.some(c => c.npc.name === npc.name)) continue;
 
-                // Check if this NPC is mentioned in the retrieved context
+                // Check if this NPC is mentioned by name OR by ID in the retrieved context
                 const matchingChunks = ragContext.filter(chunk => chunk.toLowerCase().includes(npc.name.toLowerCase()));
+                const hasNameMatch = matchingChunks.length > 0;
 
-                if (matchingChunks.length > 0) {
-                    // NEW: Check for Explicit ShortID Match in RAG text
-                    // Format: "Name [#shortId]"
-                    // If we find "[#shortId]" in the text associated with this NPC, it is a very strong match.
-                    let score = 0.75; // Default "context match" score
-                    let reason = 'rag_context_match';
+                let hasShortIdMatch = false;
+                if (npc.short_id) {
+                    const shortIdPattern = `[#${npc.short_id}]`;
+                    hasShortIdMatch = ragContext.some(chunk => chunk.includes(shortIdPattern));
+                }
 
-                    if (npc.short_id) {
-                        const shortIdPattern = `[#${npc.short_id}]`;
-                        const hasShortIdMatch = matchingChunks.some(chunk => chunk.includes(shortIdPattern));
-                        if (hasShortIdMatch) {
-                            score = 0.95; // Almost certain
-                            reason = 'rag_short_id_match';
-                        }
-                    }
+                if (hasNameMatch || hasShortIdMatch) {
+                    let score = hasShortIdMatch ? 0.95 : 0.75;
+                    let reason = hasShortIdMatch ? 'rag_short_id_match' : 'rag_context_match';
 
                     candidates.push({
                         npc,
                         similarity: score,
                         reason,
-                        ragEvidence: matchingChunks // Store evidence for confirmation
+                        ragEvidence: hasNameMatch ? matchingChunks : ragContext.filter(c => npc.short_id && c.includes(`[#${npc.short_id}]`))
                     });
                 }
             }
@@ -232,7 +236,8 @@ export async function reconcileNpcName(
 
     for (const candidate of topCandidates) {
         // SUPER-MATCH: If similarity is very high, accept immediately without AI
-        if (candidate.similarity >= 0.85) {
+        // Lowered from 0.85 to 0.82 to catch robust typos
+        if (candidate.similarity >= 0.82) {
             console.log(`[Reconcile] ⚡ AUTO-MERGE (High Sim): "${newName}" → "${candidate.npc.name}" (${candidate.reason})`);
             return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
         }

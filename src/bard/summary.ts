@@ -563,6 +563,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[], "artifacts":[]}');
                 console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni, ${entities.artifacts?.length || 0} Artefatti.`);
 
+                // 🆕 Initialize scoutFactions here so it's available for NPC/Location hydration
+                const scoutFactions = (entities.factions && Array.isArray(entities.factions)) ? entities.factions : [];
+
                 dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
 
                 // ... [NPC/Location/Quest hydration stays same] ...
@@ -581,6 +584,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 const npc = reconciled.existingNpc;
                                 // Include shortId for ID-based matching
                                 dynamicMemoryContext += `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${npc.description || 'Nessuna descrizione.'} [Status: ${npc.status || 'ALIVE'}]\n`;
+
+                                // 🆕 Automatic Faction Identification via NPC
+                                const affiliations = factionRepository.getEntityFactions('npc', npc.id);
+                                for (const aff of affiliations) {
+                                    if (aff.faction_name && !scoutFactions.includes(aff.faction_name)) {
+                                        console.log(`[Bardo] 🕵️ Scout: NPC "${npc.name}" ha portato la fazione "${aff.faction_name}"`);
+                                        scoutFactions.push(aff.faction_name);
+                                    }
+                                }
                             }
                         } catch (e) {
                             console.error(`[Bardo] ⚠️ Errore riconciliazione NPC "${name}":`, e);
@@ -604,6 +616,15 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                     const loc = reconciled.existingEntry;
                                     // 🆕 Include shortId for ID-based matching
                                     dynamicMemoryContext += `- **${canonicalKey}** [ID: ${loc.short_id || 'N/A'}]: ${loc.description || 'Nessuna descrizione.'}\n`;
+
+                                    // 🆕 Automatic Faction Identification via Location
+                                    const affiliations = factionRepository.getEntityFactions('location', loc.id);
+                                    for (const aff of affiliations) {
+                                        if (aff.faction_name && !scoutFactions.includes(aff.faction_name)) {
+                                            console.log(`[Bardo] 🕵️ Scout: Luogo "${canonicalKey}" ha portato la fazione "${aff.faction_name}"`);
+                                            scoutFactions.push(aff.faction_name);
+                                        }
+                                    }
                                 }
                             }
                         } catch (e) {
@@ -643,7 +664,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
                 // 5. Idratazione Fazioni (Party + Scout)
                 // partyFaction already fetched at top scope
-                const scoutFactions = (entities.factions && Array.isArray(entities.factions)) ? entities.factions : [];
+                // scoutFactions now populated above and incrementally during NPC/Location hydration
 
                 if (partyFaction || scoutFactions.length > 0) {
                     const foundFactions = new Set<string>();

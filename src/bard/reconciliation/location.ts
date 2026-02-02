@@ -233,37 +233,28 @@ export async function reconcileLocationName(
                 // Skip if already a candidate
                 if (candidates.some(c => c.entry.id === entry.id)) continue;
 
-                const fullPath = `${entry.macro_location} ${entry.micro_location}`.toLowerCase();
-                // Check if this Location is mentioned in the retrieved context
+                // Check if this Location is mentioned by name OR by ID in the retrieved context
                 const matchingChunks = ragContext.filter(chunk =>
                     chunk.toLowerCase().includes(entry.micro_location.toLowerCase()) ||
                     chunk.toLowerCase().includes(entry.macro_location.toLowerCase())
                 );
+                const hasNameMatch = matchingChunks.length > 0;
 
-                if (matchingChunks.length > 0) {
-                    // NEW: Check for Explicit ShortID Match in RAG text
-                    let score = 0.7; // Default "context match" score
-                    let reason = 'rag_context_match';
+                let hasShortIdMatch = false;
+                if ((entry as any).short_id) {
+                    const shortIdPattern = `[#${(entry as any).short_id}]`;
+                    hasShortIdMatch = ragContext.some(chunk => chunk.includes(shortIdPattern));
+                }
 
-                    // Atlas Entries generally have ID, but we need to check if they have short_id in interface.
-                    // Assuming they do or we can match ID.
-                    // But AtlasEntry usually doesn't expose strict ShortId like NPC yet?
-                    // Let's assume we can match "Name [#shortId]" if implemented in Ingest.
-
-                    // Note: AtlasEntry type might need checking, but usually it has short_id.
-                    if ((entry as any).short_id) {
-                        const shortIdPattern = `[#${(entry as any).short_id}]`;
-                        if (matchingChunks.some(chunk => chunk.includes(shortIdPattern))) {
-                            score = 0.95;
-                            reason = 'rag_short_id_match';
-                        }
-                    }
+                if (hasNameMatch || hasShortIdMatch) {
+                    let score = hasShortIdMatch ? 0.95 : 0.7;
+                    let reason = hasShortIdMatch ? 'rag_short_id_match' : 'rag_context_match';
 
                     candidates.push({
                         entry,
                         similarity: score,
                         reason,
-                        ragEvidence: matchingChunks
+                        ragEvidence: hasNameMatch ? matchingChunks : ragContext.filter(c => (entry as any).short_id && c.includes(`[#${(entry as any).short_id}]`))
                     });
                 }
             }

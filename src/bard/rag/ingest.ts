@@ -225,7 +225,7 @@ export async function ingestSessionComplete(
                 for (const npcName of mentionedNpcs) {
                     const npc = getNpcEntry(campaignId, npcName);
                     if (npc && npc.short_id) {
-                        contextAdditions.push(`${npc.name} [${npc.short_id}]`);
+                        contextAdditions.push(`${npc.name} [#${npc.short_id}]`);
                     }
                 }
             }

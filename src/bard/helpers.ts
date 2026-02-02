@@ -177,14 +177,15 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
 }
 
 /**
- * Calcola la distanza di Levenshtein normalizzata (0-1, dove 1 = identico)
+ * Calcola la distanza di Levenshtein tra due stringhe
  */
-export function levenshteinSimilarity(a: string, b: string): number {
+export function levenshteinDistance(a: string, b: string): number {
     const aLower = a.toLowerCase().trim();
     const bLower = b.toLowerCase().trim();
 
-    if (aLower === bLower) return 1;
-    if (aLower.length === 0 || bLower.length === 0) return 0;
+    if (aLower === bLower) return 0;
+    if (aLower.length === 0) return bLower.length;
+    if (bLower.length === 0) return aLower.length;
 
     const matrix: number[][] = [];
     for (let i = 0; i <= aLower.length; i++) {
@@ -208,8 +209,19 @@ export function levenshteinSimilarity(a: string, b: string): number {
         }
     }
 
-    const distance = matrix[aLower.length][bLower.length];
-    const maxLen = Math.max(aLower.length, bLower.length);
+    return matrix[aLower.length][bLower.length];
+}
+
+/**
+ * Calcola la distanza di Levenshtein normalizzata (0-1, dove 1 = identico)
+ */
+export function levenshteinSimilarity(a: string, b: string): number {
+    if (a.toLowerCase().trim() === b.toLowerCase().trim()) return 1;
+
+    const distance = levenshteinDistance(a, b);
+    const maxLen = Math.max(a.toLowerCase().trim().length, b.toLowerCase().trim().length);
+
+    if (maxLen === 0) return 0;
     return 1 - (distance / maxLen);
 }
 

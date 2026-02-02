@@ -84,6 +84,12 @@ CHIAVE: ${locationKey}
 /**
  * Batch sync di tutti i luoghi dirty
  */
+/**
+ * Batch sync di tutti i luoghi dirty
+ */
+/**
+ * Batch sync di tutti i luoghi dirty
+ */
 export async function syncAllDirtyAtlas(campaignId: number): Promise<number> {
     const dirtyEntries = getDirtyAtlasEntries(campaignId);
 
@@ -92,15 +98,72 @@ export async function syncAllDirtyAtlas(campaignId: number): Promise<number> {
         return 0;
     }
 
-    console.log(`[Sync Atlas] Sincronizzazione batch di ${dirtyEntries.length} luoghi...`);
+    console.log(`[Sync Atlas] 📥 Inizio sync per ${dirtyEntries.length} luoghi...`);
 
-    for (const entry of dirtyEntries) {
-        try {
-            await syncAtlasEntryIfNeeded(campaignId, entry.macro_location, entry.micro_location, true);
-        } catch (e) {
-            console.error(`[Sync Atlas] Errore sync ${entry.macro_location} - ${entry.micro_location}:`, e);
+    // Process ALL in Batches (AI handles manual guidance)
+    if (dirtyEntries.length > 0) {
+        const { generateBioBatch } = await import('../bio');
+
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < dirtyEntries.length; i += BATCH_SIZE) {
+            const batch = dirtyEntries.slice(i, i + BATCH_SIZE);
+
+            const batchInput = [];
+            for (const entry of batch) {
+                const history = getAtlasHistory(campaignId, entry.macro_location, entry.micro_location);
+                const historyEvents = history.map(h => `[${h.event_type}] ${h.description}`).slice(-20).join('\n');
+
+                batchInput.push({
+                    name: `${entry.macro_location} - ${entry.micro_location}`,
+                    context: {
+                        name: `${entry.macro_location} - ${entry.micro_location}`,
+                        macro: entry.macro_location,
+                        micro: entry.micro_location,
+                        campaignId,
+                        currentDesc: entry.description || "",
+                        manualDescription: (entry as any).manual_description || undefined
+                    },
+                    history: historyEvents
+                });
+            }
+
+            const results = await generateBioBatch('LOCATION', batchInput);
+
+            for (const input of batchInput) {
+                const newDesc = results[input.name] || input.context.currentDesc;
+                const original = batch.find(e => `${e.macro_location} - ${e.micro_location}` === input.name);
+                if (original) {
+                    await finalizeAtlasSync(campaignId, original.macro_location, original.micro_location, newDesc);
+                }
+            }
         }
     }
 
     return dirtyEntries.length;
+}
+
+async function finalizeAtlasSync(campaignId: number, macro: string, micro: string, description: string) {
+    updateAtlasEntry(campaignId, macro, micro, description);
+    deleteAtlasRagSummary(campaignId, macro, micro);
+
+    if (description && description.length > 50) {
+        const locationKey = `${macro}|${micro}`;
+        const ragContent = `[[SCHEDA LUOGO UFFICIALE: ${macro} - ${micro}]]
+MACRO REGIONE: ${macro}
+LUOGO SPECIFICO: ${micro}
+DESCRIZIONE COMPLETA: ${description}
+CHIAVE: ${locationKey}
+
+(Questa scheda ufficiale del luogo ha priorita su informazioni frammentarie precedenti)`;
+
+        await ingestGenericEvent(
+            campaignId,
+            'ATLAS_UPDATE',
+            ragContent,
+            [],
+            'ATLAS'
+        );
+    }
+    clearAtlasDirtyFlag(campaignId, macro, micro);
+    console.log(`[Sync Atlas] ✅ ${macro} - ${micro} sincronizzato.`);
 }

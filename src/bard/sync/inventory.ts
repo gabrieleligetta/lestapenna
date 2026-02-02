@@ -23,22 +23,24 @@ export async function syncInventoryEntryIfNeeded(
 
     console.log(`[Sync] Avvio sync Inventario per ${itemName}...`);
 
-    // 1. Fetch History and Generate Bio
-    const { inventoryRepository } = await import('../../db/repositories/InventoryRepository');
-    const history = inventoryRepository.getInventoryHistory(campaignId, itemName);
-    const simpleHistory = history.map((h: any) => ({ description: h.description, event_type: h.event_type }));
+    // 1. Check for Artifact Match first
+    const { getArtifactByName } = await import('../../db');
+    const artifact = getArtifactByName(campaignId, itemName);
 
-    const newBio = await generateBio('ITEM', {
-        campaignId,
-        name: itemName,
-        currentDesc: item.description || '',
-        manualDescription: (item as any).manual_description || undefined // 🆕 Passa la descrizione manuale
-    }, simpleHistory);
-
-    // 2. Build RAG content
     let ragContent = `[[SCHEDA OGGETTO UFFICIALE: ${itemName}]]\n`;
     ragContent += `QUANTITÀ: ${item.quantity}\n`;
-    if (newBio) ragContent += `LEGGENDA: ${newBio}\n`;
+
+    if (artifact) {
+        console.log(`[Sync] ${itemName} identificato come Artefatto. Link alla scheda.`);
+        ragContent += `IDENTIFICAZIONE: Questo oggetto è un Artefatto conosciuto.\n`;
+        ragContent += `RIFERIMENTO: Vedi [[SCHEDA ARTEFATTO UFFICIALE: ${itemName}]] per la storia e i poteri completi.\n`;
+        // Non generiamo bio per l'inventario se è un artefatto, usiamo quella dell'artefatto (gestita in artifact.ts)
+    } else {
+        // Oggetto comune/standard - Usa descrizione manuale o default, NIENTE AI (Risparmio Costi)
+        const description = (item as any).manual_description || item.description || "Oggetto standard dell'inventario.";
+        ragContent += `DESCRIZIONE: ${description}\n`;
+    }
+
     if (item.notes) ragContent += `NOTE: ${item.notes}\n`;
     ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
 
@@ -62,15 +64,78 @@ export async function syncAllDirtyInventory(campaignId: number): Promise<number>
 
     if (dirty.length === 0) return 0;
 
-    console.log(`[Sync] Sincronizzazione batch di ${dirty.length} oggetti inventario...`);
+    console.log(`[Sync] 📥 Inizio sync per ${dirty.length} oggetti inventario...`);
+
+    const { getArtifactByName } = await import('../../db'); // Lazy load
+
+    // 1. Separate Artifacts vs Items
+    const normalItems = [];
+    const artifacts = [];
 
     for (const item of dirty) {
-        try {
-            await syncInventoryEntryIfNeeded(campaignId, item.item_name, true);
-        } catch (e) {
-            console.error(`[Sync] Errore sync oggetto ${item.item_name}:`, e);
+        // Quick check if artifact exists with same name
+        const artifact = getArtifactByName(campaignId, item.item_name);
+        if (artifact) {
+            artifacts.push(item);
+        } else {
+            normalItems.push(item);
         }
     }
 
+    // 2. Process Artifact-Items (Just Sync RAG Link, No Bio Gen)
+    for (const item of artifacts) {
+        // ... (Logic from old syncInventoryEntryIfNeeded)
+        await finalizeInventorySync(campaignId, item, undefined, true);
+    }
+
+    // 3. Process Normal Items (Optimization: NO AI, just RAG Sync)
+    // User requested to avoid AI costs for standard items
+    for (const item of normalItems) {
+        const manualDesc = (item as any).manual_description;
+        const currentDesc = item.description;
+
+        // Use manual desc if exists, else current desc, else default
+        // We do NOT call generateBioBatch here.
+        const finalDesc = manualDesc || currentDesc || "Oggetto standard dell'inventario.";
+
+        await finalizeInventorySync(campaignId, item, finalDesc, false);
+    }
+
     return dirty.length;
+}
+
+async function finalizeInventorySync(campaignId: number, item: any, newDesc: string | undefined, isArtifact: boolean) {
+    const { inventoryRepository } = await import('../../db/repositories/InventoryRepository');
+
+    // Update DB if new description (and not artifact)
+    if (!isArtifact && newDesc) {
+        inventoryRepository.updateInventoryDescription(campaignId, item.item_name, newDesc);
+    }
+
+    // Build RAG
+    let ragContent = `[[SCHEDA OGGETTO UFFICIALE: ${item.item_name}]]\n`;
+    ragContent += `QUANTITÀ: ${item.quantity}\n`;
+
+    if (isArtifact) {
+        ragContent += `IDENTIFICAZIONE: Questo oggetto è un Artefatto conosciuto.\n`;
+        ragContent += `RIFERIMENTO: Vedi [[SCHEDA ARTEFATTO UFFICIALE: ${item.item_name}]] per la storia e i poteri completi.\n`;
+    } else {
+        const desc = newDesc || item.description || "Oggetto inventario.";
+        ragContent += `DESCRIZIONE: ${desc}\n`;
+    }
+
+    if (item.notes) ragContent += `NOTE: ${item.notes}\n`;
+    ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
+
+    // Ingest
+    await ingestGenericEvent(
+        campaignId,
+        'INVENTORY_UPDATE',
+        ragContent,
+        [],
+        'INVENTORY'
+    );
+
+    clearInventoryDirtyFlag(campaignId, item.item_name);
+    console.log(`[Sync] ✅ Inventario ${item.item_name} sincronizzato.`);
 }

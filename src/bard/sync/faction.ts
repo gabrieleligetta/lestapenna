@@ -73,6 +73,9 @@ DESCRIZIONE COMPLETA: ${newBio}
 /**
  * Batch sync di tutte le fazioni dirty
  */
+/**
+ * Batch sync di tutte le fazioni dirty
+ */
 export async function syncAllDirtyFactions(campaignId: number): Promise<number> {
     const dirtyFactions = factionRepository.getDirtyFactions(campaignId);
 
@@ -81,17 +84,77 @@ export async function syncAllDirtyFactions(campaignId: number): Promise<number> 
         return 0;
     }
 
-    console.log(`[Sync] Sincronizzazione batch di ${dirtyFactions.length} fazioni...`);
+    console.log(`[Sync] 📥 Inizio sync per ${dirtyFactions.length} fazioni...`);
 
-    for (const faction of dirtyFactions) {
-        try {
-            await syncFactionEntryIfNeeded(campaignId, faction.name, true);
-        } catch (e) {
-            console.error(`[Sync] Errore sync fazione "${faction.name}":`, e);
+    // Process in Batches
+    if (dirtyFactions.length > 0) {
+        const { generateBioBatch } = await import('../bio');
+        const BATCH_SIZE = 5;
+
+        for (let i = 0; i < dirtyFactions.length; i += BATCH_SIZE) {
+            const batch = dirtyFactions.slice(i, i + BATCH_SIZE);
+
+            const batchInput = [];
+            for (const faction of batch) {
+                const history = factionRepository.getFactionHistory(campaignId, faction.name);
+                const historyEvents = history.map(h => `[${h.event_type}] ${h.description}`).slice(-20).join('\n');
+
+                batchInput.push({
+                    name: faction.name,
+                    context: {
+                        name: faction.name,
+                        campaignId,
+                        currentDesc: faction.description || '',
+                        manualDescription: (faction as any).manual_description || undefined
+                    },
+                    history: historyEvents
+                });
+            }
+
+            const results = await generateBioBatch('FACTION', batchInput);
+
+            for (const input of batchInput) {
+                const newDesc = results[input.name] || input.context.currentDesc;
+                const original = batch.find(f => f.name === input.name);
+                if (original) {
+                    await finalizeFactionSync(campaignId, original, newDesc);
+                }
+            }
         }
     }
 
     return dirtyFactions.length;
+}
+
+async function finalizeFactionSync(campaignId: number, faction: any, newDesc: string) {
+    // Update DB
+    factionRepository.updateFaction(campaignId, faction.name, { description: newDesc }, false);
+
+    // Build RAG Content
+    const members = factionRepository.countFactionMembers(faction.id);
+    const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
+
+    const ragContent = `[[SCHEDA FAZIONE UFFICIALE: ${faction.name}]]
+TIPO: ${faction.type}
+STATO: ${faction.status}
+REPUTAZIONE CON IL PARTY: ${reputation}
+MEMBRI: ${members.npcs} NPC, ${members.pcs} PG, ${members.locations} Luoghi affiliati
+DESCRIZIONE COMPLETA: ${newDesc}
+
+(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
+
+    // Ingest
+    await ingestGenericEvent(
+        campaignId,
+        'FACTION_UPDATE',
+        ragContent,
+        [faction.name],
+        'FACTION'
+    );
+
+    // Clear flag
+    factionRepository.clearFactionDirtyFlag(campaignId, faction.name);
+    console.log(`[Sync] ✅ Fazione "${faction.name}" sincronizzata.`);
 }
 
 /**

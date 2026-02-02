@@ -57,20 +57,81 @@ export async function syncQuestEntryIfNeeded(
 /**
  * Batch sync di tutte le quest dirty
  */
+/**
+ * Batch sync di tutte le quest dirty
+ */
 export async function syncAllDirtyQuests(campaignId: number): Promise<number> {
     const dirty = getDirtyQuests(campaignId);
 
     if (dirty.length === 0) return 0;
 
-    console.log(`[Sync] Sincronizzazione batch di ${dirty.length} quest...`);
+    console.log(`[Sync] 📥 Inizio sync per ${dirty.length} quest...`);
 
-    for (const q of dirty) {
-        try {
-            await syncQuestEntryIfNeeded(campaignId, q.title, true);
-        } catch (e) {
-            console.error(`[Sync] Errore sync quest ${q.title}:`, e);
+    if (dirty.length > 0) {
+        const { generateBioBatch } = await import('../bio');
+        const { questRepository } = await import('../../db/repositories/QuestRepository');
+        const BATCH_SIZE = 5;
+
+        for (let i = 0; i < dirty.length; i += BATCH_SIZE) {
+            const batch = dirty.slice(i, i + BATCH_SIZE);
+
+            const batchInput = [];
+            for (const q of batch) {
+                const history = getQuestHistory(campaignId, q.title);
+                const historyEvents = history.map((h: any) => `[${h.event_type}] ${h.description}`).slice(-20).join('\n');
+
+                batchInput.push({
+                    name: q.title,
+                    context: {
+                        name: q.title,
+                        role: q.status,
+                        campaignId,
+                        currentDesc: q.description || '',
+                        manualDescription: q.manual_description || undefined
+                    },
+                    history: historyEvents
+                });
+            }
+
+            const results = await generateBioBatch('QUEST', batchInput);
+
+            for (const input of batchInput) {
+                const newBio = results[input.name] || input.context.currentDesc;
+                const original = batch.find(q => q.title === input.name);
+
+                if (original) {
+                    await finalizeQuestSync(campaignId, original, newBio);
+                }
+            }
         }
     }
 
     return dirty.length;
+}
+
+async function finalizeQuestSync(campaignId: number, quest: any, newBio: string) {
+    const { questRepository } = await import('../../db/repositories/QuestRepository');
+
+    // Update DB
+    questRepository.updateQuestDescription(campaignId, quest.title, newBio);
+
+    // Build RAG Content
+    let ragContent = `[[SCHEDA MISSIONE UFFICIALE: ${quest.title}]]\n`;
+    ragContent += `TIPO: ${quest.type || 'MAJOR'}\n`;
+    ragContent += `STATO: ${quest.status}\n`;
+    if (newBio) ragContent += `DIARIO COMPLETO: ${newBio}\n`;
+    ragContent += `\n(Questa scheda ufficiale ha priorità su informazioni frammentarie precedenti)`;
+
+    // Ingest
+    await ingestGenericEvent(
+        campaignId,
+        'QUEST_UPDATE',
+        ragContent,
+        [],
+        'QUEST'
+    );
+
+    // Clear flag
+    clearQuestDirtyFlag(campaignId, quest.title);
+    console.log(`[Sync] ✅ Quest ${quest.title} sincronizzata.`);
 }

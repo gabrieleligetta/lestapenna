@@ -228,6 +228,7 @@ export const inventoryRepository = {
         artifact_status?: string;
         artifact_short_id?: string;
         is_cursed?: boolean;
+        artifact_description?: string;
     })[] => {
         const items = db.prepare(`
             SELECT
@@ -235,7 +236,8 @@ export const inventoryRepository = {
                 CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END as is_artifact,
                 a.status as artifact_status,
                 a.short_id as artifact_short_id,
-                a.is_cursed
+                a.is_cursed,
+                a.description as artifact_description
             FROM inventory i
             LEFT JOIN artifacts a ON i.campaign_id = a.campaign_id
                 AND lower(i.item_name) = lower(a.name)
@@ -259,6 +261,7 @@ export const inventoryRepository = {
         artifact_status?: string;
         artifact_short_id?: string;
         is_cursed?: boolean;
+        artifact_description?: string;
     })[] => {
         const items = db.prepare(`
             SELECT
@@ -266,7 +269,8 @@ export const inventoryRepository = {
                 CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END as is_artifact,
                 a.status as artifact_status,
                 a.short_id as artifact_short_id,
-                a.is_cursed
+                a.is_cursed,
+                a.description as artifact_description
             FROM inventory i
             LEFT JOIN artifacts a ON i.campaign_id = a.campaign_id
                 AND lower(i.item_name) = lower(a.name)
@@ -289,6 +293,7 @@ export const inventoryRepository = {
         artifact_status?: string;
         artifact_short_id?: string;
         is_cursed?: boolean;
+        artifact_description?: string;
     }) | null => {
         const item = db.prepare(`
             SELECT
@@ -296,7 +301,8 @@ export const inventoryRepository = {
                 CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END as is_artifact,
                 a.status as artifact_status,
                 a.short_id as artifact_short_id,
-                a.is_cursed
+                a.is_cursed,
+                a.description as artifact_description
             FROM inventory i
             LEFT JOIN artifacts a ON i.campaign_id = a.campaign_id
                 AND lower(i.item_name) = lower(a.name)

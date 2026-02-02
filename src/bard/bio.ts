@@ -247,3 +247,53 @@ export async function generateBio(
         return ctx.currentDesc || "";
     }
 }
+
+/**
+ * Genera descrizioni per più entità in una singola chiamata (Risparmio Token ~40%)
+ */
+/**
+ * Genera descrizioni per più entità in una singola chiamata (Risparmio Token ~40%)
+ */
+export async function generateBioBatch(
+    type: BioEntityType,
+    items: Array<{ name: string, context: BioContext, history: string }>
+): Promise<Record<string, string>> {
+
+    if (items.length === 0) return {};
+
+    console.log(`[BioBatch] 🧬 Avvio generazione batch per ${items.length} entità di tipo ${type}...`);
+
+    // Costruiamo un payload compatto
+    const payload = items.map(i => ({
+        id: i.name,
+        current_desc: i.context.currentDesc?.substring(0, 500) || "Nessuna", // Tronchiamo per risparmiare input
+        manual_guidance: i.context.manualDescription || null, // 🆕 Include guida manuale
+        recent_events: i.history
+    }));
+
+    const systemPrompt = `Sei l'Archivista di ${type}. Aggiorna le descrizioni delle seguenti entità basandoti sui nuovi eventi.
+Sii CONCISO (max 3 frasi per entità).
+IMPORTANTE: Se presente "manual_guidance", usala come scheletro vincolante. Non contraddirla.
+Restituisci SOLO un JSON valido formato: { "Nome Entità": "Nuova Descrizione" }.`;
+
+    try {
+        const response = await metadataClient.chat.completions.create({
+            model: METADATA_MODEL, // Usa pure gpt-4o-mini o equivalente economico
+            response_format: { type: "json_object" },
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: JSON.stringify(payload) }
+            ]
+        });
+
+        const content = response.choices[0].message.content;
+        if (!content) return {};
+
+        const results = JSON.parse(content);
+        return results; // Mappa { "Nome": "Descrizione" }
+
+    } catch (e) {
+        console.error(`[BioBatch] Errore batch:`, e);
+        return {}; // Fallback sicuro
+    }
+}

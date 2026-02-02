@@ -75,6 +75,12 @@ BIOGRAFIA COMPLETA: ${finalBio}
 /**
  * Batch sync di tutti gli NPC dirty
  */
+/**
+ * Batch sync di tutti gli NPC dirty
+ */
+/**
+ * Batch sync di tutti gli NPC dirty
+ */
 export async function syncAllDirtyNpcs(campaignId: number): Promise<number> {
     const dirtyNpcs = getDirtyNpcs(campaignId);
 
@@ -83,17 +89,78 @@ export async function syncAllDirtyNpcs(campaignId: number): Promise<number> {
         return 0;
     }
 
-    console.log(`[Sync] Sincronizzazione batch di ${dirtyNpcs.length} NPC...`);
+    console.log(`[Sync] 📥 Inizio sync per ${dirtyNpcs.length} NPC...`);
 
-    for (const npc of dirtyNpcs) {
-        try {
-            await syncNpcDossierIfNeeded(campaignId, npc.name, true);
-        } catch (e) {
-            console.error(`[Sync] Errore sync ${npc.name}:`, e);
+    // Process ALL in Batches (AI handles manual guidance)
+    if (dirtyNpcs.length > 0) {
+        // Import batch generator
+        const { generateBioBatch } = await import('../bio');
+
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < dirtyNpcs.length; i += BATCH_SIZE) {
+            const batch = dirtyNpcs.slice(i, i + BATCH_SIZE);
+
+            // Prepare payload
+            const batchInput = [];
+            for (const npc of batch) {
+                const history = getNpcHistory(campaignId, npc.name);
+                const historyEvents = history.map(h => `[${h.event_type}] ${h.description}`).slice(-20).join('\n');
+
+                batchInput.push({
+                    name: npc.name,
+                    context: {
+                        name: npc.name,
+                        role: npc.role || 'Sconosciuto',
+                        currentDesc: npc.description || '',
+                        manualDescription: npc.manual_description || undefined // 🆕 Pass manual description
+                    },
+                    history: historyEvents
+                });
+            }
+
+            // Call AI
+            const results = await generateBioBatch('NPC', batchInput);
+
+            // Apply results
+            for (const input of batchInput) {
+                const newDesc = results[input.name] || input.context.currentDesc; // Fallback
+                const originalNpc = batch.find(n => n.name === input.name);
+                if (originalNpc) {
+                    await finalizeNpcSync(campaignId, input.name, originalNpc.role || 'Sconosciuto', originalNpc.status || 'Sconosciuto', newDesc);
+                }
+            }
         }
     }
 
     return dirtyNpcs.length;
+}
+
+/**
+ * Common Finalizer for NPC Sync
+ */
+async function finalizeNpcSync(campaignId: number, npcName: string, role: string, status: string, description: string) {
+    updateNpcEntry(campaignId, npcName, description, role);
+    deleteNpcRagSummary(campaignId, npcName);
+
+    if (description.length > 50) {
+        const ragContent = `[[SCHEDA UFFICIALE: ${npcName}]]
+RUOLO: ${role}
+STATO: ${status}
+BIOGRAFIA COMPLETA: ${description}
+
+(Questa scheda ufficiale ha priorita su informazioni frammentarie precedenti)`;
+
+        await ingestGenericEvent(
+            campaignId,
+            'DOSSIER_UPDATE',
+            ragContent,
+            [npcName],
+            'DOSSIER'
+        );
+    }
+
+    clearNpcDirtyFlag(campaignId, npcName);
+    console.log(`[Sync] ✅ ${npcName} sincronizzato.`);
 }
 
 

@@ -326,17 +326,19 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('analyst', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, 0, latency, false);
+        const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('analyst', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
 
-        // 🆕 Context Window Logging
+        // 🆕 Context Window Logging + Prompt Caching Stats
         const CONTEXT_LIMIT = 128000;
         const OUTPUT_LIMIT = 16384;
-        const totalTokens = inputTokens + outputTokens;
         const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
         const outputPct = ((outputTokens / OUTPUT_LIMIT) * 100).toFixed(1);
+        const cachePct = inputTokens > 0 ? ((cachedTokens / inputTokens) * 100).toFixed(1) : '0';
         const contextWarning = inputTokens > CONTEXT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
         const outputWarning = outputTokens > OUTPUT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
-        console.log(`[Analista] 📊 Token Usage: ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}`);
+        const cacheInfo = cachedTokens > 0 ? ` | 💾 Cached: ${cachedTokens.toLocaleString()} (${cachePct}%)` : '';
+        console.log(`[Analista] 📊 Token Usage: ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}${cacheInfo}`);
 
         const content = response.choices[0].message.content || "{}";
 
@@ -1022,10 +1024,13 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             saveDebugFile(sessionId, promptFileName, reducePrompt);
 
             const startAI = Date.now();
+            const writerSystemContent = worldManifesto
+                ? `Sei un assistente D&D esperto. Usa il seguente WORLD MANIFESTO come contesto della campagna:\n\n${worldManifesto}\n\nRispondi SOLO con JSON valido.`
+                : "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido.";
             const summaryOptions: any = {
                 model: SUMMARY_MODEL,
                 messages: [
-                    { role: "system", content: "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido." },
+                    { role: "system", content: writerSystemContent },
                     { role: "user", content: reducePrompt }
                 ]
             };
@@ -1047,11 +1052,13 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
             monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
 
-            // 🆕 Context Window Logging (Per il singolo atto)
+            // 🆕 Context Window Logging + Prompt Caching Stats (Per il singolo atto)
             const CONTEXT_LIMIT = 128000;
             const OUTPUT_LIMIT = 16384;
             const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
-            console.log(`[Bardo] 📊 Token Usage (Atto ${actNumber}): ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} (${contextPct}%)`);
+            const cachePct = inputTokens > 0 ? ((cachedTokens / inputTokens) * 100).toFixed(1) : '0';
+            const cacheInfo = cachedTokens > 0 ? ` | 💾 Cached: ${cachedTokens.toLocaleString()} (${cachePct}%)` : '';
+            console.log(`[Bardo] 📊 Token Usage (Atto ${actNumber}): ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} (${contextPct}%)${cacheInfo}`);
 
             const content = response.choices[0].message.content || "{}";
             const responseFileName = (!isMultiPart && i === 0) ? 'writer_response.txt' : `writer_response_act${actNumber}.txt`;

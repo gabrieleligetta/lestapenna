@@ -86,18 +86,22 @@ async function generateWorldManifesto(campaignId: number): Promise<string> {
         const locations = locationRepository.listAllAtlasEntries(campaignId);
         const quests = questRepository.getOpenQuests(campaignId);
 
-        // Arricchisci NPC con eventi recenti
+        // Arricchisci NPC con TUTTI gli eventi (non solo ultimi 5)
         const npcsWithEvents = npcs.map((npc: any) => {
             const events = npcRepository.getNpcHistory(campaignId, npc.name);
-            return { ...npc, events: events.slice(-5) }; // Ultimi 5 eventi
+            return { ...npc, events }; // Tutti gli eventi
         });
 
-        // Arricchisci fazioni con reputazione e membri
-        const factionsWithRep = factions.map((f: any) => ({
-            ...f,
-            reputation: factionRepository.getFactionReputation(campaignId, f.id),
-            members: factionRepository.countFactionMembers(f.id)
-        }));
+        // Arricchisci fazioni con reputazione, membri e storia
+        const factionsWithRep = factions.map((f: any) => {
+            const events = factionRepository.getFactionHistory(campaignId, f.name);
+            return {
+                ...f,
+                reputation: factionRepository.getFactionReputation(campaignId, f.id),
+                members: factionRepository.countFactionMembers(f.id),
+                events: events.slice(-5) // Ultimi 5 eventi per fazione
+            };
+        });
 
         // 2. Costruzione Context Raw
         const contextData = buildContextForArchivista({
@@ -118,8 +122,8 @@ async function generateWorldManifesto(campaignId: number): Promise<string> {
                 { role: 'system', content: 'Sei un archivista esperto di campagne D&D. Compili manifesti operativi densi e informativi.' },
                 { role: 'user', content: ARCHIVISTA_PROMPT(campaign.name, contextData) }
             ],
-            temperature: 0.3,
-            max_tokens: 6000
+            temperature: 1,
+            max_completion_tokens: 10000
         });
 
         const manifesto = response.choices[0]?.message?.content || buildFallbackManifesto(contextData);
@@ -151,61 +155,173 @@ async function generateWorldManifesto(campaignId: number): Promise<string> {
 
 /**
  * Formatta i dati grezzi per l'AI con tutti gli ID necessari
+ * NOTA: Nessun limite artificiale - passa TUTTO il contesto disponibile
  */
 function buildContextForArchivista(data: any): string {
     const { campaign, characters, partyFaction, factions, npcs, artifacts, locations, quests } = data;
 
     let ctx = '';
 
-    // Party e PG
+    // ============================================
+    // PARTY E PG (COMPLETO)
+    // ============================================
     ctx += `\n## PARTY: ${partyFaction?.name || 'Gruppo Senza Nome'} [ID: ${partyFaction?.short_id || 'N/A'}]\n`;
-    for (const char of characters) {
-        ctx += `- **${char.character_name}** [ID: ${char.short_id || 'N/A'}] (${char.race || ''} ${char.class || ''}): ${char.description || 'Nessuna descrizione'}\n`;
+    if (partyFaction?.description) {
+        ctx += `Descrizione: ${partyFaction.description}\n`;
     }
-
-    // NPC (top 30 per attività recente)
-    const sortedNpcs = npcs
-        .sort((a: any, b: any) => (b.events?.length || 0) - (a.events?.length || 0))
-        .slice(0, 30);
-
-    ctx += `\n## NPC (${npcs.length} totali, top 30)\n`;
-    for (const npc of sortedNpcs) {
-        ctx += `- **${npc.name}** [ID: ${npc.short_id}] (${npc.role || 'Sconosciuto'}) [${npc.status || 'ALIVE'}]: ${(npc.description || '').substring(0, 150)}\n`;
-        if (npc.events?.length) {
-            const recentEvents = npc.events.slice(-3).map((e: any) => `[${e.event_type}] ${(e.description || '').substring(0, 60)}`).join('; ');
-            ctx += `  Eventi recenti: ${recentEvents}\n`;
+    ctx += `\n### Membri del Party:\n`;
+    for (const char of characters) {
+        ctx += `- **${char.character_name}** [ID: ${char.short_id || 'N/A'}] (${char.race || ''} ${char.class || ''})`;
+        if (char.alignment_moral || char.alignment_ethical) {
+            ctx += ` [${char.alignment_ethical || ''} ${char.alignment_moral || ''}]`;
+        }
+        ctx += `\n`;
+        if (char.description) {
+            ctx += `  Bio: ${char.description}\n`;
         }
     }
 
-    // Fazioni
-    ctx += `\n## FAZIONI (${factions.length})\n`;
+    // ============================================
+    // FAZIONI (COMPLETO CON DETTAGLI)
+    // ============================================
+    ctx += `\n## FAZIONI (${factions.length} totali)\n`;
     for (const faction of factions) {
         const rep = faction.reputation || 'NEUTRALE';
         const memberCount = faction.members?.npcs || 0;
-        ctx += `- **${faction.name}** [ID: ${faction.short_id}] (${faction.type}): ${(faction.description || '').substring(0, 100)} [Rep: ${rep}, Membri: ${memberCount} NPC]`;
-        if (faction.is_party) ctx += ' [PARTY]';
-        ctx += '\n';
+        const locCount = faction.members?.locations || 0;
+
+        ctx += `\n### ${faction.name} [ID: ${faction.short_id}]`;
+        if (faction.is_party) ctx += ' ⭐ PARTY';
+        ctx += `\n`;
+        ctx += `- Tipo: ${faction.type || 'GENERIC'} | Reputazione: ${rep} | Membri: ${memberCount} NPC, ${locCount} Luoghi\n`;
+        if (faction.alignment_moral || faction.alignment_ethical) {
+            ctx += `- Allineamento: ${faction.alignment_ethical || ''} ${faction.alignment_moral || ''}\n`;
+        }
+        if (faction.description) {
+            ctx += `- Descrizione: ${faction.description}\n`;
+        }
+        // Eventi recenti della fazione
+        if (faction.events?.length) {
+            const recentEvents = faction.events.slice(-3).map((e: any) => `[${e.event_type}] ${e.description}`).join('; ');
+            ctx += `- Eventi recenti: ${recentEvents}\n`;
+        }
     }
 
-    // Artefatti
-    ctx += `\n## ARTEFATTI (${artifacts.length})\n`;
-    for (const art of artifacts) {
-        let line = `- **${art.name}** [ID: ${art.short_id}]: ${(art.description || '').substring(0, 100)}`;
-        if (art.is_cursed) line += ' [MALEDETTO]';
-        if (art.owner_name) line += ` [Possessore: ${art.owner_name}]`;
-        ctx += line + '\n';
+    // ============================================
+    // NPC (TUTTI, ORDINATI PER RILEVANZA)
+    // ============================================
+    // Ordina per: 1) numero eventi, 2) data ultimo aggiornamento
+    const sortedNpcs = npcs.sort((a: any, b: any) => {
+        const eventsA = a.events?.length || 0;
+        const eventsB = b.events?.length || 0;
+        if (eventsB !== eventsA) return eventsB - eventsA;
+        return new Date(b.last_updated || 0).getTime() - new Date(a.last_updated || 0).getTime();
+    });
+
+    ctx += `\n## NPC CONOSCIUTI (${npcs.length} totali)\n`;
+
+    // Prima i più rilevanti (con eventi)
+    const activeNpcs = sortedNpcs.filter((n: any) => n.events?.length > 0);
+    const passiveNpcs = sortedNpcs.filter((n: any) => !n.events?.length);
+
+    if (activeNpcs.length > 0) {
+        ctx += `\n### NPC Attivi (con storia):\n`;
+        for (const npc of activeNpcs) {
+            ctx += `- **${npc.name}** [ID: ${npc.short_id}] (${npc.role || 'Sconosciuto'}) [${npc.status || 'ALIVE'}]`;
+            if (npc.alignment_moral || npc.alignment_ethical) {
+                ctx += ` [${npc.alignment_ethical || ''} ${npc.alignment_moral || ''}]`;
+            }
+            if (npc.last_seen_location) {
+                ctx += ` 📍${npc.last_seen_location}`;
+            }
+            ctx += `\n`;
+            if (npc.description) {
+                ctx += `  Bio: ${npc.description}\n`;
+            }
+            if (npc.events?.length) {
+                ctx += `  Storia (${npc.events.length} eventi):\n`;
+                // Mostra ultimi 5 eventi per NPC attivi
+                for (const e of npc.events.slice(-5)) {
+                    ctx += `    • [${e.event_type}] ${e.description}\n`;
+                }
+            }
+        }
     }
 
-    // Luoghi (top 20)
-    ctx += `\n## ATLANTE (${locations.length} luoghi, top 20)\n`;
-    for (const loc of locations.slice(0, 20)) {
-        ctx += `- **${loc.macro_location} - ${loc.micro_location}** [ID: ${loc.short_id}]: ${(loc.description || '').substring(0, 80)}\n`;
+    if (passiveNpcs.length > 0) {
+        ctx += `\n### Altri NPC noti:\n`;
+        for (const npc of passiveNpcs) {
+            ctx += `- **${npc.name}** [ID: ${npc.short_id}] (${npc.role || 'Sconosciuto'}) [${npc.status || 'ALIVE'}]`;
+            if (npc.last_seen_location) {
+                ctx += ` 📍${npc.last_seen_location}`;
+            }
+            ctx += `: ${npc.description || 'Nessuna descrizione'}\n`;
+        }
     }
 
-    // Quest attive
+    // ============================================
+    // ARTEFATTI (TUTTI CON DETTAGLI)
+    // ============================================
+    if (artifacts.length > 0) {
+        ctx += `\n## ARTEFATTI (${artifacts.length})\n`;
+        for (const art of artifacts) {
+            ctx += `- **${art.name}** [ID: ${art.short_id}] [${art.status || 'FUNZIONANTE'}]`;
+            if (art.is_cursed) ctx += ' ⚠️MALEDETTO';
+            ctx += `\n`;
+            if (art.description) {
+                ctx += `  Descrizione: ${art.description}\n`;
+            }
+            if (art.effects) {
+                ctx += `  Effetti: ${art.effects}\n`;
+            }
+            if (art.owner_name) {
+                ctx += `  Possessore: ${art.owner_name} (${art.owner_type || 'NPC'})\n`;
+            }
+            if (art.location_macro || art.location_micro) {
+                ctx += `  Ubicazione: ${art.location_macro || ''} - ${art.location_micro || ''}\n`;
+            }
+            if (art.curse_description) {
+                ctx += `  Maledizione: ${art.curse_description}\n`;
+            }
+        }
+    }
+
+    // ============================================
+    // ATLANTE (TUTTI I LUOGHI)
+    // ============================================
+    ctx += `\n## ATLANTE (${locations.length} luoghi)\n`;
+
+    // Raggruppa per macro-location
+    const locationsByMacro: Record<string, any[]> = {};
+    for (const loc of locations) {
+        const macro = loc.macro_location || 'Sconosciuto';
+        if (!locationsByMacro[macro]) locationsByMacro[macro] = [];
+        locationsByMacro[macro].push(loc);
+    }
+
+    for (const [macro, locs] of Object.entries(locationsByMacro)) {
+        ctx += `\n### ${macro}\n`;
+        for (const loc of locs) {
+            ctx += `- **${loc.micro_location}** [ID: ${loc.short_id}]`;
+            if (loc.description) {
+                ctx += `: ${loc.description}`;
+            }
+            ctx += `\n`;
+        }
+    }
+
+    // ============================================
+    // QUEST (TUTTE CON DETTAGLI)
+    // ============================================
     ctx += `\n## QUEST ATTIVE (${quests.length})\n`;
     for (const q of quests) {
-        ctx += `- **${q.title}** [ID: ${q.short_id}] [${q.status}] [${q.type || 'MAJOR'}]: ${(q.description || '').substring(0, 100)}\n`;
+        ctx += `- **${q.title}** [ID: ${q.short_id}] [${q.status}] [${q.type || 'MAJOR'}]\n`;
+        if (q.description) {
+            ctx += `  Descrizione: ${q.description}\n`;
+        }
+        if (q.giver_npc) {
+            ctx += `  Quest Giver: ${q.giver_npc}\n`;
+        }
     }
 
     return ctx;

@@ -325,6 +325,11 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     - **LEGALE**: Rispetto di leggi, codici d'onore, patti. (+Impact)
     - **CAOTICO**: Libertà assoluta, ribellione all'autorità, imprevedibilità. (-Impact)
     - Usa 'moral_impact' e 'ethical_impact' in character_growth, npc_events e party_alignment_change per quantificare.
+    - **SACRIFICIO**: Distingui con attenzione. 
+        - "Sacrificio di Sè" per proteggere altri = EROICO/BUONO (+). 
+        - "Sacrificio strategico" di risorse/alleati consensuali = NEUTRALE/GRIGIO (~0). 
+        - "Richiesta di Sacrificio Altrui" contro volontà o di innocenti = MALVAGIO (-).
+        - Se un NPC propone un sacrificio difficile per una "Causa Superiore" (es. salvare il mondo), valuta il contesto: è fanatismo (Malvagio/Caotico) o necessità disperata (Neutrale)? Non penalizzare automaticamente come Malvagio se l'intento è opporsi a un male maggiore.
 - **ARTEFATTI**: Estrai SOLO oggetti MAGICI, LEGGENDARI o IMPORTANTI per la trama. NON estrarre oggetti comuni. Estrai se l'oggetto ha un NOME PROPRIO o è descritto come significativo/unico. Se un artefatto cambia proprietario o stato, aggiornalo.
 - **ARTIFACT EVENTS**: Registra eventi SIGNIFICATIVI per artefatti (attivazione poteri, distruzione, trasferimento, rivelazioni, maledizioni). NON registrare semplici osservazioni o menzioni.
 

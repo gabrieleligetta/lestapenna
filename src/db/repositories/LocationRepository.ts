@@ -8,8 +8,12 @@ export const locationRepository = {
         // 1. Aggiorna lo stato corrente della campagna
         const current = campaignRepository.getCampaignLocationById(campaignId);
 
-        // Se è identico, non facciamo nulla (evita spam nella history)
-        if (current && current.macro === macro && current.micro === micro) return;
+        // Se è identico E della stessa sessione, non facciamo nulla (evita spam nella history)
+        // MA se la sessione è diversa (es. nuovo viaggio registrato in S3 al punto d'arrivo di S2), lo salviamo.
+        const lastHistory = db.prepare('SELECT session_id FROM location_history WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 1').get(campaignId) as { session_id: string } | undefined;
+        const isSameSession = lastHistory?.session_id === sessionId;
+
+        if (current && current.macro === macro && current.micro === micro && isSameSession) return;
 
         const stmt = db.prepare(`
             UPDATE campaigns 

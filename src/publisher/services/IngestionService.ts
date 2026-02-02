@@ -146,9 +146,42 @@ export class IngestionService {
             }
         }
 
-        // Process validated events
-        if (validated) {
-            await this.processValidatedEvents(campaignId, sessionId, validated, sessionStartTime);
+        // 🆕 Process Faction Updates (MOVED FIRST to ensure IDs exist)
+        if (result.faction_updates?.length) {
+            console.log(`[Ingestion] ⚔️ Salvataggio ${result.faction_updates.length} aggiornamenti fazioni...`);
+            await this.processFactionUpdates(campaignId, sessionId, result.faction_updates, sessionStartTime);
+        }
+
+
+
+        // 🆕 Process Party Alignment
+        if (result.party_alignment_change) {
+            const { moral, ethical, reason } = result.party_alignment_change;
+            if (moral || ethical) {
+                console.log(`[Ingestion] ⚖️ Allineamento Party: ${moral || '-'} / ${ethical || '-'} (${reason})`);
+                const { campaignRepository, addWorldEvent, factionRepository } = await import('../../db');
+                campaignRepository.updatePartyAlignment(campaignId, moral, ethical);
+
+                // 🆕 Sync with Factions table
+                const partyFaction = factionRepository.getPartyFaction(campaignId);
+                if (partyFaction) {
+                    factionRepository.updateFaction(campaignId, partyFaction.name, {
+                        alignment_moral: moral,
+                        alignment_ethical: ethical
+                    }, false);
+                    console.log(`[Ingestion] 🎭 Fazione Party allineata: ${partyFaction.name}`);
+                }
+
+                addWorldEvent(
+                    campaignId,
+                    sessionId,
+                    `L'allineamento del gruppo è cambiato: ${moral ? `Morale: ${moral}` : ''} ${ethical ? `Etico: ${ethical}` : ''}. Motivo: ${reason}`,
+                    'POLITICS', // Usa un tipo esistente
+                    undefined,
+                    false,
+                    sessionStartTime
+                );
+            }
         }
 
         // Process NPC dossier updates (metadata)
@@ -163,6 +196,12 @@ export class IngestionService {
 
         // Process monsters
         await this.processMonsters(campaignId, sessionId, result.monsters, sessionStartTime);
+
+        // 🆕 Process Faction Affiliations (Process AFTER entities are created)
+        if (result.faction_affiliations?.length) {
+            console.log(`[Ingestion] 🤝 Salvataggio ${result.faction_affiliations.length} affiliazioni...`);
+            await this.processFactionAffiliations(campaignId, sessionId, result.faction_affiliations, sessionStartTime);
+        }
 
         // Process present NPCs
         if (result.present_npcs?.length) {
@@ -204,55 +243,15 @@ export class IngestionService {
             }
         }
 
-        // 🆕 Process Faction Updates
-        if (result.faction_updates?.length) {
-            console.log(`[Ingestion] ⚔️ Salvataggio ${result.faction_updates.length} aggiornamenti fazioni...`);
-            await this.processFactionUpdates(campaignId, sessionId, result.faction_updates, sessionStartTime);
-        }
-
-        // 🆕 Process Faction Affiliations
-        if (result.faction_affiliations?.length) {
-            console.log(`[Ingestion] 🤝 Salvataggio ${result.faction_affiliations.length} affiliazioni...`);
-            await this.processFactionAffiliations(campaignId, sessionId, result.faction_affiliations, sessionStartTime);
-        }
-
-        // 🆕 Process Party Alignment
-        if (result.party_alignment_change) {
-            const { moral, ethical, reason } = result.party_alignment_change;
-            if (moral || ethical) {
-                console.log(`[Ingestion] ⚖️ Allineamento Party: ${moral || '-'} / ${ethical || '-'} (${reason})`);
-                const { campaignRepository, addWorldEvent, factionRepository } = await import('../../db');
-                campaignRepository.updatePartyAlignment(campaignId, moral, ethical);
-
-                // 🆕 Sync with Factions table
-                const partyFaction = factionRepository.getPartyFaction(campaignId);
-                if (partyFaction) {
-                    factionRepository.updateFaction(campaignId, partyFaction.name, {
-                        alignment_moral: moral,
-                        alignment_ethical: ethical
-                    }, false);
-                    console.log(`[Ingestion] 🎭 Fazione Party allineata: ${partyFaction.name}`);
-                }
-
-                addWorldEvent(
-                    campaignId,
-                    sessionId,
-                    `L'allineamento del gruppo è cambiato: ${moral ? `Morale: ${moral}` : ''} ${ethical ? `Etico: ${ethical}` : ''}. Motivo: ${reason}`,
-                    'POLITICS', // Usa un tipo esistente
-                    undefined,
-                    false,
-                    sessionStartTime
-                );
-            }
-        }
-
         // 🆕 Process Artifacts (Magical/Legendary Items)
-        console.log(`[Ingestion] 🔍 DEBUG: result.artifacts = ${JSON.stringify(result.artifacts?.slice(0, 2) || 'undefined')}`);
         if (result.artifacts?.length) {
             console.log(`[Ingestion] ✨ Salvataggio ${result.artifacts.length} artefatti...`);
             await this.processArtifacts(campaignId, sessionId, result.artifacts, sessionStartTime);
-        } else {
-            console.log(`[Ingestion] ⚠️ DEBUG: Nessun artefatto nel result (artifacts è ${result.artifacts === undefined ? 'undefined' : 'empty array'})`);
+        }
+
+        // Process validated events (NOW CALLED AFTER UPDATES)
+        if (validated) {
+            await this.processValidatedEvents(campaignId, sessionId, validated, sessionStartTime);
         }
 
         // 📍 PHASE: SYNCING
@@ -270,7 +269,23 @@ export class IngestionService {
         for (const evt of validated.character_events.keep) {
             const safeDesc = evt.event || "Evento significativo registrato.";
             console.log(`[PG] ➕ ${evt.name}: ${safeDesc}`);
-            // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual, timestamp, moral, ethical)
+
+            // 🆕 Resolve Faction ID if present (Fix for FK errors)
+            let fixedFactionId = evt.faction_id;
+            if (fixedFactionId) {
+                const faction = factionRepository.getFactionByShortId(campaignId, fixedFactionId);
+                if (faction) {
+                    fixedFactionId = faction.id;
+                } else if (typeof fixedFactionId !== 'number') {
+                    // If it's a string ID that we couldn't resolve, fallback to null to avoid FK error
+                    // Try name?
+                    const fByName = factionRepository.getFaction(campaignId, fixedFactionId);
+                    if (fByName) fixedFactionId = fByName.id;
+                    else fixedFactionId = null;
+                }
+            }
+
+            // Signature: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual, timestamp, moral, ethical, factionId)
             addCharacterEvent(
                 campaignId,
                 evt.name,
@@ -281,7 +296,7 @@ export class IngestionService {
                 timestamp,
                 evt.moral_impact || 0,
                 evt.ethical_impact || 0,
-                evt.faction_id // 🆕 Faction Context
+                fixedFactionId
             );
             // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
             await ingestBioEvent(campaignId, sessionId, evt.name, safeDesc, 'PG', timestamp);
@@ -304,6 +319,19 @@ export class IngestionService {
                     }
                 }
 
+                // 🆕 Resolve Faction ID if present
+                let fixedFactionId = evt.faction_id;
+                if (fixedFactionId) {
+                    const faction = factionRepository.getFactionByShortId(campaignId, fixedFactionId);
+                    if (faction) {
+                        fixedFactionId = faction.id;
+                    } else if (typeof fixedFactionId !== 'number') {
+                        const fByName = factionRepository.getFaction(campaignId, fixedFactionId);
+                        if (fByName) fixedFactionId = fByName.id;
+                        else fixedFactionId = null;
+                    }
+                }
+
                 console.log(`[NPC] ➕ ${npcName}: ${safeDesc}`);
                 // Signature: (campaignId: number, npcName: string, sessionId: string, description: string, type: string, isManual, timestamp, moral, ethical)
                 addNpcEvent(
@@ -316,7 +344,7 @@ export class IngestionService {
                     timestamp,
                     evt.moral_impact || 0,
                     evt.ethical_impact || 0,
-                    evt.faction_id // 🆕 Faction Context
+                    fixedFactionId
                 );
                 // Signature: (campaignId: number, sessionId: string, charName: string, event: string, type: string, timestamp)
                 await ingestBioEvent(campaignId, sessionId, npcName, safeDesc, 'NPC', timestamp);
@@ -976,12 +1004,30 @@ export class IngestionService {
             const clean = cleanEntityName(artifact.name);
             const artifactName = clean.name;
 
-            // Resolve faction ID if faction_name is provided
+            // Resolve faction ID if faction_name OR faction_id (ShortID) is provided
             let factionId: number | undefined;
+
+            // 1. Try Name
             if (artifact.faction_name) {
                 const faction = getFaction(campaignId, artifact.faction_name);
                 if (faction) {
                     factionId = faction.id;
+                }
+            }
+
+            // 2. Try ShortID (if not found by name)
+            if (!factionId && artifact.faction_id) {
+                // Lazy load if needed or assume it's available via repository imports
+                // We need to import factionRepository but getFaction covers names.
+                // Let's rely on the module import standard logic or specific function if available.
+                // Note: 'getFaction' is imported from '../../db'. We check if getFactionByShortId is available or if we need to call repo.
+                // Looking at imports at top of file... factionRepository IS imported in 'processBatchEvents' via 'await import'.
+                // Here we are in 'processArtifacts'.
+                const { factionRepository } = await import('../../db/repositories/FactionRepository');
+                const faction = factionRepository.getFactionByShortId(campaignId, artifact.faction_id.toString());
+                if (faction) {
+                    factionId = faction.id;
+                    console.log(`[Artifact] 🎯 Faction ID Match: ${artifact.faction_id} → ${faction.name}`);
                 }
             }
 

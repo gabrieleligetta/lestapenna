@@ -53,7 +53,7 @@ export const characterRepository = {
     },
 
     getUserProfile: (userId: string, campaignId: number): UserProfile & { foundation_description: string | null } => {
-        const row = db.prepare('SELECT character_name, race, class, description, foundation_description, alignment_moral, alignment_ethical, email FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
+        const row = db.prepare('SELECT character_name, race, class, description, foundation_description, alignment_moral, alignment_ethical, moral_score, ethical_score, email FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as any | undefined;
         return row || { character_name: null, race: null, class: null, description: null, foundation_description: null, email: null };
     },
 
@@ -81,7 +81,7 @@ export const characterRepository = {
 
             sql += ` WHERE user_id = ? AND campaign_id = ? `;
 
-            const params:(string | number)[] = [value];
+            const params: (string | number)[] = [value];
             if (field === 'description' && isManual) params.push(value);
             params.push(userId, campaignId);
 

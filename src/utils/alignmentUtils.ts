@@ -28,3 +28,99 @@ export function getAlignmentLabel(moral: number, ethical: number): string {
     if (m === 'NEUTRALE' && e === 'NEUTRALE') return 'NEUTRALE VERU'; // or just NEUTRALE
     return `${e} ${m}`;
 }
+
+// =============================================
+// ALIGNMENT SPECTRUM VISUALIZATION
+// =============================================
+
+/**
+ * Role-based weight multipliers for member alignment contribution
+ */
+export const ROLE_WEIGHTS: Record<string, number> = {
+    'LEADER': 1.0,    // Leaders fully represent the faction
+    'MEMBER': 0.5,    // Members contribute half weight
+    'ALLY': 0.25,     // Allies contribute quarter weight
+    'ENEMY': 0,       // Enemies don't contribute
+    'CONTROLLED': 0,  // Locations don't contribute
+    'HQ': 0
+};
+
+/**
+ * Formats a single alignment axis as a colored spectrum bar
+ * @param score - The alignment score
+ * @param leftIcon - Icon for the left side (positive values)
+ * @param rightIcon - Icon for the right side (negative values)
+ * @param leftLabel - Label for left extreme
+ * @param rightLabel - Label for right extreme
+ */
+export function formatAlignmentBar(
+    score: number,
+    leftIcon: string,
+    rightIcon: string,
+    leftLabel: string,
+    rightLabel: string
+): string {
+    // Clamp score to -50..+50 for display purposes
+    const clampedScore = Math.max(-50, Math.min(50, score));
+
+    // Map score to position 0-8 (9 segments)
+    // -50 -> 8 (far right), 0 -> 4 (center), +50 -> 0 (far left)
+    const position = Math.round(4 - (clampedScore / 50) * 4);
+
+    // Color gradients (left=positive, right=negative)
+    const leftColors = ['🟩', '🟩', '🟨', '⬜', '⬜', '⬜', '🟨', '🟥', '🟥'];
+    const rightColors = ['🟦', '🟦', '🟨', '⬜', '⬜', '⬜', '🟨', '🟪', '🟪'];
+
+    // Choose color set based on axis (we'll use leftColors for moral, rightColors for ethical)
+    const isEthicalAxis = leftLabel === 'Legale';
+    const colors = isEthicalAxis ? rightColors : leftColors;
+
+    // Build the bar with position marker
+    let bar = '';
+    for (let i = 0; i < 9; i++) {
+        if (i === position) {
+            bar += '▼';
+        } else {
+            bar += colors[i];
+        }
+    }
+
+    // Format: Icon [spectrum] Icon (score)
+    const signedScore = score >= 0 ? `+${score}` : `${score}`;
+    return `${leftIcon} ${bar} ${rightIcon}  \`${signedScore}\``;
+}
+
+/**
+ * Formats complete alignment display with two spectrum bars
+ */
+export function formatAlignmentSpectrum(moralScore: number, ethicalScore: number): string {
+    const moralBar = formatAlignmentBar(moralScore, '😇', '😈', 'Buono', 'Cattivo');
+    const ethicalBar = formatAlignmentBar(ethicalScore, '📜', '🌀', 'Legale', 'Caotico');
+
+    return `**Morale**\n${moralBar}\n**Etico**\n${ethicalBar}`;
+}
+
+/**
+ * Compact single-line alignment display
+ */
+export function formatAlignmentCompact(moralScore: number, ethicalScore: number): string {
+    const mLabel = getMoralAlignment(moralScore);
+    const eLabel = getEthicalAlignment(ethicalScore);
+
+    const moralIcon = mLabel === 'BUONO' ? '😇' : mLabel === 'CATTIVO' ? '😈' : '⚖️';
+    const ethicalIcon = eLabel === 'LEGALE' ? '📜' : eLabel === 'CAOTICO' ? '🌀' : '⚖️';
+
+    // Mini spectrum (5 segments)
+    const mPos = Math.round(2 - (Math.max(-50, Math.min(50, moralScore)) / 50) * 2);
+    const ePos = Math.round(2 - (Math.max(-50, Math.min(50, ethicalScore)) / 50) * 2);
+
+    const buildMiniBar = (pos: number, leftC: string, rightC: string) => {
+        const segments = [leftC, '🟨', '⬜', '🟨', rightC];
+        return segments.map((c, i) => i === pos ? '●' : c).join('');
+    };
+
+    const mBar = buildMiniBar(mPos, '🟩', '🟥');
+    const eBar = buildMiniBar(ePos, '🟦', '🟪');
+
+    return `${moralIcon}${mBar}${ethicalIcon}${eBar}`;
+}

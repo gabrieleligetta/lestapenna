@@ -5,6 +5,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { getUserProfile, getCharacterUserId } from '../../db';
+import { formatAlignmentSpectrum } from '../../utils/alignmentUtils';
 
 export const whoamiCommand: Command = {
     name: 'whoami',
@@ -49,19 +50,12 @@ export const whoamiCommand: Command = {
                     { name: "🌍 Campagna", value: ctx.activeCampaign!.name || "Nessuna", inline: true }
                 );
 
-            // Add alignment field if available
-            if (p.alignment_moral || p.alignment_ethical) {
-                const moralIcon = p.alignment_moral === 'BUONO' ? '😇' : p.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
-                const ethicalIcon = p.alignment_ethical === 'LEGALE' ? '📜' : p.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
-
-                const scoreText = (p.moral_score !== undefined || p.ethical_score !== undefined)
-                    ? `\n*(E: ${p.ethical_score ?? 0}, M: ${p.moral_score ?? 0})*`
-                    : '';
-
+            // Add alignment field if available - Visual spectrum
+            if (p.alignment_moral || p.alignment_ethical || p.moral_score || p.ethical_score) {
                 embed.addFields({
                     name: "⚖️ Allineamento",
-                    value: `${moralIcon} ${p.alignment_ethical || 'NEUTRALE'} ${p.alignment_moral || 'NEUTRALE'}${scoreText}`,
-                    inline: true
+                    value: formatAlignmentSpectrum(p.moral_score ?? 0, p.ethical_score ?? 0),
+                    inline: false
                 });
             }
 

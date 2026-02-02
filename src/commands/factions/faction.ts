@@ -17,6 +17,7 @@ import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveFactionUpdate, startInteractiveFactionAdd, startInteractiveFactionDelete } from './interactiveUpdate';
 import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
+import { formatAlignmentSpectrum } from '../../utils/alignmentUtils';
 
 // Helper: Get NPC by ID (for internal use)
 function getNpcById(npcId: number): { id: number; name: string; role?: string } | null {
@@ -169,20 +170,21 @@ export const factionCommand: Command = {
                 });
             }
 
-            // 🆕 Alignment (Always show for PARTY, otherwise if set)
-            // 🆕 Alignment (Always show for PARTY, otherwise if set)
-            if (faction.is_party || faction.alignment_moral || faction.alignment_ethical) {
-                const moralIcon = faction.alignment_moral === 'BUONO' ? '😇' : faction.alignment_moral === 'CATTIVO' ? '😈' : '⚖️';
-                const ethicalIcon = faction.alignment_ethical === 'LEGALE' ? '📜' : faction.alignment_ethical === 'CAOTICO' ? '🌀' : '⚖️';
+            // 🆕 Alignment - Computed on-demand from faction + member events
+            const computed = factionRepository.getComputedFactionAlignment(campaignId, faction.id);
+            if (faction.is_party || computed.moralScore !== 0 || computed.ethicalScore !== 0) {
+                const spectrumDisplay = formatAlignmentSpectrum(computed.moralScore, computed.ethicalScore);
 
-                const scoreText = (faction.moral_score !== undefined || faction.ethical_score !== undefined)
-                    ? `\n*(E: ${faction.ethical_score ?? 0}, M: ${faction.moral_score ?? 0})*`
-                    : '';
+                // Add breakdown info if there are contributing members
+                let breakdownText = '';
+                if (computed.breakdown.memberCount > 0) {
+                    breakdownText = `\n-# Fazione: M${computed.breakdown.factionMoral >= 0 ? '+' : ''}${computed.breakdown.factionMoral} E${computed.breakdown.factionEthical >= 0 ? '+' : ''}${computed.breakdown.factionEthical} | ${computed.breakdown.memberCount} membri: M${computed.breakdown.membersMoral >= 0 ? '+' : ''}${computed.breakdown.membersMoral} E${computed.breakdown.membersEthical >= 0 ? '+' : ''}${computed.breakdown.membersEthical}`;
+                }
 
                 embed.addFields({
                     name: "⚖️ Allineamento",
-                    value: `${moralIcon} ${faction.alignment_moral || 'NEUTRALE'} ${ethicalIcon} ${faction.alignment_ethical || 'NEUTRALE'}${scoreText}`,
-                    inline: true
+                    value: spectrumDisplay + breakdownText,
+                    inline: false
                 });
             }
 

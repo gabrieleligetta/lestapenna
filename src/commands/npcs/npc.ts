@@ -32,6 +32,7 @@ import {
 } from '../../bard';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { safeReply } from '../../utils/discordHelper';
+import { formatAlignmentSpectrum } from '../../utils/alignmentUtils';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveNpcAdd, startInteractiveNpcUpdate, startInteractiveNpcDelete, startInteractiveEventsAdd, startInteractiveEventsUpdate, startInteractiveEventsDelete } from './interactiveUpdate';
 import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
@@ -158,17 +159,15 @@ export const npcCommand: Command = {
                 embed.addFields({ name: "Alias", value: npc.aliases.split(',').join(', ') });
             }
 
-            // 🆕 Aglignment
-            // 🆕 Aglignment
-            if (npc.alignment_moral || npc.alignment_ethical) {
-                const scoreText = (npc.moral_score !== undefined || npc.ethical_score !== undefined)
-                    ? `\n*(E: ${npc.ethical_score ?? 0}, M: ${npc.moral_score ?? 0})*`
-                    : '';
+            // 🆕 Alignment - Visual spectrum
+            if (npc.alignment_moral || npc.alignment_ethical || npc.moral_score || npc.ethical_score) {
+                const moralScore = npc.moral_score ?? 0;
+                const ethicalScore = npc.ethical_score ?? 0;
 
                 embed.addFields({
                     name: "⚖️ Allineamento",
-                    value: `${npc.alignment_ethical || 'NEUTRALE'} ${npc.alignment_moral || 'NEUTRALE'}${scoreText}`,
-                    inline: true
+                    value: formatAlignmentSpectrum(moralScore, ethicalScore),
+                    inline: false
                 });
             }
 

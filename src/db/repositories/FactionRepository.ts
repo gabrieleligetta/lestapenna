@@ -12,7 +12,7 @@ import {
     REPUTATION_SPECTRUM
 } from '../types';
 import { generateShortId } from '../utils/idGenerator';
-import { getMoralAlignment, getEthicalAlignment } from '../../utils/alignmentUtils';
+import { getMoralAlignment, getEthicalAlignment, ROLE_WEIGHTS } from '../../utils/alignmentUtils';
 
 export const factionRepository = {
     // =============================================
@@ -581,6 +581,101 @@ export const factionRepository = {
 
     clearFactionDirtyFlag: (campaignId: number, name: string): void => {
         db.prepare('UPDATE factions SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
+    },
+
+    // =============================================
+    // COMPUTED ALIGNMENT (On-Demand)
+    // =============================================
+
+    /**
+     * Computes faction alignment from:
+     * 1. Faction's own events (faction_history)
+     * 2. Member NPCs' events (npc_history), weighted by role
+     *
+     * @returns { moralScore, ethicalScore, moralLabel, ethicalLabel, breakdown }
+     */
+    getComputedFactionAlignment: (campaignId: number, factionId: number): {
+        moralScore: number;
+        ethicalScore: number;
+        moralLabel: string;
+        ethicalLabel: string;
+        breakdown: {
+            factionMoral: number;
+            factionEthical: number;
+            membersMoral: number;
+            membersEthical: number;
+            memberCount: number;
+        };
+    } => {
+        // 1. Get faction's own events contribution
+        const faction = factionRepository.getFactionById(factionId);
+        if (!faction) {
+            return {
+                moralScore: 0,
+                ethicalScore: 0,
+                moralLabel: 'NEUTRALE',
+                ethicalLabel: 'NEUTRALE',
+                breakdown: { factionMoral: 0, factionEthical: 0, membersMoral: 0, membersEthical: 0, memberCount: 0 }
+            };
+        }
+
+        const factionEvents = db.prepare(`
+            SELECT COALESCE(SUM(moral_weight), 0) as total_moral,
+                   COALESCE(SUM(ethical_weight), 0) as total_ethical
+            FROM faction_history
+            WHERE campaign_id = ? AND lower(faction_name) = lower(?)
+        `).get(campaignId, faction.name) as { total_moral: number; total_ethical: number };
+
+        const factionMoral = factionEvents.total_moral || 0;
+        const factionEthical = factionEvents.total_ethical || 0;
+
+        // 2. Get all active NPC members with their roles
+        const npcMembers = db.prepare(`
+            SELECT fa.entity_id, fa.role, n.name as npc_name
+            FROM faction_affiliations fa
+            JOIN npc_dossier n ON fa.entity_id = n.id
+            WHERE fa.faction_id = ?
+              AND fa.entity_type = 'npc'
+              AND fa.is_active = 1
+        `).all(factionId) as Array<{ entity_id: number; role: string; npc_name: string }>;
+
+        // 3. Calculate weighted contribution from each member
+        let membersMoral = 0;
+        let membersEthical = 0;
+
+        for (const member of npcMembers) {
+            const roleWeight = ROLE_WEIGHTS[member.role] ?? 0.5;
+            if (roleWeight === 0) continue;
+
+            // Get NPC's events
+            const npcEvents = db.prepare(`
+                SELECT COALESCE(SUM(moral_weight), 0) as total_moral,
+                       COALESCE(SUM(ethical_weight), 0) as total_ethical
+                FROM npc_history
+                WHERE campaign_id = ? AND lower(npc_name) = lower(?)
+            `).get(campaignId, member.npc_name) as { total_moral: number; total_ethical: number };
+
+            membersMoral += (npcEvents.total_moral || 0) * roleWeight;
+            membersEthical += (npcEvents.total_ethical || 0) * roleWeight;
+        }
+
+        // 4. Sum totals
+        const totalMoral = Math.round(factionMoral + membersMoral);
+        const totalEthical = Math.round(factionEthical + membersEthical);
+
+        return {
+            moralScore: totalMoral,
+            ethicalScore: totalEthical,
+            moralLabel: getMoralAlignment(totalMoral),
+            ethicalLabel: getEthicalAlignment(totalEthical),
+            breakdown: {
+                factionMoral,
+                factionEthical,
+                membersMoral: Math.round(membersMoral),
+                membersEthical: Math.round(membersEthical),
+                memberCount: npcMembers.filter(m => (ROLE_WEIGHTS[m.role] ?? 0.5) > 0).length
+            }
+        };
     },
 
     // =============================================

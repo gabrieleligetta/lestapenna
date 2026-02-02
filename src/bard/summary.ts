@@ -579,7 +579,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                             if (reconciled && !foundNpcs.has(reconciled.canonicalName)) {
                                 foundNpcs.add(reconciled.canonicalName);
                                 const npc = reconciled.existingNpc;
-                                // 🆕 Include shortId for ID-based matching
+                                // Include shortId for ID-based matching
                                 dynamicMemoryContext += `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${npc.description || 'Nessuna descrizione.'} [Status: ${npc.status || 'ALIVE'}]\n`;
                             }
                         } catch (e) {
@@ -707,21 +707,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                         } catch (e) {
                             console.error(`[Bardo] ⚠️ Errore riconciliazione Artefatto "${name}":`, e);
                         }
-                    }
-                }
-
-                // 7. Idratazione Inventario (per ID-based matching su loot/loot_removed)
-                const inventory = inventoryRepository.listAllInventory(campaignId);
-                if (inventory && inventory.length > 0) {
-                    dynamicMemoryContext += `\n🎒 INVENTARIO DEL PARTY:\n`;
-                    for (const item of inventory.slice(0, 30)) { // Limit to 30 items
-                        let itemInfo = `- **${item.item_name}** [ID: ${item.short_id || 'N/A'}]`;
-                        if (item.quantity > 1) itemInfo += ` (x${item.quantity})`;
-                        if (item.description) itemInfo += `: ${item.description.substring(0, 100)}`;
-                        dynamicMemoryContext += itemInfo + '\n';
-                    }
-                    if (inventory.length > 30) {
-                        dynamicMemoryContext += `... e altri ${inventory.length - 30} oggetti.\n`;
                     }
                 }
 

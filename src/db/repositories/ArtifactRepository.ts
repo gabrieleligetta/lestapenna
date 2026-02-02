@@ -34,7 +34,8 @@ export const artifactRepository = {
         const shortId = existing?.short_id || generateShortId('artifacts');
 
         db.prepare(`
-                campaign_id, name, status, description, effects, 
+            INSERT INTO artifacts (
+                campaign_id, name, status, description, effects,
                 is_cursed, curse_description, owner_type, owner_id, owner_name,
                 location_macro, location_micro, faction_id,
                 first_session_id, rag_sync_needed, is_manual, short_id, manual_description

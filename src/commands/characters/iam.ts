@@ -10,6 +10,7 @@ import {
     getUserProfile,
     characterRepository
 } from '../../db';
+import { formatAlignmentSpectrum } from '../../utils/alignmentUtils';
 import {
     ActionRowBuilder,
     ButtonBuilder,
@@ -76,7 +77,7 @@ async function showProfileDashboard(ctx: CommandContext, interactionToUpdate?: a
         .addFields(
             { name: '🧬 Razza', value: profile.race || '_Non impostata_', inline: true },
             { name: '⚔️ Classe', value: profile.class || '_Non impostata_', inline: true },
-            { name: '⚖️ Allineamento', value: `${profile.alignment_ethical || 'NEUTRALE'} ${profile.alignment_moral || 'NEUTRALE'}`, inline: true },
+            { name: '⚖️ Allineamento', value: formatAlignmentSpectrum(profile.moral_score ?? 0, profile.ethical_score ?? 0), inline: false },
             { name: '📜 Background (Manuale)', value: profile.foundation_description || profile.description || '_Nessun background inserito manualment._', inline: false },
             { name: '📧 Email Recap', value: profile.email || '_Non impostata_', inline: true }
         );

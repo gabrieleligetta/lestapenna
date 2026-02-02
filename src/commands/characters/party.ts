@@ -4,7 +4,8 @@
 
 import { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType, MessageComponentInteraction } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { getCampaignCharacters, getUserProfile, getCharacterUserId, getPartyFaction } from '../../db';
+import { getCampaignCharacters, getUserProfile, getCharacterUserId, getPartyFaction, factionRepository } from '../../db';
+import { formatAlignmentSpectrum } from '../../utils/alignmentUtils';
 
 export const partyCommand: Command = {
     name: 'party',
@@ -25,12 +26,14 @@ export const partyCommand: Command = {
             return `**${name}**${details ? ` (${details})` : ''}`;
         }).join('\n');
 
-        const alignMoral = ctx.activeCampaign!.party_alignment_moral || "NEUTRALE";
-        const alignEthical = ctx.activeCampaign!.party_alignment_ethical || "NEUTRALE";
-
         // Recupera il nome del party se esiste una fazione associata
         const partyFaction = getPartyFaction(ctx.activeCampaign!.id);
         const partyName = partyFaction ? partyFaction.name : ctx.activeCampaign!.name;
+
+        // Compute party alignment from faction events + members
+        const partyAlignment = partyFaction
+            ? factionRepository.getComputedFactionAlignment(ctx.activeCampaign!.id, partyFaction.id)
+            : { moralScore: ctx.activeCampaign!.party_moral_score ?? 0, ethicalScore: ctx.activeCampaign!.party_ethical_score ?? 0 };
 
         const embed = new EmbedBuilder()
             .setTitle(`🛡️ Party: ${partyName}`)
@@ -38,7 +41,7 @@ export const partyCommand: Command = {
             .setDescription(list)
             .addFields({
                 name: "⚖️ Allineamento del Gruppo",
-                value: `**${alignEthical} ${alignMoral}**\n*(E: ${ctx.activeCampaign!.party_ethical_score ?? 0}, M: ${ctx.activeCampaign!.party_moral_score ?? 0})*`,
+                value: formatAlignmentSpectrum(partyAlignment.moralScore, partyAlignment.ethicalScore),
                 inline: false
             });
 
@@ -95,15 +98,11 @@ export const partyCommand: Command = {
                             { name: "🌍 Campagna", value: ctx.activeCampaign!.name || "Nessuna", inline: true }
                         );
 
-                    if (p.alignment_moral || p.alignment_ethical) {
-                        const scoreText = (p.moral_score !== undefined || p.ethical_score !== undefined)
-                            ? `\n*(E: ${p.ethical_score ?? 0}, M: ${p.moral_score ?? 0})*`
-                            : '';
-
+                    if (p.alignment_moral || p.alignment_ethical || p.moral_score || p.ethical_score) {
                         profileEmbed.addFields({
                             name: "⚖️ Allineamento",
-                            value: `${p.alignment_ethical || 'NEUTRALE'} ${p.alignment_moral || 'NEUTRALE'}${scoreText}`,
-                            inline: true
+                            value: formatAlignmentSpectrum(p.moral_score ?? 0, p.ethical_score ?? 0),
+                            inline: false
                         });
                     }
 

@@ -30,21 +30,30 @@ export async function syncNpcDossierIfNeeded(
     const history = getNpcHistory(campaignId, npcName);
 
     // 2. Generate Bio using unified service
-    const newBio = await generateBio('NPC', {
-        name: npcName,
-        role: npc.role || 'Sconosciuto',
-        currentDesc: npc.description || '',
-        manualDescription: (npc as any).manual_description || undefined // 🆕 Passa la descrizione manuale come guida
-    }, history);
+    const manualDesc = (npc as any).manual_description;
+    let finalBio: string;
 
-    updateNpcEntry(campaignId, npcName, newBio, npc.role || undefined);
+    // Se esiste manual_description, usala direttamente (anche se vuota) invece dell'AI
+    if (manualDesc !== null && manualDesc !== undefined) {
+        finalBio = manualDesc;
+        console.log(`[Sync] ${npcName}: Usando manual_description (${finalBio.length} chars)`);
+    } else {
+        // Solo se non c'è manual_description, genera con AI
+        finalBio = await generateBio('NPC', {
+            name: npcName,
+            role: npc.role || 'Sconosciuto',
+            currentDesc: npc.description || ''
+        }, history);
+    }
+
+    updateNpcEntry(campaignId, npcName, finalBio, npc.role || undefined);
     deleteNpcRagSummary(campaignId, npcName);
 
-    if (newBio.length > 100) {
+    if (finalBio.length > 100) {
         const ragContent = `[[SCHEDA UFFICIALE: ${npcName}]]
 RUOLO: ${npc.role || 'Sconosciuto'}
 STATO: ${npc.status || 'Sconosciuto'}
-BIOGRAFIA COMPLETA: ${newBio}
+BIOGRAFIA COMPLETA: ${finalBio}
 
 (Questa scheda ufficiale ha priorita su informazioni frammentarie precedenti)`;
 
@@ -60,7 +69,7 @@ BIOGRAFIA COMPLETA: ${newBio}
     clearNpcDirtyFlag(campaignId, npcName);
 
     console.log(`[Sync] ${npcName} sincronizzato.`);
-    return newBio;
+    return finalBio;
 }
 
 /**

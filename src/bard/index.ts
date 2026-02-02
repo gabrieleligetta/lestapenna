@@ -79,4 +79,7 @@ export * from './sync';
 // Reconciliation
 export * from './reconciliation';
 
+// Manifesto
+export * from './manifesto';
+
 

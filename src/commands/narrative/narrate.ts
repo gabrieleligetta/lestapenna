@@ -7,7 +7,8 @@ import {
 } from '../../db';
 import {
     TONES,
-    ToneKey
+    ToneKey,
+    invalidateManifesto
 } from '../../bard';
 import { monitor } from '../../monitor';
 import { PipelineService } from '../../publisher/services/PipelineService';
@@ -123,6 +124,8 @@ export const narrateCommand: Command = {
                 // 4. Process Batch Events
                 if (activeCampaign) {
                     await ingestionService.processBatchEvents(activeCampaign.id, targetSessionId, result, channel);
+                    // 🆕 Invalidate Manifesto for next run
+                    invalidateManifesto(activeCampaign.id);
                 }
 
                 // Update phase to DONE if we ingested

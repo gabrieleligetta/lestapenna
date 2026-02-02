@@ -89,6 +89,8 @@ import {
     type ReconciliationContext
 } from './reconciliation';
 
+import { getOrCreateManifesto } from './manifesto'; // 🆕 World Manifesto
+
 // Legacy imports (still used for quests)
 import { reconcileQuestTitle } from './reconciliation/quest';
 
@@ -298,7 +300,7 @@ async function identifyRelevantContext(
 
 
 
-export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string, partContext?: string): Promise<{ data: AnalystOutput, tokens: { input: number, output: number, inputChars: number, outputChars: number } }> {
+export async function extractStructuredData(sessionId: string, narrativeText: string, castContext: string, memoryContext: string, partContext?: string, manifesto: string = ""): Promise<{ data: AnalystOutput, tokens: { input: number, output: number, inputChars: number, outputChars: number } }> {
     console.log(`[Analista] 📊 Estrazione dati strutturati (${narrativeText.length} chars)${partContext ? ` [${partContext}]` : ''}...`);
 
     // Inietto il contesto della parte se presente
@@ -311,9 +313,10 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
         const options: any = {
             model: SUMMARY_MODEL,
             messages: [
-                { role: "system", content: "Sei un analista dati. Rispondi SOLO con JSON valido." },
+                { role: "system", content: `Sei un analista dati. Utilizza il seguente WORLD MANIFESTO come contesto globale della campagna:\n\n${manifesto}\n\nRispondi SOLO con JSON valido.` },
                 { role: "user", content: prompt }
             ]
+
         };
 
         if (SUMMARY_PROVIDER === 'openai') options.response_format = { type: "json_object" };
@@ -812,8 +815,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 // 🆕 DEBUG: Stampa tutto il contesto idratato
                 console.log(`[Bardo] 📝 DETTAGLIO CONTESTO IDRATO:\n${dynamicMemoryContext}\n-----------------------------------`);
 
-                // Fallback location corrente
-                const snapshot = getCampaignSnapshot(campaignId);
+                // Fallback location corrente (snapshot already fetched above)
                 let locationContext = snapshot.location_context || 'Sconosciuto';
 
                 // 🆕 Try to resolve ID for current location
@@ -835,6 +837,16 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             }
 
             console.log(`[Bardo] 💧 Contesto Idrato (${dynamicMemoryContext.length} chars).`);
+        }
+
+        // 🆕 WORLD MANIFESTO GENERATION
+        let worldManifesto = "";
+        if (campaignId) {
+            try {
+                worldManifesto = await getOrCreateManifesto(campaignId);
+            } catch (err) {
+                console.error(`[Bardo] ⚠️ Failed to generate World Manifesto:`, err);
+            }
         }
 
         // CALCOLO DINAMICO DEL LIMITE
@@ -897,7 +909,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             if (!options.skipAnalysis) {
                 // Nota: Passiamo memoryContext globale e il contesto della parte
                 const partHeader = isMultiPart ? `PARTE ${actNumber} DI ${parts.length}` : undefined;
-                const analystResult = await extractStructuredData(sessionId, currentPart, castContext, dynamicMemoryContext, partHeader);
+                const analystResult = await extractStructuredData(sessionId, currentPart, castContext, dynamicMemoryContext, partHeader, worldManifesto);
                 partialAnalystData = analystResult.data;
 
                 // Aggregate Analyst Tokens

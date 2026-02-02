@@ -542,7 +542,7 @@ export const SMART_MERGE_PROMPT = (targetName: string, bio1: string, bio2: strin
 
 export const AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT = (newName: string, newDescription: string, candidateName: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D&D e narratologia fantasy. Rispondi SOLO con "SI" o "NO".
 
-Domanda: Il nuovo NPC "${newName}" è in realtà l'NPC esistente "${candidateName}" (errore di trascrizione, alias, o evoluzione del personaggio)?
+Domanda: Il nuovo NPC "${newName}" è CERTAMENTE l'NPC esistente "${candidateName}" (errore di trascrizione, alias)?
 
 CONFRONTO DATI:
 - NUOVO (${newName}): "${newDescription}"
@@ -550,61 +550,77 @@ CONFRONTO DATI:
 ${ragContextText}
 
 CRITERI DI GIUDIZIO (In ordine di importanza):
-1. **Fonetica e Trascrizione:** Se i nomi suonano simili (es. Siri/Ciri, Leosin/Leo Sin), c'è un'altissima probabilità che siano la stessa persona.
-2. **Soprannomi/Alias:** Se uno dei nomi sembra un soprannome o una forma abbreviata dell'altro, RISPONDI SI.
-3. **Trasformazioni D&D:** I personaggi possono cambiare età, forma fisica o stato (morto/vivo) rapidamente. NON rifiutare un match per differenze di stato se l'identità è la stessa.
-4. **Ruoli Semantici:** Se entrambi sono legati alla stessa entità o ruolo specfifico (es. Voce di Ogma), sono la stessa persona.
-5. **Logica di Situazione:** Se le descrizioni condividono dettagli unici, conferma il match.
+1. **Fonetica e Trascrizione:** SOLO se i nomi suonano molto simili (es. Siri/Ciri, Leosin/Leo Sin) puoi rispondere SI.
+2. **Soprannomi/Alias:** SOLO se uno dei nomi è chiaramente una forma abbreviata dell'altro (es. "Leosin" = "Leosin Erantar").
 
-Se c'è una somiglianza fonetica o un legame logico plausibile, **RISPONDI SI** per evitare duplicati. Sii permissivo sugli errori di trascrizione.
+CRITERI DI RIFIUTO (Se uno di questi è vero, rispondi NO):
+1. **"X" vs "Fratello/Madre/Padre di X":** Sono persone DIVERSE! "Viktor" NON è "Fratello di Viktor"!
+2. **Entità canoniche D&D:** Bahamut, Vecna, Tiamat, Asmodeus, Glaedr, etc. sono entità UNICHE - NON confonderli con NPC locali!
+3. **Nomi completamente diversi:** Se non c'è somiglianza fonetica diretta, rispondi NO.
+4. **Ruoli diversi:** "Gran Visir" NON è "Jotunai" solo perché appaiono nello stesso testo RAG.
+
+**NEL DUBBIO, RISPONDI NO!** È meglio avere duplicati che fondere personaggi diversi.
 
 Rispondi SOLO: SI oppure NO`;
 
 export const AI_CONFIRM_SAME_PERSON_PROMPT = (name1: string, name2: string, context: string) => `Sei un esperto di D&D. Rispondi SOLO con "SI" o "NO".
 
-Domanda: "${name1}" e "${name2}" sono la STESSA persona/NPC?
+Domanda: "${name1}" e "${name2}" sono CERTAMENTE la STESSA persona/NPC?
 
-Considera che:
-- I nomi potrebbero essere pronunce errate o parziali (es. "Leo Sin" = "Leosin")
-- Potrebbero essere soprannomi o alias (es. "Rantar" = "Leosin Erantar")
-- Le trascrizioni audio spesso dividono i nomi
-- Sii permissivo sugli errori di battitura/trascrizione.
+Rispondi SI SOLO se:
+- I nomi sono varianti fonetiche dello stesso nome (es. "Leo Sin" = "Leosin", "Siri" = "Ciri")
+- Uno è abbreviazione dell'altro (es. "Rantar" = "Leosin Erantar")
+
+Rispondi NO se:
+- "${name1}" contiene "di ${name2}" o viceversa (es. "Fratello di Viktor" ≠ "Viktor")
+- I nomi sono completamente diversi (es. "Bahamut" ≠ "Ciri")
+- Non c'è somiglianza fonetica diretta
 
 ${context ? `Contesto aggiuntivo: ${context}` : ''}
+
+**NEL DUBBIO, RISPONDI NO!**
 
 Rispondi SOLO: SI oppure NO`;
 
 export const AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT = (newMacro: string, newMicro: string, newDescription: string, candidateMacro: string, candidateMicro: string, candidateDescription: string, ragContextText: string) => `Sei un esperto di D&D e ambientazioni fantasy. Rispondi SOLO con "SI" o "NO".
 
-Domanda: Il nuovo luogo "${newMacro} - ${newMicro}" è in realtà il luogo esistente "${candidateMacro} - ${candidateMicro}"?
+Domanda: Il nuovo luogo "${newMacro} - ${newMicro}" è CERTAMENTE il luogo esistente "${candidateMacro} - ${candidateMicro}"?
 
 CONFRONTO DATI:
 - NUOVO: "${newDescription}"
 - ESISTENTE: "${candidateDescription}"
 ${ragContextText}
 
-CRITERI DI GIUDIZIO:
-1. **Macro Mancante:** Se il NUOVO luogo ha una Macro vuota o sconosciuta (es. inizia con " - " o è vuota), IGNORA la differenza di Macro. Se la Micro coincide o è molto simile ("Palazzo" vs "Palazzo dei Draghi"), RISPONDI SI.
-2. **Fonetica:** Se i nomi suonano simili o sono traduzioni/sinonimi (es. "Torre Nera" vs "Torre Oscura").
-3. **Contesto (RAG):** Se la "Memoria Storica" descrive eventi accaduti nel luogo candidato che coincidono con la descrizione del nuovo luogo.
-4. **Gerarchia:** Se uno è chiaramente un sotto-luogo dell'altro ma usato come nome principale.
-5. **Link Semantico:** Se il Contesto RAG o la descrizione suggeriscono che sono lo stesso posto.
+Rispondi SI SOLO se:
+1. **Stesso Nome:** I nomi Micro sono quasi identici (es. "Sala del Trono" = "Sala Trono", varianti fonetiche)
+2. **Macro Mancante:** Se il NUOVO ha Macro vuota E la Micro coincide esattamente con un luogo esistente nella stessa Macro corrente
 
-Se c'è un collegamento plausibile o una parte del nome coincide (specialmente la Micro), **FAVORISCI IL SI** per evitare duplicati.
+Rispondi NO se:
+1. **Nomi diversi:** "Palazzo Imperiale" NON è "Palazzo Centrale" - sono palazzi diversi!
+2. **Luoghi generici:** "Palazzo", "Tempio", "Torre" senza specificazione NON corrispondono a luoghi specifici diversi
+3. **Macro diverse:** Se entrambi hanno Macro specificate e sono diverse, sono luoghi diversi
+4. **Solo RAG match:** Il fatto che appaiano nello stesso testo RAG NON significa che siano lo stesso luogo!
+
+**NEL DUBBIO, RISPONDI NO!** È meglio avere duplicati che fondere luoghi diversi.
 
 Rispondi SOLO: SI oppure NO`;
 
 export const AI_CONFIRM_SAME_LOCATION_PROMPT = (loc1Macro: string, loc1Micro: string, loc2Macro: string, loc2Micro: string, context: string) => `Sei un esperto di D&D e ambientazioni fantasy. Rispondi SOLO con "SI" o "NO".
 
-Domanda: "${loc1Macro} - ${loc1Micro}" e "${loc2Macro} - ${loc2Micro}" sono lo STESSO luogo?
+Domanda: "${loc1Macro} - ${loc1Micro}" e "${loc2Macro} - ${loc2Micro}" sono CERTAMENTE lo STESSO luogo?
 
-Considera che:
-- I nomi potrebbero essere trascrizioni errate o parziali (es. "Palazzo centrale" = "Palazzo Centrale")
-- Potrebbero essere descrizioni diverse dello stesso posto (es. "Sala del trono" = "Sala Trono")
-- I luoghi macro potrebbero avere varianti (es. "Dominio di Ogma" = "Regno di Ogma")
-- **Se una Macro è vuota (" - Micro"), ignora la Macro e confronta solo la Micro.**
+Rispondi SI SOLO se:
+- I nomi Micro sono varianti fonetiche/ortografiche (es. "Palazzo centrale" = "Palazzo Centrale")
+- Stessa Macro + Micro quasi identica (es. "Sala del trono" = "Sala Trono")
+
+Rispondi NO se:
+- Micro nomi diversi: "Palazzo Imperiale" ≠ "Palazzo Centrale"
+- Macro diverse con specifiche diverse
+- Nomi generici ("Tempio", "Torre") senza corrispondenza esatta
 
 ${context ? `Contesto aggiuntivo: ${context}` : ''}
+
+**NEL DUBBIO, RISPONDI NO!**
 
 Rispondi SOLO: SI oppure NO`;
 

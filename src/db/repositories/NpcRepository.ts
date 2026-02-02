@@ -127,11 +127,33 @@ export const npcRepository = {
                    `).run(mLabel, eLabel, npc.id);
 
                     console.log(`[NPC] ⚖️ Alignment Updated for ${npcName}: ${eLabel} ${mLabel} (M:${npc.moral_score}, E:${npc.ethical_score})`);
-                }
 
-                // 4. Update Faction Alignment if linked
-                if (factionId) {
-                    factionRepository.updateFactionAlignmentScore(campaignId, factionId, moral_weight, ethical_weight);
+                    // 4. Handle Faction Link (Member vs Interaction)
+                    if (factionId) {
+                        // Check if NPC is a member of this specific faction
+                        const affiliation = db.prepare(`
+                             SELECT 1 FROM faction_affiliations 
+                             WHERE faction_id = ? AND entity_type = 'npc' AND entity_id = ? AND is_active = 1
+                        `).get(factionId, npc.id);
+
+                        if (affiliation) {
+                            // It's their faction: Action reflects on the Faction's alignment
+                            factionRepository.updateFactionAlignmentScore(campaignId, factionId, moral_weight, ethical_weight);
+                        } else {
+                            // It's a target faction: Log interaction (Reputation context)
+                            factionRepository.addFactionEvent(
+                                campaignId,
+                                factionRepository.getFactionById(factionId)?.name || 'Unknown Faction',
+                                sessionId,
+                                `[INTERAZIONE NPC] ${npcName}: ${description}`,
+                                'GENERIC',
+                                false,
+                                0,
+                                0,
+                                0
+                            );
+                        }
+                    }
                 }
             }
         })();

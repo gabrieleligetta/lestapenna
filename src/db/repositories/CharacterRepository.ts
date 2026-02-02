@@ -5,14 +5,83 @@ export const characterRepository = {
     addCharacterEvent: (campaignId: number, charName: string, sessionId: string, description: string, type: string, isManual: boolean = false, timestamp?: number, moral_weight: number = 0, ethical_weight: number = 0, factionId?: number) => {
         const { factionRepository } = require('../index'); // Lazy load
 
+        // 1. Insert History Entry
         db.prepare(`
             INSERT INTO character_history (campaign_id, character_name, session_id, description, event_type, timestamp, is_manual, moral_weight, ethical_weight, faction_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(campaignId, charName, sessionId, description, type, timestamp || Date.now(), isManual ? 1 : 0, moral_weight, ethical_weight, factionId || null);
 
-        // 🆕 Update Faction Alignment if linked
-        if (factionId && (moral_weight !== 0 || ethical_weight !== 0)) {
-            factionRepository.updateFactionAlignmentScore(campaignId, factionId, moral_weight, ethical_weight);
+        // 2. Update Character Score
+        if (moral_weight !== 0 || ethical_weight !== 0) {
+            db.prepare(`
+                UPDATE characters
+                SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?,
+                    ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+                    rag_sync_needed = 1
+                WHERE campaign_id = ? AND lower(character_name) = lower(?)
+            `).run(moral_weight, ethical_weight, campaignId, charName);
+
+            // 3. Recalculate Party Alignment (Weighted Average of Members)
+            const partyFaction = factionRepository.getPartyFaction(campaignId);
+            if (partyFaction) {
+                const computed = factionRepository.getComputedFactionAlignment(campaignId, partyFaction.id);
+                // Update Party/Campaign Scores directly to match computed average
+                db.prepare(`
+                    UPDATE campaigns 
+                    SET party_moral_score = ?, party_ethical_score = ?,
+                        party_alignment_moral = ?, party_alignment_ethical = ?
+                    WHERE id = ?
+                `).run(computed.moralScore, computed.ethicalScore, computed.moralLabel, computed.ethicalLabel, campaignId);
+
+                // Also update Faction table for consistency
+                db.prepare(`
+                    UPDATE factions
+                    SET moral_score = ?, ethical_score = ?,
+                        alignment_moral = ?, alignment_ethical = ?,
+                        rag_sync_needed = 1
+                    WHERE id = ?
+                `).run(computed.moralScore, computed.ethicalScore, computed.moralLabel, computed.ethicalLabel, partyFaction.id);
+
+                console.log(`[Alignment] ⚖️ Recalculated Party Alignment: ${computed.ethicalLabel} ${computed.moralLabel} (M:${computed.moralScore}, E:${computed.ethicalScore})`);
+            }
+        }
+
+        // 4. Handle Target Faction (Member vs Interaction)
+        if (factionId) {
+            const userId = characterRepository.getCharacterUserId(campaignId, charName);
+            let isMember = false;
+
+            if (userId) {
+                // Check affiliation using raw query to avoid circular dependency loop if possible, 
+                // but we have factionRepository required.
+                // However, character uses rowid for affiliation, not userId directly.
+                const charRow = db.prepare('SELECT rowid FROM characters WHERE user_id = ? AND campaign_id = ?').get(userId, campaignId) as { rowid: number } | undefined;
+                if (charRow) {
+                    const affiliation = db.prepare('SELECT 1 FROM faction_affiliations WHERE faction_id = ? AND entity_type = ? AND entity_id = ? AND is_active = 1').get(factionId, 'pc', charRow.rowid);
+                    if (affiliation) isMember = true;
+                }
+            }
+
+            if (isMember) {
+                // Update Faction Alignment if linked (Contribution)
+                if (moral_weight !== 0 || ethical_weight !== 0) {
+                    factionRepository.updateFactionAlignmentScore(campaignId, factionId, moral_weight, ethical_weight);
+                }
+            } else {
+                // Log Interaction in Faction History (Reputation/Story context)
+                // Do NOT update Faction Alignment (Target doesn't change alignment because of PC action)
+                factionRepository.addFactionEvent(
+                    campaignId,
+                    factionRepository.getFactionById(factionId)?.name || 'Unknown Faction',
+                    sessionId,
+                    `[INTERAZIONE PG] ${charName}: ${description}`,
+                    'GENERIC', // Or REPUTATION_CHANGE if we had value
+                    false,
+                    0, // No Hard Reputation Change calculated yet
+                    0, // No Moral Weight on Faction
+                    0  // No Ethical Weight on Faction
+                );
+            }
         }
     },
 

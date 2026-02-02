@@ -112,8 +112,18 @@ export async function batchReconcile(
 
         const topCandidate = candidates[0];
 
-        // High confidence match - accept without AI
-        if (topCandidate.score >= 0.85) {
+        // Reasons that are SAFE to auto-merge (syntactic matches only)
+        const SAFE_AUTO_MERGE_REASONS = [
+            'exact_match',
+            'context_match',
+            'first_char_typo'
+        ];
+
+        const isSafeReason = SAFE_AUTO_MERGE_REASONS.some(r => topCandidate.reason.includes(r));
+
+        // High confidence match - accept without AI ONLY if it's a safe reason
+        // Raised threshold from 0.85 to 0.92 and require safe reason
+        if (topCandidate.score >= 0.92 && isSafeReason) {
             console.log(`[BatchReconcile] ⚡ AUTO: "${entity.name}" → "${topCandidate.entity.name}" (${topCandidate.score.toFixed(2)}, ${topCandidate.reason})`);
             results.push({
                 originalName: entity.name,
@@ -249,10 +259,13 @@ ${context.sessionContext || ''}
 Per ogni entità nuova, determina se corrisponde a una delle entità esistenti elencate come candidati.
 
 **REGOLE:**
-1. Errori di trascrizione audio sono COMUNI: "Siri"="Ciri", "Fainar"="Sainar", "Leo Sin"="Leosin"
-2. Per le LOCATION: Se manca la macro ma la micro corrisponde a un luogo nel contesto corrente, è un MATCH
-3. Sii PERMISSIVO per varianti fonetiche, abbreviazioni, soprannomi
-4. Se non c'è corrispondenza chiara, marca come NEW
+1. Errori di trascrizione audio sono COMUNI per varianti fonetiche: "Siri"="Ciri", "Fainar"="Sainar", "Leo Sin"="Leosin"
+2. Per le LOCATION: Se manca la macro ma la micro corrisponde ESATTAMENTE a un luogo nel contesto corrente, è un MATCH
+3. Per gli NPC: "Viktor" NON è "Fratello di Viktor" - sono persone DIVERSE!
+4. Nomi celebri di D&D (Bahamut, Vecna, Tiamat, Asmodeus, etc.) sono entità UNICHE - NON confonderli con NPC locali!
+5. Se i nomi non sono varianti fonetiche dello STESSO nome, marca come NEW
+6. Nel DUBBIO, marca come NEW - è meglio avere duplicati che fondere entità diverse!
+7. "Palazzo Imperiale" NON è "Palazzo Centrale" - sono luoghi DIVERSI anche se entrambi sono palazzi!
 
 **ENTITÀ DA RICONCILIARE:**
 `;

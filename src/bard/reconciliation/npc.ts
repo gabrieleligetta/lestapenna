@@ -192,10 +192,27 @@ export async function reconcileNpcName(
             }
         }
 
-        // 2. Substring Match (Boosted)
+        // 2. Substring Match (CAUTION: "Viktor" in "Fratello di Viktor" is NOT a match!)
+        // Only treat as high-confidence if the shorter name IS the full first word (e.g., "Leosin" in "Leosin Erantar")
         if (containsSubstring(newName, existingName)) {
-            candidates.push({ npc, similarity: 0.85, reason: 'substring_match' });
-            continue;
+            const shorterLen = Math.min(newNameClean.length, existingNameClean.length);
+            const longerName = newNameClean.length > existingNameClean.length ? newNameClean : existingNameClean;
+            const shorterName = newNameClean.length > existingNameClean.length ? existingNameClean : newNameClean;
+
+            // Check if shorter name is a PREFIX (first word) of the longer name
+            // "Leosin" is prefix of "Leosin Erantar" ✓
+            // "Viktor" is NOT prefix of "Fratello di Viktor" ✗
+            const isPrefixMatch = longerName.startsWith(shorterName) &&
+                (longerName.length === shorterName.length || longerName[shorterName.length] === ' ');
+
+            if (isPrefixMatch) {
+                candidates.push({ npc, similarity: 0.85, reason: 'substring_prefix_match' });
+                continue;
+            } else {
+                // It's contained but not as a prefix - much lower confidence, needs AI check
+                candidates.push({ npc, similarity: 0.55, reason: 'substring_contained_only' });
+                continue;
+            }
         }
 
         // 3. Significant Token Overlap (Boosted for multi-word names)
@@ -252,8 +269,23 @@ export async function reconcileNpcName(
                 }
 
                 if (hasNameMatch || hasShortIdMatch) {
-                    let score = hasShortIdMatch ? 0.95 : 0.75;
+                    // CRITICAL FIX: RAG matches should NEVER auto-merge!
+                    // The fact that a RAG fragment mentions "Ciri" doesn't mean "Bahamut" = "Ciri"
+                    // RAG matches are hints for AI confirmation, not high-confidence matches
+                    let score = hasShortIdMatch ? 0.65 : 0.55;  // Was 0.95/0.75 - WAY too high
                     let reason = hasShortIdMatch ? 'rag_short_id_match' : 'rag_context_match';
+
+                    // Additional validation: the RAG chunk should actually discuss the NEW name,
+                    // not just randomly mention an existing NPC
+                    const queryNameInChunks = ragContext.some(chunk =>
+                        chunk.toLowerCase().includes(newNameLower)
+                    );
+
+                    // If the query name appears in the same chunks, slightly higher confidence
+                    if (queryNameInChunks) {
+                        score += 0.15; // Max becomes 0.80 for short_id + query match
+                        reason += '_with_query';
+                    }
 
                     candidates.push({
                         npc,
@@ -277,15 +309,43 @@ export async function reconcileNpcName(
     const topCandidates = candidates.slice(0, 3);
     console.log(`[Reconcile] 🔍 "${newName}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.npc.name}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
+    // Reasons that are SAFE to auto-merge (syntactic matches)
+    const SAFE_AUTO_MERGE_REASONS = [
+        'exact_match',
+        'first_char_typo',
+        'typo_dist_1',
+        'strong_prefix_match',
+        'substring_prefix_match',
+        'full_token_overlap'
+    ];
+
+    // Reasons that ALWAYS need AI confirmation (semantic/RAG matches are unreliable)
+    const ALWAYS_AI_CHECK_REASONS = [
+        'rag_short_id_match',
+        'rag_context_match',
+        'rag_short_id_match_with_query',
+        'rag_context_match_with_query',
+        'substring_contained_only',
+        'partial_token_overlap'
+    ];
+
     for (const candidate of topCandidates) {
-        // SUPER-MATCH: If similarity is very high, accept immediately without AI
-        // Lowered from 0.85 to 0.82 to catch robust typos
-        if (candidate.similarity >= 0.82) {
-            console.log(`[Reconcile] ⚡ AUTO-MERGE (High Sim): "${newName}" → "${candidate.npc.name}" (${candidate.reason})`);
+        const isSafeReason = SAFE_AUTO_MERGE_REASONS.some(r => candidate.reason.includes(r));
+        const needsAICheck = ALWAYS_AI_CHECK_REASONS.some(r => candidate.reason.includes(r));
+
+        // AUTO-MERGE: Only if high similarity AND safe reason AND NOT in blacklist
+        if (candidate.similarity >= 0.90 && isSafeReason && !needsAICheck) {
+            console.log(`[Reconcile] ⚡ AUTO-MERGE (High Sim + Safe): "${newName}" → "${candidate.npc.name}" (${candidate.reason})`);
             return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
         }
 
-        console.log(`[Reconcile] 🤔 Checking candidate: "${candidate.npc.name}" (${candidate.reason})...`);
+        // Skip very low similarity candidates
+        if (candidate.similarity < 0.50) {
+            console.log(`[Reconcile] ⏭️ Skip low-sim candidate: "${candidate.npc.name}" (${candidate.similarity.toFixed(2)})`);
+            continue;
+        }
+
+        console.log(`[Reconcile] 🤔 AI Check needed: "${candidate.npc.name}" (${candidate.reason}, sim=${candidate.similarity.toFixed(2)})...`);
 
         const isSame = await aiConfirmSamePersonExtended(
             campaignId,

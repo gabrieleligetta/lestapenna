@@ -247,8 +247,23 @@ export async function reconcileLocationName(
                 }
 
                 if (hasNameMatch || hasShortIdMatch) {
-                    let score = hasShortIdMatch ? 0.95 : 0.7;
+                    // CRITICAL FIX: RAG matches should NEVER auto-merge!
+                    // RAG matches are hints for AI confirmation, not high-confidence matches
+                    let score = hasShortIdMatch ? 0.60 : 0.50;  // Was 0.95/0.7 - WAY too high
                     let reason = hasShortIdMatch ? 'rag_short_id_match' : 'rag_context_match';
+
+                    // Additional validation: the RAG chunk should actually discuss the NEW location,
+                    // not just randomly mention an existing location
+                    const queryLocationInChunks = ragContext.some(chunk =>
+                        chunk.toLowerCase().includes(newMicroClean) ||
+                        chunk.toLowerCase().includes(newMacroClean)
+                    );
+
+                    // If the query location appears in the same chunks, slightly higher confidence
+                    if (queryLocationInChunks) {
+                        score += 0.15; // Max becomes 0.75 for short_id + query match
+                        reason += '_with_query';
+                    }
 
                     candidates.push({
                         entry,
@@ -271,11 +286,29 @@ export async function reconcileLocationName(
     const topCandidates = candidates.slice(0, 3);
     console.log(`[Location Reconcile] 🔍 "${newMacro} - ${newMicro}" vs ${topCandidates.length} candidati: ${topCandidates.map(c => `${c.entry.macro_location}-${c.entry.micro_location}(${c.similarity.toFixed(2)})`).join(', ')}`);
 
+    // Reasons that are SAFE to auto-merge (syntactic matches)
+    const SAFE_AUTO_MERGE_REASONS = [
+        'same_macro',
+        'same_micro_exact',
+        'high_micro_sim',
+        'full_path_sim'
+    ];
+
+    // Reasons that ALWAYS need AI confirmation (semantic/RAG matches are unreliable)
+    const ALWAYS_AI_CHECK_REASONS = [
+        'rag_short_id_match',
+        'rag_context_match',
+        'rag_short_id_match_with_query',
+        'rag_context_match_with_query'
+    ];
+
     for (const candidate of topCandidates) {
-        // SUPER-MATCH: If similarity is very high (e.g. same micro), accept immediately without AI
-        // Lowered threshold to 0.85 to catch robust matches like "Palazzo dei Draghi"
-        if (candidate.similarity >= 0.85) {
-            console.log(`[Location Reconcile] ⚡ AUTO-MERGE (High Sim): "${newMacro} - ${newMicro}" → "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason})`);
+        const isSafeReason = SAFE_AUTO_MERGE_REASONS.some(r => candidate.reason.includes(r));
+        const needsAICheck = ALWAYS_AI_CHECK_REASONS.some(r => candidate.reason.includes(r));
+
+        // AUTO-MERGE: Only if very high similarity AND safe reason AND NOT in blacklist
+        if (candidate.similarity >= 0.92 && isSafeReason && !needsAICheck) {
+            console.log(`[Location Reconcile] ⚡ AUTO-MERGE (High Sim + Safe): "${newMacro} - ${newMicro}" → "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason})`);
             return {
                 canonicalMacro: candidate.entry.macro_location,
                 canonicalMicro: candidate.entry.micro_location,
@@ -283,7 +316,13 @@ export async function reconcileLocationName(
             };
         }
 
-        console.log(`[Location Reconcile] 🤔 Checking candidate: "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason})...`);
+        // Skip very low similarity candidates
+        if (candidate.similarity < 0.50) {
+            console.log(`[Location Reconcile] ⏭️ Skip low-sim candidate: "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.similarity.toFixed(2)})`);
+            continue;
+        }
+
+        console.log(`[Location Reconcile] 🤔 AI Check needed: "${candidate.entry.macro_location} - ${candidate.entry.micro_location}" (${candidate.reason}, sim=${candidate.similarity.toFixed(2)})...`);
 
         const isSame = await aiConfirmSameLocationExtended(
             campaignId,

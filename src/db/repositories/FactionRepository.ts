@@ -684,13 +684,26 @@ export const factionRepository = {
               AND fa.is_active = 1
         `).all(factionId) as Array<{ entity_id: number; role: string; npc_name: string }>;
 
+        // 2b. Get all active PC members with their roles
+        const pcMembers = db.prepare(`
+            SELECT fa.entity_id, fa.role, c.character_name
+            FROM faction_affiliations fa
+            JOIN characters c ON fa.entity_id = c.rowid
+            WHERE fa.faction_id = ?
+              AND fa.entity_type = 'pc'
+              AND fa.is_active = 1
+        `).all(factionId) as Array<{ entity_id: number; role: string; character_name: string }>;
+
         // 3. Calculate weighted contribution from each member
         let membersMoral = 0;
         let membersEthical = 0;
+        let validMemberCount = 0;
 
+        // Process NPCs
         for (const member of npcMembers) {
             const roleWeight = ROLE_WEIGHTS[member.role] ?? 0.5;
             if (roleWeight === 0) continue;
+            validMemberCount++;
 
             // Get NPC's events
             const npcEvents = db.prepare(`
@@ -702,6 +715,24 @@ export const factionRepository = {
 
             membersMoral += (npcEvents.total_moral || 0) * roleWeight;
             membersEthical += (npcEvents.total_ethical || 0) * roleWeight;
+        }
+
+        // Process PCs
+        for (const member of pcMembers) {
+            const roleWeight = ROLE_WEIGHTS[member.role] ?? 0.5;
+            if (roleWeight === 0) continue;
+            validMemberCount++;
+
+            // Get PC's events
+            const pcEvents = db.prepare(`
+                SELECT COALESCE(SUM(moral_weight), 0) as total_moral,
+                       COALESCE(SUM(ethical_weight), 0) as total_ethical
+                FROM character_history
+                WHERE campaign_id = ? AND lower(character_name) = lower(?)
+            `).get(campaignId, member.character_name) as { total_moral: number; total_ethical: number };
+
+            membersMoral += (pcEvents.total_moral || 0) * roleWeight;
+            membersEthical += (pcEvents.total_ethical || 0) * roleWeight;
         }
 
         // 4. Sum totals
@@ -718,7 +749,7 @@ export const factionRepository = {
                 factionEthical,
                 membersMoral: Math.round(membersMoral),
                 membersEthical: Math.round(membersEthical),
-                memberCount: npcMembers.filter(m => (ROLE_WEIGHTS[m.role] ?? 0.5) > 0).length
+                memberCount: validMemberCount
             }
         };
     },

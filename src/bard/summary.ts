@@ -80,8 +80,16 @@ import {
 } from './prompts';
 
 import { generateBio } from './bio'; // 🆕 Unified Generator
-import { reconcileNpcName } from './reconciliation/npc';
-import { reconcileLocationName } from './reconciliation/location';
+
+// 🆕 Batch Reconciliation System (efficient)
+import {
+    buildEntityIndex,
+    batchReconcile,
+    type EntityToReconcile,
+    type ReconciliationContext
+} from './reconciliation';
+
+// Legacy imports (still used for quests)
 import { reconcileQuestTitle } from './reconciliation/quest';
 
 // Constants
@@ -568,97 +576,161 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[], "artifacts":[]}');
                 console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni, ${entities.artifacts?.length || 0} Artefatti.`);
 
-                // 🆕 Initialize scoutFactions here so it's available for NPC/Location hydration
-                const scoutFactions = (entities.factions && Array.isArray(entities.factions)) ? entities.factions : [];
+                // ============================================
+                // 🆕 BATCH RECONCILIATION SYSTEM
+                // Replaces individual reconcile calls with one batch
+                // ============================================
 
-                dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
+                // Build entity index once (local, no API call)
+                const entityIndex = buildEntityIndex(campaignId);
 
-                // ... [NPC/Location/Quest hydration stays same] ...
+                // Get current location context for smarter matching
+                const snapshot = getCampaignSnapshot(campaignId);
+                const [currentMacro, currentMicro] = (snapshot.location_context || '').split(' - ').map((s: string) => s.trim());
 
-                // 2. Idratazione NPC
-                if (entities.npcs && Array.isArray(entities.npcs) && entities.npcs.length > 0) {
-                    const foundNpcs = new Set<string>();
+                const reconcileContext: ReconciliationContext = {
+                    currentMacro: currentMacro || undefined,
+                    currentMicro: currentMicro || undefined
+                };
 
-                    // 🆕 Filtra PG che potrebbero essere sfuggiti allo Scout
-                    const pcNamesLower = playerCharacterNames.map(n => n.toLowerCase());
-                    const filteredNpcs = entities.npcs.filter((name: string) => {
-                        const nameLower = name.toLowerCase();
-                        const isPC = pcNamesLower.some(pc =>
-                            pc === nameLower ||
-                            nameLower.includes(pc) ||
-                            pc.includes(nameLower)
-                        );
-                        if (isPC) {
-                            console.log(`[Bardo] 🚫 Filtrato PG dalla lista NPC: "${name}"`);
-                        }
-                        return !isPC;
-                    });
+                // Prepare all entities for batch reconciliation
+                const entitiesToReconcile: EntityToReconcile[] = [];
 
-                    dynamicMemoryContext += `\n👥 NPC PRESENTI (Dati Storici):\n`;
-
-                    for (const name of filteredNpcs) {
-                        try {
-                            const reconciled = await reconcileNpcName(campaignId, name, "", playerCharacterNames);
-                            // Skip if reconciliation determined this is a PC
-                            if (reconciled?.isPlayerCharacter) continue;
-                            if (reconciled && !foundNpcs.has(reconciled.canonicalName)) {
-                                foundNpcs.add(reconciled.canonicalName);
-                                const npc = reconciled.existingNpc;
-                                // Include shortId for ID-based matching
-                                dynamicMemoryContext += `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${npc.description || 'Nessuna descrizione.'} [Status: ${npc.status || 'ALIVE'}]\n`;
-
-                                // 🆕 Automatic Faction Identification via NPC
-                                const affiliations = factionRepository.getEntityFactions('npc', npc.id);
-                                for (const aff of affiliations) {
-                                    if (aff.faction_name && !scoutFactions.includes(aff.faction_name)) {
-                                        console.log(`[Bardo] 🕵️ Scout: NPC "${npc.name}" ha portato la fazione "${aff.faction_name}"`);
-                                        scoutFactions.push(aff.faction_name);
-                                    }
-                                }
-                            }
-                        } catch (e) {
-                            console.error(`[Bardo] ⚠️ Errore riconciliazione NPC "${name}":`, e);
-                        }
+                // Add NPCs
+                if (entities.npcs && Array.isArray(entities.npcs)) {
+                    for (const name of entities.npcs) {
+                        entitiesToReconcile.push({ name, type: 'npc' });
                     }
                 }
 
-                // 3. Idratazione Luoghi
-                if (entities.locations && Array.isArray(entities.locations) && entities.locations.length > 0) {
-                    const foundLocs = new Set<string>();
-
-                    dynamicMemoryContext += `\n🗺️ LUOGHI CITATI (Dati Storici):\n`;
-
+                // Add Locations
+                if (entities.locations && Array.isArray(entities.locations)) {
                     for (const name of entities.locations) {
-                        try {
-                            const reconciled = await reconcileLocationName(campaignId, "", name);
-                            if (reconciled) {
-                                const canonicalKey = `${reconciled.canonicalMacro} - ${reconciled.canonicalMicro}`;
-                                if (!foundLocs.has(canonicalKey)) {
-                                    foundLocs.add(canonicalKey);
-                                    const loc = reconciled.existingEntry;
-                                    // 🆕 Include shortId for ID-based matching
-                                    dynamicMemoryContext += `- **${canonicalKey}** [ID: ${loc.short_id || 'N/A'}]: ${loc.description || 'Nessuna descrizione.'}\n`;
+                        // Parse location format: "Macro - Micro" or just "Micro"
+                        let macro = currentMacro || '';
+                        let micro = name;
+                        if (name.includes(' - ')) {
+                            const parts = name.split(' - ');
+                            macro = parts[0].trim() || currentMacro || '';
+                            micro = parts.slice(1).join(' - ').trim();
+                        }
+                        entitiesToReconcile.push({ name, type: 'location', macro, micro });
+                    }
+                }
 
-                                    // 🆕 Automatic Faction Identification via Location
-                                    const affiliations = factionRepository.getEntityFactions('location', loc.id);
-                                    for (const aff of affiliations) {
-                                        if (aff.faction_name && !scoutFactions.includes(aff.faction_name)) {
-                                            console.log(`[Bardo] 🕵️ Scout: Luogo "${canonicalKey}" ha portato la fazione "${aff.faction_name}"`);
-                                            scoutFactions.push(aff.faction_name);
+                // Add Factions
+                if (entities.factions && Array.isArray(entities.factions)) {
+                    for (const name of entities.factions) {
+                        entitiesToReconcile.push({ name, type: 'faction' });
+                    }
+                }
+
+                // Add Artifacts
+                if (entities.artifacts && Array.isArray(entities.artifacts)) {
+                    for (const name of entities.artifacts) {
+                        entitiesToReconcile.push({ name, type: 'artifact' });
+                    }
+                }
+
+                // 🚀 SINGLE BATCH CALL for all entities
+                const reconcileResults = await batchReconcile(entityIndex, entitiesToReconcile, reconcileContext);
+
+                // ============================================
+                // HYDRATE CONTEXT FROM RESULTS
+                // ============================================
+                dynamicMemoryContext = "\n[[CONTESTO DINAMICO (ENTITÀ RILEVATE)]]\n";
+
+                const scoutFactions: string[] = [];
+                const foundNpcs = new Set<string>();
+                const foundLocs = new Set<string>();
+                const foundFactions = new Set<string>();
+                const foundArtifacts = new Set<string>();
+
+                // Process reconciliation results
+                for (const result of reconcileResults) {
+                    if (result.isPlayerCharacter) continue; // Skip PCs
+
+                    if (result.matched && result.matchedEntity) {
+                        const entity = result.matchedEntity;
+
+                        switch (result.type) {
+                            case 'npc':
+                                if (!foundNpcs.has(entity.name)) {
+                                    foundNpcs.add(entity.name);
+                                    // Get full NPC data from DB
+                                    const npc = npcRepository.getNpcByShortId(campaignId, entity.shortId || '');
+                                    if (npc) {
+                                        dynamicMemoryContext += `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${(npc.description || 'Nessuna descrizione.').substring(0, 200)} [Status: ${npc.status || 'ALIVE'}]\n`;
+
+                                        // Collect factions from NPC affiliations
+                                        const affiliations = factionRepository.getEntityFactions('npc', npc.id);
+                                        for (const aff of affiliations) {
+                                            if (aff.faction_name && !scoutFactions.includes(aff.faction_name)) {
+                                                scoutFactions.push(aff.faction_name);
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        } catch (e) {
-                            console.error(`[Bardo] ⚠️ Errore riconciliazione Luogo "${name}":`, e);
+                                break;
+
+                            case 'location':
+                                const locKey = `${entity.macro} - ${entity.micro}`;
+                                if (!foundLocs.has(locKey)) {
+                                    foundLocs.add(locKey);
+                                    const loc = locationRepository.getAtlasEntryFull(campaignId, entity.macro || '', entity.micro || '');
+                                    if (loc) {
+                                        dynamicMemoryContext += `- **${locKey}** [ID: ${loc.short_id || 'N/A'}]: ${(loc.description || 'Nessuna descrizione.').substring(0, 200)}\n`;
+
+                                        // Collect factions from location affiliations
+                                        const affiliations = factionRepository.getEntityFactions('location', loc.id);
+                                        for (const aff of affiliations) {
+                                            if (aff.faction_name && !scoutFactions.includes(aff.faction_name)) {
+                                                scoutFactions.push(aff.faction_name);
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+
+                            case 'faction':
+                                if (!foundFactions.has(entity.name)) {
+                                    foundFactions.add(entity.name);
+                                    // Will be processed below with party faction
+                                }
+                                break;
+
+                            case 'artifact':
+                                if (!foundArtifacts.has(entity.name)) {
+                                    foundArtifacts.add(entity.name);
+                                    try {
+                                        const { getArtifactByName } = await import('../db');
+                                        const artifact = getArtifactByName(campaignId, entity.name);
+                                        if (artifact) {
+                                            let artifactInfo = `- **${artifact.name}** [ID: ${artifact.short_id || 'N/A'}]: ${(artifact.description || 'Nessuna descrizione.').substring(0, 200)}`;
+                                            if (artifact.is_cursed) artifactInfo += ` [MALEDETTO]`;
+                                            if (artifact.owner_name) artifactInfo += ` [Possessore: ${artifact.owner_name}]`;
+                                            dynamicMemoryContext += artifactInfo + '\n';
+                                        }
+                                    } catch (e) { /* ignore */ }
+                                }
+                                break;
                         }
                     }
                 }
 
-                // 4. Idratazione Quest (solo quelle trovate dallo Scout)
+                // Add section headers
+                if (foundNpcs.size > 0) {
+                    const npcSection = dynamicMemoryContext.split('\n').filter(l => l.includes('[Status:')).join('\n');
+                    dynamicMemoryContext = dynamicMemoryContext.replace(npcSection, `\n👥 NPC PRESENTI (Dati Storici):\n${npcSection}`);
+                }
+
+                if (foundLocs.size > 0) {
+                    dynamicMemoryContext += `\n🗺️ LUOGHI CITATI: ${foundLocs.size} luoghi riconosciuti\n`;
+                }
+
+                // Quest hydration (still uses legacy reconciler for now)
                 if (entities.quests && Array.isArray(entities.quests) && entities.quests.length > 0) {
                     const foundQuests = new Set<string>();
-
                     dynamicMemoryContext += `\n⚔️ QUEST RILEVANTI:\n`;
 
                     for (const title of entities.quests) {
@@ -667,7 +739,6 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                             if (match && !foundQuests.has(match.canonicalTitle)) {
                                 foundQuests.add(match.canonicalTitle);
                                 const q = match.existingQuest;
-                                // 🆕 Include shortId for ID-based matching
                                 let questInfo = `- **${q.title}** [ID: ${q.short_id || 'N/A'}]: ${q.description || 'Nessuna descrizione.'} [Status: ${q.status}]`;
                                 if (q.type) questInfo += ` [${q.type}]`;
                                 dynamicMemoryContext += questInfo + '\n';
@@ -684,17 +755,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     dynamicMemoryContext += `\n⚔️ NESSUNA QUEST MENZIONATA.\n`;
                 }
 
-                // 5. Idratazione Fazioni (Party + Scout)
-                // partyFaction already fetched at top scope
-                // scoutFactions now populated above and incrementally during NPC/Location hydration
-
-                if (partyFaction || scoutFactions.length > 0) {
-                    const foundFactions = new Set<string>();
+                // Faction hydration (Party + Scout + from NPC/Location affiliations)
+                if (partyFaction || scoutFactions.length > 0 || foundFactions.size > 0) {
                     dynamicMemoryContext += `\n⚔️ FAZIONI MENZIONATE:\n`;
 
-                    console.log(`[Bardo] 🕵️ Idratazione Fazioni - Party: ${partyFaction ? partyFaction.name : 'NULL'} (CampaignID: ${campaignId}), Scout: ${scoutFactions.join(', ')}`);
-
-                    // Aggiungi SEMPRE la fazione del Party per prima
+                    // Add party faction first
                     if (partyFaction) {
                         foundFactions.add(partyFaction.name);
                         const members = factionRepository.countFactionMembers(partyFaction.id);
@@ -704,16 +769,18 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                         let factionInfo = `- **${partyFaction.name}** [ID: ${partyFaction.short_id || 'N/A'}] (${partyFaction.type || 'ORGANIZATION'}): ${partyFaction.description || 'Nessuna descrizione.'}`;
                         if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
                         if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
-                        factionInfo += ` [FAZIONE PARTY]`; // Tag esplicito
+                        factionInfo += ` [FAZIONE PARTY]`;
                         dynamicMemoryContext += factionInfo + '\n';
                     }
 
-                    for (const name of scoutFactions) {
+                    // Add other factions from scout and affiliations
+                    const allFactionNames = [...new Set([...scoutFactions, ...foundFactions])];
+                    for (const name of allFactionNames) {
+                        if (partyFaction && name === partyFaction.name) continue; // Already added
                         try {
                             const factions = factionRepository.findFactionByName(campaignId, name);
                             const faction = factions.length > 0 ? factions[0] : null;
-                            if (faction && !foundFactions.has(faction.name)) {
-                                foundFactions.add(faction.name);
+                            if (faction) {
                                 const members = factionRepository.countFactionMembers(faction.id);
                                 const totalMembers = members.npcs + members.locations + members.pcs;
                                 const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
@@ -724,33 +791,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 dynamicMemoryContext += factionInfo + '\n';
                             }
                         } catch (e) {
-                            console.error(`[Bardo] ⚠️ Errore riconciliazione Fazione "${name}":`, e);
+                            console.error(`[Bardo] ⚠️ Errore idratazione Fazione "${name}":`, e);
                         }
                     }
                 }
 
-                // 6. Idratazione Artefatti (solo quelli trovati dallo Scout)
-                if (entities.artifacts && Array.isArray(entities.artifacts) && entities.artifacts.length > 0) {
-                    const foundArtifacts = new Set<string>();
-
-                    dynamicMemoryContext += `\n✨ ARTEFATTI MENZIONATI:\n`;
-
-                    const { getArtifactByName } = await import('../db');
-                    for (const name of entities.artifacts) {
-                        try {
-                            const artifact = getArtifactByName(campaignId, name);
-                            if (artifact && !foundArtifacts.has(artifact.name)) {
-                                foundArtifacts.add(artifact.name);
-                                // 🆕 Include shortId for ID-based matching
-                                let artifactInfo = `- **${artifact.name}** [ID: ${artifact.short_id || 'N/A'}]: ${artifact.description || 'Nessuna descrizione.'}`;
-                                if (artifact.is_cursed) artifactInfo += ` [MALEDETTO]`;
-                                if (artifact.owner_name) artifactInfo += ` [Possessore: ${artifact.owner_name}]`;
-                                dynamicMemoryContext += artifactInfo + '\n';
-                            }
-                        } catch (e) {
-                            console.error(`[Bardo] ⚠️ Errore riconciliazione Artefatto "${name}":`, e);
-                        }
-                    }
+                // Artifacts section header (already added inline)
+                if (foundArtifacts.size > 0) {
+                    dynamicMemoryContext = dynamicMemoryContext.replace(/^- \*\*.*\[MALEDETTO\].*$/m, `\n✨ ARTEFATTI MENZIONATI:\n$&`);
                 }
 
                 // LOG RIEPILOGATIVO CONTESTO

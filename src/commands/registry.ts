@@ -7,6 +7,7 @@ import { debugCommand } from './admin/debug';
 import { rebuildCommand } from './admin/rebuild';
 import { recoverCommand } from './admin/recover';
 import { syncCommand } from './admin/sync';
+import { rereconcileCommand } from './admin/rereconcile';
 
 // Campaigns
 import { createCampaignCommand } from './campaigns/create';
@@ -81,6 +82,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(rebuildCommand);
     dispatcher.register(recoverCommand);
     dispatcher.register(syncCommand);
+    dispatcher.register(rereconcileCommand);
 
     // Campaigns
     dispatcher.register(createCampaignCommand);

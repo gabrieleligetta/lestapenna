@@ -112,7 +112,7 @@ export interface SummaryResponse {
         description?: string;
         type?: string;
         reputation_change?: {
-            direction: 'UP' | 'DOWN';
+            value: number;
             reason: string;
         };
     }>;
@@ -240,7 +240,7 @@ export interface AnalystOutput {
         alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';  // 🆕
         alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';  // 🆕
         reputation_change?: {
-            direction: 'UP' | 'DOWN';
+            value: number;
             reason: string;
         };
     }>;

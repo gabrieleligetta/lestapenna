@@ -83,7 +83,26 @@ export const ROLE_WEIGHTS: Record<string, number> = {
     'ALLY': 0.25,     // Allies contribute quarter weight
     'ENEMY': 0,       // Enemies don't contribute
     'CONTROLLED': 0,  // Locations don't contribute
-    'HQ': 0
+    'HQ': 0,
+    'PRESENCE': 0,    // Passive presence, no alignment contribution
+    'HOSTILE': 0,     // Hostile entities don't contribute
+    'PRISONER': 0     // Prisoners don't contribute
+};
+
+/**
+ * Role priority for merge conflict resolution.
+ * Higher value = higher priority role is kept.
+ */
+export const ROLE_PRIORITY: Record<string, number> = {
+    'LEADER': 6,
+    'HQ': 5,
+    'MEMBER': 4,
+    'CONTROLLED': 3,
+    'ALLY': 2,
+    'PRESENCE': 1,
+    'ENEMY': 0,
+    'HOSTILE': 0,
+    'PRISONER': 0
 };
 
 /**

@@ -825,6 +825,9 @@ export class IngestionService {
             if (update.reputation_change && faction) {
                 const changeValue = update.reputation_change.value || 0;
 
+                // Idempotency: clear previous REPUTATION_CHANGE events for this session+faction
+                factionRepository.clearSessionFactionEvents(campaignId, factionName, sessionId);
+
                 // addFactionEvent now handles reputation_score accumulation and label derivation
                 factionRepository.addFactionEvent(
                     campaignId,
@@ -867,6 +870,7 @@ export class IngestionService {
      */
     private async processFactionAffiliations(campaignId: number, sessionId: string, affiliations: any[], timestamp: number): Promise<void> {
         const { getNpcEntry } = await import('../../db');
+        const { npcRepository } = await import('../../db');
 
         for (const affiliation of affiliations) {
             if (!affiliation.entity_name || !affiliation.faction_name) continue;
@@ -874,8 +878,15 @@ export class IngestionService {
             const cleanFactionName = cleanEntityName(affiliation.faction_name);
             const factionName = cleanFactionName.name;
 
-            // Find the faction
-            let faction = factionRepository.getFaction(campaignId, factionName);
+            // Find the faction: ID-first, then name fallback
+            let faction = null;
+            if (affiliation.faction_id) {
+                faction = factionRepository.getFactionByShortId(campaignId, affiliation.faction_id);
+                if (faction) console.log(`[Faction Affil] 🎯 Faction ID Match: ${affiliation.faction_id} → ${faction.name}`);
+            }
+            if (!faction) {
+                faction = factionRepository.getFaction(campaignId, factionName);
+            }
             if (!faction) {
                 // Create faction if it doesn't exist
                 faction = factionRepository.createFaction(campaignId, factionName, {
@@ -893,58 +904,102 @@ export class IngestionService {
             const entityName = cleanEntityName_.name;
 
             if (entityType === 'npc') {
-                // Try to resolve NPC name robustly
-                const reconciled = await reconcileNpcName(campaignId, entityName);
-                const targetName = reconciled ? reconciled.canonicalName : entityName;
+                // ID-first lookup for NPC
+                let npc = null;
+                if (affiliation.entity_id) {
+                    npc = npcRepository.getNpcByShortId(campaignId, affiliation.entity_id);
+                    if (npc) console.log(`[Faction Affil] 🎯 NPC ID Match: ${affiliation.entity_id} → ${npc.name}`);
+                }
 
-                let npc = getNpcEntry(campaignId, targetName);
                 if (!npc) {
-                    npc = getNpcByAlias(campaignId, entityName);
+                    // Fallback: name-based reconciliation
+                    const reconciled = await reconcileNpcName(campaignId, entityName);
+                    const targetName = reconciled ? reconciled.canonicalName : entityName;
+
+                    npc = getNpcEntry(campaignId, targetName);
+                    if (!npc) {
+                        npc = getNpcByAlias(campaignId, entityName);
+                    }
                 }
 
                 if (npc) {
+                    const action = affiliation.action?.toUpperCase() || 'JOIN';
                     const role = affiliation.role?.toUpperCase() || 'MEMBER';
-                    const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED', 'HQ', 'PRESENCE', 'HOSTILE', 'PRISONER'];
-                    if (validRoles.includes(role)) {
+                    const validNpcRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'PRISONER'];
+
+                    if (action === 'LEAVE') {
+                        factionRepository.removeAffiliation(faction.id, 'npc', npc.id);
+                        factionRepository.addFactionEvent(
+                            campaignId,
+                            faction.name,
+                            sessionId,
+                            `NPC "${npc.name}" ha lasciato la fazione`,
+                            'MEMBER_LEAVE',
+                            false
+                        );
+                        console.log(`[Faction] 👋 ${npc.name} ← ${faction.name} (LEAVE)`);
+                    } else if (validNpcRoles.includes(role)) {
                         factionRepository.addAffiliation(faction.id, 'npc', npc.id, { role: role as any });
                         factionRepository.addFactionEvent(
                             campaignId,
-                            factionName,
+                            faction.name,
                             sessionId,
-                            `NPC "${entityName}" affiliato come ${role}`,
+                            `NPC "${npc.name}" affiliato come ${role}`,
                             'MEMBER_JOIN',
                             false
                         );
-                        console.log(`[Faction] 🤝 ${entityName} → ${factionName} (${role})`);
+                        console.log(`[Faction] 🤝 ${npc.name} → ${faction.name} (${role})`);
                     }
                 }
             } else if (entityType === 'location') {
                 const { getAtlasEntryFull } = await import('../../db');
-                // Locations usually have "Macro | Micro" or just "Micro" in entity_name
+
+                // ID-first lookup for location
                 let loc = null;
-                if (entityName.includes('|')) {
-                    const [macro, micro] = entityName.split('|').map(s => s.trim());
-                    loc = getAtlasEntryFull(campaignId, macro, micro);
-                } else {
-                    const allLocs = locationRepository.listAllAtlasEntries(campaignId);
-                    const match = allLocs.find((l: any) => l.micro_location.toLowerCase() === entityName.toLowerCase());
-                    if (match) loc = getAtlasEntryFull(campaignId, match.macro_location, match.micro_location);
+                if (affiliation.entity_id) {
+                    loc = locationRepository.getAtlasEntryByShortId(campaignId, affiliation.entity_id);
+                    if (loc) console.log(`[Faction Affil] 🎯 Location ID Match: ${affiliation.entity_id} → ${loc.macro_location}/${loc.micro_location}`);
+                }
+
+                if (!loc) {
+                    // Fallback: name-based lookup
+                    if (entityName.includes('|')) {
+                        const [macro, micro] = entityName.split('|').map(s => s.trim());
+                        loc = getAtlasEntryFull(campaignId, macro, micro);
+                    } else {
+                        const allLocs = locationRepository.listAllAtlasEntries(campaignId);
+                        const match = allLocs.find((l: any) => l.micro_location.toLowerCase() === entityName.toLowerCase());
+                        if (match) loc = getAtlasEntryFull(campaignId, match.macro_location, match.micro_location);
+                    }
                 }
 
                 if (loc) {
+                    const action = affiliation.action?.toUpperCase() || 'JOIN';
                     const role = affiliation.role?.toUpperCase() || 'CONTROLLED';
-                    const validRoles = ['LEADER', 'MEMBER', 'ALLY', 'ENEMY', 'CONTROLLED', 'HQ', 'PRESENCE', 'HOSTILE', 'PRISONER'];
-                    if (validRoles.includes(role)) {
+                    const validLocationRoles = ['CONTROLLED', 'HQ', 'PRESENCE', 'HOSTILE'];
+
+                    if (action === 'LEAVE') {
+                        factionRepository.removeAffiliation(faction.id, 'location', loc.id);
+                        factionRepository.addFactionEvent(
+                            campaignId,
+                            faction.name,
+                            sessionId,
+                            `Luogo "${entityName}" rimosso dalla fazione`,
+                            'MEMBER_LEAVE',
+                            false
+                        );
+                        console.log(`[Faction] 👋📍 ${entityName} ← ${faction.name} (LEAVE)`);
+                    } else if (validLocationRoles.includes(role)) {
                         factionRepository.addAffiliation(faction.id, 'location', loc.id, { role: role as any });
                         factionRepository.addFactionEvent(
                             campaignId,
-                            factionName,
+                            faction.name,
                             sessionId,
                             `Luogo "${entityName}" affiliato come ${role}`,
-                            'GENERIC', // Or a more specific event if available
+                            'GENERIC',
                             false
                         );
-                        console.log(`[Faction] 📍 ${entityName} → ${factionName} (${role})`);
+                        console.log(`[Faction] 📍 ${entityName} → ${faction.name} (${role})`);
                     }
                 }
             }

@@ -12,7 +12,7 @@ import {
     REPUTATION_SPECTRUM
 } from '../types';
 import { generateShortId } from '../utils/idGenerator';
-import { getMoralAlignment, getEthicalAlignment, ROLE_WEIGHTS, getReputationLabel, getReputationScoreForLabel } from '../../utils/alignmentUtils';
+import { getMoralAlignment, getEthicalAlignment, ROLE_WEIGHTS, ROLE_PRIORITY, getReputationLabel, getReputationScoreForLabel } from '../../utils/alignmentUtils';
 
 export const factionRepository = {
     // =============================================
@@ -446,10 +446,10 @@ export const factionRepository = {
                     // Accumulate reputation_score and derive label
                     db.prepare(`
                         INSERT INTO faction_reputation (campaign_id, faction_id, reputation, reputation_score)
-                        VALUES ($campaignId, $factionId, 'NEUTRALE', $change)
+                        VALUES ($campaignId, $factionId, 'NEUTRALE', MIN(50, MAX(-50, $change)))
                         ON CONFLICT(campaign_id, faction_id)
                         DO UPDATE SET
-                            reputation_score = COALESCE(reputation_score, 0) + $change,
+                            reputation_score = MIN(50, MAX(-50, COALESCE(reputation_score, 0) + $change)),
                             last_updated = CURRENT_TIMESTAMP
                     `).run({ campaignId, factionId: faction.id, change: reputationChange });
 
@@ -557,6 +557,69 @@ export const factionRepository = {
         }
     },
 
+    /**
+     * Clears REPUTATION_CHANGE events for a given (campaign, faction, session)
+     * and reverses their effects on the reputation score. Provides idempotency
+     * so re-processing a session doesn't double-count reputation changes.
+     */
+    clearSessionFactionEvents: (campaignId: number, factionName: string, sessionId: string): void => {
+        db.transaction(() => {
+            // 1. Sum up existing reputation changes for this session+faction
+            const row = db.prepare(`
+                SELECT COALESCE(SUM(reputation_change_value), 0) as total_rep,
+                       COALESCE(SUM(moral_weight), 0) as total_moral,
+                       COALESCE(SUM(ethical_weight), 0) as total_ethical
+                FROM faction_history
+                WHERE campaign_id = ? AND lower(faction_name) = lower(?) AND session_id = ?
+                  AND event_type = 'REPUTATION_CHANGE'
+            `).get(campaignId, factionName, sessionId) as { total_rep: number; total_moral: number; total_ethical: number } | undefined;
+
+            if (!row || (row.total_rep === 0 && row.total_moral === 0 && row.total_ethical === 0)) {
+                // Also delete the rows even if totals are zero
+                db.prepare(`
+                    DELETE FROM faction_history
+                    WHERE campaign_id = ? AND lower(faction_name) = lower(?) AND session_id = ?
+                      AND event_type = 'REPUTATION_CHANGE'
+                `).run(campaignId, factionName, sessionId);
+                return;
+            }
+
+            // 2. Reverse reputation score
+            if (row.total_rep !== 0) {
+                const faction = factionRepository.getFaction(campaignId, factionName);
+                if (faction && !faction.is_party) {
+                    db.prepare(`
+                        UPDATE faction_reputation
+                        SET reputation_score = MIN(50, MAX(-50, COALESCE(reputation_score, 0) - $reversal)),
+                            last_updated = CURRENT_TIMESTAMP
+                        WHERE campaign_id = $campaignId AND faction_id = $factionId
+                    `).run({ campaignId, factionId: faction.id, reversal: row.total_rep });
+
+                    // Re-derive label
+                    const updated = db.prepare(`
+                        SELECT reputation_score FROM faction_reputation
+                        WHERE campaign_id = ? AND faction_id = ?
+                    `).get(campaignId, faction.id) as { reputation_score: number } | undefined;
+
+                    const newScore = updated?.reputation_score ?? 0;
+                    const newLabel = getReputationLabel(newScore);
+                    db.prepare(`
+                        UPDATE faction_reputation SET reputation = ? WHERE campaign_id = ? AND faction_id = ?
+                    `).run(newLabel, campaignId, faction.id);
+                }
+            }
+
+            // 3. Delete the history rows
+            db.prepare(`
+                DELETE FROM faction_history
+                WHERE campaign_id = ? AND lower(faction_name) = lower(?) AND session_id = ?
+                  AND event_type = 'REPUTATION_CHANGE'
+            `).run(campaignId, factionName, sessionId);
+
+            console.log(`[Faction] 🔄 Cleared session ${sessionId} REPUTATION_CHANGE events for ${factionName} (reversed rep: ${row.total_rep})`);
+        })();
+    },
+
     getFactionHistory: (campaignId: number, factionName: string): FactionHistoryEntry[] => {
         return db.prepare(`
             SELECT * FROM faction_history 
@@ -605,14 +668,16 @@ export const factionRepository = {
                 `).get(target.id, aff.entity_type, aff.entity_id) as any;
 
                 if (conflict) {
-                    // Conflict: Combine notes if different, maybe keep highest role?
-                    // For now, just combine notes and keep target role if set
+                    // Conflict: Combine notes, keep role with highest priority
                     const newNotes = (conflict.notes || '') + (aff.notes ? '\n[Fusa] ' + aff.notes : '');
+                    const sourcePriority = ROLE_PRIORITY[aff.role] ?? 0;
+                    const targetPriority = ROLE_PRIORITY[conflict.role] ?? 0;
+                    const bestRole = sourcePriority > targetPriority ? aff.role : conflict.role;
                     db.prepare(`
-                        UPDATE faction_affiliations 
-                        SET notes = ?, is_active = MAX(is_active, ?)
+                        UPDATE faction_affiliations
+                        SET notes = ?, is_active = MAX(is_active, ?), role = ?
                         WHERE id = ?
-                    `).run(newNotes, aff.is_active, conflict.id);
+                    `).run(newNotes, aff.is_active, bestRole, conflict.id);
 
                     // Delete source affiliation
                     db.prepare('DELETE FROM faction_affiliations WHERE id = ?').run(aff.id);
@@ -734,7 +799,7 @@ export const factionRepository = {
 
         // Process NPCs
         for (const member of npcMembers) {
-            const roleWeight = ROLE_WEIGHTS[member.role] ?? 0.5;
+            const roleWeight = ROLE_WEIGHTS[member.role] ?? 0;
             if (roleWeight === 0) continue;
             validMemberCount++;
 
@@ -752,7 +817,7 @@ export const factionRepository = {
 
         // Process PCs
         for (const member of pcMembers) {
-            const roleWeight = ROLE_WEIGHTS[member.role] ?? 0.5;
+            const roleWeight = ROLE_WEIGHTS[member.role] ?? 0;
             if (roleWeight === 0) continue;
             validMemberCount++;
 

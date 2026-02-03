@@ -813,14 +813,16 @@ export const factionCommand: Command = {
             }
 
             let newRep: ReputationLevel;
+            const MANUAL_REP_DELTA = 10; // Score delta for manual +/- adjustments
             if (action === '+') {
-                newRep = factionRepository.adjustReputation(campaignId, faction.id, 'UP');
-                factionRepository.addFactionEvent(campaignId, faction.name, null, `Reputazione aumentata a ${newRep}`, 'REPUTATION_CHANGE', true);
+                // Use addFactionEvent with positive delta — it accumulates score and derives label
+                factionRepository.addFactionEvent(campaignId, faction.name, null, `Reputazione aumentata manualmente (+${MANUAL_REP_DELTA})`, 'REPUTATION_CHANGE', true, MANUAL_REP_DELTA);
+                newRep = factionRepository.getFactionReputation(campaignId, faction.id);
             } else if (action === '-') {
-                newRep = factionRepository.adjustReputation(campaignId, faction.id, 'DOWN');
-                factionRepository.addFactionEvent(campaignId, faction.name, null, `Reputazione diminuita a ${newRep}`, 'REPUTATION_CHANGE', true);
+                factionRepository.addFactionEvent(campaignId, faction.name, null, `Reputazione diminuita manualmente (-${MANUAL_REP_DELTA})`, 'REPUTATION_CHANGE', true, -MANUAL_REP_DELTA);
+                newRep = factionRepository.getFactionReputation(campaignId, faction.id);
             } else {
-                // Try to set specific level
+                // Try to set specific level (also syncs score to threshold value)
                 const upperAction = action.toUpperCase() as ReputationLevel;
                 if (!REPUTATION_SPECTRUM.includes(upperAction)) {
                     await ctx.message.reply(`❌ Livello non valido. Usa: ${REPUTATION_SPECTRUM.join(', ')}`);

@@ -30,6 +30,47 @@ export function getAlignmentLabel(moral: number, ethical: number): string {
 }
 
 // =============================================
+// REPUTATION (Score-based label derivation)
+// =============================================
+
+export const REPUTATION_THRESHOLDS = {
+    ALLEATO: 50,
+    AMICHEVOLE: 25,
+    CORDIALE: 10,
+    FREDDO: -10,
+    DIFFIDENTE: -25,
+    OSTILE: -50
+};
+
+export type ReputationLevel = 'OSTILE' | 'DIFFIDENTE' | 'FREDDO' | 'NEUTRALE' | 'CORDIALE' | 'AMICHEVOLE' | 'ALLEATO';
+
+export function getReputationLabel(score: number): ReputationLevel {
+    if (score <= REPUTATION_THRESHOLDS.OSTILE) return 'OSTILE';
+    if (score <= REPUTATION_THRESHOLDS.DIFFIDENTE) return 'DIFFIDENTE';
+    if (score <= REPUTATION_THRESHOLDS.FREDDO) return 'FREDDO';
+    if (score >= REPUTATION_THRESHOLDS.ALLEATO) return 'ALLEATO';
+    if (score >= REPUTATION_THRESHOLDS.AMICHEVOLE) return 'AMICHEVOLE';
+    if (score >= REPUTATION_THRESHOLDS.CORDIALE) return 'CORDIALE';
+    return 'NEUTRALE';
+}
+
+/**
+ * Returns the score threshold for a given reputation label.
+ * Used when DM manually sets a label to sync the numeric score.
+ */
+export function getReputationScoreForLabel(label: ReputationLevel): number {
+    switch (label) {
+        case 'OSTILE': return REPUTATION_THRESHOLDS.OSTILE;
+        case 'DIFFIDENTE': return REPUTATION_THRESHOLDS.DIFFIDENTE;
+        case 'FREDDO': return REPUTATION_THRESHOLDS.FREDDO;
+        case 'CORDIALE': return REPUTATION_THRESHOLDS.CORDIALE;
+        case 'AMICHEVOLE': return REPUTATION_THRESHOLDS.AMICHEVOLE;
+        case 'ALLEATO': return REPUTATION_THRESHOLDS.ALLEATO;
+        default: return 0; // NEUTRALE
+    }
+}
+
+// =============================================
 // ALIGNMENT SPECTRUM VISUALIZATION
 // =============================================
 

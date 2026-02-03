@@ -825,24 +825,7 @@ export class IngestionService {
             if (update.reputation_change && faction) {
                 const changeValue = update.reputation_change.value || 0;
 
-                // Adjust reputation by iterating steps if needed, OR just set it if we have a target?
-                // The new system uses "value" (numeric change?). 
-                // Wait, Prompt says "value": "integer from -N to +N".
-                // `adjustReputation` method in repo uses 'UP'/'DOWN' steps.
-                // I might need to map value to steps or update `factionRepository` to handle numeric shifts.
-                // For now, let's just log it and add the event with the value.
-                // TODO: Update factionRepository to handle numeric reputation shift if desired.
-                // For now, we rely on the event history.
-
-                // If value is > 0, we can try to "UP", if < 0 "DOWN" (rough approximation for existing logic)
-                // But the `reputation_change_value` column is what matters for the alignment system.
-
-                if (changeValue !== 0) {
-                    // Try to apply legacy reputation step limit
-                    if (changeValue > 0) factionRepository.adjustReputation(campaignId, faction.id, 'UP');
-                    if (changeValue < 0) factionRepository.adjustReputation(campaignId, faction.id, 'DOWN');
-                }
-
+                // addFactionEvent now handles reputation_score accumulation and label derivation
                 factionRepository.addFactionEvent(
                     campaignId,
                     factionName,
@@ -851,8 +834,8 @@ export class IngestionService {
                     'REPUTATION_CHANGE',
                     false,
                     changeValue,
-                    update.reputation_change.moral_impact || 0,
-                    update.reputation_change.ethical_impact || 0,
+                    0,
+                    0,
                     timestamp
                 );
                 console.log(`[Faction] 📊 Reputazione ${factionName}: CHANGE ${changeValue}`);

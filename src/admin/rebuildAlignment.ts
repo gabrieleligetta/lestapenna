@@ -16,26 +16,9 @@ import {
 
 import {
     getMoralAlignment as getMoralLabel,
-    getEthicalAlignment as getEthicalLabel
+    getEthicalAlignment as getEthicalLabel,
+    getReputationLabel
 } from '../utils/alignmentUtils';
-
-const getReputationLabel = (score: number): ReputationLevel => {
-    // Score range assumed: -100 to +100
-    // -50: Hostile
-    // -25: Diffident
-    // -10: Cold
-    // -10 to +10: Neutral
-    // +10: Cordial
-    // +25: Friendly
-    // +50: Ally
-    if (score <= -50) return 'OSTILE';
-    if (score <= -25) return 'DIFFIDENTE';
-    if (score <= -10) return 'FREDDO';
-    if (score >= 50) return 'ALLEATO';
-    if (score >= 25) return 'AMICHEVOLE';
-    if (score >= 10) return 'CORDIALE';
-    return 'NEUTRALE';
-};
 
 export const rebuildAlignment = {
     /**

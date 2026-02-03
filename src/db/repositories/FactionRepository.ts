@@ -12,7 +12,7 @@ import {
     REPUTATION_SPECTRUM
 } from '../types';
 import { generateShortId } from '../utils/idGenerator';
-import { getMoralAlignment, getEthicalAlignment, ROLE_WEIGHTS } from '../../utils/alignmentUtils';
+import { getMoralAlignment, getEthicalAlignment, ROLE_WEIGHTS, getReputationLabel, getReputationScoreForLabel } from '../../utils/alignmentUtils';
 
 export const factionRepository = {
     // =============================================
@@ -252,14 +252,15 @@ export const factionRepository = {
     // =============================================
 
     setFactionReputation: (campaignId: number, factionId: number, reputation: ReputationLevel): void => {
+        const score = getReputationScoreForLabel(reputation);
         db.prepare(`
-            INSERT INTO faction_reputation (campaign_id, faction_id, reputation)
-            VALUES ($campaignId, $factionId, $reputation)
+            INSERT INTO faction_reputation (campaign_id, faction_id, reputation, reputation_score)
+            VALUES ($campaignId, $factionId, $reputation, $score)
             ON CONFLICT(campaign_id, faction_id)
-            DO UPDATE SET reputation = $reputation, last_updated = CURRENT_TIMESTAMP
-        `).run({ campaignId, factionId, reputation });
+            DO UPDATE SET reputation = $reputation, reputation_score = $score, last_updated = CURRENT_TIMESTAMP
+        `).run({ campaignId, factionId, reputation, score });
 
-        console.log(`[Faction] 📊 Reputazione impostata: Faction #${factionId} -> ${reputation}`);
+        console.log(`[Faction] 📊 Reputazione impostata: Faction #${factionId} -> ${reputation} (score: ${score})`);
     },
 
     getFactionReputation: (campaignId: number, factionId: number): ReputationLevel => {
@@ -438,7 +439,40 @@ export const factionRepository = {
                 ethicalWeight
             );
 
-            // 2. Update Scores if needed
+            // 2. Update Reputation Score if needed
+            if (reputationChange !== 0) {
+                const faction = factionRepository.getFaction(campaignId, factionName);
+                if (faction && !faction.is_party) {
+                    // Accumulate reputation_score and derive label
+                    db.prepare(`
+                        INSERT INTO faction_reputation (campaign_id, faction_id, reputation, reputation_score)
+                        VALUES ($campaignId, $factionId, 'NEUTRALE', $change)
+                        ON CONFLICT(campaign_id, faction_id)
+                        DO UPDATE SET
+                            reputation_score = COALESCE(reputation_score, 0) + $change,
+                            last_updated = CURRENT_TIMESTAMP
+                    `).run({ campaignId, factionId: faction.id, change: reputationChange });
+
+                    // Read back accumulated score and derive label
+                    const row = db.prepare(`
+                        SELECT reputation_score FROM faction_reputation
+                        WHERE campaign_id = ? AND faction_id = ?
+                    `).get(campaignId, faction.id) as { reputation_score: number } | undefined;
+
+                    const newScore = row?.reputation_score ?? 0;
+                    const newLabel = getReputationLabel(newScore);
+
+                    db.prepare(`
+                        UPDATE faction_reputation
+                        SET reputation = ?
+                        WHERE campaign_id = ? AND faction_id = ?
+                    `).run(newLabel, campaignId, faction.id);
+
+                    console.log(`[Faction] 📊 Reputation Score: ${factionName} = ${newScore} → ${newLabel}`);
+                }
+            }
+
+            // 3. Update Alignment Scores if needed
             if (moralWeight !== 0 || ethicalWeight !== 0) {
                 // Update faction scores
                 db.prepare(`
@@ -450,28 +484,27 @@ export const factionRepository = {
                     WHERE campaign_id = ? AND lower(name) = lower(?)
                 `).run(moralWeight, ethicalWeight, campaignId, factionName);
 
-                // 3. Recalculate Alignment Labels & Update Campaign if Party
-                const faction = factionRepository.getFaction(campaignId, factionName);
-                if (faction) {
-                    // const { getMoralAlignment, getEthicalAlignment } = require('../../utils/alignmentUtils');
-                    const mLabel = getMoralAlignment(faction.moral_score || 0);
-                    const eLabel = getEthicalAlignment(faction.ethical_score || 0);
+                // 4. Recalculate Alignment Labels & Update Campaign if Party
+                const factionForAlign = factionRepository.getFaction(campaignId, factionName);
+                if (factionForAlign) {
+                    const mLabel = getMoralAlignment(factionForAlign.moral_score || 0);
+                    const eLabel = getEthicalAlignment(factionForAlign.ethical_score || 0);
 
                     db.prepare(`
                        UPDATE factions
                        SET alignment_moral = ?, alignment_ethical = ?
                        WHERE id = ?
-                   `).run(mLabel, eLabel, faction.id);
+                   `).run(mLabel, eLabel, factionForAlign.id);
 
-                    console.log(`[Faction] ⚖️ Alignment Updated for ${factionName}: ${eLabel} ${mLabel} (M:${faction.moral_score}, E:${faction.ethical_score})`);
+                    console.log(`[Faction] ⚖️ Alignment Updated for ${factionName}: ${eLabel} ${mLabel} (M:${factionForAlign.moral_score}, E:${factionForAlign.ethical_score})`);
 
                     // If Party, update campaign scores
-                    if (faction.is_party) {
+                    if (factionForAlign.is_party) {
                         db.prepare(`
-                           UPDATE campaigns 
+                           UPDATE campaigns
                            SET party_moral_score = ?, party_ethical_score = ?
                            WHERE id = ?
-                       `).run(faction.moral_score, faction.ethical_score, campaignId);
+                       `).run(factionForAlign.moral_score, factionForAlign.ethical_score, campaignId);
                         console.log(`[Faction] ⚖️ Party Scores Updated for Campaign #${campaignId}`);
                     }
                 }

@@ -75,12 +75,6 @@ BIOGRAFIA COMPLETA: ${finalBio}
 /**
  * Batch sync di tutti gli NPC dirty
  */
-/**
- * Batch sync di tutti gli NPC dirty
- */
-/**
- * Batch sync di tutti gli NPC dirty
- */
 export async function syncAllDirtyNpcs(campaignId: number): Promise<number> {
     const dirtyNpcs = getDirtyNpcs(campaignId);
 

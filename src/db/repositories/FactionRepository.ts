@@ -474,11 +474,11 @@ export const factionRepository = {
 
             // 3. Update Alignment Scores if needed
             if (moralWeight !== 0 || ethicalWeight !== 0) {
-                // Update faction scores
+                // Update faction scores with clamping to [-100, +100]
                 db.prepare(`
-                    UPDATE factions 
-                    SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?, 
-                        ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+                    UPDATE factions
+                    SET moral_score = MIN(100, MAX(-100, CAST(COALESCE(moral_score, 0) AS INTEGER) + ?)),
+                        ethical_score = MIN(100, MAX(-100, CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?)),
                         last_updated = CURRENT_TIMESTAMP,
                         rag_sync_needed = 1
                     WHERE campaign_id = ? AND lower(name) = lower(?)
@@ -522,9 +522,9 @@ export const factionRepository = {
         if (!faction) return;
 
         db.prepare(`
-            UPDATE factions 
-            SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?, 
-                ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+            UPDATE factions
+            SET moral_score = MIN(100, MAX(-100, CAST(COALESCE(moral_score, 0) AS INTEGER) + ?)),
+                ethical_score = MIN(100, MAX(-100, CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?)),
                 last_updated = CURRENT_TIMESTAMP,
                 rag_sync_needed = 1
             WHERE id = ?

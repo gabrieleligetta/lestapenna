@@ -7,7 +7,8 @@ import {
     PendingMerge,
     getNpcEntry,
     migrateKnowledgeFragments,
-    markNpcDirty
+    markNpcDirty,
+    npcRepository
 } from '../db';
 import { resolveIdentityCandidate, smartMergeBios } from '../bard';
 
@@ -100,8 +101,7 @@ export async function handleIdentityReply(message: Message) {
 
     // --- CASE 2: CREATE NEW (NO/NUOVO) ---
     if (['NO', 'NEW', 'NUOVO', 'N'].includes(upperContent)) {
-        db.prepare(`INSERT INTO npc_dossier (campaign_id, name, description, role, status) VALUES (?, ?, ?, ?, 'ALIVE')`)
-            .run(data.campaign_id, data.detected_name, data.new_description, data.role);
+        npcRepository.updateNpcEntry(data.campaign_id, data.detected_name, data.new_description, data.role, 'ALIVE');
         await message.reply(`🆕 **Creato!** Benvenuto **${data.detected_name}**.`);
         cleanup(data.message_id);
         return;

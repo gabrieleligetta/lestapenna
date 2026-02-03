@@ -17,11 +17,9 @@ export async function syncAtlasEntryIfNeeded(
 ): Promise<string | null> {
 
     const entry = getAtlasEntryFull(campaignId, macro, micro);
-    const needsSync = entry ? (entry as any).rag_sync_needed === 1 : false;
+    if (!entry) return null;
 
-    // Se non esiste, non possiamo syncare nulla (o dovremmo crearlo?)
-    // Per ora assumiamo che entry esista o che stiamo facendo force update.
-    // Ma se viene chiamato da atlasCommand, entry potrebbe esistere.
+    const needsSync = (entry as any).rag_sync_needed === 1;
 
     // Force: rigenera descrizione dalla storia
     if (force || needsSync) {
@@ -81,12 +79,6 @@ CHIAVE: ${locationKey}
     return entry?.description || null;
 }
 
-/**
- * Batch sync di tutti i luoghi dirty
- */
-/**
- * Batch sync di tutti i luoghi dirty
- */
 /**
  * Batch sync di tutti i luoghi dirty
  */

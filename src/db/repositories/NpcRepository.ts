@@ -12,6 +12,9 @@ export const npcRepository = {
         const existing = npcRepository.getNpcEntry(campaignId, name);
         const shortId = existing?.short_id || generateShortId('npc_dossier');
 
+        // Use existing name to preserve original case in UPSERT
+        const upsertName = existing ? existing.name : name;
+
         // Upsert - IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
             INSERT INTO npc_dossier (campaign_id, name, description, role, status, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id, alignment_moral, alignment_ethical, manual_description)
@@ -30,7 +33,7 @@ export const npcRepository = {
                 alignment_ethical = COALESCE($ethical, alignment_ethical)
         `).run({
             campaignId,
-            name,
+            name: upsertName,
             description: safeDesc,
             role: role || null,
             status: status || null, // Pass null to let SQL handle COALESCE
@@ -41,7 +44,7 @@ export const npcRepository = {
             ethical: ethical || null
         });
 
-        console.log(`[NPC] 👤 Aggiornato dossier per: ${name} [#${shortId}]`);
+        console.log(`[NPC] 👤 Aggiornato dossier per: ${upsertName} [#${shortId}]`);
     },
 
     updateNpcFields: (campaignId: number, name: string, fields: Partial<NpcEntry>, isManual: boolean = true): boolean => {
@@ -104,11 +107,11 @@ export const npcRepository = {
 
             // 2. Update Scores if needed
             if (moral_weight !== 0 || ethical_weight !== 0) {
-                // Update numerical scores
+                // Update numerical scores with clamping to [-100, +100]
                 db.prepare(`
-                    UPDATE npc_dossier 
-                    SET moral_score = CAST(COALESCE(moral_score, 0) AS INTEGER) + ?, 
-                        ethical_score = CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?,
+                    UPDATE npc_dossier
+                    SET moral_score = MIN(100, MAX(-100, CAST(COALESCE(moral_score, 0) AS INTEGER) + ?)),
+                        ethical_score = MIN(100, MAX(-100, CAST(COALESCE(ethical_score, 0) AS INTEGER) + ?)),
                         last_updated = CURRENT_TIMESTAMP,
                         rag_sync_needed = 1
                     WHERE campaign_id = ? AND lower(name) = lower(?)
@@ -178,11 +181,11 @@ export const npcRepository = {
     },
 
     markNpcDirty: (campaignId: number, name: string): void => {
-        db.prepare('UPDATE npc_dossier SET rag_sync_needed = 1 WHERE campaign_id = ? AND name = ?').run(campaignId, name);
+        db.prepare('UPDATE npc_dossier SET rag_sync_needed = 1 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
     },
 
     clearNpcDirtyFlag: (campaignId: number, name: string): void => {
-        db.prepare('UPDATE npc_dossier SET rag_sync_needed = 0 WHERE campaign_id = ? AND name = ?').run(campaignId, name);
+        db.prepare('UPDATE npc_dossier SET rag_sync_needed = 0 WHERE campaign_id = ? AND lower(name) = lower(?)').run(campaignId, name);
     },
 
     updateNpcLastSeenLocation: (campaignId: number, name: string, location: string): void => {
@@ -209,7 +212,7 @@ export const npcRepository = {
         if (!npc) return false;
 
         const aliases = npc.aliases ? npc.aliases.split(',').map(s => s.trim()) : [];
-        if (!aliases.includes(alias)) {
+        if (!aliases.some(a => a.toLowerCase() === alias.toLowerCase())) {
             aliases.push(alias);
             db.prepare('UPDATE npc_dossier SET aliases = ?, rag_sync_needed = 1 WHERE id = ?').run(aliases.join(','), npc.id);
             return true;
@@ -262,19 +265,49 @@ export const npcRepository = {
                 const mergedDesc = [existing.description, conflict.description]
                     .filter(d => d && d.trim().length > 0).join(' | ');
 
-                // Aggiorna destination
+                // Accumulate alignment scores on target
                 db.prepare(`
-                    UPDATE npc_dossier 
-                    SET description = ?, last_updated = CURRENT_TIMESTAMP, rag_sync_needed = 1
+                    UPDATE npc_dossier
+                    SET description = ?,
+                        moral_score = MIN(100, MAX(-100, CAST(COALESCE(moral_score, 0) AS INTEGER) + CAST(COALESCE(?, 0) AS INTEGER))),
+                        ethical_score = MIN(100, MAX(-100, CAST(COALESCE(ethical_score, 0) AS INTEGER) + CAST(COALESCE(?, 0) AS INTEGER))),
+                        last_updated = CURRENT_TIMESTAMP,
+                        rag_sync_needed = 1
                     WHERE id = ?
-                `).run(mergedDesc, conflict.id);
+                `).run(mergedDesc, existing.moral_score || 0, existing.ethical_score || 0, conflict.id);
 
                 // Aggiorna history to point to new name
                 db.prepare(`
-                    UPDATE npc_history 
-                    SET npc_name = ? 
+                    UPDATE npc_history
+                    SET npc_name = ?
                     WHERE campaign_id = ? AND lower(npc_name) = lower(?)
                 `).run(newName, campaignId, oldName);
+
+                // Transfer faction_affiliations from old entity to target, handling UNIQUE conflicts
+                const oldAffiliations = db.prepare(
+                    'SELECT * FROM faction_affiliations WHERE entity_type = ? AND entity_id = ?'
+                ).all('npc', existing.id) as any[];
+
+                for (const aff of oldAffiliations) {
+                    const conflictAff = db.prepare(
+                        'SELECT id FROM faction_affiliations WHERE faction_id = ? AND entity_type = ? AND entity_id = ?'
+                    ).get(aff.faction_id, 'npc', conflict.id);
+
+                    if (conflictAff) {
+                        // Already affiliated to target — just delete old
+                        db.prepare('DELETE FROM faction_affiliations WHERE id = ?').run(aff.id);
+                    } else {
+                        // Reassign to target
+                        db.prepare('UPDATE faction_affiliations SET entity_id = ? WHERE id = ?').run(conflict.id, aff.id);
+                    }
+                }
+
+                // Update knowledge_fragments.associated_npcs (JSON replace old name with new)
+                db.prepare(`
+                    UPDATE knowledge_fragments
+                    SET associated_npcs = REPLACE(associated_npcs, ?, ?)
+                    WHERE campaign_id = ? AND associated_npcs LIKE ?
+                `).run(oldName, newName, campaignId, `%${oldName}%`);
 
                 // Delete old
                 db.prepare('DELETE FROM npc_dossier WHERE id = ?').run(existing.id);
@@ -283,6 +316,14 @@ export const npcRepository = {
                 // RENAME SEMPLICE
                 db.prepare('UPDATE npc_dossier SET name = ?, rag_sync_needed = 1 WHERE id = ?').run(newName, existing.id);
                 db.prepare('UPDATE npc_history SET npc_name = ? WHERE campaign_id = ? AND lower(npc_name) = lower(?)').run(newName, campaignId, oldName);
+
+                // Update knowledge_fragments.associated_npcs (JSON replace old name with new)
+                db.prepare(`
+                    UPDATE knowledge_fragments
+                    SET associated_npcs = REPLACE(associated_npcs, ?, ?)
+                    WHERE campaign_id = ? AND associated_npcs LIKE ?
+                `).run(oldName, newName, campaignId, `%${oldName}%`);
+
                 console.log(`[DB] NPC Renamed: "${oldName}" -> "${newName}"`);
             }
         })();

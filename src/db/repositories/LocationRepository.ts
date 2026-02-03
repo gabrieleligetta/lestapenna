@@ -79,22 +79,25 @@ export const locationRepository = {
         const existing = locationRepository.getAtlasEntryFull(campaignId, macro, micro);
         const shortId = existing?.short_id || generateShortId('location_atlas');
 
-        // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
+        // Use existing names to preserve original case in UPSERT
+        const upsertMacro = existing ? existing.macro_location : macro;
+        const upsertMicro = existing ? existing.micro_location : micro;
+
         // IMPORTANTE: last_updated_session_id traccia chi ha modificato per ultimo (per purge pulito)
         db.prepare(`
             INSERT INTO location_atlas (campaign_id, macro_location, micro_location, description, last_updated, first_session_id, last_updated_session_id, rag_sync_needed, is_manual, short_id, manual_description)
             VALUES ($campaignId, $macro, $micro, $desc, CURRENT_TIMESTAMP, $sessionId, $sessionId, 1, $isManual, $shortId, CASE WHEN $isManual = 1 THEN $desc ELSE NULL END)
             ON CONFLICT(campaign_id, macro_location, micro_location)
-            DO UPDATE SET 
-                description = $desc, 
-                last_updated = CURRENT_TIMESTAMP, 
-                last_updated_session_id = $sessionId, 
-                rag_sync_needed = 1, 
+            DO UPDATE SET
+                description = $desc,
+                last_updated = CURRENT_TIMESTAMP,
+                last_updated_session_id = $sessionId,
+                rag_sync_needed = 1,
                 is_manual = $isManual,
                 manual_description = CASE WHEN $isManual = 1 THEN $desc ELSE manual_description END
-        `).run({ campaignId, macro, micro, desc: safeDesc, sessionId: sessionId || null, isManual: isManual ? 1 : 0, shortId });
+        `).run({ campaignId, macro: upsertMacro, micro: upsertMicro, desc: safeDesc, sessionId: sessionId || null, isManual: isManual ? 1 : 0, shortId });
 
-        console.log(`[Atlas] 📖 Aggiornata voce per: ${macro} - ${micro} [#${shortId}]`);
+        console.log(`[Atlas] 📖 Aggiornata voce per: ${upsertMacro} - ${upsertMicro} [#${shortId}]`);
     },
 
     listAtlasEntries: (campaignId: number, limit: number = 15, offset: number = 0): any[] => {
@@ -130,6 +133,14 @@ export const locationRepository = {
         `).run(campaignId, macro, micro);
 
         if (result.changes > 0) {
+            // Clean up atlas_history for deleted entry
+            db.prepare(`
+                DELETE FROM atlas_history
+                WHERE campaign_id = ?
+                  AND lower(macro_location) = lower(?)
+                  AND lower(micro_location) = lower(?)
+            `).run(campaignId, macro, micro);
+
             console.log(`[Atlas] 🗑️ Eliminata voce: ${macro} - ${micro}`);
             return true;
         }
@@ -195,6 +206,15 @@ export const locationRepository = {
                 WHERE id = ?
             `).run(newMacro, newMicro, existing.id);
 
+            // Update atlas_history references
+            db.prepare(`
+                UPDATE atlas_history
+                SET macro_location = ?, micro_location = ?
+                WHERE campaign_id = ?
+                  AND lower(macro_location) = lower(?)
+                  AND lower(micro_location) = lower(?)
+            `).run(newMacro, newMicro, campaignId, oldMacro, oldMicro);
+
             if (updateHistory) {
                 db.prepare(`
                     UPDATE location_history
@@ -248,6 +268,15 @@ export const locationRepository = {
                   AND lower(micro_location) = lower(?)
             `).run(newMacro, newMicro, campaignId, oldMacro, oldMicro);
 
+            // Update knowledge_fragments location references
+            db.prepare(`
+                UPDATE knowledge_fragments
+                SET macro_location = ?, micro_location = ?
+                WHERE campaign_id = ?
+                  AND lower(COALESCE(macro_location, '')) = lower(?)
+                  AND lower(COALESCE(micro_location, '')) = lower(?)
+            `).run(newMacro, newMicro, campaignId, oldMacro, oldMicro);
+
             db.prepare(`DELETE FROM location_atlas WHERE id = ?`).run(source.id);
         })();
 
@@ -298,17 +327,17 @@ export const locationRepository = {
 
     clearAtlasDirtyFlag: (campaignId: number, macro: string, micro: string): void => {
         db.prepare(`
-            UPDATE location_atlas 
-            SET rag_sync_needed = 0 
-            WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?
+            UPDATE location_atlas
+            SET rag_sync_needed = 0
+            WHERE campaign_id = ? AND lower(macro_location) = lower(?) AND lower(micro_location) = lower(?)
         `).run(campaignId, macro, micro);
     },
 
     markAtlasDirty: (campaignId: number, macro: string, micro: string): void => {
         db.prepare(`
-            UPDATE location_atlas 
-            SET rag_sync_needed = 1 
-            WHERE campaign_id = ? AND macro_location = ? AND micro_location = ?
+            UPDATE location_atlas
+            SET rag_sync_needed = 1
+            WHERE campaign_id = ? AND lower(macro_location) = lower(?) AND lower(micro_location) = lower(?)
         `).run(campaignId, macro, micro);
     },
 

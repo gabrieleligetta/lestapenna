@@ -5,7 +5,7 @@
 
 import {
     getAllNpcs,
-    listAtlasEntries,
+    listAllAtlasEntries,
     factionRepository,
     getCampaignCharacters
 } from '../../db';
@@ -154,7 +154,7 @@ export function buildEntityIndex(campaignId: number): EntityIndex {
     }
 
     // 3. Index Locations
-    const locations = listAtlasEntries(campaignId);
+    const locations = listAllAtlasEntries(campaignId);
     for (const loc of locations) {
         const key = `${normalizeForIndex(loc.macro_location)}|${normalizeForIndex(loc.micro_location)}`;
         const fullName = `${loc.macro_location} - ${loc.micro_location}`;

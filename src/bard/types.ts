@@ -143,6 +143,13 @@ export interface SummaryResponse {
         event: string;
         type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC';
     }>;
+    // 🆕 Party Alignment
+    party_alignment_change?: {
+        id?: string;
+        moral_impact?: number;
+        ethical_impact?: number;
+        reason: string;
+    };
 }
 
 // --- VALIDATION BATCH ---
@@ -248,8 +255,9 @@ export interface AnalystOutput {
     }>;
     // 🆕 Party Alignment
     party_alignment_change?: {
-        moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
-        ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+        id?: string;           // short_id della faction party
+        moral_impact?: number; // -10 a +10
+        ethical_impact?: number; // -10 a +10
         reason: string;
     };
     // 🆕 Artifacts

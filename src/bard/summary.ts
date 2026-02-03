@@ -414,6 +414,8 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
                 // 🆕 Faction System
                 faction_updates: Array.isArray(parsed?.faction_updates) ? parsed.faction_updates : [],
                 faction_affiliations: Array.isArray(parsed?.faction_affiliations) ? parsed.faction_affiliations : [],
+                // 🆕 Party Alignment
+                party_alignment_change: parsed?.party_alignment_change || undefined,
                 // 🆕 Artifacts
                 artifacts: Array.isArray(parsed?.artifacts) ? parsed.artifacts : [],
                 // 🆕 Artifact Events
@@ -504,6 +506,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                         // 🆕 Faction System
                         faction_updates: cached.analystData.faction_updates || [],
                         faction_affiliations: cached.analystData.faction_affiliations || [],
+                        // 🆕 Party Alignment
+                        party_alignment_change: cached.analystData.party_alignment_change,
                         // 🆕 Artifacts
                         artifacts: cached.analystData.artifacts || [],
                         // 🆕 Artifact Events
@@ -675,7 +679,13 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                     // Get full NPC data from DB
                                     const npc = npcRepository.getNpcByShortId(campaignId, entity.shortId || '');
                                     if (npc) {
-                                        dynamicMemoryContext += `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${(npc.description || 'Nessuna descrizione.').substring(0, 200)} [Status: ${npc.status || 'ALIVE'}]\n`;
+                                        let npcLine = `- **${npc.name}** [ID: ${npc.short_id || 'N/A'}] (${npc.role || 'Senza ruolo'}): ${(npc.description || 'Nessuna descrizione.').substring(0, 200)} [Status: ${npc.status || 'ALIVE'}]`;
+                                        const npcMoralScore = (npc as any).moral_score ?? 0;
+                                        const npcEthicalScore = (npc as any).ethical_score ?? 0;
+                                        if (npcMoralScore !== 0 || npcEthicalScore !== 0 || (npc as any).alignment_moral || (npc as any).alignment_ethical) {
+                                            npcLine += ` [Allineamento: ${(npc as any).alignment_ethical || 'NEUTRALE'} ${(npc as any).alignment_moral || 'NEUTRALE'} (M:${npcMoralScore >= 0 ? '+' : ''}${npcMoralScore}, E:${npcEthicalScore >= 0 ? '+' : ''}${npcEthicalScore})]`;
+                                        }
+                                        dynamicMemoryContext += npcLine + '\n';
 
                                         // Collect factions from NPC affiliations
                                         const affiliations = factionRepository.getEntityFactions('npc', npc.id);
@@ -806,6 +816,11 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 const reputation = factionRepository.getFactionReputation(campaignId, faction.id);
 
                                 let factionInfo = `- **${faction.name}** [ID: ${faction.short_id || 'N/A'}] (${faction.type || 'ORGANIZATION'}): ${faction.description || 'Nessuna descrizione.'}`;
+                                const fMoralScore = faction.moral_score ?? 0;
+                                const fEthicalScore = faction.ethical_score ?? 0;
+                                if (fMoralScore !== 0 || fEthicalScore !== 0 || faction.alignment_moral || faction.alignment_ethical) {
+                                    factionInfo += ` [Allineamento: ${faction.alignment_ethical || 'NEUTRALE'} ${faction.alignment_moral || 'NEUTRALE'} (M:${fMoralScore >= 0 ? '+' : ''}${fMoralScore}, E:${fEthicalScore >= 0 ? '+' : ''}${fEthicalScore})]`;
+                                }
                                 if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
                                 if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
                                 dynamicMemoryContext += factionInfo + '\n';
@@ -1004,6 +1019,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             // 🆕 Faction System
             if (partialAnalystData.faction_updates) aggregatedData.faction_updates.push(...partialAnalystData.faction_updates);
             if (partialAnalystData.faction_affiliations) aggregatedData.faction_affiliations.push(...partialAnalystData.faction_affiliations);
+            // 🆕 Party Alignment
+            if (partialAnalystData.party_alignment_change) {
+                aggregatedData.party_alignment_change = partialAnalystData.party_alignment_change;
+            }
             // 🆕 Artifacts
             if (partialAnalystData.artifacts) aggregatedData.artifacts.push(...partialAnalystData.artifacts);
             // 🆕 Artifact Events
@@ -1197,6 +1216,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             // 🆕 Faction System
             faction_updates: aggregatedData.faction_updates,
             faction_affiliations: aggregatedData.faction_affiliations,
+            // 🆕 Party Alignment
+            party_alignment_change: aggregatedData.party_alignment_change,
             // 🆕 Artifacts
             artifacts: aggregatedData.artifacts,
             // 🆕 Artifact Events

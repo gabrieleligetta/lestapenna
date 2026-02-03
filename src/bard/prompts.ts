@@ -218,10 +218,19 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     // 2. Assegna moral_impact/ethical_impact SOLO se l'evento ha una chiara valenza morale/etica.
     //    - MORAL: -10 (Crudeltà estrema) ... 0 ... +10 (Sacrificio supremo)
     //    - ETHICAL: -10 (Tradimento/Caos totale) ... 0 ... +10 (Adesione rigida alla legge/patto)
-    // 3. **SCALA**: La soglia per cambiare allineamento di un PG e' +-25 punti cumulativi. Un singolo evento puo' valere da -10 a +10.
-    //    - Un atto di coraggio minore: +1/+2. Salvare un innocente con rischio: +3/+5. Sacrificio eroico supremo: +8/+10.
-    //    - Un insulto a un alleato: -1. Torturare un prigioniero: -5/-7. Uccidere innocenti a sangue freddo: -9/-10.
-    //    - Consulta i punteggi attuali dei PG nel CONTESTO per calibrare l'impatto.
+    // 3. **SCALA SPETTRO ±100**: Lo spettro visuale va da -100 a +100. La soglia per cambiare label e' +-25.
+    //    Un singolo evento puo' valere da -10 a +10. Servono MOLTI eventi per spostarsi agli estremi.
+    //    CALIBRAZIONE IMPATTI:
+    //    +1/+2: Gesto cortese, piccola buona azione.
+    //    +3/+5: Salvare un innocente con rischio personale, aiutare un nemico ferito.
+    //    +6/+8: Atto eroico maggiore, grande sacrificio personale.
+    //    +9/+10: Sacrificio supremo, atto di pura bontà/ordine incondizionato.
+    //    -1/-2: Insulto, maleducazione, piccola scorrettezza.
+    //    -3/-5: Furto, inganno significativo, violenza gratuita minore.
+    //    -6/-8: Tortura, tradimento di un alleato, omicidio premeditato.
+    //    -9/-10: ATROCITÀ - Genocidio, massacro di innocenti, tradimento catastrofico, atti imperdonabili.
+    //    NON ESSERE TIMIDO: un tradimento DEVE valere -10, un genocidio DEVE valere -25. Non assegnare -2 a un massacro!
+    //    Consulta i punteggi attuali dei PG nel CONTESTO per calibrare l'impatto.
     // 4. **FACTION_ID**: NON assegnare faction_id per eventi di crescita personale del PG (eroismo, trauma, relazioni).
     //    faction_id va usato SOLO quando l'azione del PG e' specificamente diretta CONTRO o A FAVORE di una fazione ESTERNA.
     //    L'impatto sulla fazione PARTY e' gestito automaticamente da party_alignment_change.
@@ -232,11 +241,16 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "name": "Nome NPC",
             "event": "Evento chiave che coinvolge questo NPC (es. cambiato fazione, morto, rivelato segreto)",
             "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE",
-            "moral_impact": "numero intero da -10 a +10. 0 se neutro.",
-            "ethical_impact": "numero intero da -10 a +10. 0 se neutro.",
+            "moral_impact": "numero intero da -10 a +10. 0 se neutro. TRADIMENTO: -7/-9. MORTE INNOCENTI: -9/-10. SACRIFICIO EROICO: +8/+10.",
+            "ethical_impact": "numero intero da -10 a +10. 0 se neutro. ROMPERE PATTO: -6/-8. ANARCHIA TOTALE: -9/-10. RISPETTO CODICE: +6/+8.",
             "faction_id": "ID di 5 caratteri SOLO se l'evento dell'NPC impatta direttamente una fazione ESTERNA specifica. OMETTI se l'evento e' puramente personale."
         }
     ],
+    // AVVISO AI NPC_EVENTS:
+    // Gli NPC che compiono ATROCITÀ (tradimento, genocidio, massacro, tortura) DEVONO ricevere impatti PESANTI (-15 a -25).
+    // Un NPC che tradisce un alleato fidato: moral_impact -15, ethical_impact -15.
+    // Un NPC che ordina un massacro: moral_impact -25.
+    // NON ammorbidire: un tradimento non vale -2, vale -7 o peggio.
     "world_events": [
         {
             "event": "Evento che cambia il mondo di gioco (es. scoppiata guerra, cataclisma)", 
@@ -250,9 +264,9 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "description": "Descrizione della fazione se nuova o aggiornata",
             "type": "GUILD|KINGDOM|CULT|ORGANIZATION|GENERIC",
             "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Protegge innocenti -> BUONO, Stermina villaggi -> CATTIVO)",
-            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Segue codici rigidi -> LEGALE, Opera nell'ombra -> CAOTICO)",
+            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Segue codici rigidi, rispetta le promesse -> LEGALE, Opera nell'ombra, infrange le leggi -> CAOTICO)",
             "reputation_change": {
-                "value": "numero intero negativo o positivo (es. -15, +10)",
+                "value": "numero intero negativo o positivo. SCALA: Aiuto minore +5/+10. Salvataggio membro +15/+20. Grande alleanza +25/+30. Insulto -5/-10. Attacco a membro -15/-25. Tradimento/guerra aperta -30/-50. Genocidio/sterminio -50/-80.",
                 "reason": "Motivo del cambio reputazione (es. 'Abbiamo salvato un loro membro')"
             }
         }
@@ -308,6 +322,12 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     // 6. CURSE: La maledizione si manifesta, viene attivata o viene rimossa.
     // 7. GENERIC: Altri eventi significativi che non rientrano nelle categorie sopra.
     
+    // REGOLA: character_growth vs party_alignment_change (NO DOPPIO CONTEGGIO!)
+    // - character_growth = eventi INDIVIDUALI di un singolo PG
+    //   Es: "Aldric decide di risparmiare il prigioniero nonostante il gruppo" → character_growth per Aldric
+    // - party_alignment_change = decisioni COLLETTIVE del gruppo, non attribuibili a un singolo PG
+    //   Es: "Il gruppo decide unanimemente di saccheggiare il villaggio" → party_alignment_change
+    // - NON registrare lo stesso evento in ENTRAMBI
     "party_alignment_change": {
         "id": "ID della Fazione Party dal CONTESTO (se disponibile, es. 'px92a')",
         "moral_impact": "numero intero da -10 a +10 (impatto sulle azioni del gruppo)",
@@ -324,19 +344,21 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
 - Per i mostri: Solo creature ostili combattute, non NPC civili. **ESTRAI DETTAGLI**: se i PG scoprono abilità, debolezze o resistenze durante il combattimento, REGISTRALE (es. "il drago sputa fuoco" → abilities: ["soffio di fuoco"])
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dove sono stati fisicamente. location_updates = SOLO per l'Atlante. **CRITICO ATLANTE**: EVITA GRANULARITÀ ECCESSIVA. Se i PG visitano "Castello - Ingresso", "Castello - Cucine", "Castello - Prigioni", crea UN SOLO location_update: "Castello" e metti i dettagli nella descrizione. Solo se un luogo è davvero distinto e distante (es. "Città" vs "Foresta fuori città") crea entry separate.
 - **LOG**: Deve essere una sequenza di fatti oggettivi.
-- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG. La soglia per cambiare allineamento e' +-25 punti cumulativi. Un singolo evento ha impatto da -10 a +10. Consulta i punteggi attuali dei PG nel CONTESTO per calibrare. **FACTION_ID**: Usalo SOLO per azioni dirette CONTRO/A FAVORE di una fazione ESTERNA. Per crescita personale, eroismo, o decisioni di gruppo OMETTI faction_id (il party alignment e' gestito da party_alignment_change).
-- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). Per faction_id, usalo SOLO se l'evento dell'NPC impatta direttamente una fazione ESTERNA specifica. 
-    - Se un NPC ritenuto fidato attacca o tradisce, DEVI registrarlo qui.
+- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG. Lo spettro va da -100 a +100; la soglia per cambiare label e' +-25 punti cumulativi. Un singolo evento ha impatto da -10 a +10. **NON AMMORBIDIRE GLI IMPATTI**: Tradimento -7/-9, Genocidio/Massacro -10, Tortura -6/-8. Consulta i punteggi attuali dei PG nel CONTESTO per calibrare. **FACTION_ID**: Usalo SOLO per azioni dirette CONTRO/A FAVORE di una fazione ESTERNA. Per crescita personale, eroismo, o decisioni di gruppo OMETTI faction_id (il party alignment e' gestito da party_alignment_change).
+- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). Per faction_id, usalo SOLO se l'evento dell'NPC impatta direttamente una fazione ESTERNA specifica.
+    - Se un NPC ritenuto fidato attacca o tradisce, DEVI registrarlo qui CON IMPATTO PESANTE (moral_impact -7/-9, ethical_impact -6/-8).
     - Se un NPC viene ACCUSATO o RIVELATO come traditore da qualcun altro (e il fatto sembra vero), REGISTRA UN EVENTO "REVELATION" ANCHE PER L'NPC ACCUSATO.
     - **ECCEZIONE**: Se un NPC alleato (es. Scaglia grigia) attacca un altro NPC (es. Leosin) perché *quest'ultimo* è un traditore, l'attaccante NON è un traditore. È un evento di "REVELATION" per la vittima (Leosin) e "ALLIANCE" o "HEROIC" per l'attaccante.
+    - **ATROCITÀ NPC**: Se un NPC commette genocidio, massacro, o atti imperdonabili → moral_impact -25. Se tradisce un patto sacro → ethical_impact -25. Questi impatti si RIFLETTONO anche sulla sua fazione se applicabile (reputation_change negativo pesante).
 - **MONSTER vs NPC**: Se una creatura ha un NOME PROPRIO ed è AMICHEVOLE/ALLEATA (es. "Scagliagrigia il Drago"), mettila in NPC, NON in MONSTERS.
-- **FAZIONI**: Estrai SEMPRE fazioni rilevanti. Se il party aiuta/ostacola la fazione -> reputation_change. **IMPORTANTE**: Se un MEMBRO della fazione attacca il party, la reputazione CALA (es. -10), a meno che non sia un rinnegato.
-- **ALLINEAMENTO PARTY**: Analizza se le azioni COLLETTIVE del gruppo spostano il loro asse morale (BUONO/CATTIVO) o etico (LEGALE/CAOTICO).
+- **FAZIONI**: Estrai SEMPRE fazioni rilevanti. Se il party aiuta/ostacola la fazione -> reputation_change. **IMPORTANTE**: Se un MEMBRO della fazione attacca il party, la reputazione CALA PESANTEMENTE (es. -15/-25), a meno che non sia un rinnegato. Se la fazione dichiara guerra o commette atrocità contro il party → reputation_change -30/-50 o peggio. NON usare valori timidi come -5 per atti gravi.
+- **ALLINEAMENTO PARTY** (Spettro ±100, soglia label ±25): Analizza se le azioni COLLETTIVE del gruppo spostano il loro asse morale (BUONO/CATTIVO) o etico (LEGALE/CAOTICO).
     - **BUONO**: Altruismo, sacrificio, protezione dei deboli. (+Impact)
     - **CATTIVO**: Crudeltà gratuita, egoismo distruttivo, uccisione di innocenti. (-Impact)
     - **LEGALE**: Rispetto di leggi, codici d'onore, patti. (+Impact)
     - **CAOTICO**: Libertà assoluta, ribellione all'autorità, imprevedibilità. (-Impact)
     - Usa 'moral_impact' e 'ethical_impact' in character_growth, npc_events e party_alignment_change per quantificare.
+    - **SEVERITÀ**: Se il PARTY decide collettivamente di massacrare civili → party_alignment_change moral_impact -9/-10. Se il party tradisce un patto → ethical_impact -7/-9. NON minimizzare atti gravi.
     - **SACRIFICIO**: Distingui con attenzione. 
         - "Sacrificio di Sè" per proteggere altri = EROICO/BUONO (+). 
         - "Sacrificio strategico" di risorse/alleati consensuali = NEUTRALE/GRIGIO (~0). 

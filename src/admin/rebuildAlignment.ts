@@ -14,29 +14,10 @@ import {
     REPUTATION_SPECTRUM
 } from '../db/types';
 
-/**
- * Configuration for Alignment Thresholds
- * 0 is pure neutral.
- */
-const ALIGNMENT_THRESHOLDS = {
-    GOOD: 20,
-    EVIL: -20,
-    LAWFUL: 20,
-    CHAOTIC: -20
-};
-
-// Standard D&D 3x3 Grid
-const getMoralLabel = (score: number): 'BUONO' | 'NEUTRALE' | 'CATTIVO' => {
-    if (score >= ALIGNMENT_THRESHOLDS.GOOD) return 'BUONO';
-    if (score <= ALIGNMENT_THRESHOLDS.EVIL) return 'CATTIVO';
-    return 'NEUTRALE';
-};
-
-const getEthicalLabel = (score: number): 'LEGALE' | 'NEUTRALE' | 'CAOTICO' => {
-    if (score >= ALIGNMENT_THRESHOLDS.LAWFUL) return 'LEGALE';
-    if (score <= ALIGNMENT_THRESHOLDS.CHAOTIC) return 'CAOTICO';
-    return 'NEUTRALE';
-};
+import {
+    getMoralAlignment as getMoralLabel,
+    getEthicalAlignment as getEthicalLabel
+} from '../utils/alignmentUtils';
 
 const getReputationLabel = (score: number): ReputationLevel => {
     // Score range assumed: -100 to +100

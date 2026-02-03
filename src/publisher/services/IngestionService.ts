@@ -155,29 +155,49 @@ export class IngestionService {
 
 
 
-        // 🆕 Process Party Alignment
+        // 🆕 Process Party Alignment (via addFactionEvent on party faction)
         if (result.party_alignment_change) {
-            const { moral, ethical, reason } = result.party_alignment_change;
-            if (moral || ethical) {
-                console.log(`[Ingestion] ⚖️ Allineamento Party: ${moral || '-'} / ${ethical || '-'} (${reason})`);
-                const { campaignRepository, addWorldEvent, factionRepository } = await import('../../db');
-                campaignRepository.updatePartyAlignment(campaignId, moral, ethical);
+            const { moral_impact, ethical_impact, reason, id } = result.party_alignment_change;
+            if (moral_impact || ethical_impact) {
+                console.log(`[Ingestion] ⚖️ Allineamento Party: M:${moral_impact || 0} / E:${ethical_impact || 0} (${reason})`);
 
-                // 🆕 Sync with Factions table
-                const partyFaction = factionRepository.getPartyFaction(campaignId);
-                if (partyFaction) {
-                    factionRepository.updateFaction(campaignId, partyFaction.name, {
-                        alignment_moral: moral,
-                        alignment_ethical: ethical
-                    }, false);
-                    console.log(`[Ingestion] 🎭 Fazione Party allineata: ${partyFaction.name}`);
+                // Resolve party faction: try short_id first, then getPartyFaction
+                let partyFaction = null;
+                if (id) {
+                    partyFaction = factionRepository.getFactionByShortId(campaignId, id);
+                }
+                if (!partyFaction) {
+                    partyFaction = factionRepository.getPartyFaction(campaignId);
                 }
 
+                if (partyFaction) {
+                    // addFactionEvent handles everything: inserts faction_history,
+                    // updates factions.moral_score/ethical_score, recalculates labels,
+                    // and if is_party=1 also updates campaigns.party_moral_score/party_ethical_score
+                    factionRepository.addFactionEvent(
+                        campaignId,
+                        partyFaction.name,
+                        sessionId,
+                        `Allineamento Party: ${reason}`,
+                        'GENERIC',
+                        false,
+                        0, // reputation_change_value
+                        moral_impact || 0,
+                        ethical_impact || 0,
+                        sessionStartTime
+                    );
+                    console.log(`[Ingestion] 🎭 Fazione Party aggiornata via addFactionEvent: ${partyFaction.name}`);
+                } else {
+                    console.warn(`[Ingestion] ⚠️ Party faction non trovata per campagna ${campaignId}`);
+                }
+
+                // World event for audit trail
+                const { addWorldEvent } = await import('../../db');
                 addWorldEvent(
                     campaignId,
                     sessionId,
-                    `L'allineamento del gruppo è cambiato: ${moral ? `Morale: ${moral}` : ''} ${ethical ? `Etico: ${ethical}` : ''}. Motivo: ${reason}`,
-                    'POLITICS', // Usa un tipo esistente
+                    `L'allineamento del gruppo è cambiato: M:${moral_impact || 0}, E:${ethical_impact || 0}. Motivo: ${reason}`,
+                    'POLITICS',
                     undefined,
                     false,
                     sessionStartTime
@@ -218,12 +238,6 @@ export class IngestionService {
                     npcRepository.updateNpcLastSeenLocation(campaignId, npcName, location);
                 }
             }
-        }
-
-        // 🆕 Process Character Updates (Alignment)
-        if (result.character_updates?.length) {
-            console.log(`[Ingestion] 👤 Salvataggio ${result.character_updates.length} aggiornamenti PG...`);
-            await this.processCharacterUpdates(campaignId, sessionId, result.character_updates);
         }
 
         // 🆕 Process Logs (Bullet points)
@@ -861,34 +875,6 @@ export class IngestionService {
                     );
                     console.log(`[Faction] 📊 Reputazione ${factionName}: SET ${upperRep}`);
                 }
-            }
-        }
-    }
-
-    /**
-     * Process character updates (alignment)
-     */
-    private async processCharacterUpdates(campaignId: number, sessionId: string, updates: any[]): Promise<void> {
-        const { characterRepository, addCharacterEvent } = await import('../../db');
-
-        for (const update of updates) {
-            if (!update.name) continue;
-
-            const moral = update.alignment_moral;
-            const ethical = update.alignment_ethical;
-
-            if (moral || ethical) {
-                characterRepository.updateCharacterAlignment(campaignId, update.name, moral, ethical);
-
-                // Add event to history
-                addCharacterEvent(
-                    campaignId,
-                    update.name,
-                    sessionId,
-                    `Allineamento aggiornato: ${moral ? `Morale: ${moral}` : ''} ${ethical ? `Etico: ${ethical}` : ''}`,
-                    'GOAL_CHANGE',
-                    false
-                );
             }
         }
     }

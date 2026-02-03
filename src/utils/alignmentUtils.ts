@@ -60,12 +60,12 @@ export function formatAlignmentBar(
     leftLabel: string,
     rightLabel: string
 ): string {
-    // Clamp score to -50..+50 for display purposes
-    const clampedScore = Math.max(-50, Math.min(50, score));
+    // Clamp score to -100..+100 for display purposes
+    const clampedScore = Math.max(-100, Math.min(100, score));
 
     // Map score to position 0-8 (9 segments)
-    // -50 -> 8 (far right), 0 -> 4 (center), +50 -> 0 (far left)
-    const position = Math.round(4 - (clampedScore / 50) * 4);
+    // -100 -> 8 (far right), 0 -> 4 (center), +100 -> 0 (far left)
+    const position = Math.round(4 - (clampedScore / 100) * 4);
 
     // Color gradients (left=positive, right=negative)
     const leftColors = ['🟩', '🟩', '🟨', '⬜', '⬜', '⬜', '🟨', '🟥', '🟥'];
@@ -111,8 +111,8 @@ export function formatAlignmentCompact(moralScore: number, ethicalScore: number)
     const ethicalIcon = eLabel === 'LEGALE' ? '📜' : eLabel === 'CAOTICO' ? '🌀' : '⚖️';
 
     // Mini spectrum (5 segments)
-    const mPos = Math.round(2 - (Math.max(-50, Math.min(50, moralScore)) / 50) * 2);
-    const ePos = Math.round(2 - (Math.max(-50, Math.min(50, ethicalScore)) / 50) * 2);
+    const mPos = Math.round(2 - (Math.max(-100, Math.min(100, moralScore)) / 100) * 2);
+    const ePos = Math.round(2 - (Math.max(-100, Math.min(100, ethicalScore)) / 100) * 2);
 
     const buildMiniBar = (pos: number, leftC: string, rightC: string) => {
         const segments = [leftC, '🟨', '⬜', '🟨', rightC];

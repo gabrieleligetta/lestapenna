@@ -357,8 +357,10 @@ export async function reconcileNpcName(
         );
 
         if (isSame) {
-            console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.npc.name}"`);
-            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc, confidence: 0.80 };
+            // Blend original similarity with AI boost, capped below auto-merge threshold
+            const aiConfidence = Math.min(0.94, candidate.similarity + 0.15);
+            console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.npc.name}" (sim=${candidate.similarity.toFixed(2)} → confidence=${aiConfidence.toFixed(2)})`);
+            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc, confidence: aiConfidence };
         } else {
             console.log(`[Reconcile] ❌ Rifiutato: "${candidate.npc.name}"`);
         }
@@ -448,7 +450,7 @@ export async function smartMergeBios(targetName: string, bio1: string, bio2: str
  * Propagates the real confidence from reconcileNpcName:
  *  - 1.0:  exact match / ID match
  *  - 0.90–0.99: syntactic auto-merge (typo, prefix)
- *  - 0.80: AI-confirmed match
+ *  - 0.65–0.94: AI-confirmed (min(0.94, similarity + 0.15))
  */
 export async function resolveIdentityCandidate(campaignId: number, name: string, description: string) {
     const result = await reconcileNpcName(campaignId, name, description);

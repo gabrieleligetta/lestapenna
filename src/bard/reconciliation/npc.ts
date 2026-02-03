@@ -88,7 +88,7 @@ export async function reconcileNpcName(
     newName: string,
     newDescription: string = "",
     playerCharacters: string[] = []
-): Promise<{ canonicalName: string; existingNpc: any; isPlayerCharacter?: boolean } | null> {
+): Promise<{ canonicalName: string; existingNpc: any; isPlayerCharacter?: boolean; confidence?: number } | null> {
     // -1. PC Check (Highest Priority) - Skip if this is a player character
     if (playerCharacters.length > 0) {
         const newNameLower = newName.toLowerCase().trim();
@@ -126,7 +126,7 @@ export async function reconcileNpcName(
         const npcById = npcRepository.getNpcByShortId(campaignId, shortId);
         if (npcById) {
             console.log(`[Reconcile] 🎯 ID Match event: ${shortId} → ${npcById.name}`);
-            return { canonicalName: npcById.name, existingNpc: npcById };
+            return { canonicalName: npcById.name, existingNpc: npcById, confidence: 1.0 };
         }
     }
 
@@ -138,7 +138,7 @@ export async function reconcileNpcName(
     const exactMatch = existingNpcs.find((n: any) => n.name.toLowerCase() === newNameLower);
     if (exactMatch) {
         console.log(`[Reconcile] ✅ Match esatto (case-insensitive): "${newName}" = "${exactMatch.name}"`);
-        return { canonicalName: exactMatch.name, existingNpc: exactMatch };
+        return { canonicalName: exactMatch.name, existingNpc: exactMatch, confidence: 1.0 };
     }
 
     const newNameClean = stripPrefix(newName.toLowerCase()).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -336,7 +336,7 @@ export async function reconcileNpcName(
         // AUTO-MERGE: Only if high similarity AND safe reason AND NOT in blacklist
         if (candidate.similarity >= 0.90 && isSafeReason && !needsAICheck) {
             console.log(`[Reconcile] ⚡ AUTO-MERGE (High Sim + Safe): "${newName}" → "${candidate.npc.name}" (${candidate.reason})`);
-            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
+            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc, confidence: candidate.similarity };
         }
 
         // Skip very low similarity candidates
@@ -358,7 +358,7 @@ export async function reconcileNpcName(
 
         if (isSame) {
             console.log(`[Reconcile] ✅ CONFERMATO: "${newName}" = "${candidate.npc.name}"`);
-            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc };
+            return { canonicalName: candidate.npc.name, existingNpc: candidate.npc, confidence: 0.80 };
         } else {
             console.log(`[Reconcile] ❌ Rifiutato: "${candidate.npc.name}"`);
         }
@@ -444,12 +444,16 @@ export async function smartMergeBios(targetName: string, bio1: string, bio2: str
 }
 
 /**
- * Compatibility wrapper for IdentityGuard
+ * Compatibility wrapper for IdentityGuard.
+ * Propagates the real confidence from reconcileNpcName:
+ *  - 1.0:  exact match / ID match
+ *  - 0.90–0.99: syntactic auto-merge (typo, prefix)
+ *  - 0.80: AI-confirmed match
  */
 export async function resolveIdentityCandidate(campaignId: number, name: string, description: string) {
     const result = await reconcileNpcName(campaignId, name, description);
     if (result) {
-        return { match: result.canonicalName, confidence: 1.0 };
+        return { match: result.canonicalName, confidence: result.confidence ?? 1.0 };
     }
     return { match: null, confidence: 0 };
 }

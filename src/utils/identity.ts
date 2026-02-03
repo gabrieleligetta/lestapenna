@@ -29,39 +29,55 @@ export async function checkAndPromptMerge(
 
     const resolution = await resolveIdentityCandidate(campaignId, npc.name, npc.description);
 
-    // Threshold: Only ask if fairly confident it's a duplicate
-    if (resolution.match && resolution.confidence > 0.6) {
-        // Double check: if names are identical, skip prompt (handled by DB upsert)
-        if (resolution.match.toLowerCase() === npc.name.toLowerCase()) return false;
+    // No match or too low confidence → proceed with normal flow
+    if (!resolution.match || resolution.confidence <= 0.6) return false;
 
-        const msg = await channel.send(
-            `🕵️ **Ipotesi Identità**\n` +
-            `Ho trovato: **"${npc.name}"**\n` +
-            `Credo sia: **"${resolution.match}"**\n` +
-            `*Descrizione: ${npc.description.substring(0, 100)}...*\n\n` +
-            `👉 **Opzioni di Risposta:**\n` +
-            `- **SI**: Conferma il merge con **${resolution.match}**.\n` +
-            `- **NUOVO**: Crea come nuovo personaggio.\n` +
-            `- **[NomeReale]**: Scrivi il nome di un altro NPC esistente per unirlo a lui.`
-        );
+    // If names are identical (case-insensitive), skip prompt (handled by DB upsert)
+    if (resolution.match.toLowerCase() === npc.name.toLowerCase()) return false;
 
-        const data: PendingMerge = {
-            message_id: msg.id,
-            campaign_id: campaignId,
-            detected_name: npc.name,
-            target_name: resolution.match,
-            new_description: npc.description,
-            role: npc.role
-        };
+    // High confidence (syntactic auto-merge: typo, prefix, exact) → merge silently
+    if (resolution.confidence >= 0.95) {
+        const existing = getNpcEntry(campaignId, resolution.match);
+        if (existing) {
+            const mergedDesc = await smartMergeBios(resolution.match, existing.description || '', npc.description);
 
-        // Save to DB and RAM
-        addPendingMerge(data);
-        pendingMergesMap.set(msg.id, data);
+            db.prepare('UPDATE npc_dossier SET description = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(mergedDesc, existing.id);
 
-        return true; // We handled it (put in pending), so stop normal flow
+            migrateKnowledgeFragments(campaignId, npc.name, resolution.match);
+            markNpcDirty(campaignId, resolution.match);
+
+            console.log(`[IdentityGuard] ⚡ Auto-merge silenzioso: "${npc.name}" → "${resolution.match}" (confidence=${resolution.confidence.toFixed(2)})`);
+            return true;
+        }
     }
 
-    return false; // Not a duplicate, proceed normal flow
+    // Medium confidence (AI-confirmed or moderate syntactic) → ask user
+    const msg = await channel.send(
+        `🕵️ **Ipotesi Identità**\n` +
+        `Ho trovato: **"${npc.name}"**\n` +
+        `Credo sia: **"${resolution.match}"**\n` +
+        `*Descrizione: ${npc.description.substring(0, 100)}...*\n\n` +
+        `👉 **Opzioni di Risposta:**\n` +
+        `- **SI**: Conferma il merge con **${resolution.match}**.\n` +
+        `- **NUOVO**: Crea come nuovo personaggio.\n` +
+        `- **[NomeReale]**: Scrivi il nome di un altro NPC esistente per unirlo a lui.`
+    );
+
+    const data: PendingMerge = {
+        message_id: msg.id,
+        campaign_id: campaignId,
+        detected_name: npc.name,
+        target_name: resolution.match,
+        new_description: npc.description,
+        role: npc.role
+    };
+
+    // Save to DB and RAM
+    addPendingMerge(data);
+    pendingMergesMap.set(msg.id, data);
+
+    return true; // We handled it (put in pending), so stop normal flow
 }
 
 export async function handleIdentityReply(message: Message) {

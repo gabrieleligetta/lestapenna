@@ -206,18 +206,18 @@ export interface AnalystOutput {
         name: string;
         event: string;
         type: 'BACKGROUND' | 'TRAUMA' | 'RELATIONSHIP' | 'ACHIEVEMENT' | 'GOAL_CHANGE';
-    }>;
-    // 🆕 PC Updates
-    character_updates?: Array<{
-        name: string;
-        alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
-        alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+        moral_impact?: number;   // -10 to +10
+        ethical_impact?: number; // -10 to +10
+        faction_id?: string;     // 5-char short ID if event targets a specific external faction
     }>;
     npc_events: Array<{
         id?: string;  // 🆕 Short ID of the NPC
         name: string;
         event: string;
         type: 'REVELATION' | 'BETRAYAL' | 'DEATH' | 'ALLIANCE' | 'STATUS_CHANGE' | 'GENERIC';
+        moral_impact?: number;   // -10 to +10
+        ethical_impact?: number; // -10 to +10
+        faction_id?: string;     // 5-char short ID if event targets a specific faction
     }>;
 
     world_events: Array<{

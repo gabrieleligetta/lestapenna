@@ -544,14 +544,24 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     if (p.race) details.push(p.race);
                     if (p.class) details.push(p.class);
                     if (details.length > 0) charInfo += ` (${details.join(' ')})`;
+                    // 🆕 Add alignment info
+                    const moralLabel = (p as any).alignment_moral || 'NEUTRALE';
+                    const ethicalLabel = (p as any).alignment_ethical || 'NEUTRALE';
+                    const moralScore = (p as any).moral_score ?? 0;
+                    const ethicalScore = (p as any).ethical_score ?? 0;
+                    charInfo += ` [Allineamento: ${ethicalLabel} ${moralLabel} (M:${moralScore >= 0 ? '+' : ''}${moralScore}, E:${ethicalScore >= 0 ? '+' : ''}${ethicalScore})]`;
                     if (p.description) charInfo += `: "${p.description}"`;
                     castContext += charInfo + "\n";
                 }
             });
 
-            // Always include party name
+            // Always include party name + alignment
             if (partyFaction) {
-                castContext += `\n🎭 GRUPPO DI EROI (PARTY): **${partyFaction.name}**\n`;
+                const pMoral = partyFaction.alignment_moral || 'NEUTRALE';
+                const pEthical = partyFaction.alignment_ethical || 'NEUTRALE';
+                const pMoralScore = partyFaction.moral_score ?? 0;
+                const pEthicalScore = partyFaction.ethical_score ?? 0;
+                castContext += `\n🎭 GRUPPO DI EROI (PARTY): **${partyFaction.name}** [ID: ${partyFaction.short_id || 'N/A'}] [Allineamento: ${pEthical} ${pMoral} (M:${pMoralScore >= 0 ? '+' : ''}${pMoralScore}, E:${pEthicalScore >= 0 ? '+' : ''}${pEthicalScore})]\n`;
             }
         }
         let fullDialogue: string;
@@ -771,7 +781,12 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                         const totalMembers = members.npcs + members.locations + members.pcs;
                         const reputation = factionRepository.getFactionReputation(campaignId, partyFaction.id);
 
+                        const dmMoral = partyFaction.alignment_moral || 'NEUTRALE';
+                        const dmEthical = partyFaction.alignment_ethical || 'NEUTRALE';
+                        const dmMoralScore = partyFaction.moral_score ?? 0;
+                        const dmEthicalScore = partyFaction.ethical_score ?? 0;
                         let factionInfo = `- **${partyFaction.name}** [ID: ${partyFaction.short_id || 'N/A'}] (${partyFaction.type || 'ORGANIZATION'}): ${partyFaction.description || 'Nessuna descrizione.'}`;
+                        factionInfo += ` [Allineamento: ${dmEthical} ${dmMoral} (M:${dmMoralScore >= 0 ? '+' : ''}${dmMoralScore}, E:${dmEthicalScore >= 0 ? '+' : ''}${dmEthicalScore})]`;
                         if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
                         if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
                         factionInfo += ` [FAZIONE PARTY]`;

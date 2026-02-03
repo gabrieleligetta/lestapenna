@@ -209,7 +209,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "type": "TRAUMA|ACHIEVEMENT|RELATIONSHIP|GOAL_CHANGE",
             "moral_impact": "numero intero da -10 (Malvagio) a +10 (Buono). 0 se neutro.",
             "ethical_impact": "numero intero da -10 (Caotico) a +10 (Legale). 0 se neutro.",
-            "faction_id": "ID di 5 caratteri se l'evento riguarda una fazione specifica."
+            "faction_id": "ID di 5 caratteri SOLO se l'evento e' diretto CONTRO o A FAVORE di una fazione ESTERNA specifica (NON la fazione party). OMETTI per crescita personale, eroismo generico, o decisioni di gruppo."
         }
     ],
     // Rimosso character_updates per alignment, ora usiamo gli eventi
@@ -218,6 +218,13 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     // 2. Assegna moral_impact/ethical_impact SOLO se l'evento ha una chiara valenza morale/etica.
     //    - MORAL: -10 (Crudeltà estrema) ... 0 ... +10 (Sacrificio supremo)
     //    - ETHICAL: -10 (Tradimento/Caos totale) ... 0 ... +10 (Adesione rigida alla legge/patto)
+    // 3. **SCALA**: La soglia per cambiare allineamento di un PG e' +-25 punti cumulativi. Un singolo evento puo' valere da -10 a +10.
+    //    - Un atto di coraggio minore: +1/+2. Salvare un innocente con rischio: +3/+5. Sacrificio eroico supremo: +8/+10.
+    //    - Un insulto a un alleato: -1. Torturare un prigioniero: -5/-7. Uccidere innocenti a sangue freddo: -9/-10.
+    //    - Consulta i punteggi attuali dei PG nel CONTESTO per calibrare l'impatto.
+    // 4. **FACTION_ID**: NON assegnare faction_id per eventi di crescita personale del PG (eroismo, trauma, relazioni).
+    //    faction_id va usato SOLO quando l'azione del PG e' specificamente diretta CONTRO o A FAVORE di una fazione ESTERNA.
+    //    L'impatto sulla fazione PARTY e' gestito automaticamente da party_alignment_change.
     
     "npc_events": [
         {
@@ -227,7 +234,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "type": "REVELATION|BETRAYAL|DEATH|ALLIANCE|STATUS_CHANGE",
             "moral_impact": "numero intero da -10 a +10. 0 se neutro.",
             "ethical_impact": "numero intero da -10 a +10. 0 se neutro.",
-            "faction_id": "ID di 5 caratteri se l'evento riguarda una fazione specifica."
+            "faction_id": "ID di 5 caratteri SOLO se l'evento dell'NPC impatta direttamente una fazione ESTERNA specifica. OMETTI se l'evento e' puramente personale."
         }
     ],
     "world_events": [
@@ -317,9 +324,8 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
 - Per i mostri: Solo creature ostili combattute, non NPC civili. **ESTRAI DETTAGLI**: se i PG scoprono abilità, debolezze o resistenze durante il combattimento, REGISTRALE (es. "il drago sputa fuoco" → abilities: ["soffio di fuoco"])
 - **TRAVEL vs LOCATION**: travel_sequence = SEQUENZA CRONOLOGICA dove sono stati fisicamente. location_updates = SOLO per l'Atlante. **CRITICO ATLANTE**: EVITA GRANULARITÀ ECCESSIVA. Se i PG visitano "Castello - Ingresso", "Castello - Cucine", "Castello - Prigioni", crea UN SOLO location_update: "Castello" e metti i dettagli nella descrizione. Solo se un luogo è davvero distinto e distante (es. "Città" vs "Foresta fuori città") crea entry separate.
 - **LOG**: Deve essere una sequenza di fatti oggettivi.
-- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG.
-- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG.
-- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). 
+- **CHARACTER GROWTH**: Includi solo cambiamenti significativi nella psiche o stato dei PG. La soglia per cambiare allineamento e' +-25 punti cumulativi. Un singolo evento ha impatto da -10 a +10. Consulta i punteggi attuali dei PG nel CONTESTO per calibrare. **FACTION_ID**: Usalo SOLO per azioni dirette CONTRO/A FAVORE di una fazione ESTERNA. Per crescita personale, eroismo, o decisioni di gruppo OMETTI faction_id (il party alignment e' gestito da party_alignment_change).
+- **NPC EVENTS**: CRITICO: Cerca TRADIMENTI ("BETRAYAL") o RIVELAZIONI ("REVELATION"). Per faction_id, usalo SOLO se l'evento dell'NPC impatta direttamente una fazione ESTERNA specifica. 
     - Se un NPC ritenuto fidato attacca o tradisce, DEVI registrarlo qui.
     - Se un NPC viene ACCUSATO o RIVELATO come traditore da qualcun altro (e il fatto sembra vero), REGISTRA UN EVENTO "REVELATION" ANCHE PER L'NPC ACCUSATO.
     - **ECCEZIONE**: Se un NPC alleato (es. Scaglia grigia) attacca un altro NPC (es. Leosin) perché *quest'ultimo* è un traditore, l'attaccante NON è un traditore. È un evento di "REVELATION" per la vittima (Leosin) e "ALLIANCE" o "HEROIC" per l'attaccante.

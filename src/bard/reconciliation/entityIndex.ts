@@ -260,9 +260,9 @@ export function localMatch(
 
     // Get the appropriate entity map
     const entityMap = type === 'npc' ? index.npcs :
-                      type === 'location' ? index.locations :
-                      type === 'faction' ? index.factions :
-                      index.artifacts;
+        type === 'location' ? index.locations :
+            type === 'faction' ? index.factions :
+                index.artifacts;
 
     // 1. Exact match (instant)
     if (entityMap.has(normalized)) {
@@ -315,9 +315,9 @@ export function localMatch(
     // 3. Trigram-based candidate retrieval
     const candidateKeys = new Set<string>();
     const prefix = type === 'npc' ? 'npc:' :
-                   type === 'location' ? 'loc:' :
-                   type === 'faction' ? 'faction:' :
-                   'artifact:';
+        type === 'location' ? 'loc:' :
+            type === 'faction' ? 'faction:' :
+                'artifact:';
 
     for (const trigram of queryTrigrams) {
         const keys = index.trigramIndex.get(trigram);

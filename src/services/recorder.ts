@@ -455,7 +455,11 @@ export async function disconnect(guildId: string): Promise<boolean> {
     pendingFileProcessing.delete(guildId);
     fileProcessingResolvers.delete(guildId);
 
-    connection.destroy();
+    try {
+        connection.destroy();
+    } catch (e) {
+        console.warn(`[Recorder] ⚠️ VoiceConnection already destroyed.`);
+    }
     isStopping = false; // Reset per la prossima volta
     console.log("👋 Disconnesso in sicurezza.");
     return true;

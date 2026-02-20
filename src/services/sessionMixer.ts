@@ -79,7 +79,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
     console.log(`[Mixer] 🌳 Tree Level 1: Processing ${batches.length} batches (Stems)...`);
 
     // 4. Process batches in parallel (with concurrency limit)
-    const stemPaths: string[] = [];
+    const stemPaths: (string | null)[] = new Array(batches.length).fill(null);
     const queue = batches.map((b, i) => ({ batch: b, index: i }));
     const activePromises: Promise<void>[] = [];
 
@@ -89,7 +89,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
             const stemPath = path.join(TEMP_DIR, `stem_${sessionId}_${item.index}.flac`);
 
             const p = createStem(item.batch, stemPath).then(() => {
-                stemPaths.push(stemPath);
+                stemPaths[item.index] = stemPath;
             }).catch(err => {
                 console.error(`[Mixer] Error processing batch ${item.index}:`, err);
                 throw err;
@@ -107,10 +107,17 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
         }
     }
 
+    // Validate all stems exist before merging
+    const validStemPaths = stemPaths.filter((p): p is string => p !== null && fs.existsSync(p));
+    if (validStemPaths.length === 0) throw new Error("No stems were created successfully.");
+    if (validStemPaths.length < stemPaths.length) {
+        console.warn(`[Mixer] ⚠️ ${stemPaths.length - validStemPaths.length} stems missing, proceeding with ${validStemPaths.length}`);
+    }
+
     // 5. Merge stems to Master
-    console.log(`[Mixer] 🌳 Tree Level 2: Merging ${stemPaths.length} stems to Master...`);
+    console.log(`[Mixer] 🌳 Tree Level 2: Merging ${validStemPaths.length} stems to Master...`);
     const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_master.mp3`);
-    await mergeStemsToMaster(stemPaths, finalMp3Path);
+    await mergeStemsToMaster(validStemPaths, finalMp3Path);
 
     // 6. Upload & Cleanup
     const finalFileName = path.basename(finalMp3Path);
@@ -122,7 +129,7 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 
     // Cleanup stems
     console.log(`[Mixer] 🧹 Cleaning up temp files...`);
-    for (const stem of stemPaths) {
+    for (const stem of validStemPaths) {
         if (fs.existsSync(stem)) fs.unlinkSync(stem);
     }
 

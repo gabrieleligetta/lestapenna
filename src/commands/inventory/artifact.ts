@@ -24,11 +24,11 @@ import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
 // Status icons and colors
 const getStatusDisplay = (status: ArtifactStatus) => {
     switch (status) {
-        case 'FUNZIONANTE': return { icon: '✨', color: '#00FF00' as const, label: 'Funzionante' };
-        case 'DISTRUTTO': return { icon: '💥', color: '#FF0000' as const, label: 'Distrutto' };
-        case 'PERDUTO': return { icon: '❓', color: '#808080' as const, label: 'Perduto' };
-        case 'SIGILLATO': return { icon: '🔒', color: '#9932CC' as const, label: 'Sigillato' };
-        case 'DORMIENTE': return { icon: '💤', color: '#4169E1' as const, label: 'Dormiente' };
+        case 'FUNCTIONAL': return { icon: '✨', color: '#00FF00' as const, label: 'Funzionante' };
+        case 'DESTROYED': return { icon: '💥', color: '#FF0000' as const, label: 'Distrutto' };
+        case 'LOST': return { icon: '❓', color: '#808080' as const, label: 'Perduto' };
+        case 'SEALED': return { icon: '🔒', color: '#9932CC' as const, label: 'Sigillato' };
+        case 'DORMANT': return { icon: '💤', color: '#4169E1' as const, label: 'Dormiente' };
         default: return { icon: '🔮', color: '#7289DA' as const, label: status };
     }
 };
@@ -272,13 +272,20 @@ export const artifactCommand: Command = {
             switch (field) {
                 case 'status':
                 case 'stato': {
-                    const validStatuses = ['FUNZIONANTE', 'DISTRUTTO', 'PERDUTO', 'SIGILLATO', 'DORMIENTE'];
+                    const statusMap: Record<string, string> = {
+                        'FUNZIONANTE': 'FUNCTIONAL', 'FUNCTIONAL': 'FUNCTIONAL',
+                        'DISTRUTTO': 'DESTROYED', 'DESTROYED': 'DESTROYED',
+                        'PERDUTO': 'LOST', 'LOST': 'LOST',
+                        'SIGILLATO': 'SEALED', 'SEALED': 'SEALED',
+                        'DORMIENTE': 'DORMANT', 'DORMANT': 'DORMANT'
+                    };
                     const upperValue = value.toUpperCase();
-                    if (!validStatuses.includes(upperValue)) {
+                    const mappedStatus = statusMap[upperValue];
+                    if (!mappedStatus) {
                         await showUpdateHelp(`Status "${value}" non valido.`);
                         return;
                     }
-                    updateArtifactFields(ctx.activeCampaign!.id, artifact.name, { status: upperValue as ArtifactStatus }, true);
+                    updateArtifactFields(ctx.activeCampaign!.id, artifact.name, { status: mappedStatus as ArtifactStatus }, true);
                     await ctx.message.reply(`✅ **${artifact.name}** stato aggiornato a **${upperValue}**`);
                     break;
                 }

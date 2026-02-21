@@ -165,7 +165,7 @@ export const npcCommand: Command = {
                 const ethicalScore = npc.ethical_score ?? 0;
 
                 embed.addFields({
-                    name: "⚖️ Allineamento",
+                    name: "⚖️ Allineamento (Reale calcolato dagli eventi)",
                     value: formatAlignmentSpectrum(moralScore, ethicalScore),
                     inline: false
                 });

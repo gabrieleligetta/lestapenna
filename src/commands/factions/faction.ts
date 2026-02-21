@@ -17,7 +17,7 @@ import { safeReply } from '../../utils/discordHelper';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveFactionUpdate, startInteractiveFactionAdd, startInteractiveFactionDelete } from './interactiveUpdate';
 import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
-import { formatAlignmentSpectrum } from '../../utils/alignmentUtils';
+import { formatAlignmentSpectrum, translateReputation } from '../../utils/alignmentUtils';
 
 // Helper: Get NPC by ID (for internal use)
 function getNpcById(npcId: number): { id: number; name: string; role?: string } | null {
@@ -30,13 +30,13 @@ function getAtlasEntryById(entryId: number): { id: number; macro_location: strin
 }
 
 const REPUTATION_ICONS: Record<ReputationLevel, string> = {
-    'OSTILE': '🔴',
-    'DIFFIDENTE': '🟠',
-    'FREDDO': '🟡',
-    'NEUTRALE': '⚪',
-    'CORDIALE': '🟢',
-    'AMICHEVOLE': '💚',
-    'ALLEATO': '⭐'
+    'HOSTILE': '🔴',
+    'DISTRUSTFUL': '🟠',
+    'COLD': '🟡',
+    'NEUTRAL': '⚪',
+    'CORDIAL': '🟢',
+    'FRIENDLY': '💚',
+    'ALLIED': '⭐'
 };
 
 export const FACTION_TYPE_ICONS: Record<string, string> = {
@@ -165,7 +165,7 @@ export const factionCommand: Command = {
             if (!faction.is_party) {
                 embed.addFields({
                     name: "Reputazione",
-                    value: `${repIcon} ${reputation}`,
+                    value: `${repIcon} ${translateReputation(reputation)}`,
                     inline: true
                 });
             }
@@ -182,7 +182,7 @@ export const factionCommand: Command = {
                 }
 
                 embed.addFields({
-                    name: "⚖️ Allineamento",
+                    name: "⚖️ Allineamento (Reale calcolato dagli eventi)",
                     value: spectrumDisplay + breakdownText,
                     inline: false
                 });
@@ -534,10 +534,8 @@ export const factionCommand: Command = {
   *Es: $faction update #${faction.short_id} type GUILD*
 • **leader**: Nome NPC o ID
   *Es: $faction update #${faction.short_id} leader "Mario Rossi"*
-• **moral**: BUONO, NEUTRALE, CATTIVO
-  *Es: $faction update #${faction.short_id} moral CATTIVO*
-• **ethical**: LEGALE, NEUTRALE, CAOTICO
-  *Es: $faction update #${faction.short_id} ethical CAOTICO*
+• **moral**: ⚠️ Ora calcolato automaticamente dagli eventi
+• **ethical**: ⚠️ Ora calcolato automaticamente dagli eventi
 • **hq**: Sede principale (#shortId o "Macro | Micro")
   *Es: $faction update #${faction.short_id} hq #abc12*
 • **addloc** / **remloc**: Aggiungi/rimuovi luogo controllato
@@ -775,7 +773,7 @@ export const factionCommand: Command = {
                 msg += factions.map(f => {
                     const icon = REPUTATION_ICONS[f.reputation];
                     const typeIcon = FACTION_TYPE_ICONS[f.type] || '⚔️';
-                    return `${typeIcon} **${f.name}**: ${icon} ${f.reputation}`;
+                    return `${typeIcon} **${f.name}**: ${icon} ${translateReputation(f.reputation)}`;
                 }).join('\n');
 
                 msg += '\n\n💡 Usa `$faction rep <Nome> | +/-/<Livello>` per modificare.';
@@ -808,7 +806,7 @@ export const factionCommand: Command = {
                 // Show current reputation
                 const rep = factionRepository.getFactionReputation(campaignId, faction.id);
                 const icon = REPUTATION_ICONS[rep];
-                await ctx.message.reply(`📊 Reputazione con **${faction.name}**: ${icon} ${rep}`);
+                await ctx.message.reply(`📊 Reputazione con **${faction.name}**: ${icon} ${translateReputation(rep)}`);
                 return;
             }
 
@@ -823,18 +821,29 @@ export const factionCommand: Command = {
                 newRep = factionRepository.getFactionReputation(campaignId, faction.id);
             } else {
                 // Try to set specific level (also syncs score to threshold value)
-                const upperAction = action.toUpperCase() as ReputationLevel;
-                if (!REPUTATION_SPECTRUM.includes(upperAction)) {
+                // Map Italian input to English (users may type in either language)
+                const reputationInputMap: Record<string, ReputationLevel> = {
+                    'OSTILE': 'HOSTILE', 'HOSTILE': 'HOSTILE',
+                    'DIFFIDENTE': 'DISTRUSTFUL', 'DISTRUSTFUL': 'DISTRUSTFUL',
+                    'FREDDO': 'COLD', 'COLD': 'COLD',
+                    'NEUTRALE': 'NEUTRAL', 'NEUTRAL': 'NEUTRAL',
+                    'CORDIALE': 'CORDIAL', 'CORDIAL': 'CORDIAL',
+                    'AMICHEVOLE': 'FRIENDLY', 'FRIENDLY': 'FRIENDLY',
+                    'ALLEATO': 'ALLIED', 'ALLIED': 'ALLIED'
+                };
+                const upperAction = action.toUpperCase();
+                const mappedRep = reputationInputMap[upperAction];
+                if (!mappedRep) {
                     await ctx.message.reply(`❌ Livello non valido. Usa: ${REPUTATION_SPECTRUM.join(', ')}`);
                     return;
                 }
-                factionRepository.setFactionReputation(campaignId, faction.id, upperAction);
-                factionRepository.addFactionEvent(campaignId, faction.name, null, `Reputazione impostata a ${upperAction}`, 'REPUTATION_CHANGE', true);
-                newRep = upperAction;
+                factionRepository.setFactionReputation(campaignId, faction.id, mappedRep);
+                factionRepository.addFactionEvent(campaignId, faction.name, null, `Reputazione impostata a ${translateReputation(mappedRep)}`, 'REPUTATION_CHANGE', true);
+                newRep = mappedRep;
             }
 
             const icon = REPUTATION_ICONS[newRep];
-            await ctx.message.reply(`✅ Reputazione con **${faction.name}** aggiornata: ${icon} ${newRep}`);
+            await ctx.message.reply(`✅ Reputazione con **${faction.name}** aggiornata: ${icon} **${translateReputation(newRep)}**`);
             return;
         }
 
@@ -853,9 +862,6 @@ export const factionCommand: Command = {
             return;
         }
 
-        // =============================================
-        // DEFAULT: $faction (list) or $faction <name>
-        // =============================================
         // =============================================
         // DEFAULT: $faction (list) or $faction <name>
         // =============================================

@@ -100,7 +100,7 @@ export const partyCommand: Command = {
 
                     if (p.alignment_moral || p.alignment_ethical || p.moral_score || p.ethical_score) {
                         profileEmbed.addFields({
-                            name: "⚖️ Allineamento",
+                            name: "⚖️ Allineamento (Reale calcolato dagli eventi)",
                             value: formatAlignmentSpectrum(p.moral_score ?? 0, p.ethical_score ?? 0),
                             inline: false
                         });

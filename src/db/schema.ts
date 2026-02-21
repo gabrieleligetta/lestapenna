@@ -20,8 +20,8 @@ export const initDatabase = () => {
         current_year INTEGER,
         allow_auto_character_update INTEGER DEFAULT 0,
         last_session_number INTEGER DEFAULT 0,
-        party_alignment_moral TEXT DEFAULT 'NEUTRALE',
-        party_alignment_ethical TEXT DEFAULT 'NEUTRALE'
+        party_alignment_moral TEXT DEFAULT 'NEUTRAL',
+        party_alignment_ethical TEXT DEFAULT 'NEUTRAL'
     )`);
 
     // Migrazione: aggiungi colonna se non esiste
@@ -98,7 +98,7 @@ export const initDatabase = () => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         campaign_id INTEGER NOT NULL,
         session_id TEXT,
-        event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC'
+        event_type TEXT, -- 'WAR', 'POLITICS', 'DISCOVERY', 'CALAMITY', 'SUPERNATURAL', 'GENERIC', 'DISASTER', 'MYTH', 'RELIGION', 'BIRTH', 'DEATH', 'CONSTRUCTION'
         description TEXT NOT NULL,
         year INTEGER,
         timestamp INTEGER,
@@ -391,7 +391,7 @@ export const initDatabase = () => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         campaign_id INTEGER NOT NULL,
         faction_id INTEGER NOT NULL,
-        reputation TEXT DEFAULT 'NEUTRALE', -- OSTILE, DIFFIDENTE, FREDDO, NEUTRALE, CORDIALE, AMICHEVOLE, ALLEATO
+        reputation TEXT DEFAULT 'NEUTRAL', -- HOSTILE, DISTRUSTFUL, COLD, NEUTRAL, CORDIAL, FRIENDLY, ALLIED
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(campaign_id, faction_id),
         FOREIGN KEY(faction_id) REFERENCES factions(id) ON DELETE CASCADE,
@@ -404,7 +404,7 @@ export const initDatabase = () => {
         faction_id INTEGER NOT NULL,
         entity_type TEXT NOT NULL,   -- 'npc', 'location', 'pc'
         entity_id INTEGER NOT NULL,
-        role TEXT DEFAULT 'MEMBER',  -- LEADER, MEMBER, ALLY, ENEMY, CONTROLLED
+        role TEXT DEFAULT 'MEMBER',  -- LEADER, MEMBER, ALLY, ENEMY, CONTROLLED, HQ, PRESENCE, HOSTILE, PRISONER
         joined_session_id TEXT,      -- Quando è entrato
         is_active INTEGER DEFAULT 1, -- Affiliazione ancora attiva?
         notes TEXT,
@@ -449,7 +449,7 @@ export const initDatabase = () => {
         location_macro TEXT,             -- Dove si trova
         location_micro TEXT,
         faction_id INTEGER,              -- FK a factions
-        status TEXT DEFAULT 'FUNZIONANTE', -- FUNZIONANTE, DISTRUTTO, PERDUTO, SIGILLATO, DORMIENTE
+        status TEXT DEFAULT 'FUNCTIONAL', -- FUNCTIONAL, DESTROYED, LOST, SEALED, DORMANT
         first_session_id TEXT,
         last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
         rag_sync_needed INTEGER DEFAULT 0,
@@ -467,7 +467,7 @@ export const initDatabase = () => {
         campaign_id INTEGER NOT NULL,
         artifact_name TEXT NOT NULL,
         session_id TEXT,
-        event_type TEXT, -- 'DISCOVERY', 'ACTIVATION', 'CURSE_REVEAL', 'DESTRUCTION', 'TRANSFER', 'OBSERVATION', 'MANUAL_UPDATE'
+        event_type TEXT, -- 'DISCOVERY', 'ACTIVATION', 'CURSE_REVEAL', 'DESTRUCTION', 'TRANSFER', 'OBSERVATION', 'MANUAL_UPDATE', 'REVELATION', 'CURSE', 'GENERIC'
         description TEXT NOT NULL,
         timestamp INTEGER,
         is_manual INTEGER DEFAULT 0,
@@ -504,8 +504,8 @@ export const initDatabase = () => {
         // NUOVA COLONNA PER ANNO REGISTRAZIONE
         "ALTER TABLE recordings ADD COLUMN year INTEGER",
         // 🆕 PARTY ALIGNMENT (Good/Evil, Lawful/Chaotic)
-        "ALTER TABLE campaigns ADD COLUMN party_alignment_moral TEXT DEFAULT 'NEUTRALE'",
-        "ALTER TABLE campaigns ADD COLUMN party_alignment_ethical TEXT DEFAULT 'NEUTRALE'",
+        "ALTER TABLE campaigns ADD COLUMN party_alignment_moral TEXT DEFAULT 'NEUTRAL'",
+        "ALTER TABLE campaigns ADD COLUMN party_alignment_ethical TEXT DEFAULT 'NEUTRAL'",
         // 🆕 NUOVO CAMPO PER TRASCRIZIONI GREZZE
         "ALTER TABLE recordings ADD COLUMN raw_transcription_text TEXT",
         // 🆕 SISTEMA ARMONICO: Lazy sync RAG per NPC

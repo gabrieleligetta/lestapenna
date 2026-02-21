@@ -6,27 +6,30 @@ export const ALIGNMENT_THRESHOLDS = {
     CHAOTIC: -25
 };
 
-export type MoralAlignment = 'BUONO' | 'NEUTRALE' | 'CATTIVO';
-export type EthicalAlignment = 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+export type MoralAlignment = 'GOOD' | 'NEUTRAL' | 'EVIL';
+export type EthicalAlignment = 'LAWFUL' | 'NEUTRAL' | 'CHAOTIC';
 
 export function getMoralAlignment(score: number): MoralAlignment {
-    if (score >= ALIGNMENT_THRESHOLDS.GOOD) return 'BUONO';
-    if (score <= ALIGNMENT_THRESHOLDS.EVIL) return 'CATTIVO';
-    return 'NEUTRALE';
+    if (score >= ALIGNMENT_THRESHOLDS.GOOD) return 'GOOD';
+    if (score <= ALIGNMENT_THRESHOLDS.EVIL) return 'EVIL';
+    return 'NEUTRAL';
 }
 
 export function getEthicalAlignment(score: number): EthicalAlignment {
-    if (score >= ALIGNMENT_THRESHOLDS.LAWFUL) return 'LEGALE';
-    if (score <= ALIGNMENT_THRESHOLDS.CHAOTIC) return 'CAOTICO';
-    return 'NEUTRALE';
+    if (score >= ALIGNMENT_THRESHOLDS.LAWFUL) return 'LAWFUL';
+    if (score <= ALIGNMENT_THRESHOLDS.CHAOTIC) return 'CHAOTIC';
+    return 'NEUTRAL';
 }
 
 export function getAlignmentLabel(moral: number, ethical: number): string {
-    const m = getMoralAlignment(moral);
-    const e = getEthicalAlignment(ethical);
+    const moralLabel = getMoralAlignment(moral);
+    const ethicalLabel = getEthicalAlignment(ethical);
 
-    if (m === 'NEUTRALE' && e === 'NEUTRALE') return 'NEUTRALE VERU'; // or just NEUTRALE
-    return `${e} ${m}`;
+    const mItalian = moralLabel === 'GOOD' ? 'BUONO' : moralLabel === 'EVIL' ? 'CATTIVO' : 'NEUTRALE';
+    const eItalian = ethicalLabel === 'LAWFUL' ? 'LEGALE' : ethicalLabel === 'CHAOTIC' ? 'CAOTICO' : 'NEUTRALE';
+
+    if (mItalian === 'NEUTRALE' && eItalian === 'NEUTRALE') return 'NEUTRALE VERO';
+    return `${eItalian} ${mItalian}`;
 }
 
 // =============================================
@@ -42,16 +45,29 @@ export const REPUTATION_THRESHOLDS = {
     OSTILE: -50
 };
 
-export type ReputationLevel = 'OSTILE' | 'DIFFIDENTE' | 'FREDDO' | 'NEUTRALE' | 'CORDIALE' | 'AMICHEVOLE' | 'ALLEATO';
+export type ReputationLevel = 'HOSTILE' | 'DISTRUSTFUL' | 'COLD' | 'NEUTRAL' | 'CORDIAL' | 'FRIENDLY' | 'ALLIED';
+
+export function translateReputation(rep: ReputationLevel): string {
+    const map: Record<ReputationLevel, string> = {
+        'HOSTILE': 'Ostile',
+        'DISTRUSTFUL': 'Diffidente',
+        'COLD': 'Freddo',
+        'NEUTRAL': 'Neutrale',
+        'CORDIAL': 'Cordiale',
+        'FRIENDLY': 'Amichevole',
+        'ALLIED': 'Alleato'
+    };
+    return map[rep] || rep;
+}
 
 export function getReputationLabel(score: number): ReputationLevel {
-    if (score <= REPUTATION_THRESHOLDS.OSTILE) return 'OSTILE';
-    if (score <= REPUTATION_THRESHOLDS.DIFFIDENTE) return 'DIFFIDENTE';
-    if (score <= REPUTATION_THRESHOLDS.FREDDO) return 'FREDDO';
-    if (score >= REPUTATION_THRESHOLDS.ALLEATO) return 'ALLEATO';
-    if (score >= REPUTATION_THRESHOLDS.AMICHEVOLE) return 'AMICHEVOLE';
-    if (score >= REPUTATION_THRESHOLDS.CORDIALE) return 'CORDIALE';
-    return 'NEUTRALE';
+    if (score <= REPUTATION_THRESHOLDS.OSTILE) return 'HOSTILE';
+    if (score <= REPUTATION_THRESHOLDS.DIFFIDENTE) return 'DISTRUSTFUL';
+    if (score <= REPUTATION_THRESHOLDS.FREDDO) return 'COLD';
+    if (score >= REPUTATION_THRESHOLDS.ALLEATO) return 'ALLIED';
+    if (score >= REPUTATION_THRESHOLDS.AMICHEVOLE) return 'FRIENDLY';
+    if (score >= REPUTATION_THRESHOLDS.CORDIALE) return 'CORDIAL';
+    return 'NEUTRAL';
 }
 
 /**
@@ -60,13 +76,13 @@ export function getReputationLabel(score: number): ReputationLevel {
  */
 export function getReputationScoreForLabel(label: ReputationLevel): number {
     switch (label) {
-        case 'OSTILE': return REPUTATION_THRESHOLDS.OSTILE;
-        case 'DIFFIDENTE': return REPUTATION_THRESHOLDS.DIFFIDENTE;
-        case 'FREDDO': return REPUTATION_THRESHOLDS.FREDDO;
-        case 'CORDIALE': return REPUTATION_THRESHOLDS.CORDIALE;
-        case 'AMICHEVOLE': return REPUTATION_THRESHOLDS.AMICHEVOLE;
-        case 'ALLEATO': return REPUTATION_THRESHOLDS.ALLEATO;
-        default: return 0; // NEUTRALE
+        case 'HOSTILE': return REPUTATION_THRESHOLDS.OSTILE;
+        case 'DISTRUSTFUL': return REPUTATION_THRESHOLDS.DIFFIDENTE;
+        case 'COLD': return REPUTATION_THRESHOLDS.FREDDO;
+        case 'CORDIAL': return REPUTATION_THRESHOLDS.CORDIALE;
+        case 'FRIENDLY': return REPUTATION_THRESHOLDS.AMICHEVOLE;
+        case 'ALLIED': return REPUTATION_THRESHOLDS.ALLEATO;
+        default: return 0; // NEUTRAL
     }
 }
 
@@ -167,8 +183,8 @@ export function formatAlignmentCompact(moralScore: number, ethicalScore: number)
     const mLabel = getMoralAlignment(moralScore);
     const eLabel = getEthicalAlignment(ethicalScore);
 
-    const moralIcon = mLabel === 'BUONO' ? '😇' : mLabel === 'CATTIVO' ? '😈' : '⚖️';
-    const ethicalIcon = eLabel === 'LEGALE' ? '📜' : eLabel === 'CAOTICO' ? '🌀' : '⚖️';
+    const moralIcon = mLabel === 'GOOD' ? '😇' : mLabel === 'EVIL' ? '😈' : '⚖️';
+    const ethicalIcon = eLabel === 'LAWFUL' ? '📜' : eLabel === 'CHAOTIC' ? '🌀' : '⚖️';
 
     // Mini spectrum (5 segments)
     const mPos = Math.round(2 - (Math.max(-100, Math.min(100, moralScore)) / 100) * 2);

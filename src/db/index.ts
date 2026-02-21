@@ -4,10 +4,12 @@ export { db };
 import { initDatabase } from './schema';
 import { alignQuestStatuses } from './maintenance/questStatusAlignment';
 import { alignEntityShortIds } from './maintenance/idAlignment';
+import { alignEnumsToEnglish } from './maintenance/translateEnums';
 try {
     initDatabase();
     alignQuestStatuses();
     alignEntityShortIds();
+    alignEnumsToEnglish();
 } catch (e) {
     console.error("[DB] Failed to initialize database schema or alignment:", e);
 }

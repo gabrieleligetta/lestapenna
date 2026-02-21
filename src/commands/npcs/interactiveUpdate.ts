@@ -499,8 +499,8 @@ async function showStatusSelection(interaction: any, npc: any, ctx: CommandConte
 
 async function showAlignmentSelection(interaction: any, npc: any, type: 'moral' | 'ethical', ctx: CommandContext) {
     const options = type === 'moral'
-        ? ['BUONO', 'NEUTRALE', 'MALVAGIO']
-        : ['LEGALE', 'NEUTRALE', 'CAOTICO'];
+        ? ['GOOD', 'NEUTRAL', 'EVIL']
+        : ['LAWFUL', 'NEUTRAL', 'CHAOTIC'];
 
     // Get current value
     const currentVal = type === 'moral' ? npc.alignment_moral : npc.alignment_ethical;

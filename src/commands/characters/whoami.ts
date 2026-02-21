@@ -52,11 +52,18 @@ export const whoamiCommand: Command = {
 
             // Add alignment field if available - Visual spectrum
             if (p.alignment_moral || p.alignment_ethical || p.moral_score || p.ethical_score) {
-                embed.addFields({
-                    name: "⚖️ Allineamento",
-                    value: formatAlignmentSpectrum(p.moral_score ?? 0, p.ethical_score ?? 0),
-                    inline: false
-                });
+                embed.addFields(
+                    {
+                        name: "⚖️ Allineamento (Scelto Inizialmente)",
+                        value: (p.alignment_ethical && p.alignment_moral) ? `${p.alignment_ethical} ${p.alignment_moral}`.replace('_', ' ') : '_Non impostato_',
+                        inline: false
+                    },
+                    {
+                        name: "⚖️ Allineamento (Reale calcolato dagli eventi)",
+                        value: formatAlignmentSpectrum(p.moral_score ?? 0, p.ethical_score ?? 0),
+                        inline: false
+                    }
+                );
             }
 
             if (targetUser && targetUser.id === targetUserId) {

@@ -23,7 +23,7 @@ export const artifactRepository = {
     upsertArtifact: (
         campaignId: number,
         name: string,
-        status: ArtifactStatus = 'FUNZIONANTE',
+        status: ArtifactStatus = 'FUNCTIONAL',
         sessionId?: string,
         details?: ArtifactDetails,
         isManual: boolean = false,

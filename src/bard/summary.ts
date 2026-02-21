@@ -549,8 +549,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                     if (p.class) details.push(p.class);
                     if (details.length > 0) charInfo += ` (${details.join(' ')})`;
                     // 🆕 Add alignment info
-                    const moralLabel = (p as any).alignment_moral || 'NEUTRALE';
-                    const ethicalLabel = (p as any).alignment_ethical || 'NEUTRALE';
+                    const moralLabel = (p as any).alignment_moral || 'NEUTRAL';
+                    const ethicalLabel = (p as any).alignment_ethical || 'NEUTRAL';
                     const moralScore = (p as any).moral_score ?? 0;
                     const ethicalScore = (p as any).ethical_score ?? 0;
                     charInfo += ` [Allineamento: ${ethicalLabel} ${moralLabel} (M:${moralScore >= 0 ? '+' : ''}${moralScore}, E:${ethicalScore >= 0 ? '+' : ''}${ethicalScore})]`;
@@ -561,8 +561,8 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
 
             // Always include party name + alignment
             if (partyFaction) {
-                const pMoral = partyFaction.alignment_moral || 'NEUTRALE';
-                const pEthical = partyFaction.alignment_ethical || 'NEUTRALE';
+                const pMoral = partyFaction.alignment_moral || 'NEUTRAL';
+                const pEthical = partyFaction.alignment_ethical || 'NEUTRAL';
                 const pMoralScore = partyFaction.moral_score ?? 0;
                 const pEthicalScore = partyFaction.ethical_score ?? 0;
                 castContext += `\n🎭 GRUPPO DI EROI (PARTY): **${partyFaction.name}** [ID: ${partyFaction.short_id || 'N/A'}] [Allineamento: ${pEthical} ${pMoral} (M:${pMoralScore >= 0 ? '+' : ''}${pMoralScore}, E:${pEthicalScore >= 0 ? '+' : ''}${pEthicalScore})]\n`;
@@ -683,7 +683,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                         const npcMoralScore = (npc as any).moral_score ?? 0;
                                         const npcEthicalScore = (npc as any).ethical_score ?? 0;
                                         if (npcMoralScore !== 0 || npcEthicalScore !== 0 || (npc as any).alignment_moral || (npc as any).alignment_ethical) {
-                                            npcLine += ` [Allineamento: ${(npc as any).alignment_ethical || 'NEUTRALE'} ${(npc as any).alignment_moral || 'NEUTRALE'} (M:${npcMoralScore >= 0 ? '+' : ''}${npcMoralScore}, E:${npcEthicalScore >= 0 ? '+' : ''}${npcEthicalScore})]`;
+                                            npcLine += ` [Allineamento: ${(npc as any).alignment_ethical || 'NEUTRAL'} ${(npc as any).alignment_moral || 'NEUTRAL'} (M:${npcMoralScore >= 0 ? '+' : ''}${npcMoralScore}, E:${npcEthicalScore >= 0 ? '+' : ''}${npcEthicalScore})]`;
                                         }
                                         dynamicMemoryContext += npcLine + '\n';
 
@@ -791,14 +791,14 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                         const totalMembers = members.npcs + members.locations + members.pcs;
                         const reputation = factionRepository.getFactionReputation(campaignId, partyFaction.id);
 
-                        const dmMoral = partyFaction.alignment_moral || 'NEUTRALE';
-                        const dmEthical = partyFaction.alignment_ethical || 'NEUTRALE';
+                        const dmMoral = partyFaction.alignment_moral || 'NEUTRAL';
+                        const dmEthical = partyFaction.alignment_ethical || 'NEUTRAL';
                         const dmMoralScore = partyFaction.moral_score ?? 0;
                         const dmEthicalScore = partyFaction.ethical_score ?? 0;
                         let factionInfo = `- **${partyFaction.name}** [ID: ${partyFaction.short_id || 'N/A'}] (${partyFaction.type || 'ORGANIZATION'}): ${partyFaction.description || 'Nessuna descrizione.'}`;
                         factionInfo += ` [Allineamento: ${dmEthical} ${dmMoral} (M:${dmMoralScore >= 0 ? '+' : ''}${dmMoralScore}, E:${dmEthicalScore >= 0 ? '+' : ''}${dmEthicalScore})]`;
                         if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
-                        if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
+                        if (reputation && reputation !== 'NEUTRAL') factionInfo += ` [Reputazione: ${reputation}]`;
                         factionInfo += ` [FAZIONE PARTY]`;
                         dynamicMemoryContext += factionInfo + '\n';
                     }
@@ -819,10 +819,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                                 const fMoralScore = faction.moral_score ?? 0;
                                 const fEthicalScore = faction.ethical_score ?? 0;
                                 if (fMoralScore !== 0 || fEthicalScore !== 0 || faction.alignment_moral || faction.alignment_ethical) {
-                                    factionInfo += ` [Allineamento: ${faction.alignment_ethical || 'NEUTRALE'} ${faction.alignment_moral || 'NEUTRALE'} (M:${fMoralScore >= 0 ? '+' : ''}${fMoralScore}, E:${fEthicalScore >= 0 ? '+' : ''}${fEthicalScore})]`;
+                                    factionInfo += ` [Allineamento: ${faction.alignment_ethical || 'NEUTRAL'} ${faction.alignment_moral || 'NEUTRAL'} (M:${fMoralScore >= 0 ? '+' : ''}${fMoralScore}, E:${fEthicalScore >= 0 ? '+' : ''}${fEthicalScore})]`;
                                 }
                                 if (totalMembers > 0) factionInfo += ` [Membri: ${totalMembers}]`;
-                                if (reputation && reputation !== 'NEUTRALE') factionInfo += ` [Reputazione: ${reputation}]`;
+                                if (reputation && reputation !== 'NEUTRAL') factionInfo += ` [Reputazione: ${reputation}]`;
                                 dynamicMemoryContext += factionInfo + '\n';
                             }
                         } catch (e) {

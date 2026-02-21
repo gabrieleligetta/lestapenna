@@ -117,7 +117,7 @@ export async function startInteractiveArtifactAdd(ctx: CommandContext) {
             const description = submission.fields.getTextInputValue('artifact_description') || "";
             const currentSession = guildSessions.get(ctx.guildId);
 
-            artifactRepository.upsertArtifact(ctx.activeCampaign!.id, name, 'FUNZIONANTE', currentSession, { description }, true);
+            artifactRepository.upsertArtifact(ctx.activeCampaign!.id, name, 'FUNCTIONAL', currentSession, { description }, true);
 
             if (currentSession) {
                 // L'evento "Artefatto scoperto" è narrativo valido
@@ -192,7 +192,7 @@ async function showArtifactSelection(
     const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
     const options = artifacts.map(a => {
-        const icon = a.status === 'FUNZIONANTE' ? '✨' : a.is_cursed ? '☠️' : '🔮';
+        const icon = a.status === 'FUNCTIONAL' ? '✨' : a.is_cursed ? '☠️' : '🔮';
         return new StringSelectMenuOptionBuilder()
             .setLabel(a.name.substring(0, 100))
             .setDescription(`ID: #${a.short_id} | ${a.status}`)
@@ -217,9 +217,9 @@ async function showArtifactSelection(
     const rows: ActionRowBuilder<any>[] = [new ActionRowBuilder().addComponents(select)];
 
     const filterRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('filter_FUNZIONANTE').setLabel('Sani').setStyle(statusFilter === 'FUNZIONANTE' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('✨'),
-        new ButtonBuilder().setCustomId('filter_SIGILLATO').setLabel('Sigillati').setStyle(statusFilter === 'SIGILLATO' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('🔒'),
-        new ButtonBuilder().setCustomId('filter_PERDUTO').setLabel('Perduti').setStyle(statusFilter === 'PERDUTO' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('❓'),
+        new ButtonBuilder().setCustomId('filter_FUNCTIONAL').setLabel('Sani').setStyle(statusFilter === 'FUNCTIONAL' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('✨'),
+        new ButtonBuilder().setCustomId('filter_SEALED').setLabel('Sigillati').setStyle(statusFilter === 'SEALED' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('🔒'),
+        new ButtonBuilder().setCustomId('filter_LOST').setLabel('Perduti').setStyle(statusFilter === 'LOST' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('❓'),
         new ButtonBuilder().setCustomId('filter_ALL').setLabel('Tutti').setStyle(statusFilter === 'ALL' ? ButtonStyle.Primary : ButtonStyle.Secondary).setEmoji('🌐')
     );
     rows.push(filterRow);
@@ -351,11 +351,11 @@ async function showArtifactStatusUpdate(interaction: any, artifact: ArtifactEntr
     const select = new StringSelectMenuBuilder()
         .setCustomId('artifact_update_status')
         .addOptions(
-            new StringSelectMenuOptionBuilder().setLabel('FUNZIONANTE').setValue('FUNZIONANTE').setEmoji('✨').setDefault(artifact.status === 'FUNZIONANTE'),
-            new StringSelectMenuOptionBuilder().setLabel('SIGILLATO').setValue('SIGILLATO').setEmoji('🔒').setDefault(artifact.status === 'SIGILLATO'),
-            new StringSelectMenuOptionBuilder().setLabel('DORMIENTE').setValue('DORMIENTE').setEmoji('💤').setDefault(artifact.status === 'DORMIENTE'),
-            new StringSelectMenuOptionBuilder().setLabel('PERDUTO').setValue('PERDUTO').setEmoji('❓').setDefault(artifact.status === 'PERDUTO'),
-            new StringSelectMenuOptionBuilder().setLabel('DISTRUTTO').setValue('DISTRUTTO').setEmoji('💥').setDefault(artifact.status === 'DISTRUTTO')
+            new StringSelectMenuOptionBuilder().setLabel('Funzionante').setValue('FUNCTIONAL').setEmoji('✨').setDefault(artifact.status === 'FUNCTIONAL'),
+            new StringSelectMenuOptionBuilder().setLabel('Sigillato').setValue('SEALED').setEmoji('🔒').setDefault(artifact.status === 'SEALED'),
+            new StringSelectMenuOptionBuilder().setLabel('Dormiente').setValue('DORMANT').setEmoji('💤').setDefault(artifact.status === 'DORMANT'),
+            new StringSelectMenuOptionBuilder().setLabel('Perduto').setValue('LOST').setEmoji('❓').setDefault(artifact.status === 'LOST'),
+            new StringSelectMenuOptionBuilder().setLabel('Distrutto').setValue('DESTROYED').setEmoji('💥').setDefault(artifact.status === 'DESTROYED')
         );
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);

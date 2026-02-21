@@ -269,12 +269,12 @@ export const factionRepository = {
             WHERE campaign_id = ? AND faction_id = ?
         `).get(campaignId, factionId) as { reputation: ReputationLevel } | undefined;
 
-        return row?.reputation || 'NEUTRALE';
+        return row?.reputation || 'NEUTRAL';
     },
 
     getReputationWithAllFactions: (campaignId: number): Array<FactionEntry & { reputation: ReputationLevel }> => {
         return db.prepare(`
-            SELECT f.*, COALESCE(fr.reputation, 'NEUTRALE') as reputation
+            SELECT f.*, COALESCE(fr.reputation, 'NEUTRAL') as reputation
             FROM factions f
             LEFT JOIN faction_reputation fr ON f.id = fr.faction_id AND fr.campaign_id = f.campaign_id
             WHERE f.campaign_id = ? AND f.is_party = 0
@@ -446,7 +446,7 @@ export const factionRepository = {
                     // Accumulate reputation_score and derive label
                     db.prepare(`
                         INSERT INTO faction_reputation (campaign_id, faction_id, reputation, reputation_score)
-                        VALUES ($campaignId, $factionId, 'NEUTRALE', MIN(50, MAX(-50, $change)))
+                        VALUES ($campaignId, $factionId, 'NEUTRAL', MIN(50, MAX(-50, $change)))
                         ON CONFLICT(campaign_id, faction_id)
                         DO UPDATE SET
                             reputation_score = MIN(50, MAX(-50, COALESCE(reputation_score, 0) + $change)),
@@ -698,7 +698,7 @@ export const factionRepository = {
             // If source had a specific reputation, and target has NEUTRALE, maybe move it?
             const sourceRep = factionRepository.getFactionReputation(campaignId, source.id);
             const targetRep = factionRepository.getFactionReputation(campaignId, target.id);
-            if (targetRep === 'NEUTRALE' && sourceRep !== 'NEUTRALE') {
+            if (targetRep === 'NEUTRAL' && sourceRep !== 'NEUTRAL') {
                 factionRepository.setFactionReputation(campaignId, target.id, sourceRep);
             }
 
@@ -756,8 +756,8 @@ export const factionRepository = {
             return {
                 moralScore: 0,
                 ethicalScore: 0,
-                moralLabel: 'NEUTRALE',
-                ethicalLabel: 'NEUTRALE',
+                moralLabel: 'NEUTRAL',
+                ethicalLabel: 'NEUTRAL',
                 breakdown: { factionMoral: 0, factionEthical: 0, membersMoral: 0, membersEthical: 0, memberCount: 0 }
             };
         }

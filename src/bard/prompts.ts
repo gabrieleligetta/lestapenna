@@ -254,7 +254,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
     "world_events": [
         {
             "event": "Evento che cambia il mondo di gioco (es. scoppiata guerra, cataclisma)", 
-            "type": "POLITICS|WAR|DISASTER|DISCOVERY|MYTH|RELIGION|BIRTH|DEATH|CONSTRUCTION|GENERIC"
+            "type": "POLITICS|WAR|DISASTER|DISCOVERY|MYTH|RELIGION|BIRTH|DEATH|CONSTRUCTION|CALAMITY|SUPERNATURAL|GENERIC"
         }
     ],
     "faction_updates": [
@@ -263,8 +263,8 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "name": "Nome della fazione (es. 'Gilda dei Ladri', 'Regno di Cormyr')",
             "description": "Descrizione della fazione se nuova o aggiornata",
             "type": "GUILD|KINGDOM|CULT|ORGANIZATION|GENERIC",
-            "alignment_moral": "BUONO|NEUTRALE|CATTIVO (Deducilo dalle azioni! Es. Protegge innocenti -> BUONO, Stermina villaggi -> CATTIVO)",
-            "alignment_ethical": "LEGALE|NEUTRALE|CAOTICO (Deducilo! Es. Segue codici rigidi, rispetta le promesse -> LEGALE, Opera nell'ombra, infrange le leggi -> CAOTICO)",
+            "alignment_moral": "GOOD|NEUTRAL|EVIL (Deducilo dalle azioni! Es. Protegge innocenti -> GOOD, Stermina villaggi -> EVIL)",
+            "alignment_ethical": "LAWFUL|NEUTRAL|CHAOTIC (Deducilo! Es. Segue codici rigidi, rispetta le promesse -> LAWFUL, Opera nell'ombra, infrange le leggi -> CHAOTIC)",
             "reputation_change": {
                 "value": "numero intero negativo o positivo. SCALA: Aiuto minore +5/+10. Salvataggio membro +15/+20. Grande alleanza +25/+30. Insulto -5/-10. Attacco a membro -15/-25. Tradimento/guerra aperta -30/-50. Genocidio/sterminio -50/-80.",
                 "reason": "Motivo del cambio reputazione (es. 'Abbiamo salvato un loro membro')"
@@ -295,7 +295,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "location_macro": "Regione/Città dove si trova",
             "location_micro": "Luogo specifico",
             "faction_name": "Nome fazione che lo possiede (se applicabile)",
-            "status": "FUNZIONANTE|DISTRUTTO|PERDUTO|SIGILLATO|DORMIENTE"
+            "status": "FUNCTIONAL|DESTROYED|LOST|SEALED|DORMANT"
         }
     ],
     // AVVISO AI ARTEFATTI:
@@ -310,7 +310,7 @@ Nel CONTESTO DI RIFERIMENTO, ogni entità nota ha un **[ID: xxxxx]** (5 caratter
             "id": "ID dell'artefatto (es. 'bmu9p'). OMETTI se non noto.",
             "name": "Nome Artefatto",
             "event": "Evento significativo (es. 'L'artefatto ha rivelato un nuovo potere', 'Trasferito a Gundren')",
-            "type": "ACTIVATION|DESTRUCTION|TRANSFER|REVELATION|CURSE|GENERIC"
+            "type": "ACTIVATION|DESTRUCTION|TRANSFER|REVELATION|CURSE|DISCOVERY|CURSE_REVEAL|OBSERVATION|GENERIC"
         }
     ],
     // AVVISO AI ARTIFACT_EVENTS:

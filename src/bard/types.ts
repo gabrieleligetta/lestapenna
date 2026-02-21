@@ -43,7 +43,7 @@ export interface SummaryResponse {
     tokens: number;
     loot?: Array<{ name: string; quantity?: number; description?: string }>;
     loot_removed?: Array<{ name: string; quantity?: number; description?: string }>;
-    quests?: Array<{ title: string; description?: string; status?: string }>;
+    quests?: Array<{ id?: string; title: string; description?: string; status?: string; type?: 'MAJOR' | 'MINOR' }>;
     narrative?: string;
     narrativeBrief?: string;
     narrativeBriefs?: string[]; // Array di brief per ogni atto (per Discord multi-messaggio)
@@ -60,7 +60,7 @@ export interface SummaryResponse {
     }>;
     world_events?: Array<{
         event: string;
-        type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
+        type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC' | 'DISASTER' | 'MYTH' | 'RELIGION' | 'BIRTH' | 'DEATH' | 'CONSTRUCTION';
     }>;
     monsters?: Array<{
         name: string;
@@ -141,7 +141,7 @@ export interface SummaryResponse {
     artifact_events?: Array<{
         name: string;
         event: string;
-        type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC';
+        type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC' | 'DISCOVERY' | 'CURSE_REVEAL' | 'OBSERVATION' | 'MANUAL_UPDATE';
     }>;
     // 🆕 Party Alignment
     party_alignment_change?: {
@@ -160,7 +160,7 @@ export interface ValidationBatchInput {
     artifact_events?: Array<{ id?: string; name: string; event: string; type: string }>;
     loot?: Array<{ id?: string; name: string; quantity?: number; description?: string }>;
     loot_removed?: Array<{ id?: string; name: string; quantity?: number; description?: string }>;
-    quests?: Array<{ id?: string; title: string; description?: string; status?: string }>;
+    quests?: Array<{ id?: string; title: string; description?: string; status?: string; type?: string }>;
     atlas_update?: {
         macro: string;
         micro: string;
@@ -176,7 +176,7 @@ export interface ValidationBatchOutput {
     artifact_events: { keep: any[]; skip: string[] };
     loot: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
     loot_removed: { keep: Array<{ name: string; quantity?: number; description?: string }>; skip: string[] };
-    quests: { keep: Array<{ title: string; description?: string; status?: string }>; skip: string[] };
+    quests: { keep: Array<{ id?: string; title: string; description?: string; status?: string; type?: string }>; skip: string[] };
     atlas: { action: 'keep' | 'skip' | 'merge'; text?: string };
 }
 
@@ -184,7 +184,7 @@ export interface ValidationBatchOutput {
 export interface AnalystOutput {
     loot: Array<{ name: string; quantity?: number; description?: string }>;
     loot_removed: Array<{ name: string; quantity?: number; description?: string }>;
-    quests: Array<{ title: string; description?: string; status?: string }>;
+    quests: Array<{ id?: string; title: string; description?: string; status?: string; type?: 'MAJOR' | 'MINOR' }>;
     monsters: Array<{
         name: string;
         status: string;
@@ -200,8 +200,8 @@ export interface AnalystOutput {
         description: string;
         role?: string;
         status?: 'ALIVE' | 'DEAD' | 'MISSING';
-        alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
-        alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+        alignment_moral?: 'GOOD' | 'NEUTRAL' | 'EVIL';
+        alignment_ethical?: 'LAWFUL' | 'NEUTRAL' | 'CHAOTIC';
     }>;
     location_updates: Array<{ id?: string; macro: string; micro: string; description: string }>;  // 🆕 id for direct lookup
     travel_sequence: Array<{ macro: string; micro: string; reason?: string }>;
@@ -229,7 +229,7 @@ export interface AnalystOutput {
 
     world_events: Array<{
         event: string;
-        type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC';
+        type: 'WAR' | 'POLITICS' | 'DISCOVERY' | 'CALAMITY' | 'SUPERNATURAL' | 'GENERIC' | 'DISASTER' | 'MYTH' | 'RELIGION' | 'BIRTH' | 'DEATH' | 'CONSTRUCTION';
     }>;
     // 🆕 Faction System
     faction_updates: Array<{
@@ -237,8 +237,8 @@ export interface AnalystOutput {
         name: string;
         description?: string;
         type?: 'GUILD' | 'KINGDOM' | 'CULT' | 'ORGANIZATION' | 'GENERIC';
-        alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';  // 🆕
-        alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';  // 🆕
+        alignment_moral?: 'GOOD' | 'NEUTRAL' | 'EVIL';  // 🆕
+        alignment_ethical?: 'LAWFUL' | 'NEUTRAL' | 'CHAOTIC';  // 🆕
         reputation_change?: {
             value: number;
             reason: string;
@@ -250,7 +250,7 @@ export interface AnalystOutput {
         entity_name: string;
         faction_id?: string;  // 🆕 Short ID of the faction
         faction_name: string;
-        role?: 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED';
+        role?: 'LEADER' | 'MEMBER' | 'ALLY' | 'ENEMY' | 'CONTROLLED' | 'HQ' | 'PRESENCE' | 'HOSTILE' | 'PRISONER';
         action: 'JOIN' | 'LEAVE';
     }>;
     // 🆕 Party Alignment
@@ -273,13 +273,13 @@ export interface AnalystOutput {
         location_macro?: string;
         location_micro?: string;
         faction_name?: string;
-        status?: 'FUNZIONANTE' | 'DISTRUTTO' | 'PERDUTO' | 'SIGILLATO' | 'DORMIENTE';
+        status?: 'FUNCTIONAL' | 'DESTROYED' | 'LOST' | 'SEALED' | 'DORMANT';
     }>;
     // 🆕 Artifact Events
     artifact_events: Array<{
         id?: string;  // 🆕 Short ID of the artifact
         name: string;
         event: string;
-        type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC';
+        type: 'ACTIVATION' | 'DESTRUCTION' | 'TRANSFER' | 'REVELATION' | 'CURSE' | 'GENERIC' | 'DISCOVERY' | 'CURSE_REVEAL' | 'OBSERVATION' | 'MANUAL_UPDATE';
     }>;
 }

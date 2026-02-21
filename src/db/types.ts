@@ -79,8 +79,8 @@ export interface Campaign {
     current_micro_location?: string;
     current_year?: number; // NUOVO
     allow_auto_character_update?: number; // NUOVO
-    party_alignment_moral?: 'BUONO' | 'NEUTRALE' | 'CATTIVO';
-    party_alignment_ethical?: 'LEGALE' | 'NEUTRALE' | 'CAOTICO';
+    party_alignment_moral?: 'GOOD' | 'NEUTRAL' | 'EVIL';
+    party_alignment_ethical?: 'LAWFUL' | 'NEUTRAL' | 'CHAOTIC';
     party_moral_score?: number; // 🆕
     party_ethical_score?: number; // 🆕
 }
@@ -255,16 +255,16 @@ export interface AtlasEntryFull {
  * Livelli di reputazione del party con una fazione (spettro a 7 livelli)
  */
 export type ReputationLevel =
-    | 'OSTILE'      // -3: Nemici dichiarati
-    | 'DIFFIDENTE'  // -2: Sospettosi, poco cooperativi
-    | 'FREDDO'      // -1: Distaccati, formali
-    | 'NEUTRALE'    //  0: Default, nessuna opinione
-    | 'CORDIALE'    // +1: Amichevoli, disponibili
-    | 'AMICHEVOLE'  // +2: Alleati di fatto
-    | 'ALLEATO';    // +3: Alleanza formale
+    | 'HOSTILE'      // -3: Nemici dichiarati
+    | 'DISTRUSTFUL'  // -2: Sospettosi, poco cooperativi
+    | 'COLD'         // -1: Distaccati, formali
+    | 'NEUTRAL'      //  0: Default, nessuna opinione
+    | 'CORDIAL'      // +1: Amichevoli, disponibili
+    | 'FRIENDLY'     // +2: Alleati di fatto
+    | 'ALLIED';      // +3: Alleanza formale
 
 export const REPUTATION_SPECTRUM: ReputationLevel[] = [
-    'OSTILE', 'DIFFIDENTE', 'FREDDO', 'NEUTRALE', 'CORDIALE', 'AMICHEVOLE', 'ALLEATO'
+    'HOSTILE', 'DISTRUSTFUL', 'COLD', 'NEUTRAL', 'CORDIAL', 'FRIENDLY', 'ALLIED'
 ];
 
 export type FactionType = 'PARTY' | 'GUILD' | 'KINGDOM' | 'CULT' | 'ORGANIZATION' | 'GENERIC';
@@ -287,8 +287,8 @@ export interface FactionEntry {
     rag_sync_needed: number;
     is_manual: number;
     short_id?: string;
-    alignment_moral?: string | null;   // 🆕 BUONO, NEUTRALE, CATTIVO
-    alignment_ethical?: string | null; // 🆕 LEGALE, NEUTRALE, CAOTICO
+    alignment_moral?: string | null;   // 🆕 GOOD, NEUTRAL, EVIL
+    alignment_ethical?: string | null; // 🆕 LAWFUL, NEUTRAL, CHAOTIC
     moral_score?: number; // 🆕
     ethical_score?: number; // 🆕
 }
@@ -363,7 +363,7 @@ export interface WorldHistoryEntry {
 /**
  * Stati possibili di un artefatto
  */
-export type ArtifactStatus = 'FUNZIONANTE' | 'DISTRUTTO' | 'PERDUTO' | 'SIGILLATO' | 'DORMIENTE';
+export type ArtifactStatus = 'FUNCTIONAL' | 'DESTROYED' | 'LOST' | 'SEALED' | 'DORMANT';
 
 /**
  * Tipi di proprietario per un artefatto

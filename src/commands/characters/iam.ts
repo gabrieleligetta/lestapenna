@@ -77,9 +77,10 @@ async function showProfileDashboard(ctx: CommandContext, interactionToUpdate?: a
         .addFields(
             { name: '🧬 Razza', value: profile.race || '_Non impostata_', inline: true },
             { name: '⚔️ Classe', value: profile.class || '_Non impostata_', inline: true },
-            { name: '⚖️ Allineamento', value: formatAlignmentSpectrum(profile.moral_score ?? 0, profile.ethical_score ?? 0), inline: false },
-            { name: '📜 Background (Manuale)', value: profile.foundation_description || profile.description || '_Nessun background inserito manualment._', inline: false },
-            { name: '📧 Email Recap', value: profile.email || '_Non impostata_', inline: true }
+            { name: '📧 Email Recap', value: profile.email || '_Non impostata_', inline: true },
+            { name: '⚖️ Allineamento (Scelto Inizialmente)', value: (profile.alignment_ethical && profile.alignment_moral) ? `${profile.alignment_ethical} ${profile.alignment_moral}`.replace('_', ' ') : '_Non impostato_', inline: false },
+            { name: '⚖️ Allineamento (Reale calcolato dagli eventi)', value: formatAlignmentSpectrum(profile.moral_score ?? 0, profile.ethical_score ?? 0), inline: false },
+            { name: '📜 Background (Manuale)', value: profile.foundation_description || profile.description || '_Nessun background inserito manualment._', inline: false }
         );
 
     const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -156,15 +157,15 @@ async function showProfileDashboard(ctx: CommandContext, interactionToUpdate?: a
                 .setCustomId('cp_select_align')
                 .setPlaceholder('Scegli il tuo allineamento...')
                 .addOptions(
-                    new StringSelectMenuOptionBuilder().setLabel('Legale Buono').setValue('LEGALE_BUONO').setEmoji('😇'),
-                    new StringSelectMenuOptionBuilder().setLabel('Neutrale Buono').setValue('NEUTRALE_BUONO').setEmoji('☀️'),
-                    new StringSelectMenuOptionBuilder().setLabel('Caotico Buono').setValue('CAOTICO_BUONO').setEmoji('🌈'),
-                    new StringSelectMenuOptionBuilder().setLabel('Legale Neutrale').setValue('LEGALE_NEUTRALE').setEmoji('📜'),
-                    new StringSelectMenuOptionBuilder().setLabel('Neutrale Puro').setValue('NEUTRALE_NEUTRALE').setEmoji('⚖️'),
-                    new StringSelectMenuOptionBuilder().setLabel('Caotico Neutrale').setValue('CAOTICO_NEUTRALE').setEmoji('🌀'),
-                    new StringSelectMenuOptionBuilder().setLabel('Legale Malvagio').setValue('LEGALE_CATTIVO').setEmoji('😈'),
-                    new StringSelectMenuOptionBuilder().setLabel('Neutrale Malvagio').setValue('NEUTRALE_CATTIVO').setEmoji('🌑'),
-                    new StringSelectMenuOptionBuilder().setLabel('Caotico Malvagio').setValue('CAOTICO_CATTIVO').setEmoji('💀')
+                    new StringSelectMenuOptionBuilder().setLabel('Legale Buono').setValue('LAWFUL_GOOD').setEmoji('😇'),
+                    new StringSelectMenuOptionBuilder().setLabel('Neutrale Buono').setValue('NEUTRAL_GOOD').setEmoji('☀️'),
+                    new StringSelectMenuOptionBuilder().setLabel('Caotico Buono').setValue('CHAOTIC_GOOD').setEmoji('🌈'),
+                    new StringSelectMenuOptionBuilder().setLabel('Legale Neutrale').setValue('LAWFUL_NEUTRAL').setEmoji('📜'),
+                    new StringSelectMenuOptionBuilder().setLabel('Neutrale Puro').setValue('NEUTRAL_NEUTRAL').setEmoji('⚖️'),
+                    new StringSelectMenuOptionBuilder().setLabel('Caotico Neutrale').setValue('CHAOTIC_NEUTRAL').setEmoji('🌀'),
+                    new StringSelectMenuOptionBuilder().setLabel('Legale Malvagio').setValue('LAWFUL_EVIL').setEmoji('😈'),
+                    new StringSelectMenuOptionBuilder().setLabel('Neutrale Malvagio').setValue('NEUTRAL_EVIL').setEmoji('🌑'),
+                    new StringSelectMenuOptionBuilder().setLabel('Caotico Malvagio').setValue('CHAOTIC_EVIL').setEmoji('💀')
                 );
 
             const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);

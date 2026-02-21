@@ -186,7 +186,7 @@ function buildContextForArchivista(data: any): string {
     // ============================================
     ctx += `\n## FAZIONI (${factions.length} totali)\n`;
     for (const faction of factions) {
-        const rep = faction.reputation || 'NEUTRALE';
+        const rep = faction.reputation || 'NEUTRAL';
         const memberCount = faction.members?.npcs || 0;
         const locCount = faction.members?.locations || 0;
 
@@ -265,7 +265,7 @@ function buildContextForArchivista(data: any): string {
     if (artifacts.length > 0) {
         ctx += `\n## ARTEFATTI (${artifacts.length})\n`;
         for (const art of artifacts) {
-            ctx += `- **${art.name}** [ID: ${art.short_id}] [${art.status || 'FUNZIONANTE'}]`;
+            ctx += `- **${art.name}** [ID: ${art.short_id}] [${art.status || 'FUNCTIONAL'}]`;
             if (art.is_cursed) ctx += ' ⚠️MALEDETTO';
             ctx += `\n`;
             if (art.description) {

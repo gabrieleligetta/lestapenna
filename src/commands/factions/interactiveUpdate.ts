@@ -22,13 +22,13 @@ import { FactionType } from '../../db/types';
 import { FACTION_TYPE_ICONS } from './faction'; // Check if we can export this or need to redefine
 
 const REPUTATION_ICONS: Record<string, string> = {
-    'OSTILE': '🔴',
-    'DIFFIDENTE': '🟠',
-    'FREDDO': '🟡',
-    'NEUTRALE': '⚪',
-    'CORDIALE': '🟢',
-    'AMICHEVOLE': '💚',
-    'ALLEATO': '⭐'
+    'HOSTILE': '🔴',
+    'DISTRUSTFUL': '🟠',
+    'COLD': '🟡',
+    'NEUTRAL': '⚪',
+    'CORDIAL': '🟢',
+    'FRIENDLY': '💚',
+    'ALLIED': '⭐'
 };
 
 const ICONS: Record<string, string> = {
@@ -564,8 +564,8 @@ async function showStatusSelection(interaction: any, faction: any, ctx: CommandC
 
 async function showAlignmentSelection(interaction: any, faction: any, type: 'moral' | 'ethical', ctx: CommandContext) {
     const options = type === 'moral'
-        ? ['BUONO', 'NEUTRALE', 'CATTIVO']
-        : ['LEGALE', 'NEUTRALE', 'CAOTICO'];
+        ? ['GOOD', 'NEUTRAL', 'EVIL']
+        : ['LAWFUL', 'NEUTRAL', 'CHAOTIC'];
 
     const currentVal = type === 'moral' ? faction.alignment_moral : faction.alignment_ethical;
 

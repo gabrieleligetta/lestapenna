@@ -814,7 +814,7 @@ export class IngestionService {
 
             // Always log the faction processing
             const safeDesc = update.description || faction?.description || 'Nessuna descrizione';
-            let safeRep = update.reputation || 'NEUTRALE';
+            let safeRep = update.reputation || 'NEUTRAL';
 
             if (!update.reputation && faction) {
                 safeRep = factionRepository.getFactionReputation(campaignId, faction.id);
@@ -843,8 +843,12 @@ export class IngestionService {
                 );
                 console.log(`[Faction] 📊 Reputazione ${factionName}: CHANGE ${changeValue}`);
             } else if (update.reputation && faction) {
-                const validReps = ['OSTILE', 'DIFFIDENTE', 'FREDDO', 'NEUTRALE', 'CORDIALE', 'AMICHEVOLE', 'ALLEATO'];
-                const upperRep = update.reputation.toUpperCase();
+                const validReps = ['HOSTILE', 'DISTRUSTFUL', 'COLD', 'NEUTRAL', 'CORDIAL', 'FRIENDLY', 'ALLIED'];
+                const repMap: Record<string, string> = {
+                    'OSTILE': 'HOSTILE', 'DIFFIDENTE': 'DISTRUSTFUL', 'FREDDO': 'COLD',
+                    'NEUTRALE': 'NEUTRAL', 'CORDIALE': 'CORDIAL', 'AMICHEVOLE': 'FRIENDLY', 'ALLEATO': 'ALLIED'
+                };
+                const upperRep = repMap[update.reputation.toUpperCase()] || update.reputation.toUpperCase();
                 if (validReps.includes(upperRep)) {
                     factionRepository.setFactionReputation(campaignId, faction.id, upperRep as any);
                     factionRepository.addFactionEvent(
@@ -1128,12 +1132,19 @@ export class IngestionService {
             };
 
             // Upsert the artifact
-            console.log(`[Artifact] 🔍 DEBUG: Upserting artifact "${artifactName}" con status "${artifact.status || 'FUNZIONANTE'}"`);
+            // Map Italian status to English if needed (AI may still return Italian)
+            const artifactStatusMap: Record<string, string> = {
+                'FUNZIONANTE': 'FUNCTIONAL', 'DISTRUTTO': 'DESTROYED', 'PERDUTO': 'LOST',
+                'SIGILLATO': 'SEALED', 'DORMIENTE': 'DORMANT'
+            };
+            const rawStatus = artifact.status ? artifact.status.toUpperCase() : 'FUNCTIONAL';
+            const mappedStatus = artifactStatusMap[rawStatus] || rawStatus;
+            console.log(`[Artifact] 🔍 DEBUG: Upserting artifact "${artifactName}" con status "${mappedStatus}"`);
             try {
                 upsertArtifact(
                     campaignId,
                     artifactName,
-                    artifact.status || 'FUNZIONANTE',
+                    mappedStatus as any,
                     sessionId,
                     details,
                     false, // Not manual
@@ -1192,7 +1203,7 @@ export class IngestionService {
                 }
             }
 
-            console.log(`[Artifact] ➕ ${artifactName}: ${artifact.description ? artifact.description.substring(0, 50) + (artifact.description.length > 50 ? '...' : '') : 'Nessuna descrizione'} (Status: ${artifact.status || 'FUNZIONANTE'})`);
+            console.log(`[Artifact] ➕ ${artifactName}: ${artifact.description ? artifact.description.substring(0, 50) + (artifact.description.length > 50 ? '...' : '') : 'Nessuna descrizione'} (Status: ${mappedStatus})`);
 
             console.log(`[Artifact] ✨ ${isNew ? 'Nuovo' : 'Aggiornato'}: ${artifactName}`);
         }

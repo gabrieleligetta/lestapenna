@@ -38,46 +38,48 @@ export function alignEnumsToEnglish() {
             'DORMIENTE': 'DORMANT'
         };
 
+        // UPPER() ensures case-insensitive matching (e.g. 'buono', 'Buono', 'BUONO' all → 'GOOD')
+
         // --- 1. Campaigns ---
         for (const [it, en] of Object.entries(moralMap)) {
-            db.prepare(`UPDATE campaigns SET party_alignment_moral = ? WHERE party_alignment_moral = ?`).run(en, it);
+            db.prepare(`UPDATE campaigns SET party_alignment_moral = ? WHERE UPPER(party_alignment_moral) = ?`).run(en, it);
         }
         for (const [it, en] of Object.entries(ethicalMap)) {
-            db.prepare(`UPDATE campaigns SET party_alignment_ethical = ? WHERE party_alignment_ethical = ?`).run(en, it);
+            db.prepare(`UPDATE campaigns SET party_alignment_ethical = ? WHERE UPPER(party_alignment_ethical) = ?`).run(en, it);
         }
 
         // --- 2. NPC Dossier ---
         for (const [it, en] of Object.entries(moralMap)) {
-            db.prepare(`UPDATE npc_dossier SET alignment_moral = ? WHERE alignment_moral = ?`).run(en, it);
+            db.prepare(`UPDATE npc_dossier SET alignment_moral = ? WHERE UPPER(alignment_moral) = ?`).run(en, it);
         }
         for (const [it, en] of Object.entries(ethicalMap)) {
-            db.prepare(`UPDATE npc_dossier SET alignment_ethical = ? WHERE alignment_ethical = ?`).run(en, it);
+            db.prepare(`UPDATE npc_dossier SET alignment_ethical = ? WHERE UPPER(alignment_ethical) = ?`).run(en, it);
         }
 
         // --- 3. Faction Dossier ---
         for (const [it, en] of Object.entries(moralMap)) {
-            db.prepare(`UPDATE factions SET alignment_moral = ? WHERE alignment_moral = ?`).run(en, it);
+            db.prepare(`UPDATE factions SET alignment_moral = ? WHERE UPPER(alignment_moral) = ?`).run(en, it);
         }
         for (const [it, en] of Object.entries(ethicalMap)) {
-            db.prepare(`UPDATE factions SET alignment_ethical = ? WHERE alignment_ethical = ?`).run(en, it);
+            db.prepare(`UPDATE factions SET alignment_ethical = ? WHERE UPPER(alignment_ethical) = ?`).run(en, it);
         }
 
         // --- 4. Characters ---
         for (const [it, en] of Object.entries(moralMap)) {
-            db.prepare(`UPDATE characters SET alignment_moral = ? WHERE alignment_moral = ?`).run(en, it);
+            db.prepare(`UPDATE characters SET alignment_moral = ? WHERE UPPER(alignment_moral) = ?`).run(en, it);
         }
         for (const [it, en] of Object.entries(ethicalMap)) {
-            db.prepare(`UPDATE characters SET alignment_ethical = ? WHERE alignment_ethical = ?`).run(en, it);
+            db.prepare(`UPDATE characters SET alignment_ethical = ? WHERE UPPER(alignment_ethical) = ?`).run(en, it);
         }
 
         // --- 5. Faction Reputation ---
         for (const [it, en] of Object.entries(repMap)) {
-            db.prepare(`UPDATE faction_reputation SET reputation = ? WHERE reputation = ?`).run(en, it);
+            db.prepare(`UPDATE faction_reputation SET reputation = ? WHERE UPPER(reputation) = ?`).run(en, it);
         }
 
         // --- 6. Artifacts ---
         for (const [it, en] of Object.entries(artStatusMap)) {
-            db.prepare(`UPDATE artifacts SET status = ? WHERE status = ?`).run(en, it);
+            db.prepare(`UPDATE artifacts SET status = ? WHERE UPPER(status) = ?`).run(en, it);
         }
 
     })();

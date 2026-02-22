@@ -37,6 +37,7 @@ import { audioQueue, removeSessionJobs } from '../services/queue';
 import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../publisher';
 import { sessionPhaseManager, SessionPhase } from '../services/SessionPhaseManager';
 import { config } from '../config';
+import { resetRecordingState } from '../state/sessionState';
 import { buildWelcomeEmbed, markGuildAsWelcomed, hasBeenWelcomed } from './guildJoin';
 
 // Note: recoverOrphanedFiles and processOrphanedSessionsSequentially were local. Moving here.
@@ -392,7 +393,7 @@ async function processOrphanedSessionsSequentially(client: Client, sessionIds: s
             }
 
             console.log(`✅ ${filesToProcess.length} file accodati. Avvio processing...`);
-            await audioQueue.resume();
+            await resetRecordingState();
 
             const session = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?').get(sessionId) as { guild_id: string } | undefined;
             let channel: TextChannel | null = null;

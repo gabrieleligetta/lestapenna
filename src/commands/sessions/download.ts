@@ -5,7 +5,7 @@ import { mixSessionAudio } from '../../services/sessionMixer';
 import { audioQueue } from '../../services/queue';
 import * as fs from 'fs';
 import * as path from 'path';
-import { guildSessions } from '../../state/sessionState';
+import { hasActiveSession } from '../../state/sessionState';
 
 export const downloadCommand: Command = {
     name: 'download',
@@ -15,7 +15,7 @@ export const downloadCommand: Command = {
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args } = ctx;
 
-        const isActiveSession = guildSessions.has(message.guild!.id);
+        const isActiveSession = await hasActiveSession(message.guild!.id);
         const queueCounts = await audioQueue.getJobCounts();
         const isProcessing = queueCounts.active > 0 || queueCounts.waiting > 0;
 

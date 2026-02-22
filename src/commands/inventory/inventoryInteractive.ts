@@ -17,7 +17,7 @@ import {
     db
 } from '../../db';
 import { InventoryItem } from '../../db/types';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
 // Helper for Bio Regen - usato SOLO per note narrative
@@ -125,7 +125,7 @@ export async function startInteractiveInventoryAdd(ctx: CommandContext) {
             const qtyStr = submission.fields.getTextInputValue('item_quantity');
             const qty = parseInt(qtyStr) || 1;
             const description = submission.fields.getTextInputValue('item_description') || "";
-            const currentSession = guildSessions.get(ctx.guildId);
+            const currentSession = (await getActiveSession(ctx.guildId));
 
             inventoryRepository.addLoot(ctx.activeCampaign!.id, name, qty, currentSession, description, true);
 
@@ -391,7 +391,7 @@ async function showInventoryTextModal(interaction: any, item: InventoryItem, fie
 
         if (field === 'note') {
             await submission.deferReply();
-            const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            const session = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
             addInventoryEvent(ctx.activeCampaign!.id, item.item_name, session, newValue, "MANUAL_UPDATE", true);
             await regenerateItemBio(ctx.activeCampaign!.id, item.item_name);
             await submission.editReply(`📝 Nota aggiunta a **${item.item_name}**.`);

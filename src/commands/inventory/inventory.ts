@@ -18,7 +18,7 @@ import {
     getInventoryItemByShortId
 } from '../../db';
 import { inventoryRepository } from '../../db/repositories/InventoryRepository';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
 import { showEntityEvents } from '../utils/eventsViewer';
@@ -193,7 +193,7 @@ export const inventoryCommand: Command = {
                 await startInteractiveInventoryAdd(ctx);
                 return;
             }
-            const currentSession = guildSessions.get(ctx.guildId);
+            const currentSession = (await getActiveSession(ctx.guildId));
             inventoryRepository.addLoot(ctx.activeCampaign!.id, item, 1, currentSession, undefined, true);
 
             // L'evento "Oggetto acquisito" è narrativo valido
@@ -248,7 +248,7 @@ export const inventoryCommand: Command = {
                 return;
             }
 
-            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            const currentSession = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
             addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, note, "MANUAL_UPDATE", true);
             await ctx.message.reply(`📝 Nota aggiunta a **${item}**. Aggiornamento leggenda...`);
 
@@ -273,7 +273,7 @@ export const inventoryCommand: Command = {
 
             const removed = removeLoot(ctx.activeCampaign!.id, item, 1);
             if (removed) {
-                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                const currentSession = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
                 // L'evento "Oggetto utilizzato" è narrativo valido
                 addInventoryEvent(ctx.activeCampaign!.id, item, currentSession, "Oggetto utilizzato/rimosso.", "USE", true);
                 markInventoryDirtyForSync(ctx.activeCampaign!.id, item);

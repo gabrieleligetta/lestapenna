@@ -4,7 +4,7 @@
 
 import { Command, CommandContext } from '../types';
 import { getCampaignLocation, updateLocation } from '../../db';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 
 export const locationCommand: Command = {
     name: 'location',
@@ -27,7 +27,7 @@ export const locationCommand: Command = {
 
         // Setter
         const current = getCampaignLocation(ctx.guildId);
-        const sessionId = guildSessions.get(ctx.guildId); // Get active session if any
+        const sessionId = await getActiveSession(ctx.guildId); // Get active session if any
 
         let newMacro = current?.macro || null;
         let newMicro = null;

@@ -1,6 +1,5 @@
 import { Client, VoiceBasedChannel, TextChannel } from 'discord.js';
-import { guildSessions, autoLeaveTimers } from '../state/sessionState';
-import { audioQueue } from '../services/queue';
+import { getActiveSession, deleteActiveSession, decrementRecordingCount, autoLeaveTimers } from '../state/sessionState';
 import { disconnect } from '../services/recorder';
 import { getGuildConfig } from '../db';
 import { waitForCompletionAndSummarize } from '../publisher';
@@ -37,11 +36,11 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
         if (!autoLeaveTimers.has(guildId)) {
             console.log(`👻 Canale vuoto in ${guildId}. Timer 60s...`);
             const timer = setTimeout(async () => {
-                const sessionId = guildSessions.get(guildId);
+                const sessionId = await getActiveSession(guildId);
                 if (sessionId) {
                     await disconnect(guildId);
-                    guildSessions.delete(guildId);
-                    await audioQueue.resume();
+                    await deleteActiveSession(guildId);
+                    await decrementRecordingCount();
 
                     // Try to get command channel for notifications (optional)
                     const commandChannelId = getGuildConfig(guildId, 'cmd_channel_id');

@@ -17,7 +17,7 @@ import {
     db
 } from '../../db';
 import { ArtifactEntry, ArtifactStatus, ArtifactOwnerType } from '../../db/types';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
 // Helper for Bio Regen - usato SOLO per note narrative
@@ -115,7 +115,7 @@ export async function startInteractiveArtifactAdd(ctx: CommandContext) {
 
             const name = submission.fields.getTextInputValue('artifact_name');
             const description = submission.fields.getTextInputValue('artifact_description') || "";
-            const currentSession = guildSessions.get(ctx.guildId);
+            const currentSession = (await getActiveSession(ctx.guildId));
 
             artifactRepository.upsertArtifact(ctx.activeCampaign!.id, name, 'FUNCTIONAL', currentSession, { description }, true);
 
@@ -438,7 +438,7 @@ async function showArtifactTextModal(interaction: any, artifact: ArtifactEntry, 
 
         if (field === 'note') {
             await submission.deferReply();
-            const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            const session = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
             addArtifactEvent(ctx.activeCampaign!.id, artifact.name, session, newValue, "MANUAL_UPDATE", true);
             await regenerateArtifactBio(ctx.activeCampaign!.id, artifact.name);
             await submission.editReply(`📝 Nota aggiunta a **${artifact.name}**.`);

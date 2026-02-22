@@ -1,9 +1,8 @@
 import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { disconnect } from '../../services/recorder';
-import { audioQueue } from '../../services/queue';
 import { waitForCompletionAndSummarize } from '../../publisher';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession, deleteActiveSession, decrementRecordingCount } from '../../state/sessionState';
 
 export const stopCommand: Command = {
     name: 'stop',
@@ -12,7 +11,7 @@ export const stopCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const { message, client } = ctx;
-        const sessionId = guildSessions.get(message.guild!.id);
+        const sessionId = await getActiveSession(message.guild!.id);
 
         if (!sessionId) {
             // Disconnect anyway if requested, just to be safe
@@ -23,7 +22,7 @@ export const stopCommand: Command = {
 
         // 1. Disconnessione e chiusura file
         await disconnect(message.guild!.id);
-        guildSessions.delete(message.guild!.id);
+        await deleteActiveSession(message.guild!.id);
 
         const stopMsg = `🛑 Sessione **${sessionId}** terminata. Lo Scriba sta trascrivendo...`;
         if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {
@@ -32,9 +31,9 @@ export const stopCommand: Command = {
             await message.reply(stopMsg);
         }
 
-        // 2. Ripresa coda
-        await audioQueue.resume();
-        console.log(`[Flow] Coda RIPRESA. I worker stanno elaborando i file accumulati...`);
+        // 2. Ripresa coda (per-session: decrementa contatore, resume se nessuno registra)
+        await decrementRecordingCount();
+        console.log(`[Flow] Contatore recording decrementato. I worker elaboreranno i file accumulati...`);
 
         // 3. Monitoraggio
         await waitForCompletionAndSummarize(client, sessionId, message.channel as TextChannel);

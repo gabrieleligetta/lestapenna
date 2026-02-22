@@ -4,7 +4,7 @@
 
 import { Command, CommandContext } from '../types';
 import { getSessionEncounteredNPCs } from '../../db';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 
 export const presenzeCommand: Command = {
@@ -23,7 +23,7 @@ export const presenzeCommand: Command = {
             targetSessionId = extractSessionId(argsStr);
             sessionLabel = `sessione \`${targetSessionId}\``;
         } else {
-            targetSessionId = guildSessions.get(ctx.guildId);
+            targetSessionId = await getActiveSession(ctx.guildId);
             sessionLabel = 'questa sessione';
             if (!targetSessionId) {
                 await ctx.message.reply("⚠️ Nessuna sessione attiva. Specifica un ID: `$presenze session_xxxxx`");

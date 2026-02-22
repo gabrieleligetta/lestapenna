@@ -41,12 +41,18 @@ RUN apt-get update && apt-get install -y \
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
+# Installiamo Litestream (ARM64)
+RUN curl -L https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-arm64.tar.gz -o /tmp/litestream.tar.gz && \
+    tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz && \
+    rm /tmp/litestream.tar.gz
+
 ENV NODE_ENV=production
 
-# Copia App Node
+# Copia App Node & Config
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+COPY litestream.yml /etc/litestream.yml
 
 # === WHISPER PERSISTENCE ===
 # Whisper viene salvato in due posti:

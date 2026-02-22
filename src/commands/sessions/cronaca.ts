@@ -10,7 +10,7 @@ import {
     setSessionNumber,
     db
 } from '../../db';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import {
     ActionRowBuilder,
     ButtonBuilder,
@@ -38,7 +38,7 @@ export const cronacaCommand: Command = {
 async function showSessionDashboard(ctx: CommandContext, interactionToUpdate?: any) {
     const { message, activeCampaign, guildId } = ctx;
     const userId = message.author.id;
-    const activeSessionId = guildSessions.get(guildId!);
+    const activeSessionId = await getActiveSession(guildId!);
 
     if (activeSessionId) {
         // ACTIVE SESSION VIEW

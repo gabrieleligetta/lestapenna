@@ -4,7 +4,7 @@ import { questCommand } from './commands/inventory/quest';
 import { bestiaryCommand } from './commands/inventory/bestiary';
 import { inventoryCommand } from './commands/inventory/inventory';
 import { generateBio } from './bard/bio';
-import { guildSessions } from './state/sessionState';
+import { setActiveSession } from './state/sessionState';
 
 // Mock Metadata Client (Stub to avoid API calls or allow them if configured?)
 // We rely on actual calls if credentials exist, or failure if not.
@@ -25,7 +25,7 @@ async function runTest() {
     // 1. Setup
     try {
         db.prepare("INSERT OR IGNORE INTO campaigns (id, guild_id, name) VALUES (1, 'test_guild', 'Test Campaign')").run();
-        guildSessions.set('test_guild', 'test_session_1');
+        await setActiveSession('test_guild', 'test_session_1');
     } catch (e) { console.error("Setup error", e); }
 
     // 2. QUEST TEST

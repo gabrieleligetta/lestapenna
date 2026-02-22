@@ -16,7 +16,7 @@ import {
     db
 } from '../../db';
 import { BestiaryEntry } from '../../db/types';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
 // Helper for Bio Regen - usato SOLO per note narrative
@@ -316,7 +316,7 @@ async function showBestiaryTextModal(interaction: any, monster: BestiaryEntry, f
 
         if (field === 'note') {
             await submission.deferReply();
-            const session = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            const session = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
             bestiaryRepository.addBestiaryEvent(ctx.activeCampaign!.id, monster.name, session, newValue, "MANUAL_UPDATE", true);
             await regenerateMonsterBio(ctx.activeCampaign!.id, monster.name);
             await submission.editReply(`📝 Nota aggiunta a **${monster.name}**.`);

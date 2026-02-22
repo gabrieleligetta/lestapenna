@@ -36,3 +36,8 @@ output "ssh_connection" {
   description = "Comando SSH per connettersi al server"
   value       = "ssh ubuntu@${oci_core_instance.dnd_bot_server.public_ip}"
 }
+
+output "bucket_db_backup_name" {
+  description = "Nome del bucket DB Backup"
+  value       = oci_objectstorage_bucket.db_backup.name
+}

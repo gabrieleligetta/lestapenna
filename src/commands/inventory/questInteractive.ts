@@ -21,7 +21,7 @@ import {
     db
 } from '../../db';
 import { Quest, QuestStatus } from '../../db/types';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 
 // Helper for Bio Regen - usato SOLO per note narrative, non per cambio stato
@@ -124,7 +124,7 @@ export async function startInteractiveQuestAdd(ctx: CommandContext) {
 
             const title = submission.fields.getTextInputValue('quest_title');
             const description = submission.fields.getTextInputValue('quest_description') || "";
-            const currentSession = guildSessions.get(ctx.guildId);
+            const currentSession = (await getActiveSession(ctx.guildId));
 
             addQuest(ctx.activeCampaign!.id, title, currentSession, description, QuestStatus.OPEN, 'MAJOR', true);
             if (currentSession) {
@@ -462,7 +462,7 @@ async function showQuestTextModal(interaction: any, quest: Quest, field: string,
 
         if (field === 'note') {
             await submission.deferReply(); // Heavy AI stuff coming
-            const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+            const currentSession = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
             addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, newValue, "PROGRESS", true);
             await regenerateQuestBio(ctx.activeCampaign!.id, quest.title, quest.status);
             await submission.editReply(`📝 Nota aggiunta a **${quest.title}**.`);

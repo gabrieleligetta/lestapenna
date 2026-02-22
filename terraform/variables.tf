@@ -117,3 +117,9 @@ variable "bucket_test_name" {
   type        = string
   default     = "lestapenna-recordings-test"
 }
+
+variable "bucket_db_backup_name" {
+  description = "Nome del bucket Object Storage per i backup Litestream SQLite"
+  type        = string
+  default     = "lestapenna-db-backup"
+}

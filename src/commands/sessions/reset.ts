@@ -73,7 +73,7 @@ export const resetCommand: Command = {
             });
         }
 
-        await audioQueue.resume();
+        // La coda non va messa in resume qui — il contatore di registrazione gestisce la pausa/resume
 
         let statusMsg = `✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda.`;
         if (restoredCount > 0) {

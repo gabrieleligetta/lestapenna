@@ -1,6 +1,6 @@
 import { Command, CommandContext } from '../types';
 import { isRecordingPaused, pauseRecording, resumeRecording } from '../../services/recorder';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 
 export const pauseCommand: Command = {
     name: 'pause',
@@ -11,7 +11,7 @@ export const pauseCommand: Command = {
         const { message } = ctx;
         const commandName = message.content.slice(1).split(' ')[0].toLowerCase();
 
-        const sessionId = guildSessions.get(message.guild!.id);
+        const sessionId = await getActiveSession(message.guild!.id);
         if (!sessionId) {
             await message.reply("Nessuna sessione attiva.");
             return;

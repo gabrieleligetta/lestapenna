@@ -26,12 +26,11 @@ import {
     getGuildConfig
 } from '../../db';
 import { monitor } from '../../monitor';
-import { audioQueue } from '../../services/queue';
 import { connectToChannel } from '../../services/recorder';
 import { v4 as uuidv4 } from 'uuid';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 import { checkAutoLeave } from '../../bootstrap/voiceState';
-import { guildSessions } from '../../state/sessionState';
+import { setActiveSession, incrementRecordingCount } from '../../state/sessionState';
 import { ensureTestEnvironment } from './testEnv';
 import { startWorldConfigurationFlow } from '../utils/worldConfig';
 import { startInteractiveLocationSelection } from './listenInteractive';
@@ -159,7 +158,7 @@ export const listenCommand: Command = {
                 );
             }
 
-            guildSessions.set(message.guild!.id, sessionId);
+            await setActiveSession(message.guild!.id, sessionId);
             createSession(sessionId, message.guild!.id, ctx.activeCampaign!.id);
 
             // 📍 Set session phase to RECORDING
@@ -167,8 +166,8 @@ export const listenCommand: Command = {
 
             monitor.startSession(sessionId);
 
-            await audioQueue.pause();
-            console.log(`[Flow] Coda in PAUSA. Inizio accumulo file per sessione ${sessionId}`);
+            await incrementRecordingCount();
+            console.log(`[Flow] Contatore recording incrementato per sessione ${sessionId}`);
 
             await connectToChannel(voiceChannel, sessionId);
             if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {

@@ -24,7 +24,7 @@ import {
 } from '../../db';
 import { QuestStatus, Quest } from '../../db/types';
 import { questRepository } from '../../db/repositories/QuestRepository';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { isSessionId, extractSessionId } from '../../utils/sessionId';
 import { generateBio } from '../../bard/bio';
 import { showEntityEvents } from '../utils/eventsViewer';
@@ -231,7 +231,7 @@ export const questCommand: Command = {
                 await startInteractiveQuestAdd(ctx);
                 return;
             }
-            const currentSession = guildSessions.get(ctx.guildId);
+            const currentSession = (await getActiveSession(ctx.guildId));
             addQuest(ctx.activeCampaign!.id, title, currentSession, undefined, QuestStatus.OPEN, 'MAJOR', true);
 
             // Add initial history event
@@ -324,7 +324,7 @@ export const questCommand: Command = {
             // Case A: Narrative Update
             if (remainingArgs.trim().startsWith('|')) {
                 const note = remainingArgs.replace('|', '').trim();
-                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                const currentSession = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
                 addQuestEvent(ctx.activeCampaign!.id, quest.title, currentSession, note, "PROGRESS", true);
 
                 await ctx.message.reply(`📝 Nota aggiunta a **${quest.title}**. Rigenerazione diario...`);

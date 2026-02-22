@@ -23,9 +23,14 @@ services:
       - UV_THREADPOOL_SIZE=32
       # 🇮🇹 Modello Whisper: true = distil-it-v0.2 (530MB, italiano), false = large-v3 (3GB)
       - WHISPER_DISTIL_IT=true
+      # 🆕 LITESTREAM SECRETS (passati dal .env copiato da GitHub Actions)
+      - OCI_ENDPOINT=${OCI_ENDPOINT}
+      - OCI_ACCESS_KEY_ID=${OCI_ACCESS_KEY_ID}
+      - OCI_SECRET_ACCESS_KEY=${OCI_SECRET_ACCESS_KEY}
 
     # 🔧 FLAG GC ESPLICITI: Passati direttamente al comando di avvio
-    command: node --optimize_for_size --gc_interval=100 dist/index.js
+    # 🆕 LITESTREAM WRAPPER: Esegue la replica DB in background in prod
+    command: litestream replicate -exec "node --optimize_for_size --gc_interval=100 dist/index.js"
 
     deploy:
       resources:

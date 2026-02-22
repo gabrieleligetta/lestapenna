@@ -8,7 +8,7 @@ import {
     bestiaryRepository,
     db
 } from '../../db';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { generateBio } from '../../bard/bio';
 import { showEntityEvents } from '../utils/eventsViewer';
 import {
@@ -230,7 +230,7 @@ export const bestiaryCommand: Command = {
             // ... rest of logic ...
             if (remainingArgs.trim().startsWith('|')) {
                 const note = remainingArgs.replace('|', '').trim();
-                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                const currentSession = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
                 bestiaryRepository.addBestiaryEvent(ctx.activeCampaign!.id, monster.name, currentSession, note, "MANUAL_UPDATE", true);
 
                 await ctx.message.reply(`📝 Nota aggiunta a **${monster.name}**. Aggiornamento dossier...`);

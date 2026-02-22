@@ -1,0 +1,17 @@
+# litestream.yml
+# Configurazione per la replica in tempo reale del database SQLite.
+# Questo file viene utilizzato solo nell'ambiente di produzione.
+
+dbs:
+  - path: /app/data/dnd_bot.db
+    replicas:
+      # S3/Oracle Cloud Storage
+      - type: s3
+        # Oracle Cloud S3-compatible endpoint format:
+        # https://<namespace>.compat.objectstorage.<region>.oraclecloud.com
+        endpoint: ${OCI_ENDPOINT}
+        bucket: lestapenna-db-backup
+        path: dnd_bot_replica
+        access-key-id: ${OCI_ACCESS_KEY_ID}
+        secret-access-key: ${OCI_SECRET_ACCESS_KEY}
+        region: auto # S3-compatible ignorano questo ma è richiesto dal parser

@@ -16,7 +16,7 @@ import {
     upsertArtifact
 } from '../../db';
 import { ArtifactEntry, ArtifactStatus } from '../../db/types';
-import { guildSessions } from '../../state/sessionState';
+import { getActiveSession } from '../../state/sessionState';
 import { showEntityEvents } from '../utils/eventsViewer';
 import { startInteractiveArtifactUpdate, startInteractiveArtifactAdd, startInteractiveArtifactDelete } from './artifactInteractive';
 import { startInteractiveMerge, MergeConfig } from '../utils/mergeInteractive';
@@ -224,7 +224,7 @@ export const artifactCommand: Command = {
             // Case A: Narrative Update
             if (remainingArgs.trim().startsWith('|')) {
                 const note = remainingArgs.replace('|', '').trim();
-                const currentSession = guildSessions.get(ctx.guildId) || 'UNKNOWN_SESSION';
+                const currentSession = (await getActiveSession(ctx.guildId)) || 'UNKNOWN_SESSION';
                 addArtifactEvent(ctx.activeCampaign!.id, artifact.name, currentSession, note, "MANUAL_UPDATE", true);
 
                 await ctx.message.reply(`📝 Nota aggiunta a **${artifact.name}**.`);

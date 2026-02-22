@@ -26,3 +26,13 @@ resource "oci_objectstorage_bucket" "recordings_test" {
   storage_tier   = "Standard"
   versioning     = "Disabled"
 }
+
+# --- Bucket Litestream DB Backup ---
+resource "oci_objectstorage_bucket" "db_backup" {
+  compartment_id = var.compartment_ocid
+  namespace      = data.oci_objectstorage_namespace.ns.namespace
+  name           = var.bucket_db_backup_name
+  access_type    = "NoPublicAccess"
+  storage_tier   = "Standard"
+  versioning     = "Disabled"
+}

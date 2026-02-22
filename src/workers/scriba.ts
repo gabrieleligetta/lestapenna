@@ -60,11 +60,16 @@ export async function notifyRemoteModelUnload(): Promise<void> {
 }
 
 export async function unloadTranscriptionModels(): Promise<void> {
+    const tasks: Promise<void>[] = [];
+
     if (REMOTE_WHISPER_URL) {
-        await notifyRemoteModelUnload();
-    } else {
-        await unloadLocalModel();
+        tasks.push(notifyRemoteModelUnload());
     }
+
+    // Unload local AS WELL to ensure we are not holding memory anywhere
+    tasks.push(unloadLocalModel());
+
+    await Promise.allSettled(tasks);
 }
 
 async function transcribeWithFallback(

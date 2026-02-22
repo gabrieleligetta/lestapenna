@@ -54,10 +54,40 @@ export function normalizeLootList(list: any[]): Array<{ name: string; quantity?:
  * Parsing JSON sicuro che non crasha
  */
 export function safeJsonParse(jsonString: string): any | null {
+    if (!jsonString) return null;
+
     try {
+        // Fallback rapido per JSON pulito
         return JSON.parse(jsonString);
     } catch (e) {
-        return null;
+        // Se fallisce, tenta l'estrazione intelligente
+        try {
+            // 1. Rimuovi code block markdown (es. ```json ... ```)
+            let cleanedStr = jsonString.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1');
+
+            // 2. Trova il primo '{' e l'ultimo '}'
+            const firstBrace = cleanedStr.indexOf('{');
+            const lastBrace = cleanedStr.lastIndexOf('}');
+
+            // Prova anche con array `[` e `]`
+            const firstBracket = cleanedStr.indexOf('[');
+            const lastBracket = cleanedStr.lastIndexOf(']');
+
+            if (firstBrace !== -1 && lastBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+                // E' probabilmente un oggetto
+                const jsonContent = cleanedStr.substring(firstBrace, lastBrace + 1);
+                return JSON.parse(jsonContent);
+            } else if (firstBracket !== -1 && lastBracket !== -1) {
+                // E' probabilmente un array
+                const jsonContent = cleanedStr.substring(firstBracket, lastBracket + 1);
+                return JSON.parse(jsonContent);
+            }
+
+            return null;
+        } catch (innerError) {
+            console.error("[Bardo] ⚠️ Errore critico nel parsing JSON di emergenza:", innerError);
+            return null;
+        }
     }
 }
 

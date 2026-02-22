@@ -32,13 +32,13 @@ interface AIConfig {
 
     // Granular Per-Phase Config
     phases: {
-        transcription: { provider: 'openai' | 'ollama', model: string };
-        metadata: { provider: 'openai' | 'ollama', model: string };
-        map: { provider: 'openai' | 'ollama', model: string };
-        summary: { provider: 'openai' | 'ollama', model: string };
-        analyst: { provider: 'openai' | 'ollama', model: string };
-        chat: { provider: 'openai' | 'ollama', model: string };
-        narrativeFilter: { provider: 'openai' | 'ollama', model: string };
+        transcription: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+        metadata: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+        map: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+        summary: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+        analyst: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+        chat: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+        narrativeFilter: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
     };
 }
 
@@ -119,6 +119,16 @@ const getPhaseModel = (phaseKey: string, openAiFallback: string): string => {
     return val || openAiFallback;
 };
 
+const getOllamaPhaseModel = (phaseKey: string, fallback: string): string => {
+    const val = (process.env[`OLLAMA_MODEL_${phaseKey.toUpperCase()}`] || '').split('#')[0].trim();
+    return val || fallback;
+};
+
+const getOllamaLocalPhaseModel = (phaseKey: string, fallback: string): string => {
+    const val = (process.env[`OLLAMA_LOCAL_MODEL_${phaseKey.toUpperCase()}`] || '').split('#')[0].trim();
+    return val || fallback;
+};
+
 const globalAiProvider = (() => {
     const p = (process.env['AI_PROVIDER'] || '').split('#')[0].trim().toLowerCase();
     return p === 'ollama' ? 'ollama' : 'openai';
@@ -169,31 +179,45 @@ export const config = {
         phases: {
             transcription: {
                 provider: getPhaseProvider('transcription'),
-                model: getPhaseModel('transcription', 'gpt-5-mini')
+                model: getPhaseModel('transcription', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('transcription', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('transcription', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             },
             metadata: {
                 provider: getPhaseProvider('metadata'),
-                model: getPhaseModel('metadata', 'gpt-5-mini')
+                model: getPhaseModel('metadata', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('metadata', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('metadata', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             },
             map: {
                 provider: getPhaseProvider('map'),
-                model: getPhaseModel('map', 'gpt-5-mini')
+                model: getPhaseModel('map', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('map', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('map', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             },
             summary: {
                 provider: getPhaseProvider('summary'),
-                model: getPhaseModel('summary', 'gpt-5-mini')
+                model: getPhaseModel('summary', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('summary', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('summary', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             },
             analyst: {
                 provider: getPhaseProvider('analyst', 'metadata'),
-                model: getPhaseModel('analyst', 'gpt-5-mini')
+                model: getPhaseModel('analyst', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('analyst', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('analyst', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             },
             chat: {
                 provider: getPhaseProvider('chat'),
-                model: getPhaseModel('chat', 'gpt-5-mini')
+                model: getPhaseModel('chat', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('chat', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('chat', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             },
             narrativeFilter: {
                 provider: getPhaseProvider('narrative_filter'),
-                model: getPhaseModel('narrative_filter', 'gpt-5-mini')
+                model: getPhaseModel('narrative_filter', 'gpt-5-mini'),
+                ollamaModel: getOllamaPhaseModel('narrative_filter', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
+                ollamaLocalModel: getOllamaLocalPhaseModel('narrative_filter', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
             }
         }
     } as AIConfig,

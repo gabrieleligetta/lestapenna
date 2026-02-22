@@ -1,9 +1,11 @@
 import { Command, CommandContext } from '../types';
+import { TextChannel } from 'discord.js';
 import { resetSessionData, updateRecordingStatus } from '../../db';
 import { audioQueue, removeSessionJobs } from '../../services/queue';
 import { monitor } from '../../monitor';
 import { downloadFromOracle, uploadToOracle } from '../../services/backup';
 import { purgeSessionData } from '../../services/janitor';
+import { waitForCompletionAndSummarize } from '../../publisher';
 import * as fs from 'fs';
 
 export const resetCommand: Command = {
@@ -75,10 +77,20 @@ export const resetCommand: Command = {
 
         // La coda non va messa in resume qui — il contatore di registrazione gestisce la pausa/resume
 
-        let statusMsg = `✅ **Reset Completato**. ${filesToProcess.length} file sono stati rimessi in coda.`;
+        let statusMsg = `✅ **Reset avviato**. ${filesToProcess.length} file sono stati rimessi in coda.`;
         if (restoredCount > 0) {
             statusMsg += `\n📦 ${restoredCount} file mancanti sono stati ripristinati dal Cloud.`;
         }
         await message.reply(statusMsg);
+
+        // 🟢 NOVITÀ: Attendi che la coda audio e correzione si svuoti, poi fai il summary
+        try {
+            const channel = message.channel as TextChannel;
+            await waitForCompletionAndSummarize(ctx.client, targetSessionId, channel);
+        } catch (e: any) {
+            console.error(`[Reset] Errore in waitForCompletionAndSummarize:`, e);
+            const channel = message.channel as TextChannel;
+            await channel.send(`❌ Errore post-reset: ${e.message}`);
+        }
     }
 };

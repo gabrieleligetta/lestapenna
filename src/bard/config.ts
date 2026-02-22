@@ -43,8 +43,10 @@ async function checkOllamaAlive(baseUrl: string): Promise<boolean> {
 
 export async function getDynamicProvider(
     configuredProvider: 'ollama' | 'openai',
-    configuredModel: string,
-    openaiFallbackModel: string
+    openaiModel: string,
+    openaiFallbackModel: string,
+    ollamaModel: string,
+    ollamaLocalModel: string
 ): Promise<{ client: OpenAI, model: string, provider: 'ollama' | 'openai' }> {
 
     // CASO 1: L'utente ha chiesto esplicitamente OpenAI nell'.env
@@ -56,7 +58,7 @@ export async function getDynamicProvider(
                 project: config.ai.openAi.projectId,
                 timeout: 1800 * 1000,
             }),
-            model: configuredModel,
+            model: openaiModel,
             provider: 'openai'
         };
     }
@@ -75,7 +77,7 @@ export async function getDynamicProvider(
                 apiKey: 'ollama',
                 timeout: 1800 * 1000,
             }),
-            model: configuredModel,
+            model: ollamaModel,
             provider: 'ollama'
         };
     }
@@ -92,8 +94,8 @@ export async function getDynamicProvider(
                     apiKey: 'ollama',
                     timeout: 1800 * 1000,
                 }),
-                // Quando cadiamo sul locale cloud, dovremmo usare il modello locale configurato
-                model: config.ai.ollama.localModel,
+                // Quando cadiamo sul locale cloud, dovremmo usare il modello locale configurato per questa fase
+                model: ollamaLocalModel,
                 provider: 'ollama'
             };
         }
@@ -130,13 +132,13 @@ export const NARRATIVE_FILTER_PROVIDER = config.ai.phases.narrativeFilter.provid
 // MODEL CONFIGURATION (Granular Constants from ENV)
 // ============================================
 
-export const TRANSCRIPTION_MODEL = TRANSCRIPTION_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.transcription.model;
-export const METADATA_MODEL = METADATA_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.metadata.model;
-export const MAP_MODEL = MAP_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.map.model;
-export const SUMMARY_MODEL = SUMMARY_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.summary.model;
-export const ANALYST_MODEL = ANALYST_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.analyst.model;
-export const CHAT_MODEL = CHAT_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.chat.model;
-export const NARRATIVE_FILTER_MODEL = NARRATIVE_FILTER_PROVIDER === 'ollama' ? config.ai.ollama.model : config.ai.phases.narrativeFilter.model;
+export const TRANSCRIPTION_MODEL = TRANSCRIPTION_PROVIDER === 'ollama' ? config.ai.phases.transcription.ollamaModel : config.ai.phases.transcription.model;
+export const METADATA_MODEL = METADATA_PROVIDER === 'ollama' ? config.ai.phases.metadata.ollamaModel : config.ai.phases.metadata.model;
+export const MAP_MODEL = MAP_PROVIDER === 'ollama' ? config.ai.phases.map.ollamaModel : config.ai.phases.map.model;
+export const SUMMARY_MODEL = SUMMARY_PROVIDER === 'ollama' ? config.ai.phases.summary.ollamaModel : config.ai.phases.summary.model;
+export const ANALYST_MODEL = ANALYST_PROVIDER === 'ollama' ? config.ai.phases.analyst.ollamaModel : config.ai.phases.analyst.model;
+export const CHAT_MODEL = CHAT_PROVIDER === 'ollama' ? config.ai.phases.chat.ollamaModel : config.ai.phases.chat.model;
+export const NARRATIVE_FILTER_MODEL = NARRATIVE_FILTER_PROVIDER === 'ollama' ? config.ai.phases.narrativeFilter.ollamaModel : config.ai.phases.narrativeFilter.model;
 
 export const EMBEDDING_MODEL_OPENAI = 'text-embedding-3-small';
 export const EMBEDDING_MODEL_OLLAMA = 'nomic-embed-text';
@@ -147,13 +149,13 @@ export const EMBEDDING_MODEL_OLLAMA = 'nomic-embed-text';
 // esportiamo funzioni che risolvono dinamicamente il provider e il client sano.
 // ============================================
 
-export const getTranscriptionClient = () => getDynamicProvider(TRANSCRIPTION_PROVIDER, TRANSCRIPTION_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
-export const getMetadataClient = () => getDynamicProvider(METADATA_PROVIDER, METADATA_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
-export const getMapClient = () => getDynamicProvider(MAP_PROVIDER, MAP_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
-export const getSummaryClient = () => getDynamicProvider(SUMMARY_PROVIDER, SUMMARY_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
-export const getAnalystClient = () => getDynamicProvider(ANALYST_PROVIDER, ANALYST_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
-export const getChatClient = () => getDynamicProvider(CHAT_PROVIDER, CHAT_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
-export const getNarrativeFilterClient = () => getDynamicProvider(NARRATIVE_FILTER_PROVIDER, NARRATIVE_FILTER_MODEL, config.ai.openAi.fallbackModel || 'gpt-4o-mini');
+export const getTranscriptionClient = () => getDynamicProvider(TRANSCRIPTION_PROVIDER, config.ai.phases.transcription.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.transcription.ollamaModel, config.ai.phases.transcription.ollamaLocalModel);
+export const getMetadataClient = () => getDynamicProvider(METADATA_PROVIDER, config.ai.phases.metadata.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.metadata.ollamaModel, config.ai.phases.metadata.ollamaLocalModel);
+export const getMapClient = () => getDynamicProvider(MAP_PROVIDER, config.ai.phases.map.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.map.ollamaModel, config.ai.phases.map.ollamaLocalModel);
+export const getSummaryClient = () => getDynamicProvider(SUMMARY_PROVIDER, config.ai.phases.summary.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.summary.ollamaModel, config.ai.phases.summary.ollamaLocalModel);
+export const getAnalystClient = () => getDynamicProvider(ANALYST_PROVIDER, config.ai.phases.analyst.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.analyst.ollamaModel, config.ai.phases.analyst.ollamaLocalModel);
+export const getChatClient = () => getDynamicProvider(CHAT_PROVIDER, config.ai.phases.chat.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.chat.ollamaModel, config.ai.phases.chat.ollamaLocalModel);
+export const getNarrativeFilterClient = () => getDynamicProvider(NARRATIVE_FILTER_PROVIDER, config.ai.phases.narrativeFilter.model, config.ai.openAi.fallbackModel || 'gpt-4o-mini', config.ai.phases.narrativeFilter.ollamaModel, config.ai.phases.narrativeFilter.ollamaLocalModel);
 
 // I client di embedding sono generalmente gestiti separatamente perché usano dimensioni diverse, 
 // ma li dichiariamo statici per semplicità poichè il RAG ne ha bisogno.
@@ -222,16 +224,25 @@ async function checkRemoteModelAvailable(): Promise<void> {
     }
 }
 
+const formatPhaseLog = (prov: string, oaiModel: string, ollamaMod: string, ollamaLocalMod: string) => {
+    if (prov === 'ollama') {
+        const remote = ollamaMod !== config.ai.ollama.model ? `[${ollamaMod}]` : ollamaMod;
+        const local = ollamaLocalMod !== config.ai.ollama.localModel ? `(loc: ${ollamaLocalMod})` : `(loc: ${ollamaLocalMod})`;
+        return `${remote} ${local}`.padEnd(40);
+    }
+    return oaiModel.padEnd(40);
+}
+
 console.log('\n🎭 BARDO AI - CONFIG GRANULARE');
-console.log(`Correzione:  ${TRANSCRIPTION_PROVIDER.padEnd(8)} → ${TRANSCRIPTION_MODEL.padEnd(20)}`);
-console.log(`Metadati:    ${METADATA_PROVIDER.padEnd(8)} → ${METADATA_MODEL.padEnd(20)}`);
-console.log(`Map:         ${MAP_PROVIDER.padEnd(8)} → ${MAP_MODEL.padEnd(20)}`);
-console.log(`Analyst:     ${ANALYST_PROVIDER.padEnd(8)} → ${ANALYST_MODEL.padEnd(20)} (estrazione dati)`);
-console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${SUMMARY_MODEL.padEnd(20)} (narrazione)`);
-console.log(`Chat/RAG:    ${CHAT_PROVIDER.padEnd(8)} → ${CHAT_MODEL.padEnd(20)}`);
-console.log(`NarrFilter:  ${NARRATIVE_FILTER_PROVIDER.padEnd(8)} → ${NARRATIVE_FILTER_MODEL.padEnd(20)} (batch: ${NARRATIVE_BATCH_SIZE})`);
+console.log(`Correzione:  ${TRANSCRIPTION_PROVIDER.padEnd(8)} → ${formatPhaseLog(TRANSCRIPTION_PROVIDER, config.ai.phases.transcription.model, config.ai.phases.transcription.ollamaModel, config.ai.phases.transcription.ollamaLocalModel)}`);
+console.log(`Metadati:    ${METADATA_PROVIDER.padEnd(8)} → ${formatPhaseLog(METADATA_PROVIDER, config.ai.phases.metadata.model, config.ai.phases.metadata.ollamaModel, config.ai.phases.metadata.ollamaLocalModel)}`);
+console.log(`Map:         ${MAP_PROVIDER.padEnd(8)} → ${formatPhaseLog(MAP_PROVIDER, config.ai.phases.map.model, config.ai.phases.map.ollamaModel, config.ai.phases.map.ollamaLocalModel)}`);
+console.log(`Analyst:     ${ANALYST_PROVIDER.padEnd(8)} → ${formatPhaseLog(ANALYST_PROVIDER, config.ai.phases.analyst.model, config.ai.phases.analyst.ollamaModel, config.ai.phases.analyst.ollamaLocalModel)} (estrazione dati)`);
+console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${formatPhaseLog(SUMMARY_PROVIDER, config.ai.phases.summary.model, config.ai.phases.summary.ollamaModel, config.ai.phases.summary.ollamaLocalModel)} (narrazione)`);
+console.log(`Chat/RAG:    ${CHAT_PROVIDER.padEnd(8)} → ${formatPhaseLog(CHAT_PROVIDER, config.ai.phases.chat.model, config.ai.phases.chat.ollamaModel, config.ai.phases.chat.ollamaLocalModel)}`);
+console.log(`NarrFilter:  ${NARRATIVE_FILTER_PROVIDER.padEnd(8)} → ${formatPhaseLog(NARRATIVE_FILTER_PROVIDER, config.ai.phases.narrativeFilter.model, config.ai.phases.narrativeFilter.ollamaModel, config.ai.phases.narrativeFilter.ollamaLocalModel)} (batch: ${NARRATIVE_BATCH_SIZE})`);
 console.log(`Embeddings:  DOPPIO      → OpenAI (${EMBEDDING_MODEL_OPENAI}) + Ollama (${EMBEDDING_MODEL_OLLAMA})`);
-console.log(`Ollama:      Remoto → ${config.ai.ollama.model} | Locale → ${config.ai.ollama.localModel}`);
+console.log(`Ollama (Gen): Remoto → ${config.ai.ollama.model} | Locale → ${config.ai.ollama.localModel}`);
 
 // Check asincrono del modello remoto (non blocca il boot)
 checkRemoteModelAvailable();

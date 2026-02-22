@@ -25,6 +25,7 @@ services:
       - WHISPER_DISTIL_IT=true
       # 🆕 LITESTREAM SECRETS (passati dal .env copiato da GitHub Actions)
       - OCI_ENDPOINT=${OCI_ENDPOINT}
+      - OCI_REGION=${OCI_REGION}
       - OCI_ACCESS_KEY_ID=${OCI_ACCESS_KEY_ID}
       - OCI_SECRET_ACCESS_KEY=${OCI_SECRET_ACCESS_KEY}
 

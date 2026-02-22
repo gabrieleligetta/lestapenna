@@ -14,4 +14,4 @@ dbs:
         path: dnd_bot_replica
         access-key-id: ${OCI_ACCESS_KEY_ID}
         secret-access-key: ${OCI_SECRET_ACCESS_KEY}
-        region: ${OCI_REGION}
+        region: eu-milan-1

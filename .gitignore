@@ -27,3 +27,11 @@ data/*
 /oracle/expand_diskk.sh
 /old_reference/prompts/analyst_prompt.txt
 /old_reference/prompts/writer_prompt.txt
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
+terraform/crash.log

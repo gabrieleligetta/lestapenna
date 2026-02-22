@@ -1,0 +1,30 @@
+# ============================================================================
+# Copia questo file in terraform.tfvars e compila con i tuoi valori
+# ⚠️ NON committare terraform.tfvars — è gitignored
+# ============================================================================
+
+# --- Autenticazione OCI ---
+tenancy_ocid        = "ocid1.tenancy.oc1..aaaaaaaxxxxxxxxx"
+user_ocid           = "ocid1.user.oc1..aaaaaaaxxxxxxxxx"
+api_key_fingerprint = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+private_key_path    = "~/.oci/oci_api_key.pem"
+
+# --- Region e Compartment ---
+region           = "eu-milan-1"
+compartment_ocid = "ocid1.tenancy.oc1..aaaaaaaxxxxxxxxx"  # root tenancy se non usi compartment
+
+# --- Compute ---
+image_ocid     = "ocid1.image.oc1.eu-milan-1.aaaaaaaxxxxxxxxx"
+ssh_public_key = "ssh-rsa AAAA...your-key-here"
+
+# --- Defaults (decommentare solo per override) ---
+# instance_display_name = "DnD-Bot-Server"
+# instance_shape        = "VM.Standard.A1.Flex"
+# instance_ocpus        = 4
+# instance_memory_gb    = 24
+# boot_volume_size_gb   = 200
+# availability_domain   = "TWUu:EU-MILAN-1-AD-1"
+# vcn_cidr              = "10.0.0.0/16"
+# subnet_cidr           = "10.0.0.0/24"
+# bucket_name           = "lestapenna-recordings"
+# bucket_test_name      = "lestapenna-recordings-test"

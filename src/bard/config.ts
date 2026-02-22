@@ -81,7 +81,7 @@ export async function getDynamicProvider(
     }
 
     // Tenta il fallback locale (il container nel cloud) se il primary fallisce
-    const localFallbackUrl = 'http://host.docker.internal:11434/v1'; // Default locale
+    const localFallbackUrl = config.ai.ollama.localBaseUrl;
     if (primaryUrl !== localFallbackUrl) {
         const isLocalAlive = await checkOllamaAlive(localFallbackUrl);
         if (isLocalAlive) {
@@ -92,8 +92,8 @@ export async function getDynamicProvider(
                     apiKey: 'ollama',
                     timeout: 1800 * 1000,
                 }),
-                // Quando cadiamo sul locale cloud, dovremmo usare un modello leggero standard se il primario era un 14B
-                model: 'llama3.2', // Fallback model locale sicuro
+                // Quando cadiamo sul locale cloud, dovremmo usare il modello locale configurato
+                model: config.ai.ollama.localModel,
                 provider: 'ollama'
             };
         }
@@ -190,6 +190,38 @@ export const CHUNK_OVERLAP = MAP_PROVIDER === 'ollama' ? 1000 : 5000;
 // DEBUG LOG (Startup)
 // ============================================
 
+// ============================================
+// REMOTE MODEL CHECK (Startup)
+// ============================================
+
+async function checkRemoteModelAvailable(): Promise<void> {
+    const remoteUrl = config.ai.ollama.baseUrl.replace(/\/v1\/?$/, '');
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(`${remoteUrl}/api/tags`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!resp.ok) {
+            console.warn(`[Ollama] ⚠️ PC remoto ha risposto con status ${resp.status}`);
+            return;
+        }
+        const data = await resp.json() as { models?: Array<{ name: string }> };
+        const models = (data.models || []).map((m) => m.name);
+        const wanted = config.ai.ollama.model;
+        const found = models.some((m: string) =>
+            m === wanted || m.startsWith(wanted + ':')
+        );
+        if (found) {
+            console.log(`[Ollama] ✅ Modello "${wanted}" disponibile sul PC remoto`);
+        } else {
+            console.warn(`[Ollama] ⚠️ Modello "${wanted}" NON trovato sul PC remoto!`);
+            console.warn(`[Ollama]    Modelli disponibili: ${models.join(', ')}`);
+        }
+    } catch {
+        console.warn(`[Ollama] ⚠️ PC remoto non raggiungibile per check modello`);
+    }
+}
+
 console.log('\n🎭 BARDO AI - CONFIG GRANULARE');
 console.log(`Correzione:  ${TRANSCRIPTION_PROVIDER.padEnd(8)} → ${TRANSCRIPTION_MODEL.padEnd(20)}`);
 console.log(`Metadati:    ${METADATA_PROVIDER.padEnd(8)} → ${METADATA_MODEL.padEnd(20)}`);
@@ -199,3 +231,7 @@ console.log(`Summary:     ${SUMMARY_PROVIDER.padEnd(8)} → ${SUMMARY_MODEL.padE
 console.log(`Chat/RAG:    ${CHAT_PROVIDER.padEnd(8)} → ${CHAT_MODEL.padEnd(20)}`);
 console.log(`NarrFilter:  ${NARRATIVE_FILTER_PROVIDER.padEnd(8)} → ${NARRATIVE_FILTER_MODEL.padEnd(20)} (batch: ${NARRATIVE_BATCH_SIZE})`);
 console.log(`Embeddings:  DOPPIO      → OpenAI (${EMBEDDING_MODEL_OPENAI}) + Ollama (${EMBEDDING_MODEL_OLLAMA})`);
+console.log(`Ollama:      Remoto → ${config.ai.ollama.model} | Locale → ${config.ai.ollama.localModel}`);
+
+// Check asincrono del modello remoto (non blocca il boot)
+checkRemoteModelAvailable();

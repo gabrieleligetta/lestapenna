@@ -24,7 +24,9 @@ interface AIConfig {
     };
     ollama: {
         baseUrl: string;
+        localBaseUrl: string;
         model: string;
+        localModel: string;
     };
     embeddingProvider: 'openai' | 'ollama';
 
@@ -158,7 +160,9 @@ export const config = {
         },
         ollama: {
             baseUrl: getEnv('OLLAMA_BASE_URL', false, 'http://host.docker.internal:11434/v1'),
-            model: getEnv('OLLAMA_MODEL', false, 'llama3.2')
+            localBaseUrl: getEnv('OLLAMA_LOCAL_BASE_URL', false, 'http://host.docker.internal:11434/v1'),
+            model: getEnv('OLLAMA_MODEL', false, 'llama3.2'),
+            localModel: getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2')
         },
         embeddingProvider: getPhaseProvider('embedding'),
 

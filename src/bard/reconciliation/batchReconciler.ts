@@ -3,7 +3,7 @@
  * Replaces multiple individual AI confirmation calls with one batch call
  */
 
-import { metadataClient, METADATA_MODEL } from '../config';
+import { getMetadataClient } from '../config';
 import {
     EntityIndex,
     IndexedEntity,
@@ -217,8 +217,9 @@ async function batchAIConfirm(
     const prompt = buildBatchPrompt(cases, context);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [
                 { role: "system", content: "Sei un esperto di D&D. Rispondi SOLO con JSON valido." },
                 { role: "user", content: prompt }

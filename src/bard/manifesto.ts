@@ -12,7 +12,7 @@ import { artifactRepository } from '../db/repositories/ArtifactRepository';
 import { questRepository } from '../db/repositories/QuestRepository';
 import { campaignRepository } from '../db/repositories/CampaignRepository';
 import { characterRepository } from '../db/repositories/CharacterRepository';
-import { metadataClient, METADATA_MODEL, METADATA_PROVIDER } from './config';
+import { getMetadataClient } from './config';
 import { monitor } from '../monitor';
 
 // Cache in-memory per il manifesto (chiave: campaignId)
@@ -116,8 +116,9 @@ async function generateWorldManifesto(campaignId: number): Promise<string> {
         });
 
         // 3. Compressione AI (Archivista)
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model, provider } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [
                 { role: 'system', content: 'Sei un archivista esperto di campagne D&D. Compili manifesti operativi densi e informativi.' },
                 { role: 'user', content: ARCHIVISTA_PROMPT(campaign.name, contextData) }
@@ -133,8 +134,8 @@ async function generateWorldManifesto(campaignId: number): Promise<string> {
         if (response.usage) {
             monitor.logAIRequestWithCost(
                 'manifesto',
-                METADATA_PROVIDER,
-                METADATA_MODEL,
+                provider,
+                model,
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
                 0, // cached tokens

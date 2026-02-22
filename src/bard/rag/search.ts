@@ -17,9 +17,7 @@ import {
     EMBEDDING_MODEL_OPENAI,
     ollamaEmbedClient,
     openaiEmbedClient,
-    chatClient,
-    CHAT_MODEL,
-    CHAT_PROVIDER
+    getChatClient
 } from '../config';
 import { cosineSimilarity, withRetry } from '../helpers';
 import { RAG_QUERY_GENERATION_PROMPT, BARD_ATMOSPHERE_PROMPT } from '../prompts';
@@ -166,8 +164,9 @@ export async function generateSearchQueries(campaignId: number, userQuestion: st
 
     const startAI = Date.now();
     try {
-        const response = await chatClient.chat.completions.create({
-            model: CHAT_MODEL,
+        const { client, model, provider } = await getChatClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }],
             response_format: { type: "json_object" }
         });
@@ -175,12 +174,12 @@ export async function generateSearchQueries(campaignId: number, userQuestion: st
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
-        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
+        monitor.logAIRequestWithCost('chat', provider, model, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
         const parsed = JSON.parse(response.choices[0].message.content || "{}");
         return Array.isArray(parsed.queries) ? parsed.queries : [];
     } catch (e) {
-        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('chat', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         return [userQuestion];
     }
 }
@@ -243,19 +242,21 @@ export async function askBard(campaignId: number, question: string, history: { r
 
     const startAI = Date.now();
     try {
-        const response = await withRetry(() => chatClient.chat.completions.create({
-            model: CHAT_MODEL,
+        const { client, model, provider } = await getChatClient();
+        const response: any = await withRetry(() => client.chat.completions.create({
+            model: model,
             messages: messages as any
         }));
 
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
-        monitor.logAIRequestWithCost('chat', CHAT_PROVIDER, CHAT_MODEL, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
+        monitor.logAIRequestWithCost('chat', provider, model, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
         console.error("[Chat] Errore:", e);
+        monitor.logAIRequestWithCost('chat', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         return "La mia mente è annebbiata...";
     }
 }

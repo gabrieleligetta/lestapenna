@@ -34,18 +34,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
-    SUMMARY_MODEL,
-    SUMMARY_PROVIDER,
-    summaryClient,
-    METADATA_MODEL,
-    METADATA_PROVIDER,
-    metadataClient,
-    ANALYST_MODEL,
-    ANALYST_PROVIDER,
-    analystClient,
-    MAP_MODEL,
-    MAP_PROVIDER,
-    mapClient,
+    getSummaryClient,
+    getMetadataClient,
+    getAnalystClient,
+    getMapClient,
     EMBEDDING_BATCH_SIZE,
     MAX_CHUNK_SIZE,
     CHUNK_OVERLAP
@@ -204,8 +196,9 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
 
     const startAI = Date.now();
     try {
-        const response = await withRetry(() => mapClient.chat.completions.create({
-            model: MAP_MODEL,
+        const { client, model, provider } = await getMapClient();
+        const response: any = await withRetry(() => client.chat.completions.create({
+            model: model,
             messages: [
                 { role: "system", content: mapPrompt },
                 { role: "user", content: chunk }
@@ -215,7 +208,7 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('map', MAP_PROVIDER, MAP_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('map', provider, model, inputTokens, outputTokens, 0, latency, false);
 
         return {
             text: response.choices[0].message.content || "",
@@ -224,7 +217,7 @@ async function extractFactsFromChunk(chunk: string, index: number, total: number
         };
     } catch (err) {
         console.error(`[Map] ❌ Errore chunk ${index + 1}:`, err);
-        monitor.logAIRequestWithCost('map', MAP_PROVIDER, MAP_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('map', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         return { text: "", title: "", tokens: 0 };
     }
 }
@@ -270,8 +263,9 @@ async function identifyRelevantContext(
 
     const startAI = Date.now();
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model, provider } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [
                 { role: "system", content: "Sei un esperto di ricerca semantica. Rispondi SOLO con JSON." },
                 { role: "user", content: prompt }
@@ -282,7 +276,7 @@ async function identifyRelevantContext(
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('metadata', provider, model, inputTokens, outputTokens, 0, latency, false);
 
         const parsed = JSON.parse(response.choices[0].message.content || '{"queries":[]}');
         const queries = Array.isArray(parsed) ? parsed : (parsed.queries || parsed.list || []);
@@ -290,7 +284,7 @@ async function identifyRelevantContext(
         return queries.slice(0, 5);
     } catch (e) {
         console.error('[identifyRelevantContext] ❌ Errore generazione query:', e);
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('metadata', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         return [
             `Eventi recenti ${snapshot.location?.macro || 'campagna'}`,
             `Dialoghi NPC ${snapshot.presentNpcs?.slice(0, 2).join(' ') || ''}`
@@ -310,8 +304,10 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
 
     const startAI = Date.now();
     try {
+        const { client, model, provider } = await getAnalystClient();
+
         const options: any = {
-            model: SUMMARY_MODEL,
+            model: model,
             messages: [
                 { role: "system", content: `Sei un analista dati. Utilizza il seguente WORLD MANIFESTO come contesto globale della campagna:\n\n${manifesto}\n\nRispondi SOLO con JSON valido.` },
                 { role: "user", content: prompt }
@@ -319,15 +315,15 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
 
         };
 
-        if (SUMMARY_PROVIDER === 'openai') options.response_format = { type: "json_object" };
-        else if (SUMMARY_PROVIDER === 'ollama') options.format = 'json';
+        if (provider === 'openai') options.response_format = { type: "json_object" };
+        else if (provider === 'ollama') options.format = 'json';
 
-        const response = await summaryClient.chat.completions.create(options);
+        const response: any = await client.chat.completions.create(options);
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
-        const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
-        monitor.logAIRequestWithCost('analyst', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+        const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
+        monitor.logAIRequestWithCost('analyst', provider, model, inputTokens, outputTokens, cachedTokens, latency, false);
 
         // 🆕 Context Window Logging + Prompt Caching Stats
         const CONTEXT_LIMIT = 128000;
@@ -426,7 +422,7 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
 
     } catch (e: any) {
         console.error('[Analista] ❌ Errore estrazione dati:', e.message);
-        monitor.logAIRequestWithCost('analyst', ANALYST_PROVIDER, ANALYST_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('analyst', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         return {
             data: {
                 loot: [], loot_removed: [], quests: [], monsters: [],
@@ -470,7 +466,8 @@ export function prepareCleanText(sessionId: string): string | undefined {
 export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', narrativeText?: string, options: { skipAnalysis?: boolean, forceRegeneration?: boolean } = {}): Promise<SummaryResponse> {
     const startAI = Date.now();
     try {
-        console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${SUMMARY_MODEL}, Force: ${options.forceRegeneration})...`);
+        const { client, model, provider } = await getSummaryClient();
+        console.log(`[Bardo] 📚 Generazione Riassunto per sessione ${sessionId} (Model: ${model}, Force: ${options.forceRegeneration})...`);
 
         // 1. CHECK CACHE (If not forcing regeneration)
         if (!options.forceRegeneration) {
@@ -586,8 +583,9 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             try {
                 // 1. Eseguiamo lo Scout (con esclusione PG)
                 console.log(`[Bardo] 🕵️ Scout esclude PG: ${playerCharacterNames.join(', ') || 'nessuno'}`);
-                const scoutResponse = await metadataClient.chat.completions.create({
-                    model: METADATA_MODEL,
+                const { client, model, provider } = await getMetadataClient();
+                const scoutResponse = await client.chat.completions.create({
+                    model: model,
                     messages: [{ role: "user", content: SCOUT_PROMPT(fullDialogue, playerCharacterNames) }],
                     response_format: { type: "json_object" }
                 });
@@ -1058,33 +1056,35 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             saveDebugFile(sessionId, promptFileName, reducePrompt);
 
             const startAI = Date.now();
+            const { client, model, provider } = await getSummaryClient();
+
             const writerSystemContent = worldManifesto
                 ? `Sei un assistente D&D esperto. Usa il seguente WORLD MANIFESTO come contesto della campagna:\n\n${worldManifesto}\n\nRispondi SOLO con JSON valido.`
                 : "Sei un assistente D&D esperto. Rispondi SOLO con JSON valido.";
             const summaryOptions: any = {
-                model: SUMMARY_MODEL,
+                model: model,
                 messages: [
                     { role: "system", content: writerSystemContent },
                     { role: "user", content: reducePrompt }
                 ]
             };
 
-            if (SUMMARY_PROVIDER === 'openai') {
+            if (provider === 'openai') {
                 summaryOptions.response_format = { type: "json_object" };
                 summaryOptions.max_completion_tokens = 16000;
-            } else if (SUMMARY_PROVIDER === 'ollama') {
+            } else if (provider === 'ollama') {
                 summaryOptions.format = 'json';
                 summaryOptions.options = { num_ctx: 8192 };
             }
 
-            const response = await withRetry(() => summaryClient.chat.completions.create(summaryOptions));
+            const response: any = await withRetry(() => client.chat.completions.create(summaryOptions));
             const latency = Date.now() - startAI;
             const inputTokens = response.usage?.prompt_tokens || 0;
             const outputTokens = response.usage?.completion_tokens || 0;
-            const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+            const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
             accumulatedTokens += (response.usage?.total_tokens || 0);
 
-            monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+            monitor.logAIRequestWithCost('summary', provider, model, inputTokens, outputTokens, cachedTokens, latency, false);
 
             // 🆕 Context Window Logging + Prompt Caching Stats (Per il singolo atto)
             const CONTEXT_LIMIT = 128000;
@@ -1225,7 +1225,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
         };
     } catch (err: any) {
         console.error("[Bardo] ❌ Errore finale:", err);
-        monitor.logAIRequestWithCost('summary', SUMMARY_PROVIDER, SUMMARY_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('summary', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         throw err;
     }
 }

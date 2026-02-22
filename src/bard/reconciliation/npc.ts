@@ -3,7 +3,7 @@
  */
 
 import { getAllNpcs, npcRepository } from '../../db';
-import { metadataClient, METADATA_MODEL } from '../config';
+import { getMetadataClient } from '../config';
 import { levenshteinDistance, levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
 import {
@@ -46,8 +46,9 @@ async function aiConfirmSamePersonExtended(
     const prompt = AI_CONFIRM_SAME_PERSON_EXTENDED_PROMPT(newName, newDescription, candidateName, candidateDescription, ragContextText);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }],
             max_completion_tokens: 5
         });
@@ -66,8 +67,9 @@ export async function aiConfirmSamePerson(name1: string, name2: string, context:
     const prompt = AI_CONFIRM_SAME_PERSON_PROMPT(name1, name2, context);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }],
             max_completion_tokens: 5
         });
@@ -163,9 +165,9 @@ export async function reconcileNpcName(
         }
 
         if (dist === 1 && newNameClean.length >= 4 && existingNameClean.length >= 4) {
-             console.log(`[Reconcile] 🔤 Typo dist=1: "${newName}" ≈ "${existingName}"`);
-             candidates.push({ npc, similarity: 0.92, reason: `typo_dist_1` });
-             continue;
+            console.log(`[Reconcile] 🔤 Typo dist=1: "${newName}" ≈ "${existingName}"`);
+            candidates.push({ npc, similarity: 0.92, reason: `typo_dist_1` });
+            continue;
         }
 
         // 1. Clean Levenshtein
@@ -434,8 +436,9 @@ export async function smartMergeBios(targetName: string, bio1: string, bio2: str
     const prompt = SMART_MERGE_PROMPT(targetName, bio1, bio2);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }]
         });
         return response.choices[0].message.content || bio1 + "\n" + bio2;

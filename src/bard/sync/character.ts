@@ -9,11 +9,7 @@ import {
     getDirtyCharacters,
     getNewCharacterHistory
 } from '../../db';
-import {
-    metadataClient,
-    METADATA_MODEL,
-    METADATA_PROVIDER
-} from '../config';
+
 import { monitor } from '../../monitor';
 import { ingestGenericEvent } from '../rag';
 import { generateBio } from '../bio';

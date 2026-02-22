@@ -3,7 +3,7 @@
  * Handles Characters (PC), NPCs, and Locations (Atlas)
  */
 
-import { metadataClient, METADATA_MODEL, METADATA_PROVIDER } from './config';
+import { getMetadataClient } from './config';
 import { monitor } from '../monitor';
 import {
     UPDATE_CHARACTER_BIO_PROMPT,
@@ -189,8 +189,9 @@ export async function generateBio(
     // 4. Call LLM
     const startAI = Date.now();
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model, provider } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [
                 { role: "system", content: "Sei un esperto biografo e archivista fantasy. Rispondi in italiano. Sii conciso se necessario per non superare i limiti di spazio." },
                 { role: "user", content: prompt }
@@ -202,7 +203,7 @@ export async function generateBio(
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
 
-        monitor.logAIRequestWithCost('bio_gen', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, 0, latency, false);
+        monitor.logAIRequestWithCost('bio_gen', provider, model, inputTokens, outputTokens, 0, latency, false);
 
         const newDesc = response.choices[0].message.content?.trim() || ctx.currentDesc || "";
 
@@ -243,7 +244,8 @@ export async function generateBio(
 
     } catch (e) {
         console.error(`[BioGen] ❌ Errore generazione bio per ${ctx.name}:`, e);
-        monitor.logAIRequestWithCost('bio_gen', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        // Fallback static logging on failure since we might not have dynamic provider initialized
+        monitor.logAIRequestWithCost('bio_gen', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
         return ctx.currentDesc || "";
     }
 }
@@ -277,8 +279,9 @@ IMPORTANTE: Se presente "manual_guidance", usala come scheletro vincolante. Non 
 Restituisci SOLO un JSON valido formato: { "Nome Entità": "Nuova Descrizione" }.`;
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL, // Usa pure gpt-4o-mini o equivalente economico
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model, // Usa pure gpt-4o-mini o equivalente economico
             response_format: { type: "json_object" },
             messages: [
                 { role: "system", content: systemPrompt },

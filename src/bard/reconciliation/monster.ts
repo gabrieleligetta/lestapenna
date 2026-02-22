@@ -3,7 +3,7 @@
  */
 
 import { listAllMonsters } from '../../db';
-import { metadataClient, METADATA_MODEL } from '../config';
+import { getMetadataClient } from '../config';
 import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { AI_CONFIRM_SAME_MONSTER_PROMPT } from '../prompts';
 
@@ -14,8 +14,9 @@ async function aiConfirmSameMonster(name1: string, name2: string, context: strin
     const prompt = AI_CONFIRM_SAME_MONSTER_PROMPT(name1, name2, context);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }],
             max_completion_tokens: 5
         });

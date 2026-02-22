@@ -14,9 +14,7 @@
  */
 
 import {
-    narrativeFilterClient,
-    NARRATIVE_FILTER_MODEL,
-    NARRATIVE_FILTER_PROVIDER,
+    getNarrativeFilterClient,
     NARRATIVE_BATCH_SIZE
 } from '../../bard';
 import { monitor } from '../../monitor';
@@ -117,8 +115,9 @@ export async function normalizeToNarrative(
 
         const startAI = Date.now();
         try {
-            const response = await narrativeFilterClient.chat.completions.create({
-                model: NARRATIVE_FILTER_MODEL,
+            const { client, model, provider } = await getNarrativeFilterClient();
+            const response = await client.chat.completions.create({
+                model: model,
                 messages: [
                     {
                         role: "system",
@@ -136,8 +135,8 @@ export async function normalizeToNarrative(
 
             monitor.logAIRequestWithCost(
                 'narrative_filter',
-                NARRATIVE_FILTER_PROVIDER,
-                NARRATIVE_FILTER_MODEL,
+                provider,
+                model,
                 inputTokens,
                 outputTokens,
                 cachedTokens,
@@ -204,8 +203,8 @@ export async function normalizeToNarrative(
             console.error(`[NarrativeFilter] Errore batch ${batchNum + 1}:`, e.message);
             monitor.logAIRequestWithCost(
                 'narrative_filter',
-                NARRATIVE_FILTER_PROVIDER,
-                NARRATIVE_FILTER_MODEL,
+                'openai',
+                'gpt-4o-mini',
                 0, 0, 0,
                 Date.now() - startAI,
                 true

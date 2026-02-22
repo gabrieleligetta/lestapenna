@@ -3,7 +3,7 @@
  */
 
 import { listAllAtlasEntries } from '../../db';
-import { metadataClient, METADATA_MODEL } from '../config';
+import { getMetadataClient } from '../config';
 import { levenshteinSimilarity, containsSubstring, stripPrefix } from '../helpers';
 import { searchKnowledge } from '../rag';
 import { AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT, AI_CONFIRM_SAME_LOCATION_PROMPT } from '../prompts';
@@ -89,8 +89,9 @@ async function aiConfirmSameLocationExtended(
     const prompt = AI_CONFIRM_SAME_LOCATION_EXTENDED_PROMPT(newMacro, newMicro, newDescription, candidateMacro, candidateMicro, candidateDescription, ragContextText);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }],
             max_completion_tokens: 5
         });
@@ -113,8 +114,9 @@ export async function aiConfirmSameLocation(
     const prompt = AI_CONFIRM_SAME_LOCATION_PROMPT(loc1.macro, loc1.micro, loc2.macro, loc2.micro, context);
 
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [{ role: "user", content: prompt }],
             max_completion_tokens: 5
         });

@@ -3,7 +3,7 @@
  */
 
 import { ValidationBatchInput, ValidationBatchOutput } from './types';
-import { metadataClient, METADATA_PROVIDER, METADATA_MODEL } from './config';
+import { getMetadataClient } from './config';
 import { monitor } from '../monitor';
 import { getNpcHistory, getCharacterHistory, getOpenQuests, npcRepository, characterRepository, artifactRepository, inventoryRepository, questRepository, locationRepository } from '../db';
 import { QuestStatus } from '../db/types';
@@ -228,8 +228,9 @@ export async function validateBatch(
 
     const startAI = Date.now();
     try {
-        const response = await metadataClient.chat.completions.create({
-            model: METADATA_MODEL,
+        const { client, model, provider } = await getMetadataClient();
+        const response = await client.chat.completions.create({
+            model: model,
             messages: [
                 { role: "system", content: "Sei il Custode degli Archivi di una campagna D&D. Valida dati in batch. Rispondi SOLO con JSON valido in italiano." },
                 { role: "user", content: prompt }
@@ -242,7 +243,7 @@ export async function validateBatch(
         const outputTokens = response.usage?.completion_tokens || 0;
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
 
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, inputTokens, outputTokens, cachedTokens, latency, false);
+        monitor.logAIRequestWithCost('metadata', provider, model, inputTokens, outputTokens, cachedTokens, latency, false);
 
         console.log(`[Validator] Validazione completata in ${latency}ms (${inputTokens}+${outputTokens} tokens)`);
 
@@ -343,7 +344,7 @@ export async function validateBatch(
 
     } catch (e: any) {
         console.error('[Validator] Errore batch validation:', e);
-        monitor.logAIRequestWithCost('metadata', METADATA_PROVIDER, METADATA_MODEL, 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('metadata', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
 
         return {
             npc_events: { keep: input.npc_events || [], skip: [] },

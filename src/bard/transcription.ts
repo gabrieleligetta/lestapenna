@@ -4,9 +4,7 @@
 
 import { AIResponse } from './types';
 import {
-    transcriptionClient,
-    TRANSCRIPTION_PROVIDER,
-    TRANSCRIPTION_MODEL,
+    getTranscriptionClient,
     TRANSCRIPTION_CONCURRENCY
 } from './config';
 import { withRetry, processInBatches } from './helpers';
@@ -73,9 +71,10 @@ ${batch.map((s, i) => `${i + 1}. ${cleanText(s.text)}`).join('\n')}`;
 
             const startAI = Date.now();
             try {
+                const { client, model, provider } = await getTranscriptionClient();
                 const response = await withRetry(() =>
-                    transcriptionClient.chat.completions.create({
-                        model: TRANSCRIPTION_MODEL,
+                    client.chat.completions.create({
+                        model: model,
                         messages: [
                             { role: "system", content: "Correttore ortografico conciso." },
                             { role: "user", content: prompt }
@@ -90,8 +89,8 @@ ${batch.map((s, i) => `${i + 1}. ${cleanText(s.text)}`).join('\n')}`;
 
                 monitor.logAIRequestWithCost(
                     'transcription',
-                    TRANSCRIPTION_PROVIDER,
-                    TRANSCRIPTION_MODEL,
+                    provider,
+                    model,
                     inputTokens,
                     outputTokens,
                     cachedTokens,
@@ -102,7 +101,7 @@ ${batch.map((s, i) => `${i + 1}. ${cleanText(s.text)}`).join('\n')}`;
                 const rawOutput = response.choices[0].message.content || "";
                 const lines = rawOutput.split('\n')
                     .map(l => l.replace(/^\d+\.\s*/, '').trim())
-                    .filter(l => l.length > 0);
+                    .filter((l: string) => l.length > 0);
 
                 const tolerance = Math.ceil(batch.length * 0.2);
                 const diff = Math.abs(lines.length - batch.length);
@@ -127,11 +126,11 @@ ${batch.map((s, i) => `${i + 1}. ${cleanText(s.text)}`).join('\n')}`;
 
             } catch (err) {
                 console.error(`[Correzione] ❌ Errore batch ${idx + 1}:`, err);
-                monitor.logAIRequestWithCost('transcription', TRANSCRIPTION_PROVIDER, TRANSCRIPTION_MODEL, 0, 0, 0, Date.now() - startAI, true);
+                monitor.logAIRequestWithCost('transcription', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
                 return batch;
             }
         },
-        `Correzione (${TRANSCRIPTION_PROVIDER})`
+        `Correzione Testo`
     );
 
     return results.flat();

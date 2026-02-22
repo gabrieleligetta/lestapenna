@@ -23,7 +23,29 @@ export interface TranscriptionResult {
 
 // Paths inside container
 const WHISPER_BIN = '/app/whisper/main';
-const WHISPER_MODEL = '/app/whisper/model.bin';
+const WHISPER_MODEL_LARGE = '/app/whisper/model.bin';           // large-v3 (~3GB, fallback)
+const WHISPER_MODEL_DISTIL_IT = '/app/whisper/model-distil-it.bin'; // distil-it-v0.2 Q5_0 (~530MB)
+
+// Selezione modello: distil-it (italiano ottimizzato) > large-v3 (fallback)
+function detectModel(): string {
+    const useDistilIt = process.env.WHISPER_DISTIL_IT !== 'false'; // default: true
+
+    if (useDistilIt && fs.existsSync(WHISPER_MODEL_DISTIL_IT)) {
+        console.log('[WhisperCpp] 🇮🇹 Modello: distil-it-v0.2 (Q5_0, ~530MB, italiano ottimizzato)');
+        return WHISPER_MODEL_DISTIL_IT;
+    }
+
+    if (fs.existsSync(WHISPER_MODEL_LARGE)) {
+        console.log('[WhisperCpp] 🌍 Modello: large-v3 (~3GB, multilingua)');
+        return WHISPER_MODEL_LARGE;
+    }
+
+    // Fallback: prova comunque il path default
+    console.warn('[WhisperCpp] ⚠️ Nessun modello trovato, provo il path default...');
+    return WHISPER_MODEL_LARGE;
+}
+
+const WHISPER_MODEL = detectModel();
 
 export class WhisperCppService {
 
@@ -60,14 +82,14 @@ export class WhisperCppService {
                         const stderrStr = stderr.toString();
                         // Filtra log inutili di whisper.cpp
                         if (stderrStr.includes('error:') || stderrStr.includes('ERROR') || stderrStr.includes('failed')) {
-                             console.error(`[WhisperCpp] ❌ ${stderrStr.trim()}`);
+                            console.error(`[WhisperCpp] ❌ ${stderrStr.trim()}`);
                         }
                     }
-                    
+
                     if (error) {
                         console.error(`[WhisperCpp] Process execution failed.`);
                         console.error(`[WhisperCpp] ERROR OBJ: ${error.message}`);
-                        
+
                         // Pass the stderr as part of the error message for better visibility
                         reject(new Error(`Whisper failed: ${stderr || error.message}`));
                     } else {
@@ -87,15 +109,15 @@ export class WhisperCppService {
             const rawData = await readFileAsync(jsonOutputPath, 'utf-8');
             const result = JSON.parse(rawData);
 
-            await unlinkAsync(jsonOutputPath).catch(() => {});
+            await unlinkAsync(jsonOutputPath).catch(() => { });
 
             return this.mapToResult(result);
 
         } catch (e: any) {
             // Enhanced logging in the catch block
             console.error("[WhisperCpp] Transcription EXCEPTION:", e.message);
-            
-            if (fs.existsSync(jsonOutputPath)) await unlinkAsync(jsonOutputPath).catch(() => {});
+
+            if (fs.existsSync(jsonOutputPath)) await unlinkAsync(jsonOutputPath).catch(() => { });
             return { error: e.message || "Unknown Error" };
         }
     }
@@ -131,7 +153,7 @@ export class WhisperCppService {
 
     private parseTime(val: any): number {
         if (typeof val === 'number') return val;
-        return 0; 
+        return 0;
     }
 }
 
@@ -142,10 +164,10 @@ export function convertPcmToWav(input: string, output: string): Promise<void> {
         const { spawn } = require('child_process');
         const ffmpeg = spawn('ffmpeg', [
             '-f', 's16le',
-            '-ar', '48000', 
+            '-ar', '48000',
             '-ac', '2',
             '-i', input,
-            '-ar', '16000', 
+            '-ar', '16000',
             '-ac', '1',
             '-af', 'loudnorm=I=-16:LRA=11:TP=-1.5',
             output,
@@ -166,7 +188,7 @@ export function convertToLocalWav(input: string): Promise<string> {
         const { spawn } = require('child_process');
         const ffmpeg = spawn('ffmpeg', [
             '-i', input,
-            '-ar', '16000', 
+            '-ar', '16000',
             '-ac', '1',
             '-c:a', 'pcm_s16le',
             output,

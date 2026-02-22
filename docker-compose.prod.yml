@@ -21,6 +21,8 @@ services:
       # Rimosso --optimize_for_size e --gc_interval=100 da qui perché Node 22 li blocca in NODE_OPTIONS
       - NODE_OPTIONS=--max-old-space-size=6144
       - UV_THREADPOOL_SIZE=32
+      # 🇮🇹 Modello Whisper: true = distil-it-v0.2 (530MB, italiano), false = large-v3 (3GB)
+      - WHISPER_DISTIL_IT=true
 
     # 🔧 FLAG GC ESPLICITI: Passati direttamente al comando di avvio
     command: node --optimize_for_size --gc_interval=100 dist/index.js
@@ -76,17 +78,17 @@ services:
 
     environment:
       # 🔧 CONFIGURAZIONE CRITICA
-      - OLLAMA_NUM_PARALLEL=1           # Una inferenza alla volta
-      - OLLAMA_MAX_LOADED_MODELS=2      # 🆕 Llama3.2 + nomic-embed-text
-      - OLLAMA_FLASH_ATTENTION=1        # Ottimizzazione memoria
-      - OLLAMA_NUM_THREADS=4            # Usa tutti i core quando attivo
-      - OLLAMA_MAX_QUEUE=10             # Aumentato per embedding batch
+      - OLLAMA_NUM_PARALLEL=1 # Una inferenza alla volta
+      - OLLAMA_MAX_LOADED_MODELS=2 # 🆕 Llama3.2 + nomic-embed-text
+      - OLLAMA_FLASH_ATTENTION=1 # Ottimizzazione memoria
+      - OLLAMA_NUM_THREADS=4 # Usa tutti i core quando attivo
+      - OLLAMA_MAX_QUEUE=10 # Aumentato per embedding batch
 
     deploy:
       resources:
         limits:
           # NON limitiamo CPU: lasciamo che nice di Whisper gestisca la priorità
-          memory: 14G  # 🔧 Spazio per 2 modelli + overhead
+          memory: 14G # 🔧 Spazio per 2 modelli + overhead
         reservations:
           memory: 8G
 
@@ -110,14 +112,9 @@ services:
     environment:
       - OLLAMA_HOST=ollama:11434
     entrypoint: /bin/sh
-    command: -c "echo 'Waiting for Ollama server...';
-      until ollama list > /dev/null 2>&1; do sleep 2; done;
-      echo 'Pulling models...';
-      ollama pull nomic-embed-text;
-      ollama pull llama3.2:latest;
-      echo 'Done!'"
+    command: -c "echo 'Waiting for Ollama server...'; until ollama list > /dev/null 2>&1; do sleep 2; done; echo 'Pulling models...'; ollama pull nomic-embed-text; ollama pull llama3.2:latest; echo 'Done!'"
 
 volumes:
   ollama_data:
   redis_data:
-  whisper_data:  # 🆕 Persiste whisper.cpp e modello large-v3
+  whisper_data: # 🆕 Persiste whisper.cpp e modello large-v3

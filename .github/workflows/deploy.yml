@@ -46,12 +46,15 @@ jobs:
             # 4. Scrive il contenuto del secret ENV_FILE dentro il file .env sul server
             echo "${{ secrets.ENV_FILE }}" > .env
             
-            # 5. Build immagine Whisper SOLO se non esiste (sopravvive a docker system prune)
-            if ! docker image inspect whisper-large-v3:latest > /dev/null 2>&1; then
-                echo "🔧 Building whisper-large-v3 image (first time only)..."
-                docker build -f Dockerfile.whisper -t whisper-large-v3:latest .
+            # 5. Build immagine Whisper se non esiste O se il Dockerfile.whisper è cambiato
+            WHISPER_HASH=$(sha256sum Dockerfile.whisper | cut -d' ' -f1)
+            CURRENT_HASH=$(docker image inspect whisper-large-v3:latest --format '{{index .Config.Labels "dockerfile.hash"}}' 2>/dev/null || echo "none")
+            
+            if [ "$WHISPER_HASH" != "$CURRENT_HASH" ]; then
+                echo "🔧 Building whisper-large-v3 image (Dockerfile changed or first build)..."
+                docker build -f Dockerfile.whisper --label "dockerfile.hash=$WHISPER_HASH" -t whisper-large-v3:latest .
             else
-                echo "✅ whisper-large-v3 image already exists, skipping build"
+                echo "✅ whisper-large-v3 image is up to date, skipping build"
             fi
 
             # 6. Ricostruisci e riavvia i container usando il file di produzione

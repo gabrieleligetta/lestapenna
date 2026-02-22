@@ -58,6 +58,7 @@ COPY --from=builder /app/dist ./dist
 RUN mkdir -p /app/whisper-backup
 COPY --from=whisper-builder /whisper/build/bin/whisper-cli /app/whisper-backup/main
 COPY --from=whisper-builder /whisper/models/ggml-large-v3.bin /app/whisper-backup/model.bin
+COPY --from=whisper-builder /whisper/models/ggml-distil-it-q5_0.bin /app/whisper-backup/model-distil-it.bin
 RUN chmod +x /app/whisper-backup/main
 
 # Directory per il volume (sarà popolata dall'entrypoint)

@@ -12,7 +12,11 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git . && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release
 
-# Scarica il modello LARGE-V3 (~3GB)
+# Scarica il modello LARGE-V3 (~3GB) — fallback
 RUN bash ./models/download-ggml-model.sh large-v3
 
-# Output: /whisper/build/bin/whisper-cli e /whisper/models/ggml-large-v3.bin
+# Scarica il modello distil-it-v0.2 Q5_0 (~530MB) — ottimizzato per italiano
+RUN curl -L -o models/ggml-distil-it-q5_0.bin \
+    "https://huggingface.co/bofenghuang/whisper-large-v3-distil-it-v0.2/resolve/main/ggml-model-q5_0.bin"
+
+# Output: /whisper/build/bin/whisper-cli, /whisper/models/ggml-large-v3.bin, /whisper/models/ggml-distil-it-q5_0.bin

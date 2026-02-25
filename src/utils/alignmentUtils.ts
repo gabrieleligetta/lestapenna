@@ -134,7 +134,8 @@ export function formatAlignmentBar(
     leftIcon: string,
     rightIcon: string,
     leftLabel: string,
-    rightLabel: string
+    rightLabel: string,
+    axisLabel: string
 ): string {
     // Clamp score to -100..+100 for display purposes
     const clampedScore = Math.max(-100, Math.min(100, score));
@@ -161,19 +162,26 @@ export function formatAlignmentBar(
         }
     }
 
-    // Format: Icon [spectrum] Icon (score)
+    // Format: Icon [spectrum] Icon  `LABEL (score)`
     const signedScore = score >= 0 ? `+${score}` : `${score}`;
-    return `${leftIcon} ${bar} ${rightIcon}  \`${signedScore}\``;
+    return `${leftIcon} ${bar} ${rightIcon}  \`${axisLabel} (${signedScore})\``;
 }
 
 /**
  * Formats complete alignment display with two spectrum bars
  */
 export function formatAlignmentSpectrum(moralScore: number, ethicalScore: number): string {
-    const moralBar = formatAlignmentBar(moralScore, '😇', '😈', 'Buono', 'Cattivo');
-    const ethicalBar = formatAlignmentBar(ethicalScore, '📜', '🌀', 'Legale', 'Caotico');
+    const moralAxisLabel = getMoralAlignment(moralScore) === 'GOOD' ? 'BUONO'
+        : getMoralAlignment(moralScore) === 'EVIL' ? 'CATTIVO' : 'NEUTRALE';
+    const ethicalAxisLabel = getEthicalAlignment(ethicalScore) === 'LAWFUL' ? 'LEGALE'
+        : getEthicalAlignment(ethicalScore) === 'CHAOTIC' ? 'CAOTICO' : 'NEUTRALE';
 
-    return `**Morale**\n${moralBar}\n**Etico**\n${ethicalBar}`;
+    const moralBar = formatAlignmentBar(moralScore, '😇', '😈', 'Buono', 'Cattivo', moralAxisLabel);
+    const ethicalBar = formatAlignmentBar(ethicalScore, '📜', '🌀', 'Legale', 'Caotico', ethicalAxisLabel);
+
+    const fullLabel = getAlignmentLabel(moralScore, ethicalScore);
+
+    return `**Morale**\n${moralBar}\n**Etico**\n${ethicalBar}\n⚖️ **${fullLabel}**`;
 }
 
 /**

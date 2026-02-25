@@ -6,6 +6,7 @@ import { PipelineService } from '../../publisher/services/PipelineService';
 import { IngestionService } from '../../publisher/services/IngestionService';
 import { NotificationService } from '../../publisher/services/NotificationService';
 import { purgeSessionData } from '../../services/janitor';
+import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 
 export const reprocessCommand: Command = {
     name: 'reprocess',
@@ -66,6 +67,9 @@ export const reprocessCommand: Command = {
 
             // 4. Process Batch Events
             await ingestionService.processBatchEvents(campaignId, targetSessionId, result, channel, isSilent);
+
+            // 📍 PHASE: DONE
+            sessionPhaseManager.setPhase(targetSessionId, 'DONE');
 
             // 5. Publish (Skip if silent)
             if (!isSilent) {

@@ -225,18 +225,18 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
             await cmdChannel.send(`✅ Riepilogo tecnico inviato in <#${targetChannel.id}>`);
         }
 
-        const embed = new EmbedBuilder()
+        // --- EMBED 1: core della sessione ---
+        const embed1 = new EmbedBuilder()
             .setColor('#F1C40F')
             .setTitle('🎒 Riepilogo Tecnico');
 
-        // --- FULL-WIDTH ---
         const lootText = (result.loot && result.loot.length > 0)
             ? result.loot.map((i: any) => {
                 const qtyStr = i.quantity && i.quantity > 1 ? ` (x${i.quantity})` : '';
                 return `• ${i.name}${qtyStr}`;
             }).join('\n')
             : 'Nessun bottino recuperato';
-        embed.addFields({ name: '💰 Bottino (Loot)', value: truncate(lootText), inline: false });
+        embed1.addFields({ name: '💰 Bottino (Loot)', value: truncate(lootText) });
 
         const questText = (result.quests && result.quests.length > 0)
             ? result.quests.map((q: any) => {
@@ -247,9 +247,8 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
                 return `${statusEmoji} **${q.title}**${q.description ? ` - ${q.description}` : ''}`;
             }).join('\n')
             : 'Nessuna missione attiva';
-        embed.addFields({ name: '🗺️ Missioni (Quests)', value: truncate(questText), inline: false });
+        embed1.addFields({ name: '🗺️ Missioni (Quests)', value: truncate(questText) });
 
-        // --- GRIGLIA INLINE ---
         let monsterText = '*Nessuno*';
         if (result.monsters && result.monsters.length > 0) {
             monsterText = result.monsters.map((m: any) => {
@@ -260,7 +259,7 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
                 return `${statusEmoji} **${m.name}**${countText}`;
             }).join('\n');
         }
-        embed.addFields({ name: '🐉 Mostri', value: truncate(monsterText, 512) });
+        embed1.addFields({ name: '🐉 Mostri', value: truncate(monsterText) });
 
         let npcText = '*Nessuno*';
         if (encounteredNPCs && encounteredNPCs.length > 0) {
@@ -273,7 +272,16 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
                 return `${statusEmoji} **${npc.name}**${roleText}`;
             }).join('\n');
         }
-        embed.addFields({ name: '👥 NPC', value: truncate(npcText, 512) });
+        embed1.addFields({ name: '👥 NPC', value: truncate(npcText) });
+
+        await targetChannel.send({ embeds: [embed1] });
+
+        // --- EMBED 2: sviluppi (solo se c'è almeno un campo) ---
+        const embed2 = new EmbedBuilder()
+            .setColor('#9B59B6')
+            .setTitle('📊 Sviluppi della Sessione');
+
+        let embed2HasFields = false;
 
         const reputationUpdates = result.faction_updates?.filter((f: any) => f.reputation_change);
         if (reputationUpdates && reputationUpdates.length > 0) {
@@ -283,7 +291,8 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
                 const arrow = val > 0 ? '⬆️' : val < 0 ? '⬇️' : '➡️';
                 return `${arrow} **${f.name}**: ${sign}${val}\n*${f.reputation_change.reason}*`;
             }).join('\n');
-            embed.addFields({ name: '🏅 Reputazione', value: truncate(repText, 512) });
+            embed2.addFields({ name: '🏅 Reputazione', value: truncate(repText) });
+            embed2HasFields = true;
         }
 
         if (result.party_alignment_change) {
@@ -295,7 +304,8 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
             const moralArrow = moralVal > 0 ? '⬆️' : moralVal < 0 ? '⬇️' : '➡️';
             const ethicalArrow = ethicalVal > 0 ? '⬆️' : ethicalVal < 0 ? '⬇️' : '➡️';
             const alignText = `${moralArrow} Morale: **${moralSign}${moralVal}**\n${ethicalArrow} Etico: **${ethicalSign}${ethicalVal}**\n*${ac.reason}*`;
-            embed.addFields({ name: '⚖️ Allineamento', value: truncate(alignText, 512) });
+            embed2.addFields({ name: '⚖️ Allineamento', value: truncate(alignText) });
+            embed2HasFields = true;
         }
 
         const artifactLines: string[] = [];
@@ -313,7 +323,8 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
             });
         }
         if (artifactLines.length > 0) {
-            embed.addFields({ name: '🗡️ Artefatti', value: truncate(artifactLines.join('\n'), 512) });
+            embed2.addFields({ name: '🗡️ Artefatti', value: truncate(artifactLines.join('\n')) });
+            embed2HasFields = true;
         }
 
         if (result.character_growth && result.character_growth.length > 0) {
@@ -322,10 +333,13 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
                     g.type === 'RELATIONSHIP' ? '🤝' : g.type === 'BACKGROUND' ? '📖' : '🎯';
                 return `${typeEmoji} **${g.name}**: ${g.event}`;
             }).join('\n');
-            embed.addFields({ name: '🧬 Crescita PG', value: truncate(growthText, 512) });
+            embed2.addFields({ name: '🧬 Crescita PG', value: truncate(growthText) });
+            embed2HasFields = true;
         }
 
-        await targetChannel.send({ embeds: [embed] });
+        if (embed2HasFields) {
+            await targetChannel.send({ embeds: [embed2] });
+        }
 
     } catch (err: any) {
         console.error(`[Tecnico] ❌ Errore:`, err);

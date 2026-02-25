@@ -138,19 +138,16 @@ export async function publishSummary(
         await safeSend(targetChannel, logText);
     }
 
-    // --- RIEPILOGO TECNICO ---
-    // Layout: Bottino e Missioni full-width (testo lungo),
-    // tutto il resto inline → griglia automatica fino a 3 colonne per riga
-    const embed = new EmbedBuilder()
+    // --- EMBED 1: core della sessione ---
+    const embed1 = new EmbedBuilder()
         .setColor("#F1C40F")
         .setTitle("🎒 Riepilogo Tecnico");
 
-    // --- FULL-WIDTH: sezioni con testo potenzialmente lungo ---
     const lootText = (loot && loot.length > 0) ? loot.map(i => {
         const qtyStr = i.quantity && i.quantity > 1 ? ` (x${i.quantity})` : '';
         return `• ${i.name}${qtyStr}`;
     }).join('\n') : "Nessun bottino recuperato";
-    embed.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText), inline: false });
+    embed1.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText) });
 
     const questText = (quests && quests.length > 0) ? quests.map(q => {
         if (typeof q === 'string') return `• ${q}`;
@@ -159,11 +156,8 @@ export async function publishSummary(
                 q.status === 'DROPPED' ? '🗑️' : '⚔️';
         return `${statusEmoji} **${q.title}**${q.description ? ` - ${q.description}` : ''}`;
     }).join('\n') : "Nessuna missione attiva";
-    embed.addFields({ name: "🗺️ Missioni (Quests)", value: truncate(questText), inline: false });
+    embed1.addFields({ name: "🗺️ Missioni (Quests)", value: truncate(questText) });
 
-    // --- GRIGLIA INLINE: campi compatti disposti in colonne da Discord ---
-
-    // 🐉 Mostri
     let monsterText = "*Nessuno*";
     if (monsters && monsters.length > 0) {
         monsterText = monsters.map(monster => {
@@ -174,9 +168,8 @@ export async function publishSummary(
             return `${statusEmoji} **${monster.name}**${countText}`;
         }).join('\n');
     }
-    embed.addFields({ name: "🐉 Mostri", value: truncate(monsterText, 512) });
+    embed1.addFields({ name: "🐉 Mostri", value: truncate(monsterText) });
 
-    // 👥 NPC
     let npcText = "*Nessuno*";
     if (encounteredNPCs && encounteredNPCs.length > 0) {
         npcText = encounteredNPCs.map(npc => {
@@ -188,9 +181,17 @@ export async function publishSummary(
             return `${statusEmoji} **${npc.name}**${roleText}`;
         }).join('\n');
     }
-    embed.addFields({ name: '👥 NPC', value: truncate(npcText, 512) });
+    embed1.addFields({ name: '👥 NPC', value: truncate(npcText) });
 
-    // 🏅 Reputazione (condizionale)
+    await targetChannel.send({ embeds: [embed1] });
+
+    // --- EMBED 2: sviluppi (solo se c'è almeno un campo) ---
+    const embed2 = new EmbedBuilder()
+        .setColor("#9B59B6")
+        .setTitle("📊 Sviluppi della Sessione");
+
+    let embed2HasFields = false;
+
     const reputationUpdates = factionUpdates?.filter(f => f.reputation_change);
     if (reputationUpdates && reputationUpdates.length > 0) {
         const repText = reputationUpdates.map(f => {
@@ -199,10 +200,10 @@ export async function publishSummary(
             const arrow = val > 0 ? '⬆️' : val < 0 ? '⬇️' : '➡️';
             return `${arrow} **${f.name}**: ${sign}${val}\n*${f.reputation_change!.reason}*`;
         }).join('\n');
-        embed.addFields({ name: '🏅 Reputazione', value: truncate(repText, 512) });
+        embed2.addFields({ name: '🏅 Reputazione', value: truncate(repText) });
+        embed2HasFields = true;
     }
 
-    // ⚖️ Allineamento Party (condizionale)
     if (partyAlignmentChange) {
         const moralVal = partyAlignmentChange.moral_impact ?? 0;
         const ethicalVal = partyAlignmentChange.ethical_impact ?? 0;
@@ -211,10 +212,10 @@ export async function publishSummary(
         const moralArrow = moralVal > 0 ? '⬆️' : moralVal < 0 ? '⬇️' : '➡️';
         const ethicalArrow = ethicalVal > 0 ? '⬆️' : ethicalVal < 0 ? '⬇️' : '➡️';
         const alignText = `${moralArrow} Morale: **${moralSign}${moralVal}**\n${ethicalArrow} Etico: **${ethicalSign}${ethicalVal}**\n*${partyAlignmentChange.reason}*`;
-        embed.addFields({ name: '⚖️ Allineamento', value: truncate(alignText, 512) });
+        embed2.addFields({ name: '⚖️ Allineamento', value: truncate(alignText) });
+        embed2HasFields = true;
     }
 
-    // 🗡️ Artefatti (condizionale)
     const artifactLines: string[] = [];
     if (artifacts && artifacts.length > 0) {
         artifacts.forEach(a => {
@@ -230,20 +231,23 @@ export async function publishSummary(
         });
     }
     if (artifactLines.length > 0) {
-        embed.addFields({ name: '🗡️ Artefatti', value: truncate(artifactLines.join('\n'), 512) });
+        embed2.addFields({ name: '🗡️ Artefatti', value: truncate(artifactLines.join('\n')) });
+        embed2HasFields = true;
     }
 
-    // 🧬 Crescita PG (condizionale)
     if (characterGrowth && characterGrowth.length > 0) {
         const growthText = characterGrowth.map(g => {
             const typeEmoji = g.type === 'TRAUMA' ? '💔' : g.type === 'ACHIEVEMENT' ? '🏆' :
                 g.type === 'RELATIONSHIP' ? '🤝' : g.type === 'BACKGROUND' ? '📖' : '🎯';
             return `${typeEmoji} **${g.name}**: ${g.event}`;
         }).join('\n');
-        embed.addFields({ name: '🧬 Crescita PG', value: truncate(growthText, 512) });
+        embed2.addFields({ name: '🧬 Crescita PG', value: truncate(growthText) });
+        embed2HasFields = true;
     }
 
-    await targetChannel.send({ embeds: [embed] });
+    if (embed2HasFields) {
+        await targetChannel.send({ embeds: [embed2] });
+    }
     // ------------------------------------
 
     if (targetChannel.id !== defaultChannel.id) {

@@ -151,6 +151,7 @@ export function purgeSessionData(sessionId: string, clearCache: boolean = false)
     }
 
     // 2. Delete Derived Data (DB Tables) - Eventi storici
+    db.prepare('DELETE FROM session_logs WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM location_history WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM npc_history WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM world_history WHERE session_id = ?').run(sessionId);

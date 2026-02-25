@@ -1,6 +1,6 @@
-import { TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
+import { TextChannel, DMChannel, NewsChannel, ThreadChannel, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { Command, CommandContext } from '../types';
-import { searchKnowledge } from '../../bard'; // searchKnowledge was not in destructuring in index.ts but imported via require? Line 2678: require('./bard')
+import { searchKnowledge } from '../../bard';
 
 export const wikiCommand: Command = {
     name: 'wiki',
@@ -15,46 +15,72 @@ export const wikiCommand: Command = {
             return;
         }
 
-        // Fix per TS2339: Controllo se il canale supporta sendTyping
         if ('sendTyping' in message.channel) {
             await (message.channel as TextChannel | DMChannel | NewsChannel | ThreadChannel).sendTyping();
         }
 
         try {
-            // Usa searchKnowledge ma restituisce i risultati raw
-            // In index.ts logic it used dynamic require: const { searchKnowledge } = require('./bard');
-            // Here we imported it statically.
-            const fragments = await searchKnowledge(activeCampaign!.id, term, 3);
+            const fragments = await searchKnowledge(activeCampaign!.id, term, 10);
 
             if (fragments.length === 0) {
                 await message.reply("Non ho trovato nulla negli archivi su questo argomento.");
                 return;
             }
 
-            // Limite embed Discord: 4096 caratteri per description
-            const MAX_DESC_LENGTH = 4000; // Buffer di sicurezza
-            const MAX_FRAGMENT_LENGTH = 1200; // Max per singolo frammento
+            let index = 0;
+            const total = fragments.length;
 
-            // Tronca ogni frammento se troppo lungo
-            const truncatedFragments = fragments.map((f: string) => {
-                if (f.length > MAX_FRAGMENT_LENGTH) {
-                    return f.substring(0, MAX_FRAGMENT_LENGTH) + '... [troncato]';
-                }
-                return f;
+            const buildEmbed = (i: number) => {
+                const MAX_LENGTH = 3800;
+                const content = fragments[i].length > MAX_LENGTH
+                    ? fragments[i].substring(0, MAX_LENGTH) + '... [troncato]'
+                    : fragments[i];
+                return new EmbedBuilder()
+                    .setTitle(`📜 Archivio: "${term}"`)
+                    .setDescription(content)
+                    .setColor(0x8B4513)
+                    .setFooter({ text: `Frammento ${i + 1} / ${total}` });
+            };
+
+            const buildRow = (i: number) => new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('wiki_prev')
+                    .setLabel('◀')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(i === 0),
+                new ButtonBuilder()
+                    .setCustomId('wiki_next')
+                    .setLabel('▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(i === total - 1)
+            );
+
+            const reply = await message.reply({
+                embeds: [buildEmbed(index)],
+                components: total > 1 ? [buildRow(index)] : []
             });
 
-            // Costruisci descrizione con controllo lunghezza
-            let description = '';
-            for (let i = 0; i < truncatedFragments.length; i++) {
-                const fragmentText = `**Frammento ${i + 1}:**\n${truncatedFragments[i]}`;
-                if ((description.length + fragmentText.length + 2) < MAX_DESC_LENGTH) {
-                    description += fragmentText + '\n\n';
-                } else {
-                    break;
-                }
-            }
+            if (total <= 1) return;
 
-            await message.reply(`📜 **Risultati Archivio: "${term}"**\n\n${description}`);
+            const collector = reply.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 5 * 60 * 1000,
+                filter: (i) => i.user.id === message.author.id
+            });
+
+            collector.on('collect', async (interaction) => {
+                if (interaction.customId === 'wiki_prev') index = Math.max(0, index - 1);
+                else if (interaction.customId === 'wiki_next') index = Math.min(total - 1, index + 1);
+
+                await interaction.update({
+                    embeds: [buildEmbed(index)],
+                    components: [buildRow(index)]
+                });
+            });
+
+            collector.on('end', () => {
+                if (reply.editable) reply.edit({ components: [] }).catch(() => {});
+            });
 
         } catch (err) {
             console.error("Errore wiki:", err);

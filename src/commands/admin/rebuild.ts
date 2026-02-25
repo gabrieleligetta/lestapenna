@@ -190,13 +190,44 @@ function softResetAnagrafiche(campaignId?: number): { npcs: number; locations: n
         ${whereClause}
     `).run();
 
-    // Reset faction descriptions
+    // Reset faction descriptions + alignment (escludi party — ha reset dedicato sotto)
     const factionResult = db.prepare(`
         UPDATE factions
         SET description = NULL,
+            alignment_moral = NULL,
+            alignment_ethical = NULL,
+            moral_score = 0,
+            ethical_score = 0,
             rag_sync_needed = 1,
             first_session_id = NULL
         ${whereClauseParty}
+    `).run();
+
+    // Reset party faction: descrizione + allineamento azzerati
+    const partyWhereClause = campaignId
+        ? `WHERE is_party = 1 AND campaign_id = ${campaignId}`
+        : `WHERE is_party = 1`;
+    db.prepare(`
+        UPDATE factions
+        SET description = NULL,
+            alignment_moral = 'NEUTRAL',
+            alignment_ethical = 'NEUTRAL',
+            moral_score = 0,
+            ethical_score = 0,
+            rag_sync_needed = 1,
+            first_session_id = NULL
+        ${partyWhereClause}
+    `).run();
+
+    // Reset allineamento party anche nella tabella campaigns
+    const campaignWhereClause = campaignId
+        ? `WHERE id = ${campaignId}`
+        : '';
+    db.prepare(`
+        UPDATE campaigns
+        SET party_alignment_moral = 'NEUTRAL',
+            party_alignment_ethical = 'NEUTRAL'
+        ${campaignWhereClause}
     `).run();
 
     // Reset artifact descriptions but keep names
@@ -519,6 +550,7 @@ export const rebuildCommand: Command = {
 
             if (collected.size === 0) return;
         } catch {
+            await message.reply("⌛ Tempo scaduto. Rebuild annullato.");
             return;
         }
 

@@ -38,9 +38,10 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
             const timer = setTimeout(async () => {
                 const sessionId = await getActiveSession(guildId);
                 if (sessionId) {
-                    await disconnect(guildId);
+                    // Rimuovi la sessione da Redis SUBITO — previene la race condition con $termina
                     await deleteActiveSession(guildId);
                     await decrementRecordingCount();
+                    await disconnect(guildId);
 
                     // Try to get command channel for notifications (optional)
                     const commandChannelId = getGuildConfig(guildId, 'cmd_channel_id');

@@ -104,6 +104,9 @@ const fileProcessingResolvers = new Map<string, (() => void)[]>(); // guildId ->
 // 1. Aggiungi variabile di stato in alto
 let isStopping = false;
 
+// Guard di rientranza: previene doppi disconnect() concorrenti per la stessa guild
+const activeDisconnects = new Set<string>();
+
 export function pauseRecording(guildId: string) {
     pausedGuilds.add(guildId);
     console.log(`[Recorder] ⏸️ Registrazione in PAUSA per Guild ${guildId}`);
@@ -361,8 +364,18 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
 }
 
 export async function disconnect(guildId: string): Promise<boolean> {
+    // Guard di rientranza: evita doppi disconnect() concorrenti
+    if (activeDisconnects.has(guildId)) {
+        console.warn(`[Recorder] ⚠️ disconnect() già in corso per ${guildId}, skip.`);
+        return false;
+    }
+    activeDisconnects.add(guildId);
+
     const connection = getVoiceConnection(guildId);
-    if (!connection) return false;
+    if (!connection) {
+        activeDisconnects.delete(guildId);
+        return false;
+    }
 
     console.log(`[Recorder] 🛑 Disconnessione avviata. Chiusura streams...`);
     isStopping = true; // Attiva il blocco
@@ -411,57 +424,59 @@ export async function disconnect(guildId: string): Promise<boolean> {
     }
 
     const sessionId = guildToSession.get(guildId);
-
-    // D. FASE FINALE: Mix Audio + Coda Whisper
-    if (sessionId) {
-        console.log(`[Recorder] 📀 Avvio Mix Sessione e Fase Whisper per ${sessionId}...`);
-
-        try {
-            // 1. Session Mixer (Keep files local = true)
-            // Stiamo per usarli per Whisper, quindi non cancellarli ancora
-            await mixSessionAudio(sessionId, true);
-
-            // 2. Accoda i file per la trascrizione (Whisper)
-            // Il worker 'Scriba' gestirà sia la trascrizione che la cancellazione finale dei file
-            const recordings = getSessionRecordings(sessionId);
-
-            console.log(`[Recorder] 📥 Accodamento ${recordings.length} file per trascrizione...`);
-
-            for (const rec of recordings) {
-                // Solo file ancora pendenti/secured (evita duplicati se crash)
-                if (rec.status === 'PENDING' || rec.status === 'SECURED') {
-                    await audioQueue.add('transcribe-job', {
-                        sessionId: rec.session_id,
-                        fileName: rec.filename,
-                        filePath: rec.filepath,
-                        userId: rec.user_id
-                    }, {
-                        jobId: rec.filename, // Deduplicazione basata sul nome del file
-                        attempts: 5,
-                        backoff: { type: 'exponential', delay: 2000 },
-                        removeOnComplete: true,
-                        removeOnFail: false
-                    });
-                }
-            }
-            console.log(`[Recorder] ✅ Fase Whisper avviata per ${sessionId}.`);
-
-        } catch (e: any) {
-            console.error(`[Recorder] ❌ Errore nella fase finale Mix/Whisper:`, e);
-        }
-    }
-
     guildToSession.delete(guildId);
     pendingFileProcessing.delete(guildId);
     fileProcessingResolvers.delete(guildId);
 
+    // D. LASCIA IL CANALE SUBITO — il bot sparisce dal canale voce prima del mixer
     try {
         connection.destroy();
     } catch (e) {
         console.warn(`[Recorder] ⚠️ VoiceConnection already destroyed.`);
     }
-    isStopping = false; // Reset per la prossima volta
+    isStopping = false;
+    activeDisconnects.delete(guildId); // Rilascia il guard: la voce è disconnessa
     console.log("👋 Disconnesso in sicurezza.");
+
+    // E. FASE FINALE: Mix Audio + Coda Whisper — eseguito in BACKGROUND (fire-and-forget)
+    // disconnect() ritorna subito dopo E.D.; waitForCompletionAndSummarize() può partire
+    // immediatamente perché i file SECURED sono già considerati "pending" dal poller.
+    if (sessionId) {
+        console.log(`[Recorder] 📀 Avvio Mix Sessione e Fase Whisper (background) per ${sessionId}...`);
+
+        (async () => {
+            try {
+                // 1. Session Mixer (Keep files local = true)
+                await mixSessionAudio(sessionId, true);
+
+                // 2. Accoda i file per la trascrizione (Whisper)
+                const recordings = getSessionRecordings(sessionId);
+                console.log(`[Recorder] 📥 Accodamento ${recordings.length} file per trascrizione...`);
+
+                for (const rec of recordings) {
+                    if (rec.status === 'PENDING' || rec.status === 'SECURED') {
+                        await audioQueue.add('transcribe-job', {
+                            sessionId: rec.session_id,
+                            fileName: rec.filename,
+                            filePath: rec.filepath,
+                            userId: rec.user_id
+                        }, {
+                            jobId: rec.filename,
+                            attempts: 5,
+                            backoff: { type: 'exponential', delay: 2000 },
+                            removeOnComplete: true,
+                            removeOnFail: false
+                        });
+                    }
+                }
+                console.log(`[Recorder] ✅ Fase Whisper avviata per ${sessionId}.`);
+
+            } catch (e: any) {
+                console.error(`[Recorder] ❌ Errore nella fase finale Mix/Whisper:`, e);
+            }
+        })();
+    }
+
     return true;
 }
 

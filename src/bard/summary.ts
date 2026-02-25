@@ -268,14 +268,16 @@ async function identifyRelevantContext(
     const startAI = Date.now();
     try {
         const { client, model, provider } = await getMetadataClient();
-        const response = await client.chat.completions.create({
+        const contextOptions: any = {
             model: model,
             messages: [
                 { role: "system", content: "Sei un esperto di ricerca semantica. Rispondi SOLO con JSON." },
                 { role: "user", content: prompt }
             ],
-            response_format: { type: "json_object" }
-        });
+        };
+        if (provider === 'openai') contextOptions.response_format = { type: "json_object" };
+        else if (provider === 'ollama') contextOptions.format = 'json';
+        const response = await client.chat.completions.create(contextOptions);
 
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;
@@ -586,11 +588,13 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 // 1. Eseguiamo lo Scout (con esclusione PG)
                 console.log(`[Bardo] 🕵️ Scout esclude PG: ${playerCharacterNames.join(', ') || 'nessuno'}`);
                 const { client, model, provider } = await getMetadataClient();
-                const scoutResponse = await client.chat.completions.create({
+                const scoutOptions: any = {
                     model: model,
                     messages: [{ role: "user", content: SCOUT_PROMPT(fullDialogue, playerCharacterNames) }],
-                    response_format: { type: "json_object" }
-                });
+                };
+                if (provider === 'openai') scoutOptions.response_format = { type: "json_object" };
+                else if (provider === 'ollama') scoutOptions.format = 'json';
+                const scoutResponse = await client.chat.completions.create(scoutOptions);
 
                 const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[], "artifacts":[]}');
                 console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni, ${entities.artifacts?.length || 0} Artefatti.`);

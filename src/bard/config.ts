@@ -64,7 +64,7 @@ export async function getDynamicProvider(
             client: new OpenAI({
                 baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
                 apiKey: config.ai.gemini.apiKey,
-                timeout: 1800 * 1000,
+                timeout: 1200 * 1000, // 20 minuti
             }),
             model: phase.model,
             provider: 'gemini'

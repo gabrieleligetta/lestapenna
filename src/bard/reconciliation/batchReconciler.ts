@@ -217,15 +217,17 @@ async function batchAIConfirm(
     const prompt = buildBatchPrompt(cases, context);
 
     try {
-        const { client, model } = await getMetadataClient();
-        const response = await client.chat.completions.create({
+        const { client, model, provider } = await getMetadataClient();
+        const reconcileOptions: any = {
             model: model,
             messages: [
                 { role: "system", content: "Sei un esperto di D&D. Rispondi SOLO con JSON valido." },
                 { role: "user", content: prompt }
             ],
-            response_format: { type: "json_object" }
-        });
+        };
+        if (provider === 'openai') reconcileOptions.response_format = { type: "json_object" };
+        else if (provider === 'ollama') reconcileOptions.format = 'json';
+        const response = await client.chat.completions.create(reconcileOptions);
 
         const content = response.choices[0].message.content || '{"matches":[]}';
         const parsed = JSON.parse(content);

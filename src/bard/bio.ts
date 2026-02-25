@@ -279,15 +279,17 @@ IMPORTANTE: Se presente "manual_guidance", usala come scheletro vincolante. Non 
 Restituisci SOLO un JSON valido formato: { "Nome Entità": "Nuova Descrizione" }.`;
 
     try {
-        const { client, model } = await getMetadataClient();
-        const response = await client.chat.completions.create({
-            model: model, // Usa pure gpt-4o-mini o equivalente economico
-            response_format: { type: "json_object" },
+        const { client, model, provider } = await getMetadataClient();
+        const bioOptions: any = {
+            model: model,
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: JSON.stringify(payload) }
-            ]
-        });
+            ],
+        };
+        if (provider === 'openai') bioOptions.response_format = { type: "json_object" };
+        else if (provider === 'ollama') bioOptions.format = 'json';
+        const response = await client.chat.completions.create(bioOptions);
 
         const content = response.choices[0].message.content;
         if (!content) return {};

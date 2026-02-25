@@ -151,14 +151,18 @@ export async function generateSearchQueries(campaignId: number, userQuestion: st
 
     const prompt = RAG_QUERY_GENERATION_PROMPT(recentHistory, userQuestion);
 
+    const { client, model, provider } = await getChatClient();
     const startAI = Date.now();
     try {
-        const { client, model, provider } = await getChatClient();
-        const response = await client.chat.completions.create({
+        const options: any = {
             model: model,
             messages: [{ role: "user", content: prompt }],
-            response_format: { type: "json_object" }
-        });
+        };
+        // response_format json_object solo per OpenAI (Gemini lo gestisce via prompt)
+        if (provider === 'openai') options.response_format = { type: "json_object" };
+        else if (provider === 'ollama') options.format = 'json';
+
+        const response = await client.chat.completions.create(options);
 
         const inputTokens = response.usage?.prompt_tokens || 0;
         const outputTokens = response.usage?.completion_tokens || 0;
@@ -166,9 +170,11 @@ export async function generateSearchQueries(campaignId: number, userQuestion: st
         monitor.logAIRequestWithCost('chat', provider, model, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
         const parsed = JSON.parse(response.choices[0].message.content || "{}");
+        // Gestisce sia array diretto ["q1","q2"] sia oggetto {"queries":["q1","q2"]}
+        if (Array.isArray(parsed)) return parsed;
         return Array.isArray(parsed.queries) ? parsed.queries : [];
     } catch (e) {
-        monitor.logAIRequestWithCost('chat', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('chat', provider, model, 0, 0, 0, Date.now() - startAI, true);
         return [userQuestion];
     }
 }
@@ -229,9 +235,9 @@ export async function askBard(campaignId: number, question: string, history: { r
 
     const messages: any[] = [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: question }];
 
+    const { client, model, provider } = await getChatClient();
     const startAI = Date.now();
     try {
-        const { client, model, provider } = await getChatClient();
         const response: any = await withRetry(() => client.chat.completions.create({
             model: model,
             messages: messages as any
@@ -245,7 +251,7 @@ export async function askBard(campaignId: number, question: string, history: { r
         return response.choices[0].message.content || "Il Bardo è muto.";
     } catch (e) {
         console.error("[Chat] Errore:", e);
-        monitor.logAIRequestWithCost('chat', 'openai', 'gpt-4o-mini', 0, 0, 0, Date.now() - startAI, true);
+        monitor.logAIRequestWithCost('chat', provider, model, 0, 0, 0, Date.now() - startAI, true);
         return "La mia mente è annebbiata...";
     }
 }

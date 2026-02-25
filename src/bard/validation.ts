@@ -229,14 +229,16 @@ export async function validateBatch(
     const startAI = Date.now();
     try {
         const { client, model, provider } = await getMetadataClient();
-        const response = await client.chat.completions.create({
+        const validationOptions: any = {
             model: model,
             messages: [
                 { role: "system", content: "Sei il Custode degli Archivi di una campagna D&D. Valida dati in batch. Rispondi SOLO con JSON valido in italiano." },
                 { role: "user", content: prompt }
             ],
-            response_format: { type: "json_object" }
-        });
+        };
+        if (provider === 'openai') validationOptions.response_format = { type: "json_object" };
+        else if (provider === 'ollama') validationOptions.format = 'json';
+        const response = await client.chat.completions.create(validationOptions);
 
         const latency = Date.now() - startAI;
         const inputTokens = response.usage?.prompt_tokens || 0;

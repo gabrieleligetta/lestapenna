@@ -5,6 +5,7 @@ import { wipeCommand } from './admin/wipe';
 import { reprocessCommand } from './admin/reprocess';
 import { debugCommand } from './admin/debug';
 import { rebuildCommand } from './admin/rebuild';
+import { publishAllCommand } from './admin/publish';
 import { recoverCommand } from './admin/recover';
 import { syncCommand } from './admin/sync';
 import { rereconcileCommand } from './admin/rereconcile';
@@ -81,6 +82,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(reprocessCommand);
     dispatcher.register(debugCommand);
     dispatcher.register(rebuildCommand);
+    dispatcher.register(publishAllCommand);
     dispatcher.register(recoverCommand);
     dispatcher.register(syncCommand);
     dispatcher.register(rereconcileCommand);

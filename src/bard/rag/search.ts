@@ -46,14 +46,23 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
         const allNpcs = listNpcs(campaignId, 1000);
         const mentionedEntityRefs: string[] = [];
 
+        const queryLower = query.toLowerCase();
         for (const npc of allNpcs) {
-            if (query.toLowerCase().includes(npc.name.toLowerCase())) {
+            const npcLower = npc.name.toLowerCase();
+            // Full name match
+            if (queryLower.includes(npcLower)) {
+                mentionedEntityRefs.push(createEntityRef('npc', npc.id));
+                continue;
+            }
+            // Partial match: any significant word (4+ chars) of the NPC name appears in the query
+            const npcWords = npcLower.split(/\s+/).filter(w => w.length >= 4);
+            if (npcWords.some(word => queryLower.includes(word))) {
                 mentionedEntityRefs.push(createEntityRef('npc', npc.id));
                 continue;
             }
             if (npc.aliases) {
                 const aliases = npc.aliases.split(',').map(a => a.trim().toLowerCase());
-                if (aliases.some(alias => query.toLowerCase().includes(alias))) {
+                if (aliases.some(alias => queryLower.includes(alias))) {
                     mentionedEntityRefs.push(createEntityRef('npc', npc.id));
                 }
             }
@@ -80,9 +89,14 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
                     }
                 }
                 if (f.associated_npcs) {
-                    const fragmentNpcs = f.associated_npcs.split(',').map(n => n.toLowerCase());
+                    let parsedNpcs: string[];
+                    try {
+                        parsedNpcs = JSON.parse(f.associated_npcs).map((n: string) => n.toLowerCase());
+                    } catch {
+                        parsedNpcs = f.associated_npcs.split(',').map(n => n.toLowerCase().trim());
+                    }
                     const mentionedNpcs = allNpcs.filter(npc => mentionedNpcIds.includes(npc.id));
-                    return mentionedNpcs.some(mn => fragmentNpcs.includes(mn.name.toLowerCase()));
+                    return mentionedNpcs.some(mn => parsedNpcs.includes(mn.name.toLowerCase()));
                 }
                 return false;
             });

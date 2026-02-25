@@ -50,6 +50,7 @@ import { askCommand } from './narrative/ask';
 import { ingestCommand } from './narrative/ingest';
 import { narrateCommand } from './narrative/narrate';
 import { storyCommand } from './narrative/story';
+import { tecnicoCommand } from './narrative/tecnico';
 import { wikiCommand } from './narrative/wiki';
 
 // NPCs
@@ -124,6 +125,7 @@ export function registerAllCommands(dispatcher: CommandDispatcher) {
     dispatcher.register(ingestCommand);
     dispatcher.register(narrateCommand);
     dispatcher.register(storyCommand);
+    dispatcher.register(tecnicoCommand);
     dispatcher.register(wikiCommand);
 
     // NPCs

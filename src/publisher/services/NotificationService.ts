@@ -32,7 +32,12 @@ export class NotificationService {
             summary.narrativeBrief,
             summary.monsters,
             encounteredNPCs,
-            summary.narrativeBriefs // Array di brief per ogni atto
+            summary.narrativeBriefs,
+            summary.faction_updates,
+            summary.character_growth,
+            summary.party_alignment_change,
+            summary.artifacts,
+            summary.artifact_events
         );
     }
 
@@ -49,7 +54,12 @@ export class NotificationService {
             summary.narrativeBrief,
             summary.narrative,
             summary.monsters,
-            summary.quests
+            summary.quests,
+            summary.faction_updates,
+            summary.character_growth,
+            summary.party_alignment_change,
+            summary.artifacts,
+            summary.artifact_events
         );
     }
 

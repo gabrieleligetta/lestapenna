@@ -1,6 +1,7 @@
 /.env
 .idea
 node_modules
+/ai.config.local.json
 
 # Recordings
 recordings/*

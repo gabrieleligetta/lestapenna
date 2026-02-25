@@ -12,9 +12,7 @@ import {
     getNpcIdByName
 } from '../../db';
 import {
-    openaiEmbedClient,
     ollamaEmbedClient,
-    EMBEDDING_MODEL_OPENAI,
     EMBEDDING_MODEL_OLLAMA,
     EMBEDDING_BATCH_SIZE
 } from '../config';
@@ -33,63 +31,28 @@ export async function ingestGenericEvent(
     microLoc: string,
     timestamp?: number
 ): Promise<void> {
-    const promises: any[] = [];
     const startAI = Date.now();
 
-    // OpenAI Embedding
-    promises.push(
-        openaiEmbedClient.embeddings.create({
-            model: EMBEDDING_MODEL_OPENAI,
-            input: content
-        })
-            .then(resp => {
-                const inputTokens = resp.usage?.prompt_tokens || 0;
-                monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
-                return { provider: 'openai', data: resp.data[0].embedding };
-            })
-            .catch(err => {
-                console.error('[RAG] Errore embedding OpenAI:', err.message);
-                monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
-                return { provider: 'openai', error: err.message };
-            })
-    );
-
-    // Ollama Embedding
-    promises.push(
-        ollamaEmbedClient.embeddings.create({
+    try {
+        const resp = await ollamaEmbedClient.embeddings.create({
             model: EMBEDDING_MODEL_OLLAMA,
             input: content
-        })
-            .then(resp => {
-                monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
-                return { provider: 'ollama', data: resp.data[0].embedding };
-            })
-            .catch(err => {
-                console.error('[RAG] Errore embedding Ollama:', err.message);
-                monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
-                return { provider: 'ollama', error: err.message };
-            })
-    );
-
-    const results = await Promise.allSettled(promises);
-
-    for (const res of results) {
-        if (res.status === 'fulfilled') {
-            const val = res.value as any;
-            if (!val.error) {
-                insertKnowledgeFragment(
-                    campaignId,
-                    sessionId,
-                    content,
-                    val.data,
-                    val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
-                    timestamp || Date.now(),
-                    null,
-                    microLoc,
-                    npcs
-                );
-            }
-        }
+        });
+        monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
+        insertKnowledgeFragment(
+            campaignId,
+            sessionId,
+            content,
+            resp.data[0].embedding,
+            EMBEDDING_MODEL_OLLAMA,
+            timestamp || Date.now(),
+            null,
+            microLoc,
+            npcs
+        );
+    } catch (err: any) {
+        console.error('[RAG] Errore embedding Ollama:', err.message);
+        monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
     }
 
     console.log(`[RAG] Evento generico indicizzato in ${Date.now() - startAI}ms`);
@@ -166,7 +129,6 @@ export async function ingestSessionComplete(
     console.log(`[RAG] 🧠 Ingestione POST-SUMMARY per sessione ${sessionId}...`);
     console.log(`[RAG] 📊 Metadati Analista: ${summaryResult.present_npcs?.length || 0} NPC, ${summaryResult.location_updates?.length || 0} luoghi`);
 
-    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OPENAI);
     deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OLLAMA);
 
     const startTime = getSessionStartTime(sessionId) || Date.now();
@@ -250,61 +212,27 @@ export async function ingestSessionComplete(
 
     console.log(`[RAG] 📦 Creati ${chunks.length} chunks (${CHUNK_SIZE} chars, ${OVERLAP} overlap)`);
 
-    await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, idx) => {
-        const promises: any[] = [];
+    await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, _idx) => {
         const startAI = Date.now();
-
-        // OpenAI Task
-        promises.push(
-            openaiEmbedClient.embeddings.create({
-                model: EMBEDDING_MODEL_OPENAI,
-                input: chunk.text
-            })
-                .then(resp => {
-                    const inputTokens = resp.usage?.prompt_tokens || 0;
-                    monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, inputTokens, 0, 0, Date.now() - startAI, false);
-                    return { provider: 'openai', data: resp.data[0].embedding };
-                })
-                .catch(err => {
-                    monitor.logAIRequestWithCost('embeddings', 'openai', EMBEDDING_MODEL_OPENAI, 0, 0, 0, Date.now() - startAI, true);
-                    return { provider: 'openai', error: err.message };
-                })
-        );
-
-        // Ollama Task
-        promises.push(
-            ollamaEmbedClient.embeddings.create({
+        try {
+            const resp = await ollamaEmbedClient.embeddings.create({
                 model: EMBEDDING_MODEL_OLLAMA,
                 input: chunk.text
-            })
-                .then(resp => {
-                    monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
-                    return { provider: 'ollama', data: resp.data[0].embedding };
-                })
-                .catch(err => {
-                    monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
-                    return { provider: 'ollama', error: err.message };
-                })
-        );
-
-        const results = await Promise.allSettled(promises);
-
-        for (const res of results) {
-            if (res.status === 'fulfilled') {
-                const val = res.value as any;
-                if (!val.error) {
-                    insertKnowledgeFragment(
-                        campaignId, sessionId, chunk.text,
-                        val.data,
-                        val.provider === 'openai' ? EMBEDDING_MODEL_OPENAI : EMBEDDING_MODEL_OLLAMA,
-                        chunk.timestamp,
-                        chunk.macro,
-                        chunk.micro,
-                        chunk.npcs,
-                        chunk.entityRefs || []
-                    );
-                }
-            }
+            });
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
+            insertKnowledgeFragment(
+                campaignId, sessionId, chunk.text,
+                resp.data[0].embedding,
+                EMBEDDING_MODEL_OLLAMA,
+                chunk.timestamp,
+                chunk.macro,
+                chunk.micro,
+                chunk.npcs,
+                chunk.entityRefs || []
+            );
+        } catch (err: any) {
+            console.error(`[RAG] Errore embedding chunk:`, err.message);
+            monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
         }
     }, `Ingestione RAG (${chunks.length} chunks)`);
 }

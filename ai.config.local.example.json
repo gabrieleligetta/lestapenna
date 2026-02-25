@@ -1,0 +1,16 @@
+{
+  "_comment": "Copia questo file come ai.config.local.json per override locali (gitignored). Specifica solo le fasi che vuoi cambiare.",
+
+  "phases": {
+    "map":      { "provider": "ollama", "model": "llama3.3", "localModel": "llama3.2" },
+    "analyst":  { "provider": "ollama", "model": "mistral-nemo:12b" },
+    "summary":  { "provider": "openai", "model": "gpt-4o" }
+  },
+  "ollama": {
+    "remoteUrl": "http://100.64.x.x:11434/v1",
+    "localUrl":  "http://host.docker.internal:11434/v1"
+  },
+  "features": {
+    "enableAiCorrection": false
+  }
+}

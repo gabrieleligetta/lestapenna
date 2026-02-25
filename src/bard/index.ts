@@ -27,7 +27,6 @@ export {
     ANALYST_MODEL,
     CHAT_MODEL,
     NARRATIVE_FILTER_MODEL,
-    EMBEDDING_MODEL_OPENAI,
     EMBEDDING_MODEL_OLLAMA,
     // Clients
     getTranscriptionClient,
@@ -37,7 +36,6 @@ export {
     getAnalystClient,
     getChatClient,
     getNarrativeFilterClient,
-    openaiEmbedClient,
     ollamaEmbedClient,
     // Constants
     TRANSCRIPTION_CONCURRENCY,

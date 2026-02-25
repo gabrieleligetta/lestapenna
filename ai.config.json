@@ -1,0 +1,25 @@
+{
+  "phases": {
+    "transcription":   { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "metadata":        { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "map":             { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "analyst":         { "provider": "gemini", "model": "gemini-3.1-pro-preview" },
+    "summary":         { "provider": "gemini", "model": "gemini-3.1-pro-preview" },
+    "chat":            { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "narrativeFilter": { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "embedding":       { "provider": "ollama", "model": "nomic-embed-text" }
+  },
+  "fallback": { "provider": "gemini", "model": "gemini-3-flash-preview" },
+  "ollama": {
+    "remoteUrl": "http://100.80.204.16:11434/v1",
+    "localUrl":  "http://ollama:11434/v1"
+  },
+  "concurrency": { "openai": 5, "gemini": 5, "ollama": 1 },
+  "chunkSize":   { "openai": 128000, "gemini": 900000, "ollama": 15000 },
+  "chunkOverlap":{ "openai": 5000,   "gemini": 15000,   "ollama": 1000  },
+  "features": {
+    "enableAiCorrection": true,
+    "narrativeBatchSize": 30,
+    "narrativeOverlap": 20
+  }
+}

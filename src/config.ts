@@ -1,4 +1,95 @@
 import 'dotenv/config';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// ============================================
+// AI PROVIDER TYPES (Exported for use in other modules)
+// ============================================
+
+export type AIProvider = 'openai' | 'gemini' | 'ollama';
+
+export interface PhaseConfig {
+    provider: AIProvider;
+    model: string;
+    localModel?: string;
+}
+
+export interface AiJsonConfig {
+    phases: {
+        transcription: PhaseConfig;
+        metadata: PhaseConfig;
+        map: PhaseConfig;
+        analyst: PhaseConfig;
+        summary: PhaseConfig;
+        chat: PhaseConfig;
+        narrativeFilter: PhaseConfig;
+        embedding: PhaseConfig;
+    };
+    fallback: PhaseConfig;
+    ollama: {
+        remoteUrl: string;
+        localUrl: string;
+    };
+    concurrency: Record<AIProvider, number>;
+    chunkSize: Record<AIProvider, number>;
+    chunkOverlap: Record<AIProvider, number>;
+    features: {
+        enableAiCorrection: boolean;
+        narrativeBatchSize: number;
+        narrativeOverlap: number;
+    };
+}
+
+// ============================================
+// AI CONFIG JSON LOADER (with deep-merge)
+// ============================================
+
+function deepMerge(base: unknown, override: unknown): unknown {
+    if (
+        typeof base !== 'object' || base === null ||
+        typeof override !== 'object' || override === null
+    ) {
+        return override;
+    }
+    const result: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+    for (const [key, val] of Object.entries(override as Record<string, unknown>)) {
+        if (val !== null && val !== undefined) {
+            if (
+                typeof val === 'object' && !Array.isArray(val) &&
+                typeof result[key] === 'object' && result[key] !== null && !Array.isArray(result[key])
+            ) {
+                result[key] = deepMerge(result[key], val);
+            } else {
+                result[key] = val;
+            }
+        }
+    }
+    return result;
+}
+
+let _aiConfigCache: AiJsonConfig | null = null;
+
+export function loadAiConfig(): AiJsonConfig {
+    if (_aiConfigCache) return _aiConfigCache;
+
+    const basePath = path.resolve(process.cwd(), 'ai.config.json');
+    const localPath = path.resolve(process.cwd(), 'ai.config.local.json');
+
+    const base = JSON.parse(fs.readFileSync(basePath, 'utf-8')) as AiJsonConfig;
+
+    if (!fs.existsSync(localPath)) {
+        _aiConfigCache = base;
+        return _aiConfigCache;
+    }
+
+    const local = JSON.parse(fs.readFileSync(localPath, 'utf-8'));
+    _aiConfigCache = deepMerge(base, local) as AiJsonConfig;
+    return _aiConfigCache;
+}
+
+// ============================================
+// INTERFACES
+// ============================================
 
 interface DiscordConfig {
     token: string;
@@ -15,30 +106,12 @@ interface RedisConfig {
 }
 
 interface AIConfig {
-    provider: 'openai' | 'ollama';
     openAi: {
         apiKey: string;
-        projectId?: string;
-        model: string;
-        fallbackModel?: string;
+        projectId: string;
     };
-    ollama: {
-        baseUrl: string;
-        localBaseUrl: string;
-        model: string;
-        localModel: string;
-    };
-    embeddingProvider: 'openai' | 'ollama';
-
-    // Granular Per-Phase Config
-    phases: {
-        transcription: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
-        metadata: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
-        map: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
-        summary: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
-        analyst: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
-        chat: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
-        narrativeFilter: { provider: 'openai' | 'ollama', model: string, ollamaModel: string, ollamaLocalModel: string };
+    gemini: {
+        apiKey: string;
     };
 }
 
@@ -71,6 +144,10 @@ interface FeatureFlags {
     narrativeOverlap: number;
 }
 
+// ============================================
+// ENV HELPERS
+// ============================================
+
 const getEnv = (key: string, required: boolean = false, fallback: string = ''): string => {
     const value = process.env[key];
     if (!value && required) {
@@ -92,47 +169,11 @@ const getBool = (key: string, fallback: boolean): boolean => {
     return value.toLowerCase() === 'true';
 };
 
-const getPhaseProvider = (phaseKey: string, fallbackKey: string = 'AI_PROVIDER'): 'openai' | 'ollama' => {
-    const getVal = (key: string) => {
-        const val = process.env[key] || '';
-        // Strip everything after # and trim
-        return val.split('#')[0].trim().toLowerCase();
-    };
+// ============================================
+// CONFIG EXPORT
+// ============================================
 
-    // 1. Try specific provider (e.g. ANALYST_PROVIDER)
-    const specific = getVal(`${phaseKey.toUpperCase()}_PROVIDER`);
-    if (specific === 'openai' || specific === 'ollama') return specific as 'openai' | 'ollama';
-
-    // 2. Try custom fallback (e.g. METADATA -> ANALYST)
-    if (fallbackKey !== 'AI_PROVIDER') {
-        const secondary = getVal(`${fallbackKey.toUpperCase()}_PROVIDER`);
-        if (secondary === 'openai' || secondary === 'ollama') return secondary as 'openai' | 'ollama';
-    }
-
-    // 3. Global fallback
-    const global = getVal('AI_PROVIDER');
-    return global === 'ollama' ? 'ollama' : 'openai';
-};
-
-const getPhaseModel = (phaseKey: string, openAiFallback: string): string => {
-    const val = (process.env[`OPEN_AI_MODEL_${phaseKey.toUpperCase()}`] || '').split('#')[0].trim();
-    return val || openAiFallback;
-};
-
-const getOllamaPhaseModel = (phaseKey: string, fallback: string): string => {
-    const val = (process.env[`OLLAMA_MODEL_${phaseKey.toUpperCase()}`] || '').split('#')[0].trim();
-    return val || fallback;
-};
-
-const getOllamaLocalPhaseModel = (phaseKey: string, fallback: string): string => {
-    const val = (process.env[`OLLAMA_LOCAL_MODEL_${phaseKey.toUpperCase()}`] || '').split('#')[0].trim();
-    return val || fallback;
-};
-
-const globalAiProvider = (() => {
-    const p = (process.env['AI_PROVIDER'] || '').split('#')[0].trim().toLowerCase();
-    return p === 'ollama' ? 'ollama' : 'openai';
-})();
+const _aiCfg = loadAiConfig();
 
 export const config = {
     discord: {
@@ -161,64 +202,12 @@ export const config = {
     } as RedisConfig,
 
     ai: {
-        provider: globalAiProvider,
         openAi: {
             apiKey: getEnv('OPENAI_API_KEY', false, 'dummy'),
             projectId: getEnv('OPENAI_PROJECT_ID'),
-            model: getEnv('OPEN_AI_MODEL', false, 'gpt-5-mini'),
-            fallbackModel: getEnv('OPEN_AI_FALLBACK_MODEL', false, 'gpt-5-mini')
         },
-        ollama: {
-            baseUrl: getEnv('OLLAMA_BASE_URL', false, 'http://host.docker.internal:11434/v1'),
-            localBaseUrl: getEnv('OLLAMA_LOCAL_BASE_URL', false, 'http://host.docker.internal:11434/v1'),
-            model: getEnv('OLLAMA_MODEL', false, 'llama3.2'),
-            localModel: getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2')
-        },
-        embeddingProvider: getPhaseProvider('embedding'),
-
-        phases: {
-            transcription: {
-                provider: getPhaseProvider('transcription'),
-                model: getPhaseModel('transcription', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('transcription', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('transcription', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            },
-            metadata: {
-                provider: getPhaseProvider('metadata'),
-                model: getPhaseModel('metadata', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('metadata', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('metadata', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            },
-            map: {
-                provider: getPhaseProvider('map'),
-                model: getPhaseModel('map', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('map', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('map', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            },
-            summary: {
-                provider: getPhaseProvider('summary'),
-                model: getPhaseModel('summary', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('summary', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('summary', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            },
-            analyst: {
-                provider: getPhaseProvider('analyst', 'metadata'),
-                model: getPhaseModel('analyst', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('analyst', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('analyst', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            },
-            chat: {
-                provider: getPhaseProvider('chat'),
-                model: getPhaseModel('chat', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('chat', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('chat', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            },
-            narrativeFilter: {
-                provider: getPhaseProvider('narrative_filter'),
-                model: getPhaseModel('narrative_filter', 'gpt-5-mini'),
-                ollamaModel: getOllamaPhaseModel('narrative_filter', getEnv('OLLAMA_MODEL', false, 'llama3.2')),
-                ollamaLocalModel: getOllamaLocalPhaseModel('narrative_filter', getEnv('OLLAMA_LOCAL_MODEL', false, 'llama3.2'))
-            }
+        gemini: {
+            apiKey: getEnv('GEMINI_API_KEY', false, 'dummy'),
         }
     } as AIConfig,
 
@@ -242,13 +231,8 @@ export const config = {
 
     remoteWhisper: {
         url: getEnv('REMOTE_WHISPER_URL') ? getEnv('REMOTE_WHISPER_URL').replace(/\/$/, '') : null,
-        timeout: 2700000 // 45 min defaults
+        timeout: 2700000 // 45 min default
     } as RemoteWhisperConfig,
 
-    features: {
-        enableAiCorrection: getEnv('ENABLE_AI_TRANSCRIPTION_CORRECTION') !== 'false',
-        narrativeBatchSize: getInt('NARRATIVE_BATCH_SIZE', 30),
-        narrativeOverlap: getInt('NARRATIVE_OVERLAP', 20)
-    } as FeatureFlags
+    features: _aiCfg.features as FeatureFlags
 };
-

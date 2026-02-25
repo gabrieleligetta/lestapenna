@@ -4,7 +4,7 @@
 
 import * as nodemailer from 'nodemailer';
 import OpenAI from 'openai';
-import { config } from '../config';
+import { config, loadAiConfig } from '../config';
 
 // Configurazione SMTP per Porkbun
 export const transporter = nodemailer.createTransport({
@@ -17,12 +17,23 @@ export const transporter = nodemailer.createTransport({
     }
 });
 
+const aiCfg = loadAiConfig();
+const chatPhase = aiCfg.phases.chat;
+
+const reporterApiKey =
+    chatPhase.provider === 'gemini' ? config.ai.gemini.apiKey :
+    chatPhase.provider === 'ollama' ? 'ollama' :
+    config.ai.openAi.apiKey;
+
+const reporterBaseURL =
+    chatPhase.provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta/openai/' :
+    chatPhase.provider === 'ollama' ? aiCfg.ollama.remoteUrl :
+    undefined;
+
 export const openaiReporterClient = new OpenAI({
-    baseURL: config.ai.provider === 'ollama' ? config.ai.ollama.baseUrl : undefined,
-    project: config.ai.provider === 'ollama' ? undefined : config.ai.openAi.projectId,
-    apiKey: config.ai.provider === 'ollama' ? 'ollama' : config.ai.openAi.apiKey,
+    baseURL: reporterBaseURL,
+    project: chatPhase.provider === 'openai' ? (config.ai.openAi.projectId || undefined) : undefined,
+    apiKey: reporterApiKey,
 });
 
-export const REPORT_MODEL = config.ai.provider === 'ollama'
-    ? config.ai.ollama.model
-    : config.ai.openAi.model;
+export const REPORT_MODEL = chatPhase.model;

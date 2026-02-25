@@ -52,6 +52,7 @@ services:
       - ./recordings:/app/recordings
       - ./data:/app/data
       - ./batch_processing:/app/batch_processing
+      - ./ai.config.json:/app/ai.config.json:ro
       # 🆕 Whisper persiste nel volume (sopravvive a docker system prune)
       - whisper_data:/app/whisper
 

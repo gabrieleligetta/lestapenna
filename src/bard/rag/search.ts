@@ -14,9 +14,7 @@ import {
 } from '../../db';
 import {
     EMBEDDING_MODEL_OLLAMA,
-    EMBEDDING_MODEL_OPENAI,
     ollamaEmbedClient,
-    openaiEmbedClient,
     getChatClient
 } from '../config';
 import { cosineSimilarity, withRetry } from '../helpers';
@@ -27,31 +25,22 @@ import { monitor } from '../../monitor';
  * Searches the knowledge base (RAG)
  */
 export async function searchKnowledge(campaignId: number, query: string, limit: number = 5): Promise<string[]> {
-    const provider = process.env.EMBEDDING_PROVIDER || process.env.AI_PROVIDER || 'openai';
-    const isOllama = provider === 'ollama';
-    const model = isOllama ? EMBEDDING_MODEL_OLLAMA : EMBEDDING_MODEL_OPENAI;
-    const client = isOllama ? ollamaEmbedClient : openaiEmbedClient;
-
-    console.log(`[RAG] 🔍 Ricerca con ${model} (${provider})`);
+    console.log(`[RAG] 🔍 Ricerca con ${EMBEDDING_MODEL_OLLAMA} (ollama)`);
 
     const startAI = Date.now();
     try {
-        const resp = await client.embeddings.create({
-            model: model,
+        const resp = await ollamaEmbedClient.embeddings.create({
+            model: EMBEDDING_MODEL_OLLAMA,
             input: query
         });
 
         const queryVector = resp.data[0].embedding;
-        const inputTokens = resp.usage?.prompt_tokens || 0;
-
         monitor.logAIRequestWithCost(
-            'embeddings',
-            provider === 'ollama' ? 'ollama' : 'openai',
-            model,
-            inputTokens, 0, 0, Date.now() - startAI, false
+            'embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA,
+            0, 0, 0, Date.now() - startAI, false
         );
 
-        let fragments = getKnowledgeFragments(campaignId, model);
+        let fragments = getKnowledgeFragments(campaignId, EMBEDDING_MODEL_OLLAMA);
         if (fragments.length === 0) return [];
 
         const allNpcs = listNpcs(campaignId, 1000);
@@ -147,7 +136,7 @@ export async function searchKnowledge(campaignId: number, query: string, limit: 
     } catch (e) {
         console.error("[RAG] ❌ Errore ricerca:", e);
         monitor.logAIRequestWithCost(
-            'embeddings', provider === 'ollama' ? 'ollama' : 'openai', model,
+            'embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA,
             0, 0, 0, Date.now() - startAI, true
         );
         return [];

@@ -6,7 +6,7 @@ import pidusage from 'pidusage';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SessionMetrics } from './types';
+import { SessionMetrics, MonitorProvider } from './types';
 import { calculateCost } from './costs';
 import { checkDiskSpace } from './utils';
 
@@ -233,7 +233,7 @@ export class SystemMonitor {
         }
     }
 
-    logAIRequest(provider: 'ollama' | 'openai', latencyMs: number, tokensGenerated: number, failed: boolean = false) {
+    logAIRequest(provider: MonitorProvider, latencyMs: number, tokensGenerated: number, failed: boolean = false) {
         if (!this.currentSession) return;
 
         if (!this.currentSession.aiMetrics) {
@@ -278,7 +278,7 @@ export class SystemMonitor {
 
     logAIRequestWithCost(
         phase: string,
-        provider: 'ollama' | 'openai',
+        provider: MonitorProvider,
         model: string,
         inputTokens: number,
         outputTokens: number,
@@ -296,11 +296,11 @@ export class SystemMonitor {
             this.currentSession.costMetrics = {
                 totalCostUSD: 0,
                 breakdown: [],
-                byProvider: { openai: 0, ollama: 0 }
+                byProvider: { openai: 0, gemini: 0, ollama: 0 }
             };
         }
 
-        const cost = provider === 'openai'
+        const cost = (provider === 'openai' || provider === 'gemini')
             ? calculateCost(model, inputTokens, outputTokens, cachedInputTokens)
             : 0;
 

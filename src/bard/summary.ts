@@ -40,7 +40,11 @@ import {
     getMapClient,
     EMBEDDING_BATCH_SIZE,
     MAX_CHUNK_SIZE,
-    CHUNK_OVERLAP
+    CHUNK_OVERLAP,
+    ANALYST_CONTEXT_LIMIT,
+    ANALYST_OUTPUT_LIMIT,
+    SUMMARY_CONTEXT_LIMIT,
+    SUMMARY_OUTPUT_LIMIT
 } from './config';
 
 import {
@@ -326,15 +330,13 @@ export async function extractStructuredData(sessionId: string, narrativeText: st
         monitor.logAIRequestWithCost('analyst', provider, model, inputTokens, outputTokens, cachedTokens, latency, false);
 
         // 🆕 Context Window Logging + Prompt Caching Stats
-        const CONTEXT_LIMIT = 128000;
-        const OUTPUT_LIMIT = 16384;
-        const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
-        const outputPct = ((outputTokens / OUTPUT_LIMIT) * 100).toFixed(1);
+        const contextPct = ((inputTokens / ANALYST_CONTEXT_LIMIT) * 100).toFixed(1);
+        const outputPct = ((outputTokens / ANALYST_OUTPUT_LIMIT) * 100).toFixed(1);
         const cachePct = inputTokens > 0 ? ((cachedTokens / inputTokens) * 100).toFixed(1) : '0';
-        const contextWarning = inputTokens > CONTEXT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
-        const outputWarning = outputTokens > OUTPUT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
+        const contextWarning = inputTokens > ANALYST_CONTEXT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
+        const outputWarning = outputTokens > ANALYST_OUTPUT_LIMIT * 0.8 ? '⚠️ NEAR LIMIT!' : '';
         const cacheInfo = cachedTokens > 0 ? ` | 💾 Cached: ${cachedTokens.toLocaleString()} (${cachePct}%)` : '';
-        console.log(`[Analista] 📊 Token Usage: ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}${cacheInfo}`);
+        console.log(`[Analista] 📊 Token Usage: ${inputTokens.toLocaleString()}/${ANALYST_CONTEXT_LIMIT.toLocaleString()} input (${contextPct}%) ${contextWarning} | ${outputTokens.toLocaleString()}/${ANALYST_OUTPUT_LIMIT.toLocaleString()} output (${outputPct}%) ${outputWarning}${cacheInfo}`);
 
         const content = response.choices[0].message.content || "{}";
 
@@ -1087,12 +1089,10 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
             monitor.logAIRequestWithCost('summary', provider, model, inputTokens, outputTokens, cachedTokens, latency, false);
 
             // 🆕 Context Window Logging + Prompt Caching Stats (Per il singolo atto)
-            const CONTEXT_LIMIT = 128000;
-            const OUTPUT_LIMIT = 16384;
-            const contextPct = ((inputTokens / CONTEXT_LIMIT) * 100).toFixed(1);
+            const contextPct = ((inputTokens / SUMMARY_CONTEXT_LIMIT) * 100).toFixed(1);
             const cachePct = inputTokens > 0 ? ((cachedTokens / inputTokens) * 100).toFixed(1) : '0';
             const cacheInfo = cachedTokens > 0 ? ` | 💾 Cached: ${cachedTokens.toLocaleString()} (${cachePct}%)` : '';
-            console.log(`[Bardo] 📊 Token Usage (Atto ${actNumber}): ${inputTokens.toLocaleString()}/${CONTEXT_LIMIT.toLocaleString()} (${contextPct}%)${cacheInfo}`);
+            console.log(`[Bardo] 📊 Token Usage (Atto ${actNumber}): ${inputTokens.toLocaleString()}/${SUMMARY_CONTEXT_LIMIT.toLocaleString()} (${contextPct}%)${cacheInfo}`);
 
             const content = response.choices[0].message.content || "{}";
             const responseFileName = (!isMultiPart && i === 0) ? 'writer_response.txt' : `writer_response_act${actNumber}.txt`;

@@ -2,9 +2,11 @@
  * Monitor - Types
  */
 
+export type MonitorProvider = 'openai' | 'gemini' | 'ollama';
+
 export interface CostBreakdown {
     phase: string;           // 'analyst', 'map', 'summary', 'chat', 'embeddings', 'metadata'
-    provider: 'ollama' | 'openai';
+    provider: MonitorProvider;
     model: string;
     inputTokens: number;
     outputTokens: number;
@@ -51,7 +53,7 @@ export interface SessionMetrics {
         retriedJobs: number;
     };
     aiMetrics?: {
-        provider: 'ollama' | 'openai';
+        provider: MonitorProvider;
         totalRequests: number;
         avgLatencyMs: number;
         minLatencyMs: number;
@@ -64,6 +66,7 @@ export interface SessionMetrics {
         breakdown: CostBreakdown[];
         byProvider: {
             openai: number;
+            gemini: number;
             ollama: number;
         };
     };

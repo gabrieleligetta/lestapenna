@@ -34,6 +34,8 @@ services:
       - ./package.json:/app/package.json
       - ./tsconfig.json:/app/tsconfig.json
       - ./yarn.lock:/app/yarn.lock
+      - ./ai.config.json:/app/ai.config.json:ro
+      - ./ai.config.local.json:/app/ai.config.local.json:ro
       - ./recordings:/app/recordings
       - ./batch_processing:/app/batch_processing
       - ./data:/app/data

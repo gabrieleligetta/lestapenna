@@ -71,7 +71,7 @@ export class PipelineService {
     /**
      * Generates summary for the session
      */
-    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM', options: { skipAnalysis?: boolean, forceRegeneration?: boolean } = {}): Promise<any> {
+    async generateSessionSummary(sessionId: string, campaignId: number, tone: ToneKey = 'DM', options: { skipAnalysis?: boolean, forceRegeneration?: boolean, skipNormalization?: boolean } = {}): Promise<any> {
         const cleanText = prepareCleanText(sessionId);
         if (!cleanText) {
             console.warn(`[Pipeline] ⚠️ Clean text non disponibile, fallback a raw transcription gestito da generateSummary.`);
@@ -79,10 +79,10 @@ export class PipelineService {
 
         console.log(`[Pipeline] 📝 Avvio generateSummary (Tone: ${tone}, Options: ${JSON.stringify(options)})...`);
         let result = await generateSummary(sessionId, tone, cleanText, options);
-        console.log(`[Pipeline] ✅ generateSummary completato, avvio normalizzazione...`);
+        console.log(`[Pipeline] ✅ generateSummary completato${options.skipNormalization ? ' (normalizzazione saltata)' : ', avvio normalizzazione...'}`)
 
-        // Normalize entity names if campaign exists
-        if (campaignId) {
+        // Normalize entity names if campaign exists (skip for display-only commands)
+        if (campaignId && !options.skipNormalization) {
             result = await normalizeSummaryNames(campaignId, result);
             console.log(`[Pipeline] ✅ Normalizzazione completata.`);
         }

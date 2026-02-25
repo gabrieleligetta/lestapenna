@@ -213,7 +213,7 @@ async function generateAndSendEmbed(ctx: CommandContext, sessionId: string) {
             sessionId,
             campaignId,
             'DM',
-            { skipAnalysis: true }
+            { skipAnalysis: true, skipNormalization: true }
         );
 
         const encounteredNPCs = getSessionEncounteredNPCs(sessionId);

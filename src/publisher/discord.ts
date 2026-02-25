@@ -174,7 +174,7 @@ export async function publishSummary(
             return `${statusEmoji} **${monster.name}**${countText}`;
         }).join('\n');
     }
-    embed.addFields({ name: "🐉 Mostri", value: truncate(monsterText, 512), inline: true });
+    embed.addFields({ name: "🐉 Mostri", value: truncate(monsterText, 512) });
 
     // 👥 NPC
     let npcText = "*Nessuno*";
@@ -188,7 +188,7 @@ export async function publishSummary(
             return `${statusEmoji} **${npc.name}**${roleText}`;
         }).join('\n');
     }
-    embed.addFields({ name: '👥 NPC', value: truncate(npcText, 512), inline: true });
+    embed.addFields({ name: '👥 NPC', value: truncate(npcText, 512) });
 
     // 🏅 Reputazione (condizionale)
     const reputationUpdates = factionUpdates?.filter(f => f.reputation_change);
@@ -199,7 +199,7 @@ export async function publishSummary(
             const arrow = val > 0 ? '⬆️' : val < 0 ? '⬇️' : '➡️';
             return `${arrow} **${f.name}**: ${sign}${val}\n*${f.reputation_change!.reason}*`;
         }).join('\n');
-        embed.addFields({ name: '🏅 Reputazione', value: truncate(repText, 512), inline: true });
+        embed.addFields({ name: '🏅 Reputazione', value: truncate(repText, 512) });
     }
 
     // ⚖️ Allineamento Party (condizionale)
@@ -211,7 +211,7 @@ export async function publishSummary(
         const moralArrow = moralVal > 0 ? '⬆️' : moralVal < 0 ? '⬇️' : '➡️';
         const ethicalArrow = ethicalVal > 0 ? '⬆️' : ethicalVal < 0 ? '⬇️' : '➡️';
         const alignText = `${moralArrow} Morale: **${moralSign}${moralVal}**\n${ethicalArrow} Etico: **${ethicalSign}${ethicalVal}**\n*${partyAlignmentChange.reason}*`;
-        embed.addFields({ name: '⚖️ Allineamento', value: truncate(alignText, 512), inline: true });
+        embed.addFields({ name: '⚖️ Allineamento', value: truncate(alignText, 512) });
     }
 
     // 🗡️ Artefatti (condizionale)
@@ -230,7 +230,7 @@ export async function publishSummary(
         });
     }
     if (artifactLines.length > 0) {
-        embed.addFields({ name: '🗡️ Artefatti', value: truncate(artifactLines.join('\n'), 512), inline: true });
+        embed.addFields({ name: '🗡️ Artefatti', value: truncate(artifactLines.join('\n'), 512) });
     }
 
     // 🧬 Crescita PG (condizionale)
@@ -240,7 +240,7 @@ export async function publishSummary(
                 g.type === 'RELATIONSHIP' ? '🤝' : g.type === 'BACKGROUND' ? '📖' : '🎯';
             return `${typeEmoji} **${g.name}**: ${g.event}`;
         }).join('\n');
-        embed.addFields({ name: '🧬 Crescita PG', value: truncate(growthText, 512), inline: true });
+        embed.addFields({ name: '🧬 Crescita PG', value: truncate(growthText, 512) });
     }
 
     await targetChannel.send({ embeds: [embed] });

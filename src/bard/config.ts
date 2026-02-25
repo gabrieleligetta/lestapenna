@@ -263,3 +263,30 @@ console.log(`ChunkSize:   ${MAP_PROVIDER} → ${cfg.chunkSize[MAP_PROVIDER].toLo
 
 // Check asincrono del modello remoto (non blocca il boot)
 checkRemoteModelAvailable();
+
+// Check locale embed model (critico — è l'unico usato per RAG)
+async function checkLocalEmbedModel(): Promise<void> {
+    const localUrl = cfg.ollama.localUrl.replace(/\/v1\/?$/, '');
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(`${localUrl}/api/tags`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!resp.ok) {
+            console.warn(`[Ollama] ⚠️ Locale non ha risposto (status ${resp.status}) — embed RAG non funzionerà`);
+            return;
+        }
+        const data = await resp.json() as { models?: Array<{ name: string }> };
+        const models = (data.models || []).map((m) => m.name);
+        const found = models.some(m => m === EMBEDDING_MODEL_OLLAMA || m.startsWith(EMBEDDING_MODEL_OLLAMA + ':'));
+        if (found) {
+            console.log(`[Ollama] ✅ Embed model "${EMBEDDING_MODEL_OLLAMA}" disponibile sul locale`);
+        } else {
+            console.warn(`[Ollama] 🔴 Embed model "${EMBEDDING_MODEL_OLLAMA}" NON trovato sul locale! RAG non funzionerà.`);
+            console.warn(`[Ollama]    Modelli disponibili: ${models.join(', ') || '(nessuno)'}`);
+        }
+    } catch {
+        console.warn(`[Ollama] ⚠️ Locale non raggiungibile (${localUrl}) — embed RAG non funzionerà`);
+    }
+}
+checkLocalEmbedModel();

@@ -382,6 +382,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
 
     // A. Raccogli tutte le promesse di chiusura degli stream attivi
     const closePromises: Promise<void>[] = [];
+    const ffmpegProcs: ChildProcess[] = [];
 
     for (const [key, stream] of Array.from(activeStreams)) {
         if (key.startsWith(`${guildId}-`)) {
@@ -396,29 +397,48 @@ export async function disconnect(guildId: string): Promise<boolean> {
                 }
             });
             closePromises.push(p);
+            ffmpegProcs.push(stream.ffmpeg);
             activeStreams.delete(key);
         }
     }
 
-    // B. Aspetta che TUTTI i processi ffmpeg finiscano (senza timeout)
+    // B. Aspetta che TUTTI i processi ffmpeg finiscano (max 60s, poi SIGKILL)
     if (closePromises.length > 0) {
         console.log(`[Recorder] ⏳ Attesa chiusura di ${closePromises.length} stream audio...`);
-        await Promise.all(closePromises);
+        const FFMPEG_TIMEOUT_MS = 60_000;
+        const timeout = setTimeout(() => {
+            console.warn(`[Recorder] ⚠️ Timeout chiusura ffmpeg dopo ${FFMPEG_TIMEOUT_MS / 1000}s — force kill`);
+            for (const proc of ffmpegProcs) {
+                if (proc.exitCode === null) {
+                    try { proc.kill('SIGKILL'); } catch {}
+                }
+            }
+        }, FFMPEG_TIMEOUT_MS);
+        try {
+            await Promise.all(closePromises);
+        } finally {
+            clearTimeout(timeout);
+        }
     }
 
-    // C. Aspetta che la logica di "onFileClosed" (DB + Backup) sia finita
-    // Sostituito il polling con un'attesa reattiva (Promise)
+    // C. Aspetta che la logica di "onFileClosed" (DB + Backup) sia finita (max 5min)
     const pendingFiles = pendingFileProcessing.get(guildId);
     if (pendingFiles && pendingFiles.size > 0) {
         console.log(`[Recorder] ⏳ Attesa elaborazione finale di ${pendingFiles.size} file...`);
 
-        await new Promise<void>((resolve) => {
-            // Registriamo il resolver. Verrà chiamato da ffmpeg.on('close') -> finally
-            if (!fileProcessingResolvers.has(guildId)) {
-                fileProcessingResolvers.set(guildId, []);
-            }
-            fileProcessingResolvers.get(guildId)!.push(resolve);
-        });
+        const BACKUP_TIMEOUT_MS = 300_000; // 5 minuti
+        await Promise.race([
+            new Promise<void>((resolve) => {
+                if (!fileProcessingResolvers.has(guildId)) {
+                    fileProcessingResolvers.set(guildId, []);
+                }
+                fileProcessingResolvers.get(guildId)!.push(resolve);
+            }),
+            new Promise<void>((resolve) => setTimeout(() => {
+                console.warn(`[Recorder] ⚠️ Timeout elaborazione file dopo ${BACKUP_TIMEOUT_MS / 1000}s — proseguo comunque`);
+                resolve();
+            }, BACKUP_TIMEOUT_MS)),
+        ]);
 
         console.log(`[Recorder] ✅ Tutti i file sono stati processati.`);
     }

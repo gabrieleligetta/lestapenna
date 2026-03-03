@@ -24,7 +24,7 @@ const POST_TRANSCRIPT_PHASES: SessionPhase[] = [
 
 // Phases that can be recovered
 const RECOVERABLE_PHASES: SessionPhase[] = [
-    'TRANSCRIBING', 'CORRECTING', 'SUMMARIZING', 'VALIDATING',
+    'RECORDING', 'TRANSCRIBING', 'CORRECTING', 'SUMMARIZING', 'VALIDATING',
     'INGESTING', 'SYNCING', 'PUBLISHING'
 ];
 
@@ -129,6 +129,11 @@ class SessionPhaseManagerImpl {
     getRecoveryStartPhase(currentPhase: SessionPhase): 'TRANSCRIBING' | 'SUMMARIZING' | null {
         if (!this.isRecoverable(currentPhase)) {
             return null;
+        }
+
+        // If we crashed during recording (disconnect hang), treat as transcription start
+        if (currentPhase === 'RECORDING') {
+            return 'TRANSCRIBING';
         }
 
         // If we crashed during transcription or correction, we need to redo transcription

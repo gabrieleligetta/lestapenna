@@ -192,7 +192,7 @@ export const listenCommand: Command = {
                 newMicro = locationArg.trim();
             }
 
-            updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId);
+            updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId, undefined, undefined, false, true);
             if (ctx.interaction && !ctx.interaction.replied && !ctx.interaction.deferred) {
                 await ctx.interaction.update({ content: `📍 Posizione tracciata: **${newMacro || '-'}** | **${newMicro || '-'}**.`, components: [], embeds: [] });
             } else {
@@ -214,7 +214,7 @@ export const listenCommand: Command = {
             } else {
                 // Location missing, start interactive
                 await startInteractiveLocationSelection(ctx, async (macro, micro) => {
-                    updateLocation(ctx.activeCampaign!.id, macro, micro, sessionId);
+                    updateLocation(ctx.activeCampaign!.id, macro, micro, sessionId, undefined, undefined, false, true);
                     await proceedWithSessionStart();
                 });
             }

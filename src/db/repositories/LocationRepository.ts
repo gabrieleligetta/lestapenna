@@ -4,7 +4,7 @@ import { campaignRepository } from './CampaignRepository';
 import { generateShortId } from '../utils/idGenerator';
 
 export const locationRepository = {
-    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string, timestamp?: number, isManual: boolean = false): void => {
+    updateLocation: (campaignId: number, macro: string | null, micro: string | null, sessionId?: string, reason?: string, timestamp?: number, isManual: boolean = false, skipHistory: boolean = false): void => {
         // 1. Aggiorna lo stato corrente della campagna
         const current = campaignRepository.getCampaignLocationById(campaignId);
 
@@ -24,7 +24,15 @@ export const locationRepository = {
         // Nota: Micro può essere resettato, Macro tendiamo a mantenerlo se non specificato
         stmt.run(macro, micro, campaignId);
 
-        // 2. Aggiungi alla cronologia
+        // 2. Aggiungi alla cronologia (solo se non esplicitamente saltato)
+        // skipHistory = true viene usato da listen.ts per registrare solo la posizione
+        // di partenza della sessione, che verrà poi inserita correttamente
+        // dall'AI via travel_sequence a fine sessione.
+        if (skipHistory) {
+            console.log(`[DB] 🗺️ Luogo aggiornato (no history): [${macro}] - (${micro})`);
+            return;
+        }
+
         let legacyLocation = "Sconosciuto";
         if (macro && micro) legacyLocation = `${macro} | ${micro}`;
         else if (macro) legacyLocation = macro;

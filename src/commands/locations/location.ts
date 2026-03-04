@@ -42,7 +42,11 @@ export const locationCommand: Command = {
             newMicro = argsStr.trim();
         }
 
-        updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId, undefined, undefined, true);
+        // Durante una sessione attiva, non scriviamo in location_history:
+        // la cronologia definitiva viene costruita dall'AI via travel_sequence a fine sessione.
+        // Fuori sessione (sessionId = null) registriamo normalmente.
+        const skipHistory = !!sessionId;
+        updateLocation(ctx.activeCampaign!.id, newMacro, newMicro, sessionId, undefined, undefined, true, skipHistory);
 
         await ctx.message.reply(`📍 **Aggiornamento Manuale**\nImpostato su: ${newMacro || '-'} | ${newMicro || '-'}`);
     }

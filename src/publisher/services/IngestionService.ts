@@ -253,9 +253,9 @@ export class IngestionService {
         // 🆕 Process Travel Sequence
         if (result.travel_sequence?.length) {
             console.log(`[Ingestion] 🗺️ Salvataggio ${result.travel_sequence.length} spostamenti...`);
-            // Pulizia preventiva: i luoghi possono essere già stati inseriti in tempo reale
-            // durante la sessione da listen.ts. Il travel_sequence dell'AI è la fonte
-            // autoritaria, quindi sostituiamo i record esistenti con quelli definitivi.
+            // Pulizia preventiva: processBatchEvents può essere chiamato più volte sulla stessa
+            // sessione (es. $racconta senza --reindex ri-usa la cache AI). Il travel_sequence
+            // è la fonte definitiva della cronologia luoghi, quindi si sostituisce sempre.
             locationRepository.clearSessionLocationHistory(sessionId);
             for (const travel of result.travel_sequence) {
                 updateLocation(campaignId, travel.macro, travel.micro, sessionId, travel.reason, sessionStartTime);

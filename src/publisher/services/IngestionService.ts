@@ -253,6 +253,10 @@ export class IngestionService {
         // 🆕 Process Travel Sequence
         if (result.travel_sequence?.length) {
             console.log(`[Ingestion] 🗺️ Salvataggio ${result.travel_sequence.length} spostamenti...`);
+            // Pulizia preventiva: i luoghi possono essere già stati inseriti in tempo reale
+            // durante la sessione da listen.ts. Il travel_sequence dell'AI è la fonte
+            // autoritaria, quindi sostituiamo i record esistenti con quelli definitivi.
+            locationRepository.clearSessionLocationHistory(sessionId);
             for (const travel of result.travel_sequence) {
                 updateLocation(campaignId, travel.macro, travel.micro, sessionId, travel.reason, sessionStartTime);
             }

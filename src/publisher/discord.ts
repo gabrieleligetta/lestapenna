@@ -27,6 +27,7 @@ export async function publishSummary(
     isReplay: boolean = false,
     title?: string,
     loot?: Array<{ name: string; quantity?: number; description?: string }>,
+    loot_removed?: Array<{ name: string; quantity?: number; description?: string }>,
     quests?: Array<{ title: string; description?: string; status?: string }>,
     narrative?: string,
     monsters?: Array<{ name: string; status: string; count?: string }>,
@@ -145,9 +146,19 @@ export async function publishSummary(
 
     const lootText = (loot && loot.length > 0) ? loot.map(i => {
         const qtyStr = i.quantity && i.quantity > 1 ? ` (x${i.quantity})` : '';
-        return `• ${i.name}${qtyStr}`;
+        const descStr = i.description ? ` — *${i.description}*` : '';
+        return `• ${i.name}${qtyStr}${descStr}`;
     }).join('\n') : "Nessun bottino recuperato";
     embed1.addFields({ name: "💰 Bottino (Loot)", value: truncate(lootText) });
+
+    if (loot_removed && loot_removed.length > 0) {
+        const lootRemovedText = loot_removed.map(i => {
+            const qtyStr = i.quantity && i.quantity > 1 ? ` (x${i.quantity})` : '';
+            const descStr = i.description ? ` — *${i.description}*` : '';
+            return `• ${i.name}${qtyStr}${descStr}`;
+        }).join('\n');
+        embed1.addFields({ name: "🗑️ Oggetti Persi/Usati", value: truncate(lootRemovedText) });
+    }
 
     const questText = (quests && quests.length > 0) ? quests.map(q => {
         if (typeof q === 'string') return `• ${q}`;

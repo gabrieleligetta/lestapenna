@@ -28,6 +28,7 @@ export class NotificationService {
             false,
             summary.title,
             summary.loot,
+            summary.loot_removed,
             summary.quests,
             summary.narrativeBrief,
             summary.monsters,

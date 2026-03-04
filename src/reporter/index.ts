@@ -144,12 +144,12 @@ export async function sendSessionRecap(
     <div style="background-color: #fcf3cf; padding: 10px; border-radius: 5px; border-left: 4px solid #f1c40f;">
         ${loot?.length ? `<p style="margin: 5px 0;"><strong>Ottenuti:</strong></p>
         <ul style="margin: 0 0 10px 0; padding-left: 20px; color: #27ae60;">
-            ${loot.map(l => `<li>+ ${l.name}${l.quantity && l.quantity > 1 ? ` (x${l.quantity})` : ''}</li>`).join('\n')}
+            ${loot.map(l => `<li>+ ${l.name}${l.quantity && l.quantity > 1 ? ` (x${l.quantity})` : ''}${l.description ? ` <em style="color: #555; font-size: 0.9em;">— ${l.description}</em>` : ''}</li>`).join('\n')}
         </ul>` : ''}
 
         ${lootRemoved?.length ? `<p style="margin: 5px 0;"><strong>Persi/Usati:</strong></p>
         <ul style="margin: 0; padding-left: 20px; color: #c0392b;">
-            ${lootRemoved.map(l => `<li>- ${l.name}${l.quantity && l.quantity > 1 ? ` (x${l.quantity})` : ''}</li>`).join('\n')}
+            ${lootRemoved.map(l => `<li>- ${l.name}${l.quantity && l.quantity > 1 ? ` (x${l.quantity})` : ''}${l.description ? ` <em style="color: #555; font-size: 0.9em;">— ${l.description}</em>` : ''}</li>`).join('\n')}
         </ul>` : ''}
     </div>
     ` : ''}

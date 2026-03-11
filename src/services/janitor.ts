@@ -1,6 +1,7 @@
 import * as cron from 'node-cron';
 import { ListObjectsV2Command, ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
 import { deleteRawSessionFiles, getS3Client, getBucketName, checkStorageUsage } from './backup';
+import { mixSessionAudio } from './sessionMixer';
 import { db } from '../db';
 
 // Configurazione
@@ -38,11 +39,11 @@ async function runJanitorCycle() {
 
         console.log(`[Janitor] ⚠️ Spazio critico! Avvio procedura di pulizia fino a raggiungere ${TARGET_THRESHOLD_GB} GB.`);
 
-        // 2. We need to clear space. List ALL sessions with their Master File Date.
-        let sessions: { id: string, date: Date }[] = [];
+        // 2. Indicizza TUTTE le sessioni con FLAC, tracciando se hanno il master
+        const sessionMap = new Map<string, { date: Date, hasMaster: boolean, hasFlac: boolean }>();
         let continuationToken: string | undefined = undefined;
 
-        console.log(`[Janitor] 🔍 Indicizzazione sessioni masterizzate...`);
+        console.log(`[Janitor] 🔍 Indicizzazione sessioni nel bucket...`);
 
         do {
             const listCmd: ListObjectsV2Command = new ListObjectsV2Command({
@@ -55,14 +56,23 @@ async function runJanitorCycle() {
 
             if (response.Contents) {
                 for (const obj of response.Contents) {
-                    // Check for master file to valid session existence and get date
-                    if (obj.Key && obj.Key.endsWith('_master.mp3')) {
-                        const parts = obj.Key.split('/');
-                        if (parts.length >= 3) {
-                            const sessionId = parts[1];
-                            if (obj.LastModified) {
-                                sessions.push({ id: sessionId, date: obj.LastModified });
-                            }
+                    if (!obj.Key) continue;
+                    const parts = obj.Key.split('/');
+                    if (parts.length < 3) continue;
+                    const sessionId = parts[1];
+
+                    if (!sessionMap.has(sessionId)) {
+                        sessionMap.set(sessionId, { date: obj.LastModified || new Date(), hasMaster: false, hasFlac: false });
+                    }
+                    const entry = sessionMap.get(sessionId)!;
+
+                    if (obj.Key.endsWith('_master.mp3')) {
+                        entry.hasMaster = true;
+                    } else if (obj.Key.endsWith('.flac')) {
+                        entry.hasFlac = true;
+                        // Usa la data del FLAC più vecchio come data sessione
+                        if (obj.LastModified && obj.LastModified < entry.date) {
+                            entry.date = obj.LastModified;
                         }
                     }
                 }
@@ -70,9 +80,13 @@ async function runJanitorCycle() {
             continuationToken = response.NextContinuationToken;
         } while (continuationToken);
 
-        // Sort sessions by date ASC (Oldest first)
-        sessions.sort((a, b) => a.date.getTime() - b.date.getTime());
-        console.log(`[Janitor] 📋 Trovate ${sessions.length} sessioni archiviate.`);
+        // Filtra solo sessioni con FLAC da pulire
+        const sessions = Array.from(sessionMap.entries())
+            .filter(([, data]) => data.hasFlac)
+            .map(([id, data]) => ({ id, ...data }))
+            .sort((a, b) => a.date.getTime() - b.date.getTime()); // Oldest first
+
+        console.log(`[Janitor] 📋 Trovate ${sessions.length} sessioni con file FLAC (${sessions.filter(s => !s.hasMaster).length} senza mix).`);
 
         // 3. Start Pruning Loop
         let currentUsageGB = stats.totalGB;
@@ -86,18 +100,22 @@ async function runJanitorCycle() {
 
             console.log(`[Janitor] 🗑️ Pulizia sessione del ${session.date.toISOString()} (ID: ${session.id})...`);
 
-            // Delete RAW files only (keep Master/Live/Transcript)
-            // Note: deleteRawSessionFiles returns number of files, not bytes freed unfortunately.
-            // We'll trust that deleting files frees space. We could estimate size but it's slow.
-            // We just proceed aggressively session by session.
+            // Se non c'è il master, generalo prima di cancellare i FLAC
+            if (!session.hasMaster) {
+                try {
+                    console.log(`[Janitor] 📀 Mix mancante per ${session.id}, generazione in corso...`);
+                    await mixSessionAudio(session.id, false);
+                    console.log(`[Janitor] ✅ Mix generato per ${session.id}.`);
+                } catch (mixErr: any) {
+                    console.warn(`[Janitor] ⚠️ Mix fallito per ${session.id}: ${mixErr.message}. Salto pulizia FLAC.`);
+                    continue; // Non cancellare i FLAC se il mix è fallito
+                }
+            }
+
             const deletedCount = await deleteRawSessionFiles(session.id);
 
             if (deletedCount > 0) {
                 deletedSessionsCount++;
-                // ESTIMATION: average raw session might be 100-200MB? 
-                // Since we can't query size constantly without cost/latency, we just clean one by one.
-                // Re-checking storage every single session is too API heavy.
-                // Let's re-check storage every 3 sessions cleaned.
                 if (deletedSessionsCount % 3 === 0) {
                     const updatedStats = await checkStorageUsage(true);
                     currentUsageGB = updatedStats.totalGB;

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { monitor, startMemoryMonitor } from '../monitor';
+import { startJanitor } from '../services/janitor';
 import { startWorker } from '../workers';
 import {
     checkStorageUsage,
@@ -77,6 +78,7 @@ export function registerReadyHandler(client: Client) {
 
         monitor.startIdleMonitoring();
         startMemoryMonitor();
+        startJanitor();
 
         // 🆕 PHASE-BASED RECOVERY: Check for sessions interrupted by crash
         await recoverIncompleteSessions(client);

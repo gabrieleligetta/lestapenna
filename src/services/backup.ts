@@ -433,23 +433,12 @@ export async function deleteRawSessionFiles(sessionId: string): Promise<number> 
                     .map(obj => ({ Key: obj.Key! }));
 
                 if (objectsToDelete.length > 0) {
-                    // DeleteObjectsCommand accetta max 1000 oggetti
                     for (let i = 0; i < objectsToDelete.length; i += 1000) {
                         const batch = objectsToDelete.slice(i, i + 1000);
-                        await client.send(new DeleteObjectCommand({
-                            Bucket: bucket,
-                            Key: batch[0].Key // DeleteObjectCommand cancella uno alla volta, usiamo loop o DeleteObjectsCommand
-                        }));
-
-                        // Nota: DeleteObjectCommand cancella un solo oggetto.
-                        // Per cancellarne molti, dovremmo usare DeleteObjectsCommand.
-                        // Ma il prompt chiedeva di usare le funzioni esistenti o simili.
-                        // Implementiamo un loop parallelo per efficienza.
                         await Promise.all(batch.map(obj => client.send(new DeleteObjectCommand({
                             Bucket: bucket,
                             Key: obj.Key
                         }))));
-
                         deletedCount += batch.length;
                     }
                 }

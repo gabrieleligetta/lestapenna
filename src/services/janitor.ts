@@ -11,6 +11,11 @@ const RETENTION_HOURS = 48; // Ore di conservazione dopo la creazione del Master
 export function startJanitor() {
     console.log(`[Janitor] 🧹 Servizio di pulizia programmato: ${JANITOR_SCHEDULE}`);
 
+    // Esegui subito allo startup (in background, non blocca il boot)
+    setTimeout(() => {
+        runJanitorCycle().catch(err => console.error(`[Janitor] ❌ Errore ciclo startup:`, err));
+    }, 30_000); // 30s di delay per lasciar finire il boot
+
     cron.schedule(JANITOR_SCHEDULE, async () => {
         console.log(`[Janitor] 🧹 Inizio ciclo di pulizia giornaliero...`);
         await runJanitorCycle();

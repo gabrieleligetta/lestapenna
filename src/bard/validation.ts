@@ -8,6 +8,7 @@ import { monitor } from '../monitor';
 import { getNpcHistory, getCharacterHistory, getOpenQuests, npcRepository, characterRepository, artifactRepository, inventoryRepository, questRepository, locationRepository } from '../db';
 import { QuestStatus } from '../db/types';
 import { VALIDATION_PROMPT } from './prompts';
+import { safeJsonParse } from './helpers';
 
 // ============================
 // ID-First Resolution System
@@ -249,7 +250,7 @@ export async function validateBatch(
 
         console.log(`[Validator] Validazione completata in ${latency}ms (${inputTokens}+${outputTokens} tokens)`);
 
-        const result = JSON.parse(response.choices[0].message.content || "{}");
+        const result = safeJsonParse(response.choices[0].message.content || "{}") || {};
 
         // Normalize Quests with robust fallback logic
         const normalizeStatus = (s?: string): QuestStatus => {

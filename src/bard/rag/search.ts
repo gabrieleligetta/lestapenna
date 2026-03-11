@@ -17,7 +17,7 @@ import {
     ollamaEmbedClient,
     getChatClient
 } from '../config';
-import { cosineSimilarity, withRetry } from '../helpers';
+import { cosineSimilarity, withRetry, safeJsonParse } from '../helpers';
 import { RAG_QUERY_GENERATION_PROMPT, BARD_ATMOSPHERE_PROMPT } from '../prompts';
 import { monitor } from '../../monitor';
 
@@ -183,7 +183,7 @@ export async function generateSearchQueries(campaignId: number, userQuestion: st
         const cachedTokens = response.usage?.prompt_tokens_details?.cached_tokens || 0;
         monitor.logAIRequestWithCost('chat', provider, model, inputTokens, outputTokens, cachedTokens, Date.now() - startAI, false);
 
-        const parsed = JSON.parse(response.choices[0].message.content || "{}");
+        const parsed = safeJsonParse(response.choices[0].message.content || "{}") || {};
         // Gestisce sia array diretto ["q1","q2"] sia oggetto {"queries":["q1","q2"]}
         if (Array.isArray(parsed)) return parsed;
         return Array.isArray(parsed.queries) ? parsed.queries : [];

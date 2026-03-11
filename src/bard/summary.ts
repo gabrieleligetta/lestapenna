@@ -284,7 +284,7 @@ async function identifyRelevantContext(
         const outputTokens = response.usage?.completion_tokens || 0;
         monitor.logAIRequestWithCost('metadata', provider, model, inputTokens, outputTokens, 0, latency, false);
 
-        const parsed = JSON.parse(response.choices[0].message.content || '{"queries":[]}');
+        const parsed = safeJsonParse(response.choices[0].message.content || '{}') || { queries: [] };
         const queries = Array.isArray(parsed) ? parsed : (parsed.queries || parsed.list || []);
 
         return queries.slice(0, 5);
@@ -596,7 +596,7 @@ export async function generateSummary(sessionId: string, tone: ToneKey = 'DM', n
                 else if (provider === 'ollama') scoutOptions.format = 'json';
                 const scoutResponse = await client.chat.completions.create(scoutOptions);
 
-                const entities = JSON.parse(scoutResponse.choices[0].message.content || '{"npcs":[], "locations":[], "quests":[], "factions":[], "artifacts":[]}');
+                const entities = safeJsonParse(scoutResponse.choices[0].message.content || '{}') || { npcs: [], locations: [], quests: [], factions: [], artifacts: [] };
                 console.log(`[Bardo] 🕵️ Scout ha trovato: ${entities.npcs?.length || 0} NPC, ${entities.locations?.length || 0} Luoghi, ${entities.factions?.length || 0} Fazioni, ${entities.artifacts?.length || 0} Artefatti.`);
 
                 // ============================================

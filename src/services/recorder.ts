@@ -256,7 +256,13 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
 
     decoder.on('error', (e) => handleError(e, 'Decoder'));
     ffmpeg.on('error', (e) => handleError(e, 'FFmpeg'));
+    ffmpeg.stdin?.on('error', (e) => {
+        if ((e as NodeJS.ErrnoException).code === 'EPIPE') return; // FFmpeg già terminato, ignora
+        handleError(e, 'FFmpeg stdin');
+    });
     opusStream.on('error', (e: Error) => handleError(e, 'OpusStream'));
+    timestampCapture.on('error', (e: Error) => handleError(e, 'TimestampCapture'));
+    silenceInjector.on('error', (e: Error) => handleError(e, 'SilenceInjector'));
 
     // NUOVA PIPELINE: Opus → Decoder → TimestampCapture → SilenceInjector → FFmpeg
     opusStream
@@ -410,6 +416,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
             console.warn(`[Recorder] ⚠️ Timeout chiusura ffmpeg dopo ${FFMPEG_TIMEOUT_MS / 1000}s — force kill`);
             for (const proc of ffmpegProcs) {
                 if (proc.exitCode === null) {
+                    try { proc.stdin?.destroy(); } catch {} // Previeni EPIPE
                     try { proc.kill('SIGKILL'); } catch {}
                 }
             }

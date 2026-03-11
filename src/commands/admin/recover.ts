@@ -7,6 +7,7 @@ import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } fr
 import { monitor } from '../../monitor';
 import { processSessionReport } from '../../reporter';
 import { isGuildAdmin } from '../../utils/permissions';
+import { mixSessionAudio } from '../../services/sessionMixer';
 
 export const recoverCommand: Command = {
     name: 'recover',
@@ -115,6 +116,15 @@ export const recoverCommand: Command = {
         try {
             // Logic adapted from startup recovery
             if (recoveryPhase === 'TRANSCRIBING' || (!recoveryPhase && phaseInfo.phase === 'ERROR')) { // Default logic for ERROR/Transcribing
+                // Mix sessione (come nel flusso normale di disconnect)
+                try {
+                    await (message.channel as TextChannel).send(`📀 Generazione mix audio sessione...`);
+                    await mixSessionAudio(sessionId, true);
+                } catch (mixErr: any) {
+                    console.warn(`[Recover] ⚠️ Mix audio fallito (non bloccante): ${mixErr.message}`);
+                    await (message.channel as TextChannel).send(`⚠️ Mix audio non riuscito: ${mixErr.message}. Proseguo con la trascrizione.`);
+                }
+
                 await removeSessionJobs(sessionId);
                 const filesToProcess = resetUnfinishedRecordings(sessionId);
 

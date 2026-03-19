@@ -43,6 +43,51 @@ export const knowledgeRepository = {
         db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ? AND embedding_model = ?').run(sessionId, model);
     },
 
+    /**
+     * Atomically replace session knowledge: delete old fragments, then insert new ones.
+     * Prevents orphan/duplicate fragments on crash.
+     */
+    replaceSessionKnowledge: (
+        sessionId: string,
+        model: string,
+        fragments: Array<{
+            campaignId: number;
+            content: string;
+            embedding: number[];
+            startTimestamp: number;
+            macro: string | null;
+            micro: string | null;
+            npcs: string[];
+            entityRefs: string[];
+        }>
+    ) => {
+        const tx = db.transaction(() => {
+            db.prepare('DELETE FROM knowledge_fragments WHERE session_id = ? AND embedding_model = ?').run(sessionId, model);
+
+            const insertStmt = db.prepare(`
+                INSERT INTO knowledge_fragments (
+                    campaign_id, session_id, content, embedding_json, embedding_model,
+                    vector_dimension, start_timestamp, created_at,
+                    macro_location, micro_location, associated_npcs, associated_entity_ids
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+            for (const f of fragments) {
+                const embeddingJson = JSON.stringify(f.embedding);
+                const npcsJson = f.npcs.length > 0 ? JSON.stringify(f.npcs) : null;
+                const entityRefsStr = f.entityRefs.length > 0 ? f.entityRefs.join(',') : null;
+
+                insertStmt.run(
+                    f.campaignId, sessionId, f.content, embeddingJson, model,
+                    f.embedding.length, f.startTimestamp, f.startTimestamp || Date.now(),
+                    f.macro, f.micro, npcsJson, entityRefsStr
+                );
+            }
+        });
+
+        tx();
+    },
+
     migrateKnowledgeFragments: (campaignId: number, oldName: string, newName: string) => {
         // Find fragments that mention oldName in `associated_npcs` (JSON)
         // Using LIKE is an approximation, so we filter in JS

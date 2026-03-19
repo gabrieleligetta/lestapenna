@@ -7,6 +7,7 @@ import { IngestionService } from '../../publisher/services/IngestionService';
 import { NotificationService } from '../../publisher/services/NotificationService';
 import { purgeSessionData } from '../../services/janitor';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
+import { isGuildAdmin } from '../../utils/permissions';
 
 export const reprocessCommand: Command = {
     name: 'reprocess',
@@ -15,6 +16,12 @@ export const reprocessCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args, client } = ctx;
+
+        if (!isGuildAdmin(message.author.id, message.guild!.id)) {
+            await message.reply("Solo un admin può eseguire questo comando.");
+            return;
+        }
+
         const targetSessionId = args[0];
         const isForce = args.some(arg => arg.toUpperCase() === 'FORCE');
         const isSilent = args.some(arg => arg.toUpperCase() === 'SILENT' || arg.toUpperCase() === 'SHHH');

@@ -184,11 +184,26 @@ export async function downloadFromOracle(fileName: string, localPath: string, se
             const fileStream = fs.createWriteStream(localPath);
 
             return new Promise((resolve, reject) => {
+                const cleanup = () => {
+                    try { stream.destroy(); } catch {}
+                    try { fileStream.destroy(); } catch {}
+                };
+
+                stream.on('error', (err) => {
+                    console.error(`[Custode] ❌ Errore lettura stream S3 ${fileName}:`, err);
+                    cleanup();
+                    reject(err);
+                });
+
+                fileStream.on('error', (err) => {
+                    console.error(`[Custode] ❌ Errore scrittura file locale ${fileName}:`, err);
+                    cleanup();
+                    // Remove partially written file
+                    try { fs.unlinkSync(localPath); } catch {}
+                    reject(err);
+                });
+
                 stream.pipe(fileStream)
-                    .on('error', (err) => {
-                        console.error(`[Custode] ❌ Errore scrittura file locale ${fileName}:`, err);
-                        reject(err);
-                    })
                     .on('finish', () => {
                         console.log(`[Custode] 📥 File ripristinato da Oracle: ${fileName}`);
                         resolve(true);

@@ -101,8 +101,8 @@ const guildToSession = new Map<string, string>();
 const pendingFileProcessing = new Map<string, Set<string>>(); // guildId -> Set<fileName>
 const fileProcessingResolvers = new Map<string, (() => void)[]>(); // guildId -> resolver callbacks
 
-// 1. Aggiungi variabile di stato in alto
-let isStopping = false;
+// Per-guild stopping state to prevent race conditions between concurrent disconnects
+const stoppingGuilds = new Set<string>();
 
 // Guard di rientranza: previene doppi disconnect() concorrenti per la stessa guild
 const activeDisconnects = new Set<string>();
@@ -153,7 +153,7 @@ export async function connectToChannel(channel: VoiceBasedChannel, sessionId: st
     console.log(`🎙️  Connesso al canale: ${channel.name} (Sessione: ${sessionId}, Guild: ${guildId})`);
 
     connection.receiver.speaking.on('start', (userId: string) => {
-        if (isStopping) return; // 🛑 BLOCCO HARDWARE NUOVI STREAM
+        if (stoppingGuilds.has(guildId)) return; // 🛑 Block new streams during disconnect
 
         // --- CHECK PAUSA ---
         if (pausedGuilds.has(guildId)) {
@@ -398,7 +398,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
     }
 
     console.log(`[Recorder] 🛑 Disconnessione avviata. Chiusura streams...`);
-    isStopping = true; // Attiva il blocco
+    stoppingGuilds.add(guildId); // Per-guild block
 
     // A. Raccogli tutte le promesse di chiusura degli stream attivi
     const closePromises: Promise<void>[] = [];
@@ -481,7 +481,7 @@ export async function disconnect(guildId: string): Promise<boolean> {
     } catch (e) {
         console.warn(`[Recorder] ⚠️ VoiceConnection already destroyed.`);
     }
-    isStopping = false;
+    stoppingGuilds.delete(guildId);
     activeDisconnects.delete(guildId); // Rilascia il guard: la voce è disconnessa
     console.log("👋 Disconnesso in sicurezza.");
 

@@ -33,7 +33,14 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
     const guildId = channel.guild.id;
 
     if (humans === 0) {
-        if (!autoLeaveTimers.has(guildId)) {
+        // Clear any existing timer before starting a new one (debounce rapid leave/join)
+        const existingTimer = autoLeaveTimers.get(guildId);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+            autoLeaveTimers.delete(guildId);
+        }
+
+        {
             console.log(`👻 Canale vuoto in ${guildId}. Timer 60s...`);
             const timer = setTimeout(async () => {
                 const sessionId = await getActiveSession(guildId);
@@ -66,6 +73,7 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
             autoLeaveTimers.set(guildId, timer);
         }
     } else {
+        // User rejoined — cancel pending auto-leave
         const timer = autoLeaveTimers.get(guildId);
         if (timer) {
             clearTimeout(timer);

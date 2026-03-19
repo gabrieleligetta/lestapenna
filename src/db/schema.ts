@@ -40,7 +40,6 @@ export const initDatabase = () => {
         foundation_description TEXT,
         rag_sync_needed INTEGER DEFAULT 0,
         last_synced_history_id INTEGER DEFAULT 0,
-        last_synced_history_id INTEGER DEFAULT 0,
         is_manual INTEGER DEFAULT 0,
         manual_description TEXT, -- 🆕 Backup descrizione manuale
         PRIMARY KEY (user_id, campaign_id),
@@ -739,6 +738,11 @@ export const initDatabase = () => {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_history_name ON npc_history (campaign_id, npc_name)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_campaign ON world_history (campaign_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_world_history_year ON world_history (year)`);
+
+    // Performance indexes for common query patterns
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_dossier_rag_sync ON npc_dossier (campaign_id, rag_sync_needed)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_fragments_loc ON knowledge_fragments (campaign_id, embedding_model, macro_location)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_atlas_dirty ON location_atlas (campaign_id, rag_sync_needed)`);
 
     // 7.4. Add Faction ID to History (New)
     try {

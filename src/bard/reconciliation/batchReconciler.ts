@@ -4,6 +4,7 @@
  */
 
 import { getMetadataClient } from '../config';
+import { safeJsonParse } from '../helpers';
 import {
     EntityIndex,
     IndexedEntity,
@@ -230,7 +231,7 @@ async function batchAIConfirm(
         const response = await client.chat.completions.create(reconcileOptions);
 
         const content = response.choices[0].message.content || '{"matches":[]}';
-        const parsed = JSON.parse(content);
+        const parsed = safeJsonParse(content) || { matches: [] };
 
         return parseAIResponse(cases, parsed);
     } catch (e) {

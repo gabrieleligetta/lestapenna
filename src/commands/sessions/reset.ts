@@ -6,6 +6,7 @@ import { monitor } from '../../monitor';
 import { downloadFromOracle, uploadToOracle } from '../../services/backup';
 import { purgeSessionData } from '../../services/janitor';
 import { waitForCompletionAndSummarize } from '../../publisher';
+import { isGuildAdmin } from '../../utils/permissions';
 import * as fs from 'fs';
 
 export const resetCommand: Command = {
@@ -15,6 +16,12 @@ export const resetCommand: Command = {
 
     async execute(ctx: CommandContext): Promise<void> {
         const { message, args } = ctx;
+
+        if (!isGuildAdmin(message.author.id, message.guild!.id)) {
+            await message.reply("Solo un admin può eseguire questo comando.");
+            return;
+        }
+
         const targetSessionId = args[0];
 
         if (!targetSessionId) {

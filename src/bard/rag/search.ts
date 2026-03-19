@@ -202,7 +202,10 @@ export async function askBard(campaignId: number, question: string, history: { r
     console.log(`[AskBard] 🧠 Query generate:`, searchQueries);
 
     const promises = searchQueries.map(q => searchKnowledge(campaignId, q, 3));
-    const results = await Promise.all(promises);
+    const settled = await Promise.allSettled(promises);
+    const results = settled
+        .filter((r): r is PromiseFulfilledResult<string[]> => r.status === 'fulfilled')
+        .map(r => r.value);
     const uniqueContext = Array.from(new Set(results.flat()));
 
     let contextText = uniqueContext.length > 0

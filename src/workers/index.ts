@@ -58,5 +58,23 @@ export function startWorker() {
 
     console.log("[System] Workers avviati: Scriba (Audio) e Correttore (AI).");
 
-    return { audioWorker, correctionWorker };
+    // Graceful shutdown handler
+    const shutdown = async () => {
+        console.log('[System] 🛑 Avvio graceful shutdown dei worker...');
+        try {
+            // Close workers gracefully — waits for active jobs to finish
+            await Promise.allSettled([
+                audioWorker.close(),
+                correctionWorker.close()
+            ]);
+            console.log('[System] ✅ Workers chiusi con successo.');
+        } catch (err) {
+            console.error('[System] ❌ Errore durante shutdown worker:', err);
+        }
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+
+    return { audioWorker, correctionWorker, shutdown };
 }

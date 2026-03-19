@@ -9,7 +9,8 @@ import {
     getSessionCampaignId,
     deleteSessionKnowledge,
     getSessionStartTime,
-    getNpcIdByName
+    getNpcIdByName,
+    knowledgeRepository
 } from '../../db';
 import {
     ollamaEmbedClient,
@@ -129,8 +130,6 @@ export async function ingestSessionComplete(
     console.log(`[RAG] 🧠 Ingestione POST-SUMMARY per sessione ${sessionId}...`);
     console.log(`[RAG] 📊 Metadati Analista: ${summaryResult.present_npcs?.length || 0} NPC, ${summaryResult.location_updates?.length || 0} luoghi`);
 
-    deleteSessionKnowledge(sessionId, EMBEDDING_MODEL_OLLAMA);
-
     const startTime = getSessionStartTime(sessionId) || Date.now();
 
     const npcEntityRefs: string[] = [];
@@ -212,6 +211,19 @@ export async function ingestSessionComplete(
 
     console.log(`[RAG] 📦 Creati ${chunks.length} chunks (${CHUNK_SIZE} chars, ${OVERLAP} overlap)`);
 
+    // Collect all successful embeddings first, then atomically replace in DB
+    const successfulFragments: Array<{
+        campaignId: number;
+        content: string;
+        embedding: number[];
+        startTimestamp: number;
+        macro: string | null;
+        micro: string | null;
+        npcs: string[];
+        entityRefs: string[];
+    }> = [];
+    let failedCount = 0;
+
     await processInBatches(chunks, EMBEDDING_BATCH_SIZE, async (chunk, _idx) => {
         const startAI = Date.now();
         try {
@@ -220,19 +232,32 @@ export async function ingestSessionComplete(
                 input: chunk.text
             });
             monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, false);
-            insertKnowledgeFragment(
-                campaignId, sessionId, chunk.text,
-                resp.data[0].embedding,
-                EMBEDDING_MODEL_OLLAMA,
-                chunk.timestamp,
-                chunk.macro,
-                chunk.micro,
-                chunk.npcs,
-                chunk.entityRefs || []
-            );
+            successfulFragments.push({
+                campaignId,
+                content: chunk.text,
+                embedding: resp.data[0].embedding,
+                startTimestamp: chunk.timestamp,
+                macro: chunk.macro,
+                micro: chunk.micro,
+                npcs: chunk.npcs,
+                entityRefs: chunk.entityRefs || []
+            });
         } catch (err: any) {
+            failedCount++;
             console.error(`[RAG] Errore embedding chunk:`, err.message);
             monitor.logAIRequestWithCost('embeddings', 'ollama', EMBEDDING_MODEL_OLLAMA, 0, 0, 0, Date.now() - startAI, true);
         }
     }, `Ingestione RAG (${chunks.length} chunks)`);
+
+    if (failedCount > 0) {
+        console.warn(`[RAG] ⚠️ ${failedCount}/${chunks.length} chunks falliti durante l'embedding`);
+    }
+
+    // Atomic replace: delete old + insert new in a single transaction
+    if (successfulFragments.length > 0) {
+        knowledgeRepository.replaceSessionKnowledge(sessionId, EMBEDDING_MODEL_OLLAMA, successfulFragments);
+        console.log(`[RAG] ✅ ${successfulFragments.length} frammenti salvati atomicamente nel DB`);
+    } else {
+        console.warn(`[RAG] ⚠️ Nessun frammento salvato (tutti i chunks falliti)`);
+    }
 }

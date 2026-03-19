@@ -109,7 +109,11 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
 
     // Validate all stems exist before merging
     const validStemPaths = stemPaths.filter((p): p is string => p !== null && fs.existsSync(p));
-    if (validStemPaths.length === 0) throw new Error("No stems were created successfully.");
+    if (validStemPaths.length === 0) {
+        // Cleanup any leftover stem files before throwing
+        cleanupStems(stemPaths);
+        throw new Error("No stems were created successfully.");
+    }
     if (validStemPaths.length < stemPaths.length) {
         console.warn(`[Mixer] ⚠️ ${stemPaths.length - validStemPaths.length} stems missing, proceeding with ${validStemPaths.length}`);
     }
@@ -117,7 +121,13 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
     // 5. Merge stems to Master
     console.log(`[Mixer] 🌳 Tree Level 2: Merging ${validStemPaths.length} stems to Master...`);
     const finalMp3Path = path.join(OUTPUT_DIR, `session_${sessionId}_master.mp3`);
-    await mergeStemsToMaster(validStemPaths, finalMp3Path);
+    try {
+        await mergeStemsToMaster(validStemPaths, finalMp3Path);
+    } catch (err) {
+        // Cleanup all stems on merge failure
+        cleanupStems(stemPaths);
+        throw err;
+    }
 
     // 6. Upload & Cleanup
     const finalFileName = path.basename(finalMp3Path);
@@ -153,6 +163,16 @@ export async function mixSessionAudio(sessionId: string, keepLocalFiles: boolean
     return finalMp3Path;
 }
 
+const FFMPEG_MIX_TIMEOUT_MS = 600_000; // 10 minutes per stem/merge operation
+
+function cleanupStems(stemPaths: (string | null)[]) {
+    for (const stem of stemPaths) {
+        if (stem && fs.existsSync(stem)) {
+            try { fs.unlinkSync(stem); } catch {}
+        }
+    }
+}
+
 async function createStem(files: AudioFile[], outputPath: string): Promise<string> {
     return new Promise((resolve, reject) => {
         const args: string[] = [];
@@ -183,15 +203,34 @@ async function createStem(files: AudioFile[], outputPath: string): Promise<strin
 
         const ffmpeg = spawn('ffmpeg', ffmpegArgs);
         let stderr = "";
+        let settled = false;
         ffmpeg.stderr.on('data', d => stderr += d.toString());
+
+        const timeout = setTimeout(() => {
+            if (!settled) {
+                settled = true;
+                console.error(`[Mixer] ⚠️ FFmpeg stem creation timed out after ${FFMPEG_MIX_TIMEOUT_MS / 1000}s`);
+                try { ffmpeg.kill('SIGKILL'); } catch {}
+                reject(new Error(`FFmpeg stem creation timed out after ${FFMPEG_MIX_TIMEOUT_MS / 1000}s`));
+            }
+        }, FFMPEG_MIX_TIMEOUT_MS);
+
         ffmpeg.on('close', (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
             if (code === 0) resolve(outputPath);
             else {
                 console.error(`[Mixer] Stem creation failed:\n${stderr.slice(-1000)}`);
                 reject(new Error(`FFmpeg stem creation failed with code ${code}`));
             }
         });
-        ffmpeg.on('error', reject);
+        ffmpeg.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            reject(err);
+        });
     });
 }
 
@@ -201,6 +240,20 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
             reject(new Error("No stems to merge"));
             return;
         }
+
+        let settled = false;
+
+        const withTimeout = (ffmpeg: ReturnType<typeof spawn>) => {
+            const timeout = setTimeout(() => {
+                if (!settled) {
+                    settled = true;
+                    console.error(`[Mixer] ⚠️ FFmpeg master merge timed out after ${FFMPEG_MIX_TIMEOUT_MS / 1000}s`);
+                    try { ffmpeg.kill('SIGKILL'); } catch {}
+                    reject(new Error(`FFmpeg master merge timed out after ${FFMPEG_MIX_TIMEOUT_MS / 1000}s`));
+                }
+            }, FFMPEG_MIX_TIMEOUT_MS);
+            return timeout;
+        };
 
         // If only 1 stem, just convert it
         if (stemPaths.length === 1) {
@@ -214,13 +267,23 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
                 '-y'
             ]);
             let stderr = "";
+            const timeout = withTimeout(ffmpeg);
             ffmpeg.stderr.on('data', d => stderr += d.toString());
             ffmpeg.on('close', (code) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
                 if (code === 0) resolve();
                 else {
                     console.error(`[Mixer] Master merge (single) failed:\n${stderr.slice(-1000)}`);
                     reject(new Error(`FFmpeg master merge failed ${code}`));
                 }
+            });
+            ffmpeg.on('error', (err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                reject(err);
             });
             return;
         }
@@ -253,14 +316,23 @@ async function mergeStemsToMaster(stemPaths: string[], outputPath: string): Prom
 
         const ffmpeg = spawn('ffmpeg', ffmpegArgs);
         let stderr = "";
+        const timeout = withTimeout(ffmpeg);
         ffmpeg.stderr.on('data', d => stderr += d.toString());
         ffmpeg.on('close', (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
             if (code === 0) resolve();
             else {
                 console.error(`[Mixer] Master merge failed:\n${stderr.slice(-1000)}`);
                 reject(new Error(`FFmpeg master merge failed with code ${code}`));
             }
         });
-        ffmpeg.on('error', reject);
+        ffmpeg.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            reject(err);
+        });
     });
 }

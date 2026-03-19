@@ -4,6 +4,7 @@
  */
 
 import { getMetadataClient } from './config';
+import { safeJsonParse } from './helpers';
 import { monitor } from '../monitor';
 import {
     UPDATE_CHARACTER_BIO_PROMPT,
@@ -294,7 +295,7 @@ Restituisci SOLO un JSON valido formato: { "Nome Entità": "Nuova Descrizione" }
         const content = response.choices[0].message.content;
         if (!content) return {};
 
-        const results = JSON.parse(content);
+        const results = safeJsonParse(content) || {};
         return results; // Mappa { "Nome": "Descrizione" }
 
     } catch (e) {

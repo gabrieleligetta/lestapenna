@@ -327,6 +327,20 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
         if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
             ffmpeg.stdin.end();
         }
+
+        // 🆕 Safety net: se FFmpeg non chiude entro 30s dopo la fine dello stream,
+        // force-kill per evitare processi zombie che bloccano il disconnect successivo
+        const STALE_TIMEOUT_MS = 30_000;
+        setTimeout(() => {
+            if (ffmpeg.exitCode === null) {
+                console.warn(`[VoiceRec] ⚠️ FFmpeg stale per ${filename} — force kill dopo ${STALE_TIMEOUT_MS / 1000}s`);
+                try { ffmpeg.stdin?.destroy(); } catch {}
+                try { ffmpeg.kill('SIGKILL'); } catch {}
+                if (activeStreams.has(streamKey)) {
+                    activeStreams.delete(streamKey);
+                }
+            }
+        }, STALE_TIMEOUT_MS).unref(); // unref() per non bloccare il process exit di Node
     });
 }
 
@@ -392,6 +406,11 @@ export async function disconnect(guildId: string): Promise<boolean> {
 
     for (const [key, stream] of Array.from(activeStreams)) {
         if (key.startsWith(`${guildId}-`)) {
+            // 🆕 Distruggi la pipeline upstream PRIMA di chiudere ffmpeg
+            // Questo previene che silenceInjector/decoder continuino a scrivere su stdin
+            try { stream.silenceInjector.destroy(); } catch {}
+            try { stream.decoder.destroy(); } catch {}
+
             // Creiamo una Promise che si risolve SOLO quando ffmpeg finisce davvero
             const p = new Promise<void>((resolve) => {
                 if (stream.ffmpeg.exitCode !== null) {
@@ -399,7 +418,8 @@ export async function disconnect(guildId: string): Promise<boolean> {
                 } else {
                     stream.ffmpeg.on('close', () => resolve());
                     stream.ffmpeg.on('error', () => resolve()); // Risolvi anche in caso di errore per non bloccare
-                    stream.ffmpeg.stdin?.end(); // Segnale di chiusura gentile
+                    // Distruggi stdin (più aggressivo di end()) per sbloccare FFmpeg subito
+                    try { stream.ffmpeg.stdin?.destroy(); } catch {}
                 }
             });
             closePromises.push(p);

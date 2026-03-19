@@ -161,23 +161,13 @@ export const knowledgeRepository = {
     },
 
     deleteNpcRagSummary: (campaignId: number, npcName: string) => {
-        // Delete previous RAG summary for this NPC
-        // Filter by macro/micro to target only dossier updates
-        const rows = db.prepare(`
-            SELECT id, associated_npcs 
-            FROM knowledge_fragments 
-            WHERE campaign_id = ? 
+        // Use SQL LIKE to filter in DB instead of loading all fragments into memory
+        db.prepare(`
+            DELETE FROM knowledge_fragments
+            WHERE campaign_id = ?
             AND session_id = 'DOSSIER_UPDATE'
-        `).all(campaignId) as { id: number, associated_npcs: string }[];
-
-        for (const row of rows) {
-            try {
-                const npcs = JSON.parse(row.associated_npcs);
-                if (Array.isArray(npcs) && npcs.includes(npcName)) {
-                    db.prepare('DELETE FROM knowledge_fragments WHERE id = ?').run(row.id);
-                }
-            } catch (e) { }
-        }
+            AND associated_npcs LIKE ?
+        `).run(campaignId, `%${npcName}%`);
     },
 
     deleteAtlasRagSummary: (campaignId: number, macro: string, micro: string) => {
@@ -193,58 +183,23 @@ export const knowledgeRepository = {
     },
 
     deleteQuestRagSummary: (campaignId: number, title: string) => {
-        // Identify by session_id='QUEST_UPDATE' and check content or title match if stored
-        // Currently we store bio in content. We might need a better way to target.
-        // But wait, generateBio for QUEST uses 'QUEST_UPDATE'.
-        // We can check `associated_entity_ids` if we used it, or `associated_npcs` (probably not).
-        // For now, let's assume we can filter by session_id='QUEST_UPDATE' and content LIKE title? 
-        // Or better: we rely on how we insert them.
-
-        // Actually, `generateBio` inserts with session_id = 'QUEST_UPDATE'.
-        // But we don't strictly link it to the quest title column (there isn't one in knowledge).
-        // We probably put the title in the content. 
-        // Let's use a LIKE query on content as a fallback, 
-        // OR better: Start using `associated_entity_ids` for these in the future.
-        // For now, let's look for fragments where session_id='QUEST_UPDATE' and content starts with "**Quest: {title}**" or similar.
-        // Assuming standard bio format.
-
-        // Safer approach if we don't have IDs: 
-        // Select all QUEST_UPDATE, check if content includes title.
-        const rows = db.prepare(`
-            SELECT id, content FROM knowledge_fragments 
-            WHERE campaign_id = ? AND session_id = 'QUEST_UPDATE'
-        `).all(campaignId) as { id: number, content: string }[];
-
-        for (const row of rows) {
-            if (row.content.includes(title)) {
-                db.prepare('DELETE FROM knowledge_fragments WHERE id = ?').run(row.id);
-            }
-        }
+        db.prepare(`
+            DELETE FROM knowledge_fragments
+            WHERE campaign_id = ? AND session_id = 'QUEST_UPDATE' AND content LIKE ?
+        `).run(campaignId, `%${title}%`);
     },
 
     deleteInventoryRagSummary: (campaignId: number, itemName: string) => {
-        const rows = db.prepare(`
-            SELECT id, content FROM knowledge_fragments 
-            WHERE campaign_id = ? AND session_id = 'INVENTORY_UPDATE'
-        `).all(campaignId) as { id: number, content: string }[];
-
-        for (const row of rows) {
-            if (row.content.includes(itemName)) {
-                db.prepare('DELETE FROM knowledge_fragments WHERE id = ?').run(row.id);
-            }
-        }
+        db.prepare(`
+            DELETE FROM knowledge_fragments
+            WHERE campaign_id = ? AND session_id = 'INVENTORY_UPDATE' AND content LIKE ?
+        `).run(campaignId, `%${itemName}%`);
     },
 
     deleteBestiaryRagSummary: (campaignId: number, monsterName: string) => {
-        const rows = db.prepare(`
-            SELECT id, content FROM knowledge_fragments 
-            WHERE campaign_id = ? AND session_id = 'BESTIARY_UPDATE'
-        `).all(campaignId) as { id: number, content: string }[];
-
-        for (const row of rows) {
-            if (row.content.includes(monsterName)) {
-                db.prepare('DELETE FROM knowledge_fragments WHERE id = ?').run(row.id);
-            }
-        }
+        db.prepare(`
+            DELETE FROM knowledge_fragments
+            WHERE campaign_id = ? AND session_id = 'BESTIARY_UPDATE' AND content LIKE ?
+        `).run(campaignId, `%${monsterName}%`);
     }
 };

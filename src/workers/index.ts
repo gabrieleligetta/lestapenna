@@ -20,9 +20,9 @@ export function startWorker() {
             port: config.redis.port
         },
         concurrency: 1,
-        lockDuration: 27200000, // 2 ORE
-        lockRenewTime: 60000,
-        maxStalledCount: 0,
+        lockDuration: 7200000, // 2 ore
+        lockRenewTime: 30000,  // Rinnova ogni 30s (ben entro la finestra di 2h)
+        maxStalledCount: 1,    // Consenti 1 stall recovery prima di dichiarare fallito
     });
 
     const correctionWorker = new Worker('correction-processing', correctionProcessor, {

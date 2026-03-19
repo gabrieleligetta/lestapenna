@@ -122,13 +122,18 @@ function normalizeLocationNames(macro: string, micro: string): { macro: string; 
 /**
  * Utility: Save debug file
  */
+const MAX_DEBUG_FILE_SIZE = 5 * 1024 * 1024; // 5MB max per debug file
+
 function saveDebugFile(sessionId: string, filename: string, content: string) {
     try {
         const debugDir = path.join(__dirname, '..', '..', 'transcripts', sessionId, 'debug_prompts');
         if (!fs.existsSync(debugDir)) {
             fs.mkdirSync(debugDir, { recursive: true });
         }
-        fs.writeFileSync(path.join(debugDir, filename), content, 'utf-8');
+        const truncated = content.length > MAX_DEBUG_FILE_SIZE
+            ? content.substring(0, MAX_DEBUG_FILE_SIZE) + '\n\n[TRUNCATED — exceeded 5MB limit]'
+            : content;
+        fs.writeFileSync(path.join(debugDir, filename), truncated, 'utf-8');
     } catch (e) {
         console.error(`[Debug] Failed to save ${filename}:`, e);
     }

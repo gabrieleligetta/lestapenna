@@ -26,7 +26,7 @@ async function checkOllamaAlive(baseUrl: string): Promise<boolean> {
         const nativeUrl = baseUrl.replace(/\/v1\/?$/, '');
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s — Ollama può essere lento a rispondere dopo idle
 
         const response = await fetch(`${nativeUrl}/api/tags`, {
             method: 'GET',

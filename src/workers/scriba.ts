@@ -265,12 +265,14 @@ export const scribaProcessor = async (job: Job) => {
             throw new Error(result.error);
         }
 
+        // Cleanup: remove original file and temp WAV (if PCM conversion created one)
         if (fs.existsSync(filePath)) {
-            try {
-                fs.unlinkSync(filePath);
-            } catch (err) {
+            try { fs.unlinkSync(filePath); } catch (err) {
                 console.error(`[Scriba] ❌ Errore eliminazione originale ${fileName}:`, err);
             }
+        }
+        if (isPcm && transcriptionPath !== filePath && fs.existsSync(transcriptionPath)) {
+            try { fs.unlinkSync(transcriptionPath); } catch {}
         }
 
         let audioDuration = 0;

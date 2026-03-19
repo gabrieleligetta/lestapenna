@@ -27,15 +27,13 @@ const HALLUCINATION_PATTERNS = [
     /^\s*\[?sussurro\]?\s*$/gi,
 
     // === FRASI GENERICHE STANDALONE (solo se segmento intero) ===
-    /^\s*Grazie\.?\s*$/gi,
-    /^\s*Ok\.?\s*$/gi,
-    /^\s*S[ìi]\.?\s*$/gi,
-    /^\s*No\.?\s*$/gi,
+    // Nota: "Grazie", "Ok", "Sì", "No" possono essere dialogo legittimo in D&D.
+    // Filtriamo solo le varianti più lunghe che sono tipiche allucinazioni Whisper.
     /^\s*Grazie\s+a\s+(tutti|voi)\.?\s*$/gi,
+    /^\s*Grazie\s+per\s+la\s+visione\.?\s*$/gi,
     /^\s*Ah[!.]?\s*$/gi,
     /^\s*Oh[!.]?\s*$/gi,
     /^\s*Mille\.?\s*$/gi,
-    /^\s*Ciao\.?\s*$/gi,
 
     // === ALLUCINAZIONI RIPETUTE (Pattern Aggressivi) ===
     /^\s*A\s+tutti\.?\s*$/gi,

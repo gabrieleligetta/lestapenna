@@ -49,18 +49,27 @@ snapshot. Il repository era ed è rimasto privato durante tutta la bonifica.
 
 Il force-push non ha cancellato i riferimenti della vecchia pull request #1:
 GitHub conserva ancora dieci commit precedenti, e nei loro metadati compare una
-vecchia email di lavoro. **Il repository GitHub esistente non deve quindi essere
-reso pubblico.** La procedura sicura è:
+vecchia email di lavoro. **Quel repository GitHub non deve quindi essere reso
+pubblico.** La separazione è stata completata così:
 
-1. rinominare il repository esistente e mantenerlo privato come archivio e
-   repository operativo;
-2. creare un nuovo `gabrieleligetta/lestapenna` pubblico;
-3. pubblicarvi soltanto il root commit verificato e il tag `1.0.0`;
-4. non copiare pull request, ref nascoste, reflog, bundle o oggetti della vecchia
-   history;
-5. tenere il workflow di deploy e i secret nel repository privato. Nel nuovo
-   repository pubblico può restare la CI, ma non
-   `.github/workflows/deploy.yml`.
+1. il repository storico è stato rinominato
+   `gabrieleligetta/lestapenna-private` ed è rimasto privato;
+2. è stato creato da zero il nuovo `gabrieleligetta/lestapenna` pubblico;
+3. vi sono stati pubblicati soltanto il root commit verificato e il tag
+   `1.0.0`, senza pull request, ref nascoste, reflog, bundle o vecchi oggetti;
+4. workflow di deploy, secret, vecchie Actions e PR sono rimasti nel repository
+   privato. Nel pubblico è presente soltanto `.github/workflows/ci.yml`.
+
+I due tag `1.0.0` sono intenzionalmente snapshot diversi: quello privato punta
+al commit `ac33e72294839e9b543ca3697a59262475ceeb40` e include `deploy.yml`;
+quello pubblico punta al commit `8c0d802db5a803772bae8c4a23cb1918ac45cf26`
+e lo esclude. Il codice distribuito è altrimenti lo stesso.
+
+Il checkout operativo `lestapenna/` usa come `origin` il repository privato.
+Controllare sempre `git remote -v` prima di un push e non inviare mai il suo
+`HEAD` direttamente al pubblico: contiene il workflow di deploy. Gli
+aggiornamenti pubblici vanno preparati in un checkout separato o come export
+sanitizzato, verificando ancora l'assenza di `deploy.yml` prima del push.
 
 Non affidarsi a `git log main`: dopo un rewrite bisogna controllare anche pull
 request, release, tag, ref remote e qualunque archivio collegato su GitHub.

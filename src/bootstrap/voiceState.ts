@@ -1,0 +1,96 @@
+import { Client, VoiceBasedChannel, TextChannel } from 'discord.js';
+import { getActiveSession, deleteActiveSession, decrementRecordingCount, autoLeaveTimers } from '../state/sessionState';
+import { disconnect, resubscribeMemberOnRejoin } from '../services/recorder';
+import { getGuildConfig } from '../db';
+import { waitForCompletionAndSummarize } from '../publisher';
+import { clearSessionHardCap } from '../services/sessionHardCap';
+import { config } from '../config';
+import { launchSessionProcessing } from '../services/sessionProcessing';
+
+export function registerVoiceStateHandler(client: Client) {
+    client.on('voiceStateUpdate', (oldState, newState) => {
+        const guild = newState.guild || oldState.guild;
+        if (!guild) return;
+
+        // DEV_GUILD_ID: If set, only handle that specific guild
+        if (config.discord.devGuildId && guild.id !== config.discord.devGuildId) {
+            return;
+        }
+
+        // IGNORE_GUILD_IDS: Skip these guilds
+        if (config.discord.ignoreGuildIds.includes(guild.id)) {
+            return;
+        }
+
+        const botMember = guild.members.cache.get(client.user!.id);
+        if (!botMember?.voice.channel) return;
+
+        // 🆕 LEAVE/REJOIN: if a (non-bot) member joins or rejoins THE bot's channel, we
+        // resubscribe immediately. On rejoin Discord assigns a new SSRC and `speaking
+        // start` often does not fire → without this, post-rejoin audio would be lost.
+        const botChannelId = botMember.voice.channel.id;
+        const joinedBotChannel = newState.channelId === botChannelId && oldState.channelId !== newState.channelId;
+        if (joinedBotChannel && newState.member && !newState.member.user.bot) {
+            resubscribeMemberOnRejoin(guild.id, newState.member.id);
+        }
+
+        checkAutoLeave(botMember.voice.channel, client);
+    });
+}
+
+// Export as checkAutoLeave for compatibility/external usage
+export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client) {
+    const humans = channel.members.filter(member => !member.user.bot).size;
+
+    const guildId = channel.guild.id;
+
+    if (humans === 0) {
+        // Clear any existing timer before starting a new one (debounce rapid leave/join)
+        const existingTimer = autoLeaveTimers.get(guildId);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+            autoLeaveTimers.delete(guildId);
+        }
+
+        {
+            console.log(`👻 Canale vuoto in ${guildId}. Timer 60s...`);
+            const timer = setTimeout(async () => {
+                const sessionId = await getActiveSession(guildId);
+                if (sessionId) {
+                    // Drop the session from Redis IMMEDIATELY — prevents the race with $termina
+                    await deleteActiveSession(guildId);
+                    clearSessionHardCap(guildId);
+                    await decrementRecordingCount();
+                    await disconnect(guildId, { processSession: false });
+
+                    // Try to get command channel for notifications (optional)
+                    const commandChannelId = getGuildConfig(guildId, 'cmd_channel_id');
+                    let ch: TextChannel | undefined;
+                    if (commandChannelId) {
+                        try {
+                            ch = await client.channels.fetch(commandChannelId) as TextChannel;
+                            if (ch) {
+                                await ch.send(`👻 Auto-Leave per inattività in <#${channel.id}>. Elaborazione avviata...`);
+                            }
+                        } catch (e) {
+                            console.warn(`⚠️ Impossibile accedere al canale comandi ${commandChannelId}`);
+                        }
+                    }
+                    launchSessionProcessing(sessionId, guildId);
+                    await waitForCompletionAndSummarize(client, sessionId, ch);
+                } else {
+                    await disconnect(guildId);
+                }
+                autoLeaveTimers.delete(guildId);
+            }, 60000);
+            autoLeaveTimers.set(guildId, timer);
+        }
+    } else {
+        // User rejoined — cancel pending auto-leave
+        const timer = autoLeaveTimers.get(guildId);
+        if (timer) {
+            clearTimeout(timer);
+            autoLeaveTimers.delete(guildId);
+        }
+    }
+}

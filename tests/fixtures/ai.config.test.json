@@ -1,0 +1,7 @@
+{
+  "features": {
+    "enableAiCorrection": true,
+    "enableAgenticSummary": false,
+    "enableLocalStructuredPipeline": false
+  }
+}

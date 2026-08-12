@@ -1,0 +1,23 @@
+# Configurazione del backend remoto Terraform su OCI Object Storage.
+# Copiare in backend.hcl (non tracciato) e usarlo con:
+#
+#   terraform init -backend-config=backend.hcl
+#
+# Sta fuori da main.tf perché un blocco `backend` non accetta variabili:
+# qualsiasi valore scritto lì finirebbe nel repository. Qui dentro c'è sia
+# dove vive lo state sia con quali credenziali ci si arriva.
+
+# Dove vive lo state
+bucket    = "lestapenna-tf-state"          # va creato prima del primo init
+namespace = "xxxxxxxxxxxx"                 # Object storage namespace della tenancy
+key       = "terraform.tfstate"
+region    = "eu-milan-1"
+auth      = "APIKey"
+
+# Con quali credenziali. Sono le stesse dell'API key del provider oci:
+# Console OCI → Profilo → API keys → Add API key, che genera anche il
+# fingerprint e il file .pem da salvare in locale.
+tenancy_ocid     = "ocid1.tenancy.oc1..xxxxxxxxxxxx"
+user_ocid        = "ocid1.user.oc1..xxxxxxxxxxxx"
+fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+private_key_path = "~/.oci/oci_api_key.pem"

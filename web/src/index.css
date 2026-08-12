@@ -1,0 +1,298 @@
+:root {
+  --text: #2e2334;
+  --text-muted: #6d6471;
+  --bg: #f7f2e8;
+  --surface: #fffdf8;
+  --surface-2: #f0eadf;
+  --surface-raised: #ffffff;
+  --border: #ded4c4;
+  --border-strong: #cbbdA8;
+  --gold: #8a641d;
+  --gold-bright: #ead8a7;
+  --spell: #7658d8;
+  --spell-soft: #eee9ff;
+  --aether: #167487;
+  --glow: rgb(118 88 216 / 0.18);
+  --paper: #fffaf0;
+  --paper-ink: #302737;
+  --paper-muted: #746a75;
+  --discord: #5865f2;
+  --discord-hover: #4752c4;
+  --danger: #b3261e;
+  --success: #0ca30c;
+  --warning: #fab219;
+  --success-text: #087508;
+  --warning-text: #765000;
+  --shadow-sm: 0 1px 2px rgb(49 35 24 / 0.06), 0 5px 16px rgb(49 35 24 / 0.05);
+  --shadow-md: 0 18px 45px rgb(49 35 24 / 0.12), 0 3px 12px rgb(49 35 24 / 0.08);
+  --shadow-arcane: 0 0 0 1px rgb(138 100 29 / 0.18), 0 20px 60px var(--glow);
+
+  /*
+   * Alignment and reputation ramps.
+   *
+   * Diverging, per the data-viz method: two hues either side of a neutral gray,
+   * equal steps per arm, lightness monotone within each arm. Every value here
+   * was run through the palette validator against this theme's card surface
+   * (light #ffffff, dark #201828) rather than picked by eye — the alignment
+   * triad clears CVD ΔE 8.3 / normal-vision 17.8 / 3:1 contrast in both modes,
+   * and each reputation arm passes the ordinal checks (monotone L, gaps >= 0.06,
+   * pale end above 2:1).
+   *
+   * Alignment: the mark carries only the sign, since the bar's own length
+   * already encodes magnitude. Colouring it by value too would spend the
+   * identity channel re-encoding what length shows.
+   */
+  --align-neg: #c03330;
+  --align-neutral: #8d8a95;
+  --align-pos: #1f66bd;
+
+  /*
+   * Reputation: seven discrete tiers with no length to read, so here colour does
+   * carry the value. Centre outwards, lightness falls off toward both poles.
+   * The midpoint sits below 3:1 by design (it means "nothing" and recedes toward
+   * the surface); ReputationMeter always prints the tier name, which is the
+   * relief the method requires for a sub-3:1 mark.
+   */
+  --rep-hostile: #8a1e1c;
+  --rep-distrustful: #c03330;
+  --rep-cold: #e06a67;
+  --rep-neutral: #b2afb7;
+  --rep-cordial: #4a8ee0;
+  --rep-friendly: #1f66bd;
+  --rep-allied: #144174;
+
+  --track: #eceaee;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* Height of the support bar. A token because the AI job dock has to sit
+     above it, and two hardcoded copies would drift the first time it changes. */
+  --support-bar-h: 2.25rem;
+
+  --radius-1: 0.375rem;
+  --radius-2: 0.5rem;
+  --radius-3: 0.75rem;
+  --radius-4: 1rem;
+  --radius-5: 1.5rem;
+  --radius-pill: 999px;
+
+  --fs-0: 0.75rem;
+  --fs-1: 0.85rem;
+  --fs-2: 1rem;
+  --fs-3: 1.25rem;
+  --fs-4: 1.5rem;
+  --fs-5: clamp(1.9rem, 4vw, 3.25rem);
+
+  --font-ui: 'Manrope Variable', Manrope, Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Newsreader Variable', Newsreader, Iowan Old Style, 'Palatino Linotype', Georgia, serif;
+  --motion-fast: 160ms;
+  --motion-base: 220ms;
+  --motion-page: 480ms;
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in: cubic-bezier(.55, 0, 1, .45);
+
+  --focus-ring: 2px solid var(--spell);
+
+  font: 16px/1.55 var(--font-ui);
+  color-scheme: light;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/*
+ * src/theme.ts always stamps data-theme on <html>, resolving 'system' to the OS
+ * preference in JS, so one block covers both the explicit and the automatic
+ * case. The alternative — a bare prefers-color-scheme query plus an override
+ * selector — needs the palette written twice, and every token added to one copy
+ * and forgotten in the other silently breaks contrast in one theme.
+ *
+ * Every colour token above appears here too. A tint declared in one block only
+ * is the classic way to ship a theme that fails contrast in the other.
+ */
+:root[data-theme='dark'] {
+  --text: #f4f0e8;
+  --text-muted: #b8adbd;
+  --bg: #120d18;
+  --surface: #1c1425;
+  --surface-2: #261c31;
+  --surface-raised: #2c2137;
+  --border: #3d3048;
+  --border-strong: #584568;
+  --gold: #d8ba72;
+  --gold-bright: #d8ba72;
+  --spell: #9c7cff;
+  --spell-soft: #32264a;
+  --aether: #75d7e7;
+  --glow: rgb(156 124 255 / 0.22);
+  --paper: #f4ecdc;
+  --paper-ink: #302737;
+  --paper-muted: #756a72;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.22), 0 6px 18px rgb(0 0 0 / 0.16);
+  --shadow-md: 0 20px 55px rgb(0 0 0 / 0.32), 0 4px 14px rgb(0 0 0 / 0.2);
+  --shadow-arcane: 0 0 0 1px rgb(216 186 114 / 0.16), 0 20px 64px var(--glow);
+  --danger: #f2a9a6;
+  --success: #4ad24a;
+  --warning: #fab219;
+  --success-text: #79e879;
+  --warning-text: #ffd477;
+
+  --align-neg: #dd6360;
+  --align-neutral: #6a6672;
+  --align-pos: #4a8ee0;
+
+  /* The dark arms are stepped for the dark surface, not flipped: intensity
+     climbs in lightness away from the centre, so the poles are the pale ends. */
+  --rep-hostile: #f2a9a6;
+  --rep-distrustful: #dd6360;
+  --rep-cold: #c23a38;
+  --rep-neutral: #544e5e;
+  --rep-cordial: #2a78d6;
+  --rep-friendly: #4a8ee0;
+  --rep-allied: #9ec5f4;
+
+  --track: #2c2338;
+
+  --focus-ring: 2px solid var(--spell);
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at 82% -10%, var(--glow), transparent 32rem),
+    radial-gradient(circle at -10% 78%, rgb(117 215 231 / 0.07), transparent 28rem),
+    var(--bg);
+  font-family: var(--font-ui);
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+a {
+  color: inherit;
+}
+
+/*
+ * Baseline for form controls.
+ *
+ * Every container used to re-declare the look of its own controls
+ * (`.modal-actions button`, `.entity-admin-bar button`, `.report-form input`,
+ * …), so any screen that was not on that list — the Bardo, the members list —
+ * rendered raw operating-system widgets next to themed ones on the same page.
+ *
+ * These are element selectors, the lowest specificity there is: every existing
+ * class rule still wins wherever it applies, and controls that are deliberately
+ * bare (`.icon-button`, `.link-button`) keep overriding it.
+ */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+select,
+textarea,
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color']) {
+  /* No `min-height`: the controls that opt out of the box look (`.link-button`,
+     `.th-sort`, the colour swatches) zero out padding and border but would have
+     no way to shed a minimum height. Padding alone sizes them. */
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  color: var(--text);
+}
+
+/* A field is recessed, a button sits on top: the difference is the surface. */
+select,
+textarea,
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color']) {
+  background: var(--bg);
+}
+
+button {
+  background: var(--surface-raised);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: var(--text);
+  background: var(--spell-soft);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+h1 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-5);
+  letter-spacing: -0.025em;
+}
+
+h2 {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: clamp(1.35rem, 2.3vw, 1.8rem);
+}
+
+p {
+  text-wrap: pretty;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

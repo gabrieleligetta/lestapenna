@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Terms of Service — Lestapenna</title>
+    <meta name="description" content="Terms governing the use of Lestapenna: a free, open-source Discord bot for tabletop campaigns, where the AI runs on your own provider keys.">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#100c18">
+    <link rel="canonical" href="https://lestapenna.quest/terms">
+    <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body class="legal-page">
+<main class="legal-shell">
+<a class="legal-back" href="/">← Back to Lestapenna</a>
+<h1>Terms of Service</h1>
+<p class="legal-meta">Last updated: 12 August 2026</p>
+
+<h2>1. The service</h2>
+<p>Lestapenna ("the Bot") records tabletop role-playing sessions held in Discord
+voice channels, transcribes them, and generates AI-powered summaries and
+campaign archives. By adding the Bot to a Discord server or using its commands,
+you accept these terms.</p>
+<p><strong>The service is free and we receive no payment of any kind for it.</strong>
+There is no subscription, no credit, no purchase and no billing relationship
+between us: nothing you do here results in an invoice from us, now or later.</p>
+
+<h2>1a. Open source</h2>
+<p>Lestapenna is released under the
+<a href="https://www.gnu.org/licenses/agpl-3.0.html" rel="noopener">GNU Affero General Public
+License v3.0</a>, and its source is public. You may use, study, modify and
+redistribute it. The AGPL adds one condition that matters here: if you run a
+modified version as a network service for others, you must offer those users the
+corresponding source of your version. Nothing in these terms restricts the rights
+that licence grants you; where the two disagree, the licence prevails.</p>
+
+<h2>2. Eligibility and responsibility</h2>
+<ul>
+    <li><strong>You must be at least 13 years old</strong>, or older if the law of your
+        country sets a higher minimum age, both to use the Bot and to take part in a
+        recorded session. This mirrors Discord's own Terms of Service, and it applies to
+        everyone in the voice channel, not only to whoever runs the commands.</li>
+    <li>You must comply with Discord's own Terms of Service and Community Guidelines.</li>
+    <li>Server administrators are responsible for obtaining participants' consent to
+        recording, as described in the <a href="/privacy">Privacy Policy</a>.</li>
+    <li>You may not use the Bot to record people without their knowledge or for any
+        unlawful purpose.</li>
+</ul>
+
+<h2>2a. Reporting a problem</h2>
+<p>If something is broken, or if the Bot is being misused on a server, tell us:
+<code>$report</code> (<code>$segnala</code>) from Discord, the red button in the web
+app, or the address in section 9. Reports are read and acted on.</p>
+
+<h2>3. AI keys and what they cost you</h2>
+<ul>
+    <li><strong>You bring your own AI keys.</strong> Transcription, summaries and the
+        campaign archive run on accounts you hold with providers of your choice —
+        currently OpenAI, Google, Anthropic or Ollama Cloud — or on hardware you own.
+        We never resell provider capacity and never take a margin on it.</li>
+    <li><strong>Those costs are yours and are billed to you directly by that provider</strong>,
+        under your own contract with them. We are not a party to it. What we do is show
+        an estimate before an action and the real consumption after it; estimates are
+        approximations and are not a price, a quote, or a guarantee.</li>
+    <li>Keys you entrust to the instance are encrypted at rest and are never returned by
+        any endpoint. You can replace or delete them at any time. Their validity, their
+        credit and their spending limits remain your responsibility.</li>
+    <li>If you self-host, no key of yours reaches us at all.</li>
+    <li>Voluntary sponsorship through GitHub Sponsors is a donation to the author's work.
+        It buys no feature, no priority and no service level: everything is free for
+        everyone regardless.</li>
+</ul>
+
+<h2>3a. Who is responsible for what (GDPR)</h2>
+<p>When a session is recorded, the <strong>server administrator who runs it is the
+data controller</strong>: they decide to record, why, and what to do with the result.
+Lestapenna acts as a <strong>processor</strong> on their instructions, and the AI
+provider is a sub-processor under <em>their</em> key. This is not a way of passing the
+buck — it is the correct allocation, and it comes with obligations on our side:</p>
+<ul>
+    <li><strong>Purpose limitation.</strong> Audio and transcripts are processed only to
+        produce the transcript, the recap and the campaign archive of that table. They
+        are never used to train models, never sold, never shared for anyone's marketing.</li>
+    <li><strong>Retention.</strong> Raw audio is deleted automatically after 30 days, or
+        sooner once the session archive exists. Transcripts and campaign data are kept
+        while the server keeps using the Bot, so its archive keeps working.</li>
+    <li><strong>Sub-processors</strong> are listed in full in the
+        <a href="/privacy">Privacy Policy</a>. Where you self-host, most of them disappear.</li>
+    <li><strong>Security.</strong> Provider keys are encrypted at rest with per-tenant
+        derived keys; no endpoint ever returns their value.</li>
+    <li><strong>Deletion.</strong> Anyone at the table can erase their own data with
+        <code>$forgetme</code>, and get a copy of it with <code>$mydata</code>, without
+        asking us or anyone else. An administrator can erase the whole server with
+        <code>$eraseserver</code>. <strong>Removing the Bot from a server erases that
+        server's data automatically</strong> — recordings, transcripts, recaps and every
+        stored file.</li>
+</ul>
+<p><strong>What remains yours to do:</strong> tell the people at your table that the
+session is being recorded, and let anyone who does not want to take part step out. The
+Bot makes this as visible as it can — it marks its own name while recording, refuses to
+record at all if it cannot display that marker, and posts a notice in the channel
+naming the commands to get a copy of your data or erase it — but it cannot obtain
+consent on your behalf.</p>
+
+<h2>4. AI-generated content</h2>
+<p>Summaries, transcripts, and other generated content may contain errors. The
+content is derived from your own sessions and belongs to you; we claim no
+ownership over your campaign material. You are responsible for reviewing
+generated content before relying on it.</p>
+
+<h2>4a. Pictures you upload</h2>
+<p>You can attach pictures to a campaign: a portrait on a character's sheet, a
+reference image that tells the AI what a place or a piece of armour looks like.
+Three things follow from that, and the first is the one that matters.</p>
+<ul>
+    <li><strong>Upload only what you have the right to upload.</strong> Your own work,
+        something you hold a licence for, or something whose licence permits this use.
+        Art found through a search engine is almost never any of those. By uploading you
+        state that you have that right, and that the picture does not infringe anyone
+        else's.</li>
+    <li><strong>It stays yours.</strong> We claim no ownership over it, exactly as with the
+        rest of your campaign material. What you give us is a narrow permission — to
+        store it, convert it to WebP, show it back to the members of your own table,
+        and, <em>only for the pictures you explicitly tick as references</em>, send it to
+        the image model your table has configured. Nothing else: it is never published,
+        never shared with anyone outside your table, never used to train anything, and
+        never used to promote this project. <strong>The permission ends when the picture
+        does</strong> — delete it and it is gone from our storage too.</li>
+    <li><strong>What must not go up:</strong> anything unlawful; material that infringes
+        somebody's copyright, trademark or image rights; photographs of people who have
+        not agreed to be there.</li>
+</ul>
+<p><strong>Nobody looks at your pictures before they are stored.</strong> There is no
+prior screening and no automated scanning — uploads are not inspected, and we have no
+general obligation to monitor them. That is the honest description of how this works,
+and it is the reason section 4b exists: we cannot know that something should not be
+there until somebody tells us, and when somebody does, we act.</p>
+<p>You can delete any picture yourself from the sheet it is attached to. Everything you
+uploaded also goes with <code>$forgetme</code>, with the campaign, and with the server
+when the Bot is removed — from the database and from the file storage alike.</p>
+<p>If a third party brings a claim against us because of material you uploaded, you
+are responsible for it and will hold us harmless, <strong>to the extent the applicable
+law allows</strong> — and where your local consumer law says otherwise, that law wins.</p>
+
+<h2>4b. Reporting infringing or illegal content</h2>
+<p>If something stored here infringes your rights or is otherwise unlawful, tell us and
+we will look at it. Write to
+<a href="mailto:info@lestapenna.quest">info@lestapenna.quest</a>, and see the
+<a href="/notice">notice page</a> for the full procedure.</p>
+<p>So that a report can be acted on rather than merely received, it should contain:</p>
+<ul>
+    <li>a <strong>reasoned explanation</strong> of why the material is unlawful — for a
+        copyright claim, what the work is and what your right in it is;</li>
+    <li>the <strong>exact location</strong>: the page address, or the identifier of the
+        picture as it appears in the application;</li>
+    <li>your <strong>name and email address</strong>, so we can reply and so the decision
+        can be justified;</li>
+    <li>a statement that, <strong>to the best of your knowledge, the report is accurate
+        and complete</strong> and made in good faith.</li>
+</ul>
+<p>We confirm receipt, decide without undue delay, and remove or disable access to
+material we find unlawful. Whoever uploaded it is told what was removed and why, and
+can reply — a mistaken report should be correctable, and a removal nobody can contest
+is its own kind of problem. Someone who repeatedly uploads infringing material loses
+access under section 6.</p>
+<p>Until such a notice reaches us we have no knowledge of what a given picture is, and
+we are not liable for it — the position the Digital Services Act (Regulation (EU)
+2022/2065, Article 6) gives a hosting service. Acting promptly once we <em>do</em> know
+is the other half of that arrangement, and it is the half we owe you.</p>
+
+<h2>5. Availability and limitations</h2>
+<p>The service is provided <strong>"as is" and "as available", without warranty of any
+kind</strong>, express or implied, including any warranty of merchantability, fitness for
+a particular purpose or non-infringement. This is a personal project offered free of
+charge: there is no service level, no uptime commitment and no support obligation.
+Processing times vary with load, features may change or disappear, and the public
+instance may be discontinued entirely. If continuity matters to your table, self-host
+it — the source and the instructions are public precisely for that reason.</p>
+
+<h2>6. Termination</h2>
+<p>You can stop using the service at any time by removing the Bot from your
+server. We may suspend or terminate access for violations of these terms or
+abusive usage patterns.</p>
+
+<h2>7. Liability</h2>
+<p>To the maximum extent permitted by law, we are not liable for any indirect,
+incidental or consequential damage, nor for lost data, lost recordings, or costs
+you incur with an AI provider — including costs caused by a misconfiguration, a
+key left active, or an action you did not intend to start. Since the service is
+provided free of charge, no monetary cap can be expressed as a fraction of what
+you paid us: you have paid us nothing. Nothing here limits liability that cannot
+be limited by law, including for wilful misconduct or gross negligence.</p>
+
+<h2>8. Changes</h2>
+<p>We may update these terms; material changes will be announced via the Bot or
+the website. Continued use after changes constitutes acceptance.</p>
+
+<h2>9. Contact</h2>
+<p>Operator of Lestapenna — <a href="mailto:info@lestapenna.quest">info@lestapenna.quest</a></p>
+
+<footer class="legal-footer">Lestapenna — “Il Bardo Digitale”. See also our <a href="/privacy">Privacy Policy</a>, the <a href="/license">licence</a> and how to <a href="/notice">report content</a>.</footer>
+</main>
+</body>
+</html>

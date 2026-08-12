@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy Policy — Lestapenna</title>
+    <meta name="description" content="How Lestapenna processes voice recordings, transcripts and campaign data. No payments, no tracking, no data selling.">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#100c18">
+    <link rel="canonical" href="https://lestapenna.quest/privacy">
+    <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body class="legal-page">
+<main class="legal-shell">
+<a class="legal-back" href="/">← Back to Lestapenna</a>
+<h1>Privacy Policy</h1>
+<p class="legal-meta">Last updated: 12 August 2026</p>
+
+<p>Lestapenna ("the Bot", "we") is a Discord application that records tabletop
+role-playing sessions in voice channels, transcribes them, and generates
+AI-powered narrative summaries. This policy explains what data we process and why.</p>
+
+<h2>1. Data we collect</h2>
+<ul>
+    <li><strong>Voice recordings</strong> — captured per user, only while a recording
+        session is explicitly active (started by a server member with the dedicated
+        command). The Bot never records outside an active session.</li>
+    <li><strong>Transcriptions and derived content</strong> — text transcripts of the
+        recordings and AI-generated summaries, character sheets, and campaign notes.</li>
+    <li><strong>Discord identifiers</strong> — server (guild) IDs, channel IDs, user IDs,
+        and display names, used to organize campaigns and attribute speech.</li>
+    <li><strong>Email addresses</strong> — only if voluntarily provided to receive
+        session recaps.</li>
+    <li><strong>AI provider keys</strong> — if you choose to use the public instance,
+        the keys you enter are encrypted at rest with a key held by the operator and
+        are never returned by any endpoint. You can replace or delete them at any time.
+        If you self-host, they never reach us.</li>
+    <li><strong>Pictures you upload</strong> — portraits attached to a sheet and reference
+        images attached to a campaign or a faction, plus any screenshot you choose to
+        attach to a bug report. They are converted to WebP on arrival, and that
+        conversion <strong>strips the embedded metadata</strong>: the camera details and,
+        more to the point, the GPS coordinates a phone writes into a photograph do not
+        survive it and are never stored.</li>
+    <li><strong>Usage metrics</strong> — session duration, tokens consumed per phase and
+        the resulting estimated cost, so your table can see what its own AI usage costs
+        <em>it</em>. There is no billing relationship with us, and these figures are not
+        used to charge anyone.</li>
+</ul>
+<p><strong>What we do not collect.</strong> There is no payment or billing data of any
+kind, because there is nothing to pay for. There is also <strong>no analytics and no
+tracking</strong>: this project contains no Google Analytics, no Plausible, no Sentry, no
+advertising pixel and no behavioural profiling — a claim you can verify yourself, since
+the source is public.</p>
+
+<h2>2. Recording: how you know, and how you opt out</h2>
+<p>Recording never starts silently. A member of the server has to start it with a
+command, and while it runs the Bot makes it visible in three ways at once:</p>
+<ul>
+    <li><strong>Its nickname becomes <code>[REC] …</code></strong> in the voice channel's
+        user list, for the whole duration. <strong>If it cannot display that marker, it
+        does not record at all</strong> — an indicator that can be silenced is not an
+        indicator, so the missing permission stops the session rather than hiding it.</li>
+    <li><strong>A notice is posted in the channel</strong> saying what is recorded, what
+        happens to it, and how to opt out. In full the first time on a server, in short
+        form afterwards.</li>
+    <li><strong>The Bot's status</strong> says that it is recording.</li>
+</ul>
+<p><strong>To opt out, leave the voice channel.</strong> That is enough, and nobody has to
+justify it.</p>
+<p>Server administrators remain responsible for telling the people at their table
+that sessions are recorded — the Bot makes it as visible as it can, but it cannot
+obtain consent on anyone's behalf.</p>
+
+<h2>2a. Your data, and how to act on it</h2>
+<p>You do not need to write to anyone or wait for a reply. From Discord, on the server
+in question:</p>
+<ul>
+    <li><code>$mydata</code> (<code>$imieidati</code>) sends you, in a private message, a
+        machine-readable copy of everything we hold about you: your transcripts, your
+        notes, your character sheet, your conversations with the Bard.</li>
+    <li><code>$forgetme</code> (<code>$dimenticami</code>) erases it: your audio files, the
+        transcripts of what you said, your notes, your questions and your character
+        sheet. The session recaps and the campaign's world stay — they are the whole
+        table's work, and they no longer contain anyone's words verbatim.</li>
+    <li>A server administrator can erase the <em>entire</em> server's archive with
+        <code>$eraseserver</code> (<code>$cancellaserver</code>).</li>
+</ul>
+<p><strong>Removing the Bot from a server erases that server's data.</strong> Recordings,
+transcripts, recaps, campaigns and every stored file go, automatically and without
+anyone having to ask.</p>
+<p>To have data <strong>corrected</strong> rather than deleted, ask the server
+administrator — they decide what is recorded and are the data controller — or write
+to the address in section 8. Campaign entries you edit by hand are marked as manual
+and are never overwritten by the AI afterwards.</p>
+
+<h2>3. How data is processed</h2>
+<p>Lestapenna works on a <strong>bring-your-own-key</strong> basis: the AI runs on
+accounts <em>you</em> hold, and the relationship for those calls is directly between you
+and that provider, under your contract with them. We pass your content to the provider
+you configured, and nothing more.</p>
+<p>Each table chooses, for itself:</p>
+<ul>
+    <li><strong>Transcription</strong> — either a computer you own, running our
+        transcription server, in which case the audio never reaches a third party; or a
+        cloud model on your key, which receives the audio.</li>
+    <li><strong>Summaries, extraction and chat</strong> — a model on your key, which
+        receives the transcript text.</li>
+    <li><strong>Campaign memory (embeddings)</strong> — your own hardware, or a model on
+        your key, which receives the text being indexed.</li>
+    <li><strong>Pictures</strong> — when you have a portrait drawn, the image model on your
+        key receives the prompt, and it receives an uploaded picture <em>only</em> for the
+        references you tick for that specific request. Nothing is sent because it happens
+        to be in the gallery: an unticked picture never leaves our storage.</li>
+</ul>
+<p>The operator's own hardware is not used to process other tables' content.</p>
+
+<h2>4. Storage and retention</h2>
+<ul>
+    <li>Data is stored on Oracle Cloud Infrastructure in the EU (Milan region),
+        encrypted at rest.</li>
+    <li><strong>Raw per-speaker audio is deleted after 30 days</strong>, or as soon as
+        the mixed session archive exists and storage is under pressure — whichever
+        comes first. This runs automatically every night; it is not conditional on
+        anyone remembering to ask.</li>
+    <li>Transcripts, summaries, and campaign data are retained for as long as the
+        server uses the Bot, so the campaign archive keeps working — and go when the
+        Bot is removed, when someone uses <code>$forgetme</code>, or when an
+        administrator erases the server.</li>
+    <li><strong>Pictures</strong> are kept while the campaign they belong to exists. A sheet
+        holds at most 12 and a reference set at most 6, so uploading beyond that drops the
+        oldest. A picture drawn by the AI and never accepted is deleted after 7 days.
+        <strong>Deleting a picture, an entity, a campaign or a server deletes the stored
+        file itself</strong>, not merely the record pointing at it, and so does
+        <code>$forgetme</code> for the pictures you uploaded.</li>
+    <li>Database backups are kept for 7 days.</li>
+</ul>
+
+<h2>5. Sharing and sub-processors</h2>
+<p><strong>We do not sell personal data, and we do not share it for anyone's marketing
+or profiling.</strong> There is no advertising business here to sell it to.</p>
+<p>The parties involved in running the public instance are, in full:</p>
+<ul>
+    <li><strong>Discord</strong> (Discord Inc.) — the platform the Bot lives on. Voice,
+        identifiers and messages pass through it under Discord's own privacy policy.
+        We send nothing back to Discord beyond what the Bot posts in your own channels:
+        the recaps, the notices and the replies to commands. Discord holds those the
+        way it holds any other message in your server.</li>
+    <li><strong>Oracle Cloud Infrastructure</strong> — object storage and the server, in
+        the EU (Milan region). Holds audio, backups and the database.</li>
+    <li><strong>The AI provider you choose</strong> — OpenAI, Google, Anthropic or Ollama
+        Cloud, depending on what your table configures. It receives what that phase
+        needs (audio, text, or the reference pictures you ticked) under <em>your</em>
+        account and <em>your</em> agreement with them. We are not a party to it, and if
+        you run everything on your own hardware there is no AI provider at all.</li>
+    <li><strong>Porkbun</strong> — outbound email, if you ask for session recaps by mail.</li>
+</ul>
+<p>There is no other recipient. Self-hosting removes Oracle and Porkbun from this list
+as well: only Discord and your chosen provider remain.</p>
+
+<h2>5a. A warning about free AI tiers</h2>
+<p>We never use your content to train any model, and we never let anyone else do so on
+our behalf. But because the AI runs on <em>your</em> key, one thing is outside our
+control and you should know about it: <strong>several providers train on the content
+submitted through their free tiers.</strong> Google's free AI Studio tier is the
+clearest example — content sent with a free key may be used to improve Google's
+products, including its models.</p>
+<p>If that matters to your table, use a paid API key (where the major providers do not
+train on API content by default) or run the models on your own hardware. The Bot warns
+you about this where the key is entered.</p>
+
+<h2>6. Your rights (GDPR)</h2>
+<p>You have the right to access your data, to receive a copy of it, to have it
+corrected, and to have it erased. Section 2a says how to exercise each of them —
+mostly without asking anyone. For anything not covered there, or to complain, write
+to the address below; you also have the right to lodge a complaint with your national
+data protection authority.</p>
+
+<h2>7. Age</h2>
+<p>Lestapenna is not directed at children. In line with Discord's own Terms of Service,
+you must be <strong>at least 13 years old</strong>, or older where the law of your
+country requires it, to use the Bot or to appear in a recorded session. We do not
+knowingly process the data of anyone below that age; if you believe we have, write to
+us and it will be deleted.</p>
+
+<h2>8. Contact</h2>
+<p>Data controller: the operator of Lestapenna — <a href="mailto:info@lestapenna.quest">info@lestapenna.quest</a></p>
+
+<footer class="legal-footer">Lestapenna — “Il Bardo Digitale”. See also our <a href="/terms">Terms of Service</a> and how to <a href="/notice">report content</a>.</footer>
+</main>
+</body>
+</html>

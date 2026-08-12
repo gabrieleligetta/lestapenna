@@ -1,0 +1,61 @@
+# Lestapenna public ingress.
+# Only Caddy publishes host ports; bot/API, Redis and Ollama stay on the private
+# Compose network. DOMAIN and WWW_DOMAIN are configured in docker-compose.prod.yml.
+# Landing pages, assets, and legal pages are now served by NestJS (same process
+# as the bot), not by Caddy's file_server.
+
+{$WWW_DOMAIN:www.lestapenna.quest} {
+	redir https://{$DOMAIN:lestapenna.quest}{uri} 308
+}
+
+{$DOMAIN:lestapenna.quest} {
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; img-src 'self' data: {$OCI_ENDPOINT}; media-src 'self' {$OCI_ENDPOINT}; object-src 'none'; script-src 'self'; style-src 'self'; upgrade-insecure-requests"
+	}
+
+	# API and health — no cache, no index.
+	@api path /api /api/* /health
+	handle @api {
+		header Cache-Control "no-store"
+		header X-Robots-Tag "noindex, nofollow"
+		reverse_proxy dnd-bot:3000
+	}
+
+	# React SPA (web/), built and baked into this image by Dockerfile.caddy —
+	# ADR-001: Caddy serves it statically, no Node/Vite runtime involved.
+	# handle_path strips the /app prefix before looking files up on disk
+	# (Vite's base: '/app/' means the build's own asset URLs expect that).
+	handle_path /app* {
+		root * /srv/app
+		header X-Robots-Tag "noindex, nofollow"
+
+		# Vite content-hashes asset filenames, so these can be cached forever;
+		# the SPA shell (index.html) must not be, or deploys wouldn't show up.
+		@hashedAssets path /assets/*
+		header @hashedAssets Cache-Control "public, max-age=31536000, immutable"
+		@shell not path /assets/*
+		header @shell Cache-Control "no-store"
+
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Everything else (landing pages, assets, legal, SEO files) → NestJS.
+	# NestJS serves static files from public/ via @nestjs/serve-static
+	# and handles /privacy, /terms rewrites and the custom 404 page.
+	handle {
+		reverse_proxy dnd-bot:3000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

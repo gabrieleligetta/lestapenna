@@ -1,0 +1,170 @@
+import { CommandDispatcher } from './index';
+
+// Admin
+import { reprocessCommand } from './admin/reprocess';
+import { debugCommand } from './admin/debug';
+import { rebuildCommand } from './admin/rebuild';
+import { publishAllCommand } from './admin/publish';
+import { recoverCommand } from './admin/recover';
+import { syncCommand } from './admin/sync';
+import { rereconcileCommand } from './admin/rereconcile';
+import { eraseServerCommand } from './admin/eraseServer';
+
+// Campaigns
+import { createCampaignCommand } from './campaigns/create';
+import { deleteCampaignCommand } from './campaigns/delete';
+import { membersCommand } from './campaigns/members';
+import { listCampaignsCommand } from './campaigns/list';
+import { selectCampaignCommand } from './campaigns/select';
+import { setWorldCommand } from './campaigns/setWorld';
+
+// Characters
+// Characters
+import { bioCommand } from './characters/bio';
+import { characterCommand } from './characters/character';
+import { iamCommand } from './characters/iam';
+import { partyCommand } from './characters/party';
+import { whoamiCommand } from './characters/whoami';
+
+// Config
+import { setCommand } from './config/set';
+import { statusCommand } from './config/status';
+import { metricsCommand } from './config/metrics';
+import { autoupdateCommand } from './config/autoupdate';
+import { languageCommand } from './config/language';
+
+// Help
+import { aiutoCommand } from './help/aiuto';
+import { helpCommand } from './help/help';
+
+// Meta
+import { donateCommand } from './meta/donate';
+import { forgetMeCommand } from './meta/forgetMe';
+import { myDataCommand } from './meta/myData';
+import { reportCommand } from './meta/report';
+
+// Inventory
+import { bestiaryCommand } from './inventory/bestiary';
+import { inventoryCommand } from './inventory/inventory';
+import { questCommand } from './inventory/quest';
+import { artifactCommand } from './inventory/artifact';
+
+// Locations
+import { atlasCommand } from './locations/atlas';
+import { locationCommand } from './locations/location';
+import { travelsCommand } from './locations/travels';
+
+// Narrative
+import { askCommand } from './narrative/ask';
+import { ingestCommand } from './narrative/ingest';
+import { narrateCommand } from './narrative/narrate';
+import { storyCommand } from './narrative/story';
+import { tecnicoCommand } from './narrative/tecnico';
+import { wikiCommand } from './narrative/wiki';
+
+// NPCs
+import { npcCommand } from './npcs/npc';
+import { presenzeCommand } from './npcs/presenze';
+
+// Factions
+import { factionCommand } from './factions/faction';
+import { affiliateCommand } from './factions/affiliate';
+
+// Sessions
+import { cronacaCommand } from './sessions/cronaca';
+import { downloadCommand } from './sessions/download';
+import { listCommand as listSessionsCommand } from './sessions/list'; // Renaming to avoid conflict if imported same way, though locally protected.
+import { listenCommand } from './sessions/listen';
+import { pauseCommand } from './sessions/pause';
+import { resetCommand as resetSessionCommand } from './sessions/reset';
+import { stopCommand } from './sessions/stop';
+
+// Timeline
+import { dateCommand } from './timeline/date';
+import { timelineCommand } from './timeline/timeline';
+import { year0Command } from './timeline/year0';
+
+export function registerAllCommands(dispatcher: CommandDispatcher) {
+    // Admin
+    dispatcher.register(reprocessCommand);
+    dispatcher.register(debugCommand);
+    dispatcher.register(rebuildCommand);
+    dispatcher.register(publishAllCommand);
+    dispatcher.register(recoverCommand);
+    dispatcher.register(syncCommand);
+    dispatcher.register(rereconcileCommand);
+    dispatcher.register(eraseServerCommand);
+
+    // Campaigns
+    dispatcher.register(createCampaignCommand);
+    dispatcher.register(deleteCampaignCommand);
+    dispatcher.register(membersCommand);
+    dispatcher.register(listCampaignsCommand);
+    dispatcher.register(selectCampaignCommand);
+    dispatcher.register(setWorldCommand);
+
+    // Characters
+    dispatcher.register(bioCommand);
+    dispatcher.register(characterCommand);
+    dispatcher.register(iamCommand);
+    dispatcher.register(partyCommand);
+    dispatcher.register(whoamiCommand);
+
+    // Config
+    dispatcher.register(setCommand);
+    dispatcher.register(statusCommand);
+    dispatcher.register(metricsCommand);
+    dispatcher.register(autoupdateCommand);
+    dispatcher.register(languageCommand);
+
+    // Help
+    dispatcher.register(aiutoCommand);
+    dispatcher.register(helpCommand);
+
+    // Meta
+    dispatcher.register(donateCommand);
+    dispatcher.register(forgetMeCommand);
+    dispatcher.register(myDataCommand);
+    dispatcher.register(reportCommand);
+
+    // Inventory
+    dispatcher.register(bestiaryCommand);
+    dispatcher.register(inventoryCommand);
+    dispatcher.register(questCommand);
+    dispatcher.register(artifactCommand);
+
+    // Locations
+    dispatcher.register(atlasCommand);
+    dispatcher.register(locationCommand);
+    dispatcher.register(travelsCommand);
+
+    // Narrative
+    dispatcher.register(askCommand);
+    dispatcher.register(ingestCommand);
+    dispatcher.register(narrateCommand);
+    dispatcher.register(storyCommand);
+    dispatcher.register(tecnicoCommand);
+    dispatcher.register(wikiCommand);
+
+    // NPCs
+    dispatcher.register(npcCommand);
+    dispatcher.register(presenzeCommand);
+
+    // Factions
+    dispatcher.register(factionCommand);
+    dispatcher.register(affiliateCommand);
+
+    // Sessions
+    dispatcher.register(cronacaCommand);
+    dispatcher.register(downloadCommand);
+    dispatcher.register(listSessionsCommand);
+    dispatcher.register(listenCommand);
+    dispatcher.register(pauseCommand);
+    dispatcher.register(resetSessionCommand);
+    dispatcher.register(stopCommand);
+
+    // Timeline
+    dispatcher.register(dateCommand);
+    dispatcher.register(timelineCommand);
+    dispatcher.register(year0Command);
+}

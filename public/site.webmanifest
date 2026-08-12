@@ -1,0 +1,17 @@
+{
+  "name": "Lestapenna — The Digital Bard",
+  "short_name": "Lestapenna",
+  "description": "Narrative recaps and a living campaign archive for tabletop RPG sessions on Discord.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#100c18",
+  "theme_color": "#100c18",
+  "icons": [
+    {
+      "src": "/assets/mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

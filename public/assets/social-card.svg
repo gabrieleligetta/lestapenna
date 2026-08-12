@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="glow" cx="75%" cy="10%" r="90%">
+      <stop stop-color="#5c3d82"/>
+      <stop offset=".55" stop-color="#21162e"/>
+      <stop offset="1" stop-color="#100c18"/>
+    </radialGradient>
+    <linearGradient id="feather" x1="990" y1="90" x2="705" y2="545" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5e6bd"/>
+      <stop offset="1" stop-color="#a883dc"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#e2cd9d" stroke-opacity=".035"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <circle cx="992" cy="80" r="310" fill="none" stroke="#e2cd9d" stroke-opacity=".08" stroke-width="2"/>
+  <circle cx="992" cy="80" r="390" fill="none" stroke="#e2cd9d" stroke-opacity=".05" stroke-width="2"/>
+  <g transform="translate(72 200)">
+    <rect width="58" height="58" rx="17" fill="#3e2955" stroke="#e2cd9d" stroke-opacity=".5" stroke-width="2"/>
+    <path d="M45 9c-9 2-16 6-21 13-4 6-6 13-6 22l6-8 7-1-5-2 4-5 7-1-5-3c4-5 9-10 13-15Z" fill="url(#feather)"/>
+    <path d="M15 49c6-12 13-22 24-34" fill="none" stroke="#e2cd9d" stroke-linecap="round" stroke-width="2.5"/>
+  </g>
+  <text x="151" y="242" fill="#f5efe1" font-family="Georgia,serif" font-size="34" font-weight="700">Lestapenna</text>
+  <text x="72" y="310" fill="#f5efe1" font-family="Georgia,serif" font-size="72" letter-spacing="-2">Your campaign</text>
+  <text x="72" y="392" fill="#f1dda9" font-family="Georgia,serif" font-size="72" font-style="italic" letter-spacing="-2">deserves a memory.</text>
+  <text x="75" y="468" fill="#b8aec4" font-family="Arial,sans-serif" font-size="25">Narrative recaps and a living archive for your Discord table.</text>
+  <text x="75" y="558" fill="#e2cd9d" font-family="Arial,sans-serif" font-size="20" font-weight="700" letter-spacing="4">LESTAPENNA.QUEST</text>
+  <path d="M1015 98c-133 22-242 86-311 181-64 89-94 198-88 327l86-106 108-9-74-40 56-71 101-9-69-39c59-73 129-137 191-234Z" fill="url(#feather)" opacity=".18"/>
+  <path d="M584 630c86-166 196-313 355-484" fill="none" stroke="#e2cd9d" stroke-linecap="round" stroke-opacity=".18" stroke-width="11"/>
+</svg>

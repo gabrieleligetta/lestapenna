@@ -1,0 +1,64 @@
+name: CI
+
+# Fino a ieri esisteva solo il deploy: nessuno verificava una pull request
+# prima che arrivasse in produzione. Questa CI prepara il repository ad
+# accettare contributi pubblici senza dare permessi di scrittura al job.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bot:
+    name: Bot e web app
+    runs-on: ubuntu-latest
+
+    # `src/config.ts` pretende DISCORD_BOT_TOKEN e lancia all'import: senza
+    # questo lo step OpenAPI, che carica la config fuori da Jest, non parte. Non
+    # è un segreto e non deve esserlo — è un valore fittizio che nessuna
+    # chiamata di rete raggiunge mai.
+    env:
+      DISCORD_BOT_TOKEN: ci-placeholder-token
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Test
+        # --forceExit: qualche handle resta aperto a fine suite (Redis finto,
+        # timer del monitor) e senza questo il job resterebbe appeso.
+        run: npx jest --silent --forceExit
+
+      - name: Build
+        run: npm run build
+
+      - name: Web app
+        # `npm run lint` è entrato qui dopo una bonifica in cui sono saltate
+        # fuori cinque classi CSS che non esistevano in nessun foglio di stile:
+        # la pagina privacy senza stile e tre bottoni distruttivi resi come
+        # bottoni qualunque. Nessuno strumento le vedeva, perché il lint non
+        # veniva eseguito da nessuna parte.
+        run: |
+          cd web
+          npm ci
+          npx tsc --noEmit
+          npm run lint
+          npm test
+          npm run build
+
+      - name: OpenAPI allineato
+        # Se una rotta cambia senza rigenerare la spec, il client tipizzato
+        # della web app descrive un'API che non esiste più.
+        run: npm run openapi:check

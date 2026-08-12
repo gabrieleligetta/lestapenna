@@ -1,0 +1,114 @@
+/.env
+.idea
+.DS_Store
+node_modules
+*.tsbuildinfo
+/ai.config.local.json
+
+# Recordings e artifact audio (mai committare binari)
+recordings/*
+transcripts/*
+!recordings/.gitkeep
+src/recordings/
+src/mixed_sessions/
+mixed_sessions/
+
+# Batch Processing
+batch_processing/*
+!batch_processing/.gitkeep
+
+# Cache and Data
+hf_cache/*
+!hf_cache/.gitkeep
+data/*
+!data/.gitkeep
+
+# Database e file di stato locali
+*.db
+*.sqlite
+# SQLite's WAL/shm sidecars: outside data/ no rule would catch them, and they
+# hold the same rows as the database.
+*.sqlite-wal
+*.sqlite-shm
+*.log
+
+/dist/
+/start-ollama.sh
+/stop-ollama.sh
+# The whole directory, not the individual scripts: listing them one by one means
+# the fourth file somebody drops in there gets committed.
+/oracle/
+/.env.prod
+/.env.*
+# Tranne il modello: il README dice `cp .env.example .env` come primo passo, e
+# in un repository dove la regola qui sopra lo ingoia quel comando fallisce per
+# chiunque cloni. Nel repo privato restava tracciato solo perché c'era già
+# prima della regola — cioè per caso.
+!/.env.example
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+terraform/backend.hcl
+# Gli OCID delle risorse da importare identificano una tenancy precisa.
+terraform/import.env
+terraform/crash.log
+/tmp/
+
+# Config AI sperimentali locali (non tracciati)
+/ai.config.glm52-legacy.json
+/ai.config.agentic-glm52.json
+
+# Script una tantum di manutenzione: mai nel repo pubblico
+scripts/local/
+
+# Il progetto usa npm. Un yarn.lock rimasto indietro fa installare a chi lo
+# trova un albero di dipendenze diverso da quello che gira davvero.
+yarn.lock
+
+# --- Local material that must NEVER reach the public repo ---
+# These rules used to live in .git/info/exclude, which is per-clone and does not
+# travel with the repository: a re-clone, a worktree or a CI checkout was enough
+# to make them committable again. Here they protect everyone, everywhere.
+
+# Permissions and commands saved by agents: they contain production hosts, SSH
+# users and private-key paths from the developer's own machine.
+.claude/settings.local.json
+
+# Internal documentation: production guild id, live OCIDs, server hardening
+# notes. It lives in the private archive, not here.
+# `/docs/*` and not `/docs/`: git does not descend into an ignored directory, so
+# with the second form the exception below would never even be read.
+/docs/*
+# The self-hosting guide, on the other hand, is exactly what a cloner needs.
+!/docs/SELF-HOSTING.md
+/CLAUDE.md
+
+# Screenshot scaricati da una segnalazione per guardarli: sono immagini di un
+# utente, non appartengono al repo pubblico.
+report-*-screenshot*.webp
+
+# Chiavi private e file di credenziali, ovunque vengano creati. Le chiavi
+# pubbliche (`*.pub`) possono invece essere condivise intenzionalmente.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+
+# File ambiente annidati creati da tool o sottoprogetti. Manteniamo tracciabili
+# soltanto i modelli esplicitamente destinati al repository.
+**/.env
+**/.env.*
+!/.env.example
+!/**/.env.example
+
+# Terraform può essere eseguito anche fuori dalla cartella `terraform/`.
+*.tfvars
+*.tfstate
+*.tfstate.*

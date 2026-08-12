@@ -1,0 +1,323 @@
+.campaign-journals {
+    --journal-width: min(82vw, 18rem);
+    position: relative;
+    margin-inline: -0.25rem;
+    container: campaign-journals / inline-size;
+}
+
+.campaign-journals__controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+    padding-inline: 0.25rem;
+}
+
+.campaign-journals__button {
+    display: inline-grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 0.35rem 1rem rgb(23 16 32 / 0.08);
+    transition:
+        border-color var(--motion-fast, 160ms) ease,
+        box-shadow var(--motion-fast, 160ms) ease,
+        transform var(--motion-fast, 160ms) ease;
+}
+
+.campaign-journals__button:hover:not(:disabled) {
+    border-color: var(--gold);
+    box-shadow:
+        0 0.35rem 1rem rgb(23 16 32 / 0.1),
+        0 0 1rem color-mix(in srgb, var(--gold) 32%, transparent);
+    transform: translateY(-1px);
+}
+
+.campaign-journals__button:disabled {
+    cursor: default;
+    opacity: 0.38;
+}
+
+.campaign-journals__counter {
+    min-width: 3.8rem;
+    color: var(--text-muted);
+    font-size: var(--fs-1);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.campaign-journals__track {
+    --journal-leading-padding: max(0.25rem, calc((100% - var(--journal-width)) / 2));
+    --journal-trailing-padding: max(
+        0.25rem,
+        calc(100% - var(--journal-width) - var(--journal-leading-padding))
+    );
+    display: flex;
+    gap: var(--space-4);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline mandatory;
+    scroll-padding-inline:
+        var(--journal-leading-padding)
+        var(--journal-trailing-padding);
+    scrollbar-width: none;
+    margin: 0;
+    padding:
+        0.25rem
+        var(--journal-trailing-padding)
+        var(--space-4)
+        var(--journal-leading-padding);
+    list-style: none;
+}
+
+.campaign-journals__track::-webkit-scrollbar {
+    display: none;
+}
+
+.campaign-journals__item {
+    flex: 0 0 var(--journal-width);
+    min-width: 0;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+}
+
+.campaign-journal {
+    --journal-ink: #f8ecd0;
+    --journal-muted: #d8c9aa;
+    --journal-edge: #cba45d;
+    --journal-cover: #352146;
+    --journal-cover-deep: #1b1128;
+    isolation: isolate;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 25rem;
+    overflow: hidden;
+    padding: 2.15rem 1.7rem 1.55rem 2rem;
+    border: 1px solid color-mix(in srgb, var(--journal-edge) 60%, var(--border));
+    border-radius: 0.45rem 1rem 1rem 0.45rem;
+    background:
+        radial-gradient(circle at 73% 18%, rgb(255 232 172 / 0.13), transparent 24%),
+        linear-gradient(145deg, var(--journal-cover), var(--journal-cover-deep));
+    box-shadow:
+        inset 0.32rem 0 0 rgb(255 255 255 / 0.06),
+        inset 0.44rem 0 0 rgb(0 0 0 / 0.22),
+        0.45rem 0.8rem 1.7rem rgb(23 16 32 / 0.2);
+    color: var(--journal-ink);
+    text-decoration: none;
+    transform: translateY(0);
+    transition:
+        border-color var(--motion-base, 180ms) ease,
+        box-shadow var(--motion-base, 180ms) ease,
+        transform var(--motion-base, 180ms) ease;
+}
+
+.campaign-journal::before,
+.campaign-journal::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+}
+
+.campaign-journal::before {
+    z-index: -1;
+    inset: 0.7rem;
+    border: 1px solid rgb(229 197 126 / 0.3);
+    border-radius: 0.2rem 0.65rem 0.65rem 0.2rem;
+    background:
+        repeating-radial-gradient(
+            circle at var(--journal-origin) 28%,
+            transparent 0 1.65rem,
+            rgb(238 211 150 / 0.04) 1.7rem 1.76rem
+        );
+}
+
+.campaign-journal::after {
+    inset: 0;
+    z-index: -2;
+    opacity: 0.44;
+    background:
+        linear-gradient(115deg, transparent 0 46%, rgb(255 255 255 / 0.05) 46.2% 46.7%, transparent 47%),
+        repeating-linear-gradient(
+            var(--journal-angle),
+            transparent 0 2.25rem,
+            rgb(255 255 255 / 0.025) 2.3rem 2.36rem
+        );
+}
+
+.campaign-journal:hover {
+    border-color: var(--journal-edge);
+    box-shadow:
+        inset 0.32rem 0 0 rgb(255 255 255 / 0.08),
+        inset 0.44rem 0 0 rgb(0 0 0 / 0.22),
+        0.6rem 1rem 2rem rgb(23 16 32 / 0.24),
+        0 0 1.6rem color-mix(in srgb, var(--journal-edge) 23%, transparent);
+    transform: translateY(-0.2rem);
+}
+
+.campaign-journal:focus-visible {
+    outline-color: var(--journal-edge);
+    outline-offset: 0.25rem;
+}
+
+.campaign-journal--1 {
+    --journal-cover: #163c48;
+    --journal-cover-deep: #09242e;
+    --journal-edge: #83c6bd;
+}
+
+.campaign-journal--2 {
+    --journal-cover: #58302c;
+    --journal-cover-deep: #2d1717;
+    --journal-edge: #dfaa70;
+}
+
+.campaign-journal--3 {
+    --journal-cover: #263f2d;
+    --journal-cover-deep: #122218;
+    --journal-edge: #9fc47c;
+}
+
+.campaign-journal--4 {
+    --journal-cover: #26345b;
+    --journal-cover-deep: #121a35;
+    --journal-edge: #92aee8;
+}
+
+.campaign-journal--5 {
+    --journal-cover: #493543;
+    --journal-cover-deep: #271824;
+    --journal-edge: #d2a3be;
+}
+
+.campaign-journal.is-active {
+    box-shadow:
+        inset 0.32rem 0 0 rgb(255 255 255 / 0.08),
+        inset 0.44rem 0 0 rgb(0 0 0 / 0.22),
+        0.45rem 0.8rem 1.7rem rgb(23 16 32 / 0.2),
+        0 0 1.35rem color-mix(in srgb, var(--journal-edge) 18%, transparent);
+}
+
+.campaign-journal__ornament {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 4.8rem;
+    height: 4.8rem;
+    margin: 0 auto var(--space-5);
+    border: 1px solid color-mix(in srgb, var(--journal-edge) 66%, transparent);
+    border-radius: 50%;
+    color: var(--journal-edge);
+    font-size: 1.15rem;
+    transform: rotate(45deg);
+}
+
+.campaign-journal__ornament::before {
+    content: '';
+    position: absolute;
+    width: 3.45rem;
+    height: 3.45rem;
+    border: 1px solid color-mix(in srgb, var(--journal-edge) 38%, transparent);
+    border-radius: 0.2rem;
+}
+
+.campaign-journal__ornament > span {
+    transform: rotate(-45deg);
+}
+
+.campaign-journal__monogram {
+    margin-bottom: var(--space-2);
+    color: var(--journal-edge);
+    font-size: var(--fs-0);
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-align: center;
+}
+
+.campaign-journal__title {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--journal-ink);
+    font-family: var(--font-display, Georgia, serif);
+    font-size: clamp(1.45rem, 4vw, 1.85rem);
+    font-weight: 700;
+    line-height: 1.12;
+    text-align: center;
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+.campaign-journal__status {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--space-3);
+}
+
+.campaign-journal__status .badge-success {
+    border-color: color-mix(in srgb, var(--journal-edge) 72%, transparent);
+    color: var(--journal-ink);
+    background: rgb(255 255 255 / 0.07);
+}
+
+.campaign-journal__meta {
+    display: grid;
+    gap: var(--space-3);
+    margin-top: auto;
+    padding-top: var(--space-5);
+    border-top: 1px solid rgb(229 197 126 / 0.22);
+    color: var(--journal-muted);
+    font-size: var(--fs-1);
+}
+
+.campaign-journal__meta > span {
+    display: grid;
+    gap: 0.1rem;
+    overflow-wrap: anywhere;
+}
+
+.campaign-journal__meta-label {
+    color: var(--journal-edge);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+@container campaign-journals (min-width: 40rem) {
+    .campaign-journals__track {
+        --journal-width: clamp(
+            17rem,
+            calc((100% - var(--space-4)) / 2.15),
+            23rem
+        );
+    }
+}
+
+@container campaign-journals (min-width: 60rem) {
+    .campaign-journals__track {
+        --journal-width: clamp(
+            17.5rem,
+            calc((100% - var(--space-4) * 2) / 3),
+            22rem
+        );
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .campaign-journals__button,
+    .campaign-journal {
+        transition: none;
+    }
+
+    .campaign-journals__button:hover:not(:disabled),
+    .campaign-journal:hover {
+        transform: none;
+    }
+}

@@ -1,0 +1,155 @@
+services:
+  dnd-bot:
+    platform: linux/arm64
+    build: .
+    container_name: dnd-bot-prod
+    restart: unless-stopped
+    # 🔧 STRATEGIA RAM DISK:
+    # - /dev/shm è usato per l'accumulatore del mixer streaming (I/O zero-latency)
+    # - Se RAM scende sotto 10%, fallback automatico su disco (temp_mix/)
+    # - 6GB = ~25% della RAM totale (23GB), sufficiente per sessioni multi-ora
+    shm_size: '6gb'
+    # 🛑 GRACEFUL SHUTDOWN: BACKUP_TIMEOUT_MS=300s (5min) in recorder.ts.
+    # 360s lascia margine per FFmpeg flush + upload Oracle in corso prima di SIGKILL.
+    stop_grace_period: 360s
+    # 🧹 PID 1 reaper: previene zombie da FFmpeg/whisper child processes
+    init: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Rome
+      # 🔧 TUNING GC: 6GB Heap
+      # Rimosso --optimize_for_size e --gc_interval=100 da qui perché Node 22 li blocca in NODE_OPTIONS
+      - NODE_OPTIONS=--max-old-space-size=6144
+      - UV_THREADPOOL_SIZE=32
+      # 🇮🇹 Modello Whisper: true = distil-it-v0.2 (530MB, italiano), false = large-v3 (3GB)
+      # 🆕 LITESTREAM SECRETS (passati dal .env copiato da GitHub Actions)
+      - OCI_ENDPOINT=${OCI_ENDPOINT}
+      - OCI_REGION=${OCI_REGION}
+      - OCI_ACCESS_KEY_ID=${OCI_ACCESS_KEY_ID}
+      - OCI_SECRET_ACCESS_KEY=${OCI_SECRET_ACCESS_KEY}
+      # Used both by Litestream (litestream.yml) and by the janitor snapshots.
+      - OCI_DB_BACKUP_BUCKET=${OCI_DB_BACKUP_BUCKET}
+      - MEDIA_STORAGE_DRIVER=oci
+      - OCI_MEDIA_BUCKET_NAME=${OCI_MEDIA_BUCKET_NAME}
+
+    # 🔧 FLAG GC ESPLICITI: Passati direttamente al comando di avvio
+    # 🆕 LITESTREAM WRAPPER: Esegue la replica DB in background in prod
+    command: litestream replicate -exec "node --optimize_for_size --gc_interval=100 dist/index.js"
+
+    deploy:
+      resources:
+        limits:
+          # NON limitiamo CPU: Whisper usa nice + -t 3, self-limiting
+          # Ollama non gira più sull'host: gli embedding di ogni tavolo vanno
+          # sul suo hardware o sulla sua chiave. Liberati i 12G che occupava.
+          memory: 14G
+        reservations:
+          memory: 2G
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    volumes:
+      - ./recordings:/app/recordings
+      - db_data:/app/data
+      - ./batch_processing:/app/batch_processing
+      - ./ai.config.json:/app/ai.config.json:ro
+      # 🆕 Whisper persiste nel volume (sopravvive a docker system prune)
+
+    # API accessibile solo ai container della rete Compose (Caddy), mai
+    # pubblicata direttamente sull'host.
+    expose:
+      - "3000"
+
+  redis:
+    image: redis:alpine
+    container_name: redis-server-prod
+    restart: always
+
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+    volumes:
+      - redis_data:/data
+    # 🔧 FIX BULLMQ: Policy cambiata da allkeys-lru a noeviction per evitare perdita job
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+
+    # 🩺 Garantisce che dnd-bot non parta prima che Redis accetti connessioni:
+    # evita race su BullMQ all'avvio (worker che falliscono il primo connect).
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # 🆕 Caddy reverse proxy — auto-TLS via Let's Encrypt
+  # Builds from Dockerfile.caddy: bakes the React/Vite SPA (web/) static build
+  # into the image (ADR-001 — Caddy serves the SPA, no Node/Vite runtime for
+  # the frontend). Rebuild (`docker compose build caddy`) after changes to web/.
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: caddy-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-lestapenna.quest}
+      - WWW_DOMAIN=${WWW_DOMAIN:-www.lestapenna.quest}
+      # Exact non-secret OCI origin used by the signed audio redirect. Keeping
+      # it explicit avoids the unsafe `*.oraclecloud.com` CSP wildcard.
+      - OCI_ENDPOINT=${OCI_ENDPOINT}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - dnd-bot
+
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 16M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  redis_data:
+  # Nome esplicito: il DB di produzione è stato migrato dal vecchio bind mount
+  # ./data il 2026-07-19. Non cambiarlo: un nuovo volume partirebbe vuoto.
+  db_data:
+    name: lestapenna_db_data
+  caddy_data:    # 🆕 Caddy TLS certificates
+  caddy_config:  # 🆕 Caddy configuration cache

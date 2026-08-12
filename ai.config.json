@@ -1,0 +1,28 @@
+{
+  "phases": {
+    "transcription":   { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "metadata":        { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "map":             { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "analyst":         { "provider": "gemini", "model": "gemini-3.1-pro-preview" },
+    "summary":         { "provider": "gemini", "model": "gemini-3.1-pro-preview" },
+    "chat":            { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "narrativeFilter": { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "reconcile":       { "provider": "gemini", "model": "gemini-3-flash-preview" },
+    "embedding":       { "provider": "ollama", "model": "nomic-embed-text" },
+    "image":           { "provider": "gemini", "model": "gemini-3-pro-image" }
+  },
+  "fallback": { "provider": "gemini", "model": "gemini-3-flash-preview" },
+  "ollama": {
+    "remoteUrl": "http://ollama:11434/v1",
+    "localUrl":  "http://ollama:11434/v1"
+  },
+  "concurrency": { "openai": 5, "gemini": 5, "ollama": 1, "ollama-cloud": 3, "anthropic": 5 },
+  "chunkSize":   { "openai": 800000, "gemini": 900000, "ollama": 15000, "ollama-cloud": 800000, "anthropic": 800000 },
+  "chunkOverlap":{ "openai": 15000,   "gemini": 15000,   "ollama": 1000,  "ollama-cloud": 15000,  "anthropic": 15000  },
+  "features": {
+    "enableAiCorrection": true,
+    "enableAgenticSummary": true,
+    "narrativeBatchSize": 30,
+    "narrativeOverlap": 20
+  }
+}

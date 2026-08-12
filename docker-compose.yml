@@ -1,0 +1,73 @@
+name: lestapenna
+
+services:
+  dnd-bot:
+    # Aggiungi questa riga per forzare l'architettura ARM64
+    platform: linux/arm64
+    build: .
+    container_name: dnd-bot-container
+    restart: unless-stopped
+
+    # 🔥 CRUCIALE: Aumenta la memoria condivisa per il RAM Disk (/dev/shm)
+    # Senza questo, il mixer crasherà dopo circa 6 minuti di audio (limite default 64MB)
+    shm_size: '16gb'
+
+    env_file:
+      - .env
+
+    environment:
+      # 🚀 OTTIMIZZAZIONE I/O: Aumenta i thread per la gestione file (default è 4)
+      # Fondamentale quando si scrivono molti file audio contemporaneamente.
+      - UV_THREADPOOL_SIZE=32
+
+      # 🧠 OTTIMIZZAZIONE RAM: Dice a Node di usare fino a 8GB prima di forzare il GC
+      # Funziona sia in dev che in prod, senza cambiare la riga 'command'.
+      - NODE_OPTIONS=--max-old-space-size=8192 --no-warnings
+
+    init: true
+    # Allineato a docker-compose.prod.yml: BACKUP_TIMEOUT_MS=300s in recorder.ts
+    stop_grace_period: 360s
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    # Override del comando di default
+    command: bash ./scripts/docker-dev-start.sh
+
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./yarn.lock:/app/yarn.lock
+      - ./ai.config.json:/app/ai.config.json:ro
+      - ./ai.config.local.json:/app/ai.config.local.json:ro
+      - recordings_data:/app/recordings
+      - batch_processing_data:/app/batch_processing
+      - app_data:/app/data
+      - node_modules_data:/app/node_modules
+      # 🆕 Whisper persiste nel volume (sopravvive a docker system prune)
+
+  redis:
+    image: redis:alpine
+    container_name: redis-server
+    restart: always
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6379:6379"
+
+volumes:
+  app_data:
+  batch_processing_data:
+  node_modules_data:
+  ollama_data:
+  recordings_data:
+  redis_data:

@@ -1,0 +1,338 @@
+/*
+ * Chat col Bardo — registro "Arcane Editorial".
+ *
+ * La domanda è una scheda compatta, la risposta è prosa a piena larghezza:
+ * il Bardo racconta la campagna, e un fumetto da messaggistica lo renderebbe
+ * indistinguibile da qualunque altro assistente. Glow e movimento restano
+ * riservati all'arrivo della risposta.
+ */
+
+.bard-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    min-width: 0;
+}
+
+/* The shared page header already spaces itself; here the column gap does it. */
+.bard-page > .entity-page-header {
+    margin-bottom: 0;
+}
+
+.bard-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+    min-width: 0;
+}
+
+/* --- Elenco conversazioni ------------------------------------------------ */
+
+.bard-rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.bard-rail__new {
+    width: 100%;
+}
+
+.bard-rail__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    /* Sotto i 1024px l'elenco è una striscia orizzontale scorrevole: la chat
+       deve restare la protagonista anche su telefono. */
+    overflow-x: auto;
+    flex-direction: row;
+}
+
+.bard-rail__list > li {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.bard-rail__item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    width: 100%;
+    text-align: left;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-2);
+    background: var(--surface);
+    color: inherit;
+    cursor: pointer;
+}
+
+.bard-rail__item:hover {
+    border-color: var(--border-strong);
+}
+
+.bard-rail__item.is-active {
+    border-color: var(--spell);
+    box-shadow: 0 0 0 1px var(--spell);
+}
+
+.bard-rail__title {
+    font-weight: 600;
+    line-height: 1.3;
+    /* Il titolo viene dalla prima domanda: può essere lungo. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.bard-rail__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.bard-rail__badge {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--spell-soft);
+    color: var(--spell);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+:root[data-theme='dark'] .bard-rail__badge {
+    background: color-mix(in srgb, var(--spell) 22%, transparent);
+    color: var(--gold-bright);
+}
+
+/* --- Thread -------------------------------------------------------------- */
+
+.bard-thread-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-3);
+    background: var(--surface);
+    padding: var(--space-4);
+}
+
+.bard-thread-panel__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-3);
+}
+
+.bard-thread-panel__title {
+    margin: 0;
+    font-size: 1.1rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.bard-thread-panel__buttons,
+.bard-rename {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.bard-rename input {
+    min-width: 12rem;
+}
+
+.bard-thread {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    min-height: 18rem;
+    max-height: min(60vh, 40rem);
+    overflow-y: auto;
+    /* The scroll gutter is bled back out over the panel padding: with a plain
+       padding-right the question card stopped short of the header rule and of
+       the composer, and the whole panel read as misaligned. */
+    padding-inline: var(--space-2);
+    margin-inline: calc(var(--space-2) * -1);
+}
+
+.bard-question {
+    align-self: flex-end;
+    max-width: min(38rem, 85%);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-3);
+    background: var(--surface-2);
+}
+
+.bard-question__who {
+    margin: 0 0 var(--space-1);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.bard-question__text {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* La risposta è una pagina di cronaca, non un messaggio. */
+.bard-answer {
+    max-width: 68ch;
+    border-left: 2px solid var(--gold);
+    padding-left: var(--space-4);
+    animation: bard-answer-in 320ms ease-out;
+}
+
+.bard-answer p {
+    margin: 0 0 var(--space-3);
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+
+.bard-answer__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.bard-answer__meta:empty {
+    display: none;
+}
+
+@keyframes bard-answer-in {
+    from {
+        opacity: 0;
+        transform: translateY(0.35rem);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.bard-thinking {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.bard-thinking svg {
+    animation: bard-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes bard-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+}
+
+/* --- Composer e prezzo --------------------------------------------------- */
+
+.bard-composer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-4);
+}
+
+.bard-composer textarea {
+    width: 100%;
+    resize: vertical;
+    font: inherit;
+}
+
+.bard-cost {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.bard-cost__line {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    font-size: 0.85rem;
+    min-width: 0;
+}
+
+.bard-cost__price {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 600;
+}
+
+.bard-cost__wallet {
+    color: var(--text-muted);
+}
+
+.bard-cost__send {
+    flex: 0 0 auto;
+}
+
+.bard-blocked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--warning-text);
+    font-size: 0.85rem;
+}
+
+.bard-readonly {
+    margin: 0;
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-4);
+    color: var(--text-muted);
+}
+
+@media (min-width: 1024px) {
+    .bard-layout {
+        grid-template-columns: 18rem minmax(0, 1fr);
+        align-items: start;
+    }
+
+    .bard-rail__list {
+        flex-direction: column;
+        overflow-x: visible;
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bard-answer {
+        animation: none;
+    }
+
+    .bard-thinking svg {
+        animation: none;
+        opacity: 0.7;
+    }
+}

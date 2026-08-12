@@ -1,0 +1,93 @@
+/**
+ * Notification Service - Discord and Email notifications
+ */
+
+import { Client, TextChannel } from 'discord.js';
+import { getSessionEncounteredNPCs } from '../../db';
+import { monitor } from '../../monitor';
+import { processSessionReport, sendSessionRecap } from '../../reporter';
+import { publishSummary } from '../discord';
+import { t, getGuildLocale } from '../../i18n';
+import { SessionMetrics } from '../../monitor/types';
+
+export class NotificationService {
+    /**
+     * Publishes summary to Discord channel
+     */
+    async publishToDiscord(
+        client: Client,
+        sessionId: string,
+        summary: any,
+        channel: TextChannel
+    ): Promise<void> {
+        const encounteredNPCs = getSessionEncounteredNPCs(sessionId);
+
+        await publishSummary(
+            client,
+            sessionId,
+            summary.log || [],
+            channel,
+            false,
+            summary.title,
+            summary.loot,
+            summary.loot_removed,
+            summary.quests,
+            summary.narrativeBrief,
+            summary.monsters,
+            encounteredNPCs,
+            summary.faction_updates,
+            summary.character_growth,
+            summary.party_alignment_change,
+            summary.artifacts,
+            summary.artifact_events,
+            summary.npc_events,
+            summary.world_events
+        );
+    }
+
+    /**
+     * Sends email recap of the session
+     */
+    async sendEmailRecap(sessionId: string, campaignId: number, summary: any): Promise<void> {
+        await sendSessionRecap(
+            sessionId,
+            campaignId,
+            summary.log || [],
+            summary.loot,
+            summary.loot_removed,
+            summary.narrativeBrief,
+            summary.summary,
+            summary.monsters,
+            summary.quests,
+            summary.faction_updates,
+            summary.character_growth,
+            summary.party_alignment_change,
+            summary.artifacts,
+            summary.artifact_events
+        );
+    }
+
+    /**
+     * Reports session metrics
+     */
+    async reportMetrics(): Promise<SessionMetrics | null> {
+        const metrics = await monitor.endSession();
+        if (metrics) {
+            try {
+                await processSessionReport(metrics);
+            } catch (e: any) {
+                console.error('[Monitor] ❌ ERRORE INVIO REPORT:', e.message);
+            }
+        }
+        return metrics;
+    }
+
+    /**
+     * Sends test completion notification
+     */
+    async notifyTestCompletion(sessionId: string, channel: TextChannel): Promise<void> {
+        if (sessionId.startsWith("test-")) {
+            await channel.send(t(getGuildLocale(channel.guild.id), 'publish.testReportSent'));
+        }
+    }
+}

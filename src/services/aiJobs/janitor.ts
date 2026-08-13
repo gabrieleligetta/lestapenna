@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { aiJobRepository } from '../../db/repositories/AiJobRepository';
+import { scratchReferenceRepository } from '../../db/repositories/ScratchReferenceRepository';
 import { EntityMediaStorage } from '../entityMediaStorage';
 import { logger } from '../../utils/logger';
 
@@ -62,9 +63,30 @@ export async function sweepAiJobs(now = Date.now()): Promise<{ expired: number; 
         aiJobRepository.markExpired(job.id);
     }
 
-    const purged = aiJobRepository.deleteFinishedBefore(now - KEEP_FINISHED_MS);
-    if (due.length > 0 || purged > 0) {
-        log.info(`Swept ${due.length} unclaimed result(s), removed ${purged} old record(s)`);
+    // One-time visual references share the durable job lifecycle, but not the
+    // job result row. Sweep them here so uploads abandoned before enqueue and
+    // references left behind by an interrupted worker do not become permanent.
+    const expiredReferences = scratchReferenceRepository.listExpired(now);
+    let removedReferences = 0;
+    for (const reference of expiredReferences) {
+        try {
+            await storage.delete(reference.object_key);
+            scratchReferenceRepository.removeById(reference.id);
+            deleted += 1;
+            removedReferences += 1;
+        } catch (error) {
+            // Keep the row: it is the only durable pointer that lets tomorrow's
+            // sweep retry the object deletion.
+            log.warn(`Could not delete ${reference.object_key}: ${(error as Error).message}`);
+        }
     }
-    return { expired: due.length, deleted };
+
+    const purged = aiJobRepository.deleteFinishedBefore(now - KEEP_FINISHED_MS);
+    if (due.length > 0 || purged > 0 || removedReferences > 0) {
+        log.info(
+            `Swept ${due.length} unclaimed result(s), ${removedReferences} one-time reference(s), ` +
+            `removed ${purged} old record(s)`,
+        );
+    }
+    return { expired: due.length + removedReferences, deleted };
 }

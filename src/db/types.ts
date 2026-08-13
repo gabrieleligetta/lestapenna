@@ -572,6 +572,13 @@ export interface EntityMediaEntry {
     generation_prompt: string | null;
     /** The words the person typed — the only ones worth showing back and editing. */
     generation_user_prompt: string | null;
+    /** Complete provider-neutral request, for an auditable and repeatable generation. */
+    generation_request_json: string | null;
+    /** JSON array of the roles this picture contributes when used as a reference. */
+    reference_roles_json: string | null;
+    reference_instruction: string | null;
+    /** Whether this picture is normally preselected; the primary picture is always pertinent. */
+    reference_auto_select: number;
     /** 1 on the one picture the sheet shows; the rest are the gallery. */
     is_primary: number;
     uploaded_by: string;
@@ -718,7 +725,29 @@ export interface ReferenceImageEntry {
     height: number;
     size_bytes: number;
     label: string | null;
+    /** JSON array of provider-neutral visual roles. */
+    roles_json: string | null;
+    instruction: string | null;
+    auto_select: number;
     uploaded_by: string;
+    created_at: number;
+}
+
+/** A durable one-job reference. Its bytes survive the HTTP process and a restart. */
+export interface ScratchReferenceEntry {
+    id: string;
+    campaign_id: number;
+    object_key: string;
+    mime_type: string;
+    width: number;
+    height: number;
+    size_bytes: number;
+    label: string | null;
+    roles_json: string | null;
+    instruction: string | null;
+    uploaded_by: string;
+    job_id: string | null;
+    expires_at: number;
     created_at: number;
 }
 
@@ -767,4 +796,3 @@ export interface AiUsageLogEntry {
     exchange_rate_fetched_at: number | null;
     created_at: number;
 }
-

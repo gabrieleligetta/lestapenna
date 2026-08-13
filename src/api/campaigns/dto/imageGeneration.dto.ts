@@ -7,6 +7,22 @@ import type {
     ShotPose,
 } from '../../../bard/imageShot';
 import { AiExchangeRateDto } from './entities.dto';
+import {
+    MAX_REFERENCE_INSTRUCTION_CHARS,
+    REFERENCE_ROLES,
+    type ReferenceRole,
+} from '../../../bard/imageReferences';
+
+export class ReferenceDirectiveDto {
+    @ApiProperty({ description: 'Candidate id, for example `media:<uuid>`.' })
+    id!: string;
+    @ApiProperty({ isArray: true, enum: REFERENCE_ROLES })
+    roles!: ReferenceRole[];
+    @ApiPropertyOptional({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
+    instruction?: string | null;
+    @ApiProperty({ minimum: 1 })
+    priority!: number;
+}
 
 export class GenerateEntityImageDto {
     @ApiProperty({ enum: IMAGE_GENERATION_MODES })
@@ -38,6 +54,12 @@ export class GenerateEntityImageDto {
      */
     @ApiPropertyOptional({ isArray: true, type: String })
     reference_ids?: string[];
+    @ApiPropertyOptional({
+        isArray: true,
+        type: ReferenceDirectiveDto,
+        description: 'Provider-neutral reference manifest. Takes precedence over legacy `reference_ids`.',
+    })
+    references?: ReferenceDirectiveDto[];
 }
 
 /** A picture that could be sent as a reference, for the picker to list. */
@@ -45,19 +67,23 @@ export class ReferenceCandidateDto {
     @ApiProperty() id!: string;
     @ApiProperty({
         enum: ['campaign', 'faction', 'entity', 'scratch'],
-        description: '`scratch` is a picture handed to this one generation and stored nowhere.',
+        description: '`scratch` is kept privately for one durable job, then deleted.',
     })
     scope!: 'campaign' | 'faction' | 'entity' | 'scratch';
     @ApiProperty() imageUrl!: string;
     @ApiProperty({ nullable: true }) label!: string | null;
+    @ApiProperty({ isArray: true, enum: REFERENCE_ROLES }) roles!: ReferenceRole[];
+    @ApiProperty({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
+    instruction!: string | null;
+    @ApiProperty({ description: 'Whether the UI should select this candidate before the paid confirmation.' })
+    auto_selected!: boolean;
 }
 
 /**
  * What a portrait will cost, before anything is spent.
  *
- * It names **two** models when the mode calls for one: in `auto` and `mixed` a
- * text model writes the brief before the image model draws it, and quoting only
- * the picture would understate what the button actually does.
+ * Dossier composition is local. The nullable text-model fields remain in the
+ * response for additive compatibility with clients deployed before that change.
  */
 export class ImageGenerationEstimateDto {
     @ApiProperty({ enum: IMAGE_GENERATION_MODES }) mode!: ImageGenerationMode;
@@ -72,6 +98,12 @@ export class ImageGenerationEstimateDto {
     pricing_available!: boolean;
     @ApiProperty({ nullable: true }) estimated_cost_usd!: number | null;
     @ApiProperty({ nullable: true }) estimated_cost_eur!: number | null;
+    @ApiProperty({ description: 'How many selected visual references were included in this quote.' })
+    reference_count!: number;
+    @ApiProperty({
+        description: 'False when selected reference-token rates cannot be estimated; the total is then unavailable.',
+    })
+    reference_input_cost_included!: boolean;
     @ApiProperty({ type: AiExchangeRateDto }) exchange_rate!: AiExchangeRateDto;
 }
 
@@ -93,9 +125,8 @@ export class ImageGenerationDraftDto {
     prompt!: string | null;
     /**
      * What the picture was drawn from. `dossier` is the analysed appearance
-     * record and is the strong one; `sheet`/`rag` mean the subject has not been
-     * analysed and the weaker fallback brief was used, which is worth saying
-     * out loud rather than presenting the two as equivalent.
+     * record and is the campaign-based source; `sheet`/`rag` remain readable on
+     * jobs created before the dossier requirement was introduced.
      */
     @ApiProperty({ isArray: true, enum: ['dossier', 'sheet', 'rag', 'user'] })
     sources!: Array<'dossier' | 'sheet' | 'rag' | 'user'>;

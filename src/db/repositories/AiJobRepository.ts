@@ -36,6 +36,8 @@ export type AiJobStatus =
 export type AiJobErrorKind =
     /** The provider drew nothing and said why: the request has to change. */
     | 'refused'
+    /** A selected reference disappeared, expired or could not be read. */
+    | 'reference'
     /** No model or no key for the phase — a settings problem, not a failure. */
     | 'not_configured'
     /** The provider was unreachable, rate-limited or out of credit. */

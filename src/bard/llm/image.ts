@@ -33,6 +33,15 @@ import { getGeminiAi } from '../geminiNativeGenerate';
 import { classifyProviderError, redactKeyLike } from '../ai/providerErrors';
 import { flagCredential } from '../ai/credentials';
 import type { ProviderRoute } from './generate';
+import {
+    MAX_REFERENCE_IMAGES,
+    buildVisualReferenceContract,
+    needsHighInputFidelity,
+    validateReferenceCapabilities,
+    type ReferenceManifestEntry,
+} from '../imageReferences';
+
+export { MAX_REFERENCE_IMAGES } from '../imageReferences';
 
 /**
  * The three framings an entity portrait can want.
@@ -54,21 +63,15 @@ export type ImageQuality = 'low' | 'medium' | 'high';
  * References are what let a table's gallery hold one world, a faction's members
  * wear one uniform, and a regenerated portrait keep the same face.
  */
-export interface ReferenceImage {
+export interface ReferenceImage extends Partial<ReferenceManifestEntry> {
     bytes: Buffer;
     mimeType: string;
-    /** For the log, and for the person wondering which picture did what. */
-    label?: string;
 }
 
-/**
- * How many references travel with one request.
- *
- * Pro accepts far more, but every one of them is input tokens on the table's
- * account, and the three that matter — house style, livery, own portrait —
- * fit twice over.
- */
-export const MAX_REFERENCE_IMAGES = 6;
+interface ResolvedReferenceImage extends ReferenceManifestEntry {
+    bytes: Buffer;
+    mimeType: string;
+}
 
 export interface GenerateImageParams {
     route: ProviderRoute;
@@ -77,9 +80,7 @@ export interface GenerateImageParams {
     /** Defaults to `medium`, which is what the price shown to the user assumes. */
     quality?: ImageQuality;
     /**
-     * Pictures to draw from, most general first: the model weighs the earlier
-     * ones more, so house style comes before livery, and livery before the
-     * subject's own last portrait.
+     * Pictures to draw from in the priority explicitly chosen by the person.
      */
     referenceImages?: ReferenceImage[];
     /** Cost phase for the monitor and for `ai_usage_log`. */
@@ -205,10 +206,16 @@ async function dispatchImage(params: GenerateImageParams): Promise<GeneratedImag
     const { provider, model } = params.route;
     const quality = params.quality ?? 'medium';
     const started = Date.now();
+    const references = takeReferences(params);
+    validateReferenceCapabilities(provider, model, references);
+    const contract = buildVisualReferenceContract(references);
+    const prepared = contract
+        ? { ...params, prompt: `${params.prompt}\n\n${contract}`, referenceImages: references }
+        : { ...params, referenceImages: references };
 
     const result = provider === 'gemini'
-        ? await generateWithGemini(params, quality)
-        : await generateWithOpenAi(params, quality);
+        ? await generateWithGemini(prepared, quality)
+        : await generateWithOpenAi(prepared, quality);
 
     const latencyMs = Date.now() - started;
 
@@ -232,10 +239,27 @@ async function dispatchImage(params: GenerateImageParams): Promise<GeneratedImag
 type TransportResult = Omit<GeneratedImageResult, 'provider' | 'model' | 'latencyMs'>;
 
 /** The references that will actually be sent, in order and within the cap. */
-function takeReferences(params: GenerateImageParams): ReferenceImage[] {
-    return (params.referenceImages ?? [])
-        .filter(reference => reference.bytes.length > 0)
-        .slice(0, MAX_REFERENCE_IMAGES);
+function takeReferences(params: GenerateImageParams): ResolvedReferenceImage[] {
+    const references = params.referenceImages ?? [];
+    if (references.length > MAX_REFERENCE_IMAGES) {
+        throw new Error(`At most ${MAX_REFERENCE_IMAGES} reference images may be sent`);
+    }
+    if (references.some(reference => reference.bytes.length === 0)) {
+        throw new Error('A selected reference image is empty');
+    }
+    return references
+        .map((reference, index) => ({
+            ...reference,
+            id: reference.id ?? `input:${index + 1}`,
+            scope: reference.scope ?? 'scratch',
+            label: reference.label ?? null,
+            // Old in-process callers treated a reference as the whole visual;
+            // preserving that meaning is the compatibility path during rollout.
+            roles: reference.roles ?? ['whole_image'],
+            instruction: reference.instruction ?? null,
+            priority: reference.priority ?? index + 1,
+        }))
+        .sort((a, b) => a.priority - b.priority);
 }
 
 function extensionFor(mimeType: string): string {
@@ -254,8 +278,7 @@ async function generateWithOpenAi(
     // Two endpoints for what is one idea. `images.generate` draws from words
     // alone; the moment there is a picture to draw *from*, the request is an
     // edit as far as this API is concerned, whatever it is called in the UI.
-    const response = references.length > 0
-        ? await client.images.edit({
+    const editParams: Record<string, unknown> = {
             model,
             prompt: params.prompt,
             image: await Promise.all(references.map((reference, index) => toFile(
@@ -267,7 +290,14 @@ async function generateWithOpenAi(
             size: OPENAI_SIZE[params.shape],
             quality,
             output_format: 'webp',
-        })
+        };
+    const capabilities = validateReferenceCapabilities(params.route.provider, model, references);
+    if (capabilities.inputFidelity === 'configurable' && needsHighInputFidelity(references)) {
+        editParams.input_fidelity = 'high';
+    }
+
+    const response = references.length > 0
+        ? await client.images.edit(editParams as never)
         : await client.images.generate({
             model,
             prompt: params.prompt,
@@ -292,7 +322,8 @@ async function generateWithOpenAi(
         usage: {
             input: response.usage?.input_tokens ?? 0,
             output: response.usage?.output_tokens ?? 0,
-            cached: response.usage?.input_tokens_details?.text_tokens ?? 0,
+            cached: (response.usage?.input_tokens_details as { cached_tokens?: number } | undefined)
+                ?.cached_tokens ?? 0,
         },
         imageCount: 1,
     };
@@ -336,12 +367,19 @@ async function generateWithGeminiContent(
             ? [{
                 role: 'user',
                 parts: [
-                    ...references.map(reference => ({
-                        inlineData: {
-                            mimeType: reference.mimeType,
-                            data: reference.bytes.toString('base64'),
+                    ...references.flatMap((reference, index) => ([
+                        {
+                            text: `Input image ${index + 1} follows. Allowed roles: ${reference.roles.join(', ')}.${
+                                reference.instruction ? ` Specific instruction: ${reference.instruction}` : ''
+                            }`,
                         },
-                    })),
+                        {
+                            inlineData: {
+                                mimeType: reference.mimeType,
+                                data: reference.bytes.toString('base64'),
+                            },
+                        },
+                    ])),
                     { text: params.prompt },
                 ],
             }]

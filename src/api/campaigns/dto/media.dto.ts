@@ -6,6 +6,13 @@ import {
     type EntityMediaSource,
     type ImageGenerationMode,
 } from '../../../db/types';
+import {
+    MAX_REFERENCE_INSTRUCTION_CHARS,
+    REFERENCE_ROLES,
+    defaultReferenceRoles,
+    parseStoredReferenceRoles,
+    type ReferenceRole,
+} from '../../../bard/imageReferences';
 
 export class EntityImageDto {
     @ApiProperty() id!: string;
@@ -33,6 +40,12 @@ export class EntityImageDto {
     @ApiPropertyOptional({ enum: IMAGE_GENERATION_MODES, nullable: true })
     generationMode!: ImageGenerationMode | null;
     @ApiPropertyOptional({ nullable: true }) generationPrompt!: string | null;
+    @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true })
+    generationRequest!: Record<string, unknown> | null;
+    @ApiProperty({ isArray: true, enum: REFERENCE_ROLES }) referenceRoles!: ReferenceRole[];
+    @ApiPropertyOptional({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
+    referenceInstruction!: string | null;
+    @ApiProperty() referenceAutoSelect!: boolean;
     @ApiProperty({ description: 'Epoch milliseconds.' }) updatedAt!: number;
 }
 
@@ -40,6 +53,22 @@ export class UpdateEntityImageDto {
     @ApiPropertyOptional({ minimum: 0, maximum: 100 }) focalX?: number;
     @ApiPropertyOptional({ minimum: 0, maximum: 100 }) focalY?: number;
     @ApiPropertyOptional({ nullable: true, maxLength: 300 }) altText?: string | null;
+    @ApiPropertyOptional({ isArray: true, enum: REFERENCE_ROLES }) referenceRoles?: ReferenceRole[];
+    @ApiPropertyOptional({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
+    referenceInstruction?: string | null;
+    @ApiPropertyOptional() referenceAutoSelect?: boolean;
+}
+
+function parseGenerationRequest(raw: string | null): Record<string, unknown> | null {
+    if (!raw) return null;
+    try {
+        const value = JSON.parse(raw);
+        return value && typeof value === 'object' && !Array.isArray(value)
+            ? value as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
 }
 
 export function toEntityImageDto(row: EntityMediaEntry): EntityImageDto {
@@ -58,6 +87,13 @@ export function toEntityImageDto(row: EntityMediaEntry): EntityImageDto {
         generationMode: row.generation_mode,
         // The person's own words, not the expanded prompt sent to the provider.
         generationPrompt: row.generation_user_prompt,
+        generationRequest: parseGenerationRequest(row.generation_request_json),
+        referenceRoles: parseStoredReferenceRoles(
+            row.reference_roles_json,
+            defaultReferenceRoles('entity'),
+        ),
+        referenceInstruction: row.reference_instruction,
+        referenceAutoSelect: row.reference_auto_select === 1,
         updatedAt: row.updated_at,
     };
 }

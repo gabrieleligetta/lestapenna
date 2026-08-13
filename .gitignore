@@ -86,6 +86,9 @@ yarn.lock
 # cloner needs. They contain no production identifiers or private topology.
 !/docs/SELF-HOSTING.md
 !/docs/INFRASTRUCTURE.md
+# Provider-neutral image-reference behaviour is product documentation: it has
+# no production identifiers and must stay reviewable with the implementation.
+!/docs/AI-IMAGE-GENERATION.md
 /CLAUDE.md
 
 # Screenshot scaricati da una segnalazione per guardarli: sono immagini di un

@@ -1,5 +1,10 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { REFERENCE_SCOPES, type ReferenceScope } from '../../../db/types';
+import {
+    MAX_REFERENCE_INSTRUCTION_CHARS,
+    REFERENCE_ROLES,
+    type ReferenceRole,
+} from '../../../bard/imageReferences';
 
 /**
  * A picture the image model is told to draw from.
@@ -18,5 +23,16 @@ export class ReferenceImageDto {
     @ApiProperty() width!: number;
     @ApiProperty() height!: number;
     @ApiProperty({ nullable: true }) label!: string | null;
+    @ApiProperty({ isArray: true, enum: REFERENCE_ROLES }) roles!: ReferenceRole[];
+    @ApiProperty({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
+    instruction!: string | null;
+    @ApiProperty() auto_select!: boolean;
     @ApiProperty() created_at!: number;
+}
+
+export class UpdateReferenceImageDto {
+    @ApiProperty({ isArray: true, enum: REFERENCE_ROLES }) roles!: ReferenceRole[];
+    @ApiPropertyOptional({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
+    instruction?: string | null;
+    @ApiPropertyOptional() auto_select?: boolean;
 }

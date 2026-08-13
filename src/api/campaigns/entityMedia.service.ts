@@ -30,6 +30,13 @@ import { canWriteCampaign } from '../../services/campaignAccess';
 import { logger } from '../../utils/logger';
 import { transformImageVariants } from '../../utils/imageTransform';
 import { toEntityImageDto, type EntityImageDto, type UpdateEntityImageDto } from './dto/media.dto';
+import {
+    defaultReferenceRoles,
+    ReferenceContractError,
+    normalizeReferenceInstruction,
+    normalizeReferenceRoles,
+    parseStoredReferenceRoles,
+} from '../../bard/imageReferences';
 
 const log = logger('EntityMedia');
 
@@ -65,6 +72,8 @@ export interface ImageProvenance {
     prompt?: string | null;
     /** What the person typed, kept verbatim so it can be shown back and edited. */
     userPrompt?: string | null;
+    /** The complete provider-neutral request, including its reference manifest. */
+    request?: Record<string, unknown> | null;
 }
 
 const UPLOADED_BY_HAND: ImageProvenance = { source: 'upload' };
@@ -212,6 +221,10 @@ export class EntityMediaService {
                 generation_mode: provenance.mode ?? null,
                 generation_prompt: provenance.prompt ?? null,
                 generation_user_prompt: provenance.userPrompt ?? null,
+                generation_request_json: provenance.request ? JSON.stringify(provenance.request) : null,
+                reference_roles_json: JSON.stringify(defaultReferenceRoles('entity')),
+                reference_instruction: null,
+                reference_auto_select: 0,
                 uploaded_by: request.webSession.discordUserId,
             });
 
@@ -237,12 +250,38 @@ export class EntityMediaService {
         if (!row) throw new NotFoundException('Entity image not found');
         this.assertCanWrite(request, { entityType: row.entity_type, entityKey: row.entity_key });
         const fields = this.validatePresentation(input);
-        const updated = entityMediaRepository.updatePresentation(campaignId, mediaId, {
+        entityMediaRepository.updatePresentation(campaignId, mediaId, {
             focal_x: fields.focalX,
             focal_y: fields.focalY,
             alt_text: fields.altText,
         });
-        return toEntityImageDto(updated!);
+        if (
+            input.referenceRoles !== undefined
+            || input.referenceInstruction !== undefined
+            || input.referenceAutoSelect !== undefined
+        ) {
+            let roles;
+            let instruction;
+            try {
+                roles = input.referenceRoles === undefined
+                    ? parseStoredReferenceRoles(row.reference_roles_json, defaultReferenceRoles('entity'))
+                    : normalizeReferenceRoles(input.referenceRoles);
+                instruction = input.referenceInstruction === undefined
+                    ? row.reference_instruction
+                    : normalizeReferenceInstruction(input.referenceInstruction);
+            } catch (error) {
+                if (error instanceof ReferenceContractError) throw new BadRequestException(error.message);
+                throw error;
+            }
+            entityMediaRepository.updateReferenceMetadata(campaignId, mediaId, {
+                reference_roles_json: JSON.stringify(roles),
+                reference_instruction: instruction,
+                reference_auto_select: input.referenceAutoSelect === undefined
+                    ? row.reference_auto_select
+                    : input.referenceAutoSelect ? 1 : 0,
+            });
+        }
+        return toEntityImageDto(entityMediaRepository.getById(campaignId, mediaId)!);
     }
 
     /** Removes every picture of an entity. */

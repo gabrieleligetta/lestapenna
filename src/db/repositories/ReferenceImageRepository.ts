@@ -5,12 +5,14 @@ import type { ReferenceImageEntry, ReferenceScope } from '../types';
 /**
  * The pictures handed to the image model alongside the prompt.
  *
- * Ordering matters on the way out: the model weighs the first references most,
- * so they are returned campaign art direction first, then faction livery, then
- * the entity's own accepted portrait — general look, then uniform, then face.
+ * Stored defaults say what each picture may contribute. Per-job priority is
+ * explicit in the immutable generation manifest rather than inferred here.
  */
 
-export type NewReferenceImage = Omit<ReferenceImageEntry, 'id' | 'created_at'>;
+export type NewReferenceImage = Omit<
+    ReferenceImageEntry,
+    'id' | 'created_at' | 'roles_json' | 'instruction' | 'auto_select'
+> & Partial<Pick<ReferenceImageEntry, 'roles_json' | 'instruction' | 'auto_select'>>;
 
 /** How many references one entity may accumulate before the oldest is dropped. */
 export const MAX_REFERENCES_PER_SCOPE = 6;
@@ -43,12 +45,21 @@ export const referenceImageRepository = {
             db.prepare(`
                 INSERT INTO reference_image (
                     id, campaign_id, scope, scope_key, object_key, mime_type,
-                    width, height, size_bytes, label, uploaded_by, created_at
+                    width, height, size_bytes, label, roles_json, instruction,
+                    auto_select, uploaded_by, created_at
                 ) VALUES (
                     @id, @campaign_id, @scope, @scope_key, @object_key, @mime_type,
-                    @width, @height, @size_bytes, @label, @uploaded_by, @created_at
+                    @width, @height, @size_bytes, @label, @roles_json, @instruction,
+                    @auto_select, @uploaded_by, @created_at
                 )
-            `).run({ ...entry, id, created_at: Date.now() });
+            `).run({
+                roles_json: null,
+                instruction: null,
+                auto_select: 1,
+                ...entry,
+                id,
+                created_at: Date.now(),
+            });
 
             const existing = referenceImageRepository.listForScope(
                 entry.campaign_id,
@@ -86,12 +97,22 @@ export const referenceImageRepository = {
             db.prepare(`
                 INSERT INTO reference_image (
                     id, campaign_id, scope, scope_key, object_key, mime_type,
-                    width, height, size_bytes, label, uploaded_by, created_at
+                    width, height, size_bytes, label, roles_json, instruction,
+                    auto_select, uploaded_by, created_at
                 ) VALUES (
                     @id, @campaign_id, @scope, @scope_key, @object_key, @mime_type,
-                    @width, @height, @size_bytes, @label, @uploaded_by, @created_at
+                    @width, @height, @size_bytes, @label, @roles_json, @instruction,
+                    @auto_select, @uploaded_by, @created_at
                 )
-            `).run({ ...entry, id: randomUUID(), scope: 'entity', created_at: Date.now() });
+            `).run({
+                roles_json: null,
+                instruction: null,
+                auto_select: 1,
+                ...entry,
+                id: randomUUID(),
+                scope: 'entity',
+                created_at: Date.now(),
+            });
             return previous;
         })();
     },
@@ -103,6 +124,19 @@ export const referenceImageRepository = {
             db.prepare('DELETE FROM reference_image WHERE id = ?').run(id);
             return existing;
         })();
+    },
+
+    updateMetadata(
+        campaignId: number,
+        id: string,
+        fields: Pick<ReferenceImageEntry, 'roles_json' | 'instruction' | 'auto_select'>,
+    ): ReferenceImageEntry | null {
+        db.prepare(`
+            UPDATE reference_image
+            SET roles_json = ?, instruction = ?, auto_select = ?
+            WHERE campaign_id = ? AND id = ?
+        `).run(fields.roles_json, fields.instruction, fields.auto_select, campaignId, id);
+        return referenceImageRepository.getById(campaignId, id);
     },
 };
 

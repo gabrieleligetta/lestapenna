@@ -59,7 +59,7 @@ describe('generateImage', () => {
     it('returns the bytes and the real token usage on OpenAI', async () => {
         const generate = (jest.fn() as any).mockResolvedValue({
             data: [{ b64_json: PIXEL }],
-            usage: { input_tokens: 30, output_tokens: 1056, input_tokens_details: { text_tokens: 12 } },
+            usage: { input_tokens: 30, output_tokens: 1056, input_tokens_details: { cached_tokens: 12 } },
         });
 
         const result = await generateImage({
@@ -277,10 +277,14 @@ describe('reference images', () => {
         });
 
         const parts = mockGenerateContent.mock.calls[0][0].contents[0].parts;
-        expect(parts.map((part: any) => part.inlineData && Buffer.from(part.inlineData.data, 'base64').toString()))
-            .toEqual(['house style', 'livery', 'her last portrait', undefined]);
-        // The instruction reads after the material it is about.
-        expect(parts[parts.length - 1].text).toBe('her portrait');
+        expect(parts.filter((part: any) => part.inlineData)
+            .map((part: any) => Buffer.from(part.inlineData.data, 'base64').toString()))
+            .toEqual(['house style', 'livery', 'her last portrait']);
+        expect(parts[0].text).toContain('Allowed roles: whole_image');
+        // The final instruction carries both the requested picture and the
+        // provider-neutral contract that limits what each input contributes.
+        expect(parts[parts.length - 1].text).toContain('her portrait');
+        expect(parts[parts.length - 1].text).toContain('VISUAL REFERENCE CONTRACT');
     });
 
     it('leaves a request without references exactly as it was', async () => {
@@ -298,21 +302,19 @@ describe('reference images', () => {
         expect(mockGenerateContent.mock.calls[0][0].contents).toBe('her portrait');
     });
 
-    it('caps them, because every reference is input tokens on the table\'s account', async () => {
+    it('rejects references above the product cap instead of silently dropping paid inputs', async () => {
         mockGenerateContent.mockResolvedValue({
             candidates: [{ content: { parts: [{ inlineData: { data: PIXEL, mimeType: 'image/png' } }] } }],
             usageMetadata: {},
         });
 
-        await generateImage({
+        await expect(generateImage({
             route: geminiRoute('gemini-3-pro-image'),
             prompt: 'her portrait',
             shape: 'portrait',
             referenceImages: Array.from({ length: 12 }, (_, index) => reference(`ref-${index}`)),
-        });
-
-        const parts = mockGenerateContent.mock.calls[0][0].contents[0].parts;
-        expect(parts.filter((part: any) => part.inlineData)).toHaveLength(MAX_REFERENCE_IMAGES);
+        })).rejects.toThrow(`At most ${MAX_REFERENCE_IMAGES}`);
+        expect(mockGenerateContent).not.toHaveBeenCalled();
     });
 
     it('asks for a bigger picture only where the model honours the request', async () => {
@@ -348,6 +350,31 @@ describe('reference images', () => {
         expect(generate).not.toHaveBeenCalled();
         expect(edit).toHaveBeenCalledTimes(1);
         expect(edit.mock.calls[0][0].image).toHaveLength(1);
+        expect(edit.mock.calls[0][0].input_fidelity).toBe('high');
+    });
+
+    it('omits input_fidelity for gpt-image-2, whose references are automatically high fidelity', async () => {
+        const edit = (jest.fn() as any).mockResolvedValue({ data: [{ b64_json: PIXEL }], usage: {} });
+        const route = {
+            ...openAiRoute({ images: { generate: jest.fn() } }),
+            model: 'gpt-image-2',
+            client: { images: { generate: jest.fn(), edit } },
+        } as any;
+
+        await generateImage({
+            route,
+            prompt: 'her portrait',
+            shape: 'portrait',
+            referenceImages: [{
+                ...reference('her last portrait'),
+                roles: ['subject_identity', 'face'],
+                instruction: 'Keep the same person.',
+            }],
+        });
+
+        expect(edit.mock.calls[0][0]).not.toHaveProperty('input_fidelity');
+        expect(edit.mock.calls[0][0].prompt).toContain('subject_identity, face');
+        expect(edit.mock.calls[0][0].prompt).toContain('Keep the same person.');
     });
 });
 

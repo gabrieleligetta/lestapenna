@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
 import { actionErrorMessage } from '../api/errors';
@@ -7,7 +7,6 @@ import {
     useEntityProfile,
     useGenerationReferences,
     usePendingImageJob,
-    useReferenceImages,
 } from '../api/hooks';
 import type {
     AiJobAccepted,
@@ -17,6 +16,8 @@ import type {
     ImageShot,
     MediaEntityType,
     ReferenceCandidate,
+    ReferenceDirective,
+    ReferenceManifestEntry,
 } from '../api/types';
 import { useLocale, useT } from '../i18n';
 import { AiCostConfirmationModal, type AiCostConfirmation } from './AiCostConfirmationModal';
@@ -24,6 +25,8 @@ import { AiCostIndicator } from './AiCostIndicator';
 import { formatAiMoney } from './aiCostFormatting';
 import { FormFeedback } from './FormFeedback';
 import { Icon } from './icons';
+import { ImageLightbox } from './ImageLightbox';
+import { ReferenceMetadataFields } from './ReferenceMetadataFields';
 
 const MODES: ImageGenerationMode[] = ['auto', 'prompt', 'mixed'];
 
@@ -67,7 +70,6 @@ export function EntityImageGenerator({
     // click rather than after: the two paths do not produce comparable
     // likenesses, and the weaker one is the one a new table lands on.
     const { data: profile } = useEntityProfile(campaignId, entityType, entityId);
-    const { data: campaignReferences } = useReferenceImages(campaignId, 'campaign', '');
     const { data: candidates } = useGenerationReferences(campaignId, entityType, entityId);
 
     const [mode, setMode] = useState<ImageGenerationMode>(image?.generationMode ?? 'auto');
@@ -80,16 +82,17 @@ export function EntityImageGenerator({
     // empty: the shot falls back to what every portrait had until now, and a
     // reference travels only when somebody ticks it, because each one is
     // tokens on their own account.
-    const [shot, setShot] = useState<ImageShot>({});
-    const [chosen, setChosen] = useState<string[]>([]);
-    // Pictures handed to this one generation and stored nowhere: they never
-    // reach the gallery or the reference list, so trying a pose from a
-    // photograph you will not keep costs no filing.
+    const [shot, setShot] = useState<ImageShot>(image?.generationRequest?.shot ?? {});
+    const [references, setReferences] = useState<ReferenceDirective[]>([]);
+    const preselectionKey = useRef<string | null>(null);
+    // Pictures handed to this one generation: kept privately long enough for
+    // the durable job, then deleted without entering gallery or catalogue.
     const [oneTime, setOneTime] = useState<ReferenceCandidate[]>([]);
     const [estimate, setEstimate] = useState<AiCostConfirmation | null>(null);
     const [busy, setBusy] = useState<'estimating' | 'generating' | 'keeping' | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
+    const [previewZoomed, setPreviewZoomed] = useState(false);
 
     const { data: pending } = usePendingImageJob(campaignId, entityType, entityId);
     const { data: job } = useAiJob(campaignId, jobId);
@@ -101,7 +104,31 @@ export function EntityImageGenerator({
     useEffect(() => {
         setMode(image?.generationMode ?? 'auto');
         setPrompt(image?.generationPrompt ?? '');
-    }, [image?.id, image?.generationMode, image?.generationPrompt]);
+        setShot(image?.generationRequest?.shot ?? {});
+        preselectionKey.current = null;
+    }, [entityId, image?.id, image?.generationMode, image?.generationPrompt, image?.generationRequest]);
+
+    // Context defaults are a visible starting point, never an invisible server
+    // choice. A saved AI picture instead restores its immutable request so a
+    // repeat really is a repeat. Scratch inputs are intentionally not reusable.
+    useEffect(() => {
+        if (!candidates) return;
+        const key = `${entityId}:${image?.id ?? 'new'}`;
+        if (preselectionKey.current === key) return;
+        preselectionKey.current = key;
+        const saved = image?.generationRequest?.references
+            ?.filter((reference) => reference.scope !== 'scratch')
+            .filter((reference) => candidates.some((candidate) => candidate.id === reference.id))
+            .map(({ id, roles, instruction, priority }) => ({ id, roles, instruction, priority }));
+        const defaults = candidates
+            .filter((candidate) => candidate.auto_selected)
+            // Identity first: if six style/livery references exist, the
+            // current portrait must not be the seventh input silently omitted.
+            .sort((a, b) => defaultCandidatePriority(a) - defaultCandidatePriority(b))
+            .slice(0, 6)
+            .map((candidate, index) => directiveFor(candidate, index + 1));
+        setReferences(normalizePriorities(saved?.length ? saved : defaults));
+    }, [candidates, entityId, image?.id, image?.generationRequest]);
 
     /*
      * Picks up a generation already under way for this entity.
@@ -117,7 +144,17 @@ export function EntityImageGenerator({
 
     const base = `/campaigns/${campaignId}/${entityType}/${encodeURIComponent(entityId)}/image/generate`;
     const needsPrompt = mode !== 'auto';
-    const ready = !needsPrompt || prompt.trim() !== '';
+    const hasDossier = Boolean(profile?.appearance && Object.keys(profile.appearance).length > 0);
+    const ready = (!needsPrompt || prompt.trim() !== '') && (mode === 'prompt' || hasDossier);
+
+    function draft() {
+        return {
+            mode,
+            prompt: prompt.trim() || null,
+            shot,
+            references: normalizePriorities(references),
+        };
+    }
 
     /** Fetches the price and opens the confirmation. Nothing is spent yet. */
     async function askForConfirmation() {
@@ -125,7 +162,11 @@ export function EntityImageGenerator({
         setError(null);
         setMessage(null);
         try {
-            const quote = await apiFetch<ImageGenerationEstimate>(`${base}/estimate?mode=${mode}`);
+            const quote = await apiFetch<ImageGenerationEstimate>(`${base}/estimate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(draft()),
+            });
             setEstimate({
                 action: t.media.generateTitle,
                 scope: quote.text_model
@@ -154,6 +195,10 @@ export function EntityImageGenerator({
     /** Uploads a picture for this generation only, and ticks it: asking for it was the choice. */
     async function addOneTime(file: File) {
         setError(null);
+        if (references.length >= 6) {
+            setError(t.references.referenceLimit);
+            return;
+        }
         try {
             const body = new FormData();
             body.append('file', file);
@@ -162,7 +207,13 @@ export function EntityImageGenerator({
                 { method: 'POST', body },
             );
             setOneTime((current) => [...current, held]);
-            setChosen((current) => [...current, held.id]);
+            setReferences((current) => {
+                if (current.length >= 6) {
+                    setError(t.references.referenceLimit);
+                    return current;
+                }
+                return normalizePriorities([...current, directiveFor(held, current.length + 1)]);
+            });
         } catch (reason) {
             setError(actionErrorMessage(reason, t));
         }
@@ -175,12 +226,7 @@ export function EntityImageGenerator({
             const accepted = await apiFetch<AiJobAccepted>(base, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    mode,
-                    prompt: prompt.trim() || null,
-                    shot,
-                    reference_ids: chosen,
-                }),
+                body: JSON.stringify(draft()),
             });
             setJobId(accepted.job_id);
             setEstimate(null);
@@ -230,8 +276,8 @@ export function EntityImageGenerator({
             {mode !== 'prompt' && (
                 <p className="settings-hint">
                     {profile?.appearance_text ? t.media.drawnFromDossier : t.media.drawnWithoutDossier}
-                    {campaignReferences && campaignReferences.length > 0 && (
-                        <> {t.media.referencesUsed(campaignReferences.length)}</>
+                    {references.length > 0 && (
+                        <> {t.media.referencesUsed(references.length)}</>
                     )}
                 </p>
             )}
@@ -244,7 +290,7 @@ export function EntityImageGenerator({
                             type="radio"
                             name={`image-mode-${entityId}`}
                             checked={mode === option}
-                            disabled={busy !== null}
+                            disabled={busy !== null || (option !== 'prompt' && !hasDossier)}
                             onChange={() => { setMode(option); setMessage(null); }}
                         />
                         <span>
@@ -310,18 +356,34 @@ export function EntityImageGenerator({
                     <p className="settings-hint">{t.media.referencePickerHint}</p>
                     {[...(candidates ?? []), ...oneTime].length > 0 ? (
                         <ul className="entity-image-generator__reference-list">
-                            {[...(candidates ?? []), ...oneTime].map((candidate) => (
-                                <li key={candidate.id}>
-                                    <label>
+                            {[...(candidates ?? []), ...oneTime].map((candidate) => {
+                                const directive = references.find((reference) => reference.id === candidate.id);
+                                const position = directive
+                                    ? references.findIndex((reference) => reference.id === candidate.id)
+                                    : -1;
+                                return (
+                                <li key={candidate.id} className={directive ? 'is-selected' : undefined}>
+                                    <label className="entity-image-generator__reference-summary">
                                         <input
                                             type="checkbox"
-                                            checked={chosen.includes(candidate.id)}
+                                            checked={Boolean(directive)}
                                             disabled={busy !== null}
                                             onChange={(event) => {
                                                 const { checked } = event.target;
-                                                setChosen((current) => (checked
-                                                    ? [...current, candidate.id]
-                                                    : current.filter((id) => id !== candidate.id)));
+                                                setReferences((current) => {
+                                                    if (!checked) {
+                                                        return normalizePriorities(current.filter((item) => item.id !== candidate.id));
+                                                    }
+                                                    if (current.length >= 6) {
+                                                        setError(t.references.referenceLimit);
+                                                        return current;
+                                                    }
+                                                    setError(null);
+                                                    return normalizePriorities([
+                                                        ...current,
+                                                        directiveFor(candidate, current.length + 1),
+                                                    ]);
+                                                });
                                             }}
                                         />
                                         <img src={candidate.imageUrl} alt="" loading="lazy" />
@@ -329,8 +391,43 @@ export function EntityImageGenerator({
                                             {candidate.label ?? t.media.referenceScopes[candidate.scope]}
                                         </span>
                                     </label>
+                                    {directive && (
+                                        <div className="entity-image-generator__reference-contract">
+                                            <ReferenceMetadataFields
+                                                roles={directive.roles}
+                                                instruction={directive.instruction ?? ''}
+                                                disabled={busy !== null}
+                                                onRolesChange={(roles) => setReferences((current) => current.map((item) => (
+                                                    item.id === candidate.id ? { ...item, roles } : item
+                                                )))}
+                                                onInstructionChange={(instruction) => setReferences((current) => current.map((item) => (
+                                                    item.id === candidate.id
+                                                        ? { ...item, instruction: instruction.trim() ? instruction : null }
+                                                        : item
+                                                )))}
+                                            />
+                                            <div className="entity-image-generator__priority">
+                                                <span>#{position + 1}</span>
+                                                <button
+                                                    type="button"
+                                                    className="text-button"
+                                                    aria-label={t.references.moveUp}
+                                                    disabled={busy !== null || position === 0}
+                                                    onClick={() => setReferences((current) => moveReference(current, position, -1))}
+                                                >↑</button>
+                                                <button
+                                                    type="button"
+                                                    className="text-button"
+                                                    aria-label={t.references.moveDown}
+                                                    disabled={busy !== null || position === references.length - 1}
+                                                    onClick={() => setReferences((current) => moveReference(current, position, 1))}
+                                                >↓</button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </li>
-                            ))}
+                                );
+                            })}
                         </ul>
                     ) : (
                         <p className="settings-hint">{t.media.noReferences}</p>
@@ -344,7 +441,7 @@ export function EntityImageGenerator({
                         <input
                             type="file"
                             accept="image/jpeg,image/png,image/webp"
-                            disabled={busy !== null}
+                            disabled={busy !== null || references.length >= 6}
                             onChange={(event) => {
                                 const file = event.target.files?.[0];
                                 event.target.value = '';
@@ -353,14 +450,39 @@ export function EntityImageGenerator({
                         />
                     </label>
                     <p className="settings-hint">{t.media.rightsHint}</p>
+                    {references.length > 0 && (
+                        <ReferenceManifestSummary
+                            title={t.references.selectedManifest}
+                            references={references.map((directive) => ({
+                                ...directive,
+                                label: [...(candidates ?? []), ...oneTime]
+                                    .find((candidate) => candidate.id === directive.id)?.label ?? null,
+                                scope: [...(candidates ?? []), ...oneTime]
+                                    .find((candidate) => candidate.id === directive.id)?.scope ?? 'entity',
+                            }))}
+                        />
+                    )}
                 </fieldset>
             )}
 
             {ready_to_review && job ? (
                 <div className="entity-image-generator__preview">
-                    <img
+                    <button
+                        type="button"
+                        className="entity-image-generator__preview-zoom"
+                        aria-label={t.media.enlarge}
+                        onClick={() => setPreviewZoomed(true)}
+                    >
+                        <img
+                            src={`/api/v1${base}/${encodeURIComponent(job.id)}/preview`}
+                            alt={t.media.preview}
+                        />
+                    </button>
+                    <ImageLightbox
                         src={`/api/v1${base}/${encodeURIComponent(job.id)}/preview`}
                         alt={t.media.preview}
+                        open={previewZoomed}
+                        onClose={() => setPreviewZoomed(false)}
                     />
                     <p className="settings-hint">{t.media.previewHint}</p>
                     <p className="settings-hint">
@@ -372,6 +494,12 @@ export function EntityImageGenerator({
                                 formatAiMoney(job.cost_eur ?? job.cost_usd, job.cost_eur === null ? 'USD' : 'EUR', locale),
                             )}
                     </p>
+                    {referenceManifestFromResult(job.result).length > 0 && (
+                        <ReferenceManifestSummary
+                            title={t.references.selectedManifest}
+                            references={referenceManifestFromResult(job.result)}
+                        />
+                    )}
                     <div className="entity-image-generator__actions">
                         <button type="button" className="primary" disabled={busy !== null} onClick={() => void keep()}>
                             {busy === 'keeping' ? t.media.keeping : t.media.keep}
@@ -438,6 +566,70 @@ export function EntityImageGenerator({
                 onConfirm={() => void generate()}
             />
         </section>
+    );
+}
+
+function directiveFor(candidate: ReferenceCandidate, priority: number): ReferenceDirective {
+    return {
+        id: candidate.id,
+        roles: candidate.roles,
+        instruction: candidate.instruction,
+        priority,
+    };
+}
+
+function defaultCandidatePriority(candidate: ReferenceCandidate): number {
+    if (candidate.scope === 'entity') return 0;
+    if (candidate.scope === 'faction') return 1;
+    if (candidate.scope === 'campaign') return 2;
+    return 3;
+}
+
+function normalizePriorities(references: ReferenceDirective[]): ReferenceDirective[] {
+    return references.map((reference, index) => ({ ...reference, priority: index + 1 }));
+}
+
+function moveReference(
+    references: ReferenceDirective[],
+    position: number,
+    movement: -1 | 1,
+): ReferenceDirective[] {
+    const target = position + movement;
+    if (position < 0 || target < 0 || target >= references.length) return references;
+    const next = [...references];
+    [next[position], next[target]] = [next[target], next[position]];
+    return normalizePriorities(next);
+}
+
+function referenceManifestFromResult(result: Record<string, unknown> | null | undefined): ReferenceManifestEntry[] {
+    const raw = result?.references;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((entry): entry is ReferenceManifestEntry => Boolean(
+        entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string',
+    ));
+}
+
+function ReferenceManifestSummary({
+    title,
+    references,
+}: {
+    title: string;
+    references: ReferenceManifestEntry[];
+}) {
+    const t = useT();
+    return (
+        <details className="entity-image-generator__manifest">
+            <summary>{title}</summary>
+            <ol>
+                {[...references].sort((a, b) => a.priority - b.priority).map((reference) => (
+                    <li key={reference.id}>
+                        <strong>{reference.label ?? reference.scope}</strong>
+                        <span>{reference.roles.map((role) => t.references.roleNames[role]).join(', ')}</span>
+                        {reference.instruction && <small>{reference.instruction}</small>}
+                    </li>
+                ))}
+            </ol>
+        </details>
     );
 }
 

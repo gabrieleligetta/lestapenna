@@ -360,10 +360,15 @@ export async function eraseUserData(guildId: string, userId: string): Promise<Er
         `SELECT object_key FROM reference_image
          WHERE uploaded_by = ? AND campaign_id IN (SELECT id FROM campaigns WHERE guild_id = ?)`,
     ).all(userId, guildId) as { object_key: string }[];
+    const scratchKeys = db.prepare(
+        `SELECT object_key FROM image_reference_scratch
+         WHERE uploaded_by = ? AND campaign_id IN (SELECT id FROM campaigns WHERE guild_id = ?)`,
+    ).all(userId, guildId) as { object_key: string }[];
 
     await deleteMediaKeys([
         ...mediaKeys.flatMap(media => [media.display_object_key, media.thumbnail_object_key]),
         ...referenceKeys.map(reference => reference.object_key),
+        ...scratchKeys.map(reference => reference.object_key),
     ], result);
 
     countRow(result, 'entity_media', db.prepare(
@@ -371,6 +376,9 @@ export async function eraseUserData(guildId: string, userId: string): Promise<Er
     ).run(userId, guildId).changes);
     countRow(result, 'reference_image', db.prepare(
         'DELETE FROM reference_image WHERE uploaded_by = ? AND campaign_id IN (SELECT id FROM campaigns WHERE guild_id = ?)',
+    ).run(userId, guildId).changes);
+    countRow(result, 'image_reference_scratch', db.prepare(
+        'DELETE FROM image_reference_scratch WHERE uploaded_by = ? AND campaign_id IN (SELECT id FROM campaigns WHERE guild_id = ?)',
     ).run(userId, guildId).changes);
 
     log.info(

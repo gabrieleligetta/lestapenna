@@ -2801,6 +2801,58 @@
         "tags": [
           "EntityMedia"
         ]
+      },
+      "post": {
+        "operationId": "EntityMediaController_estimateGenerationDraft",
+        "parameters": [
+          {
+            "name": "entityType",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "enum": [
+                "npc",
+                "location",
+                "character",
+                "artifact"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateEntityImageDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationEstimateDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "EntityMedia"
+        ]
       }
     },
     "/api/v1/campaigns/{campaignId}/{entityType}/{entityId}/image/generate": {
@@ -3391,6 +3443,17 @@
                   "label": {
                     "type": "string",
                     "maxLength": 120
+                  },
+                  "roles": {
+                    "type": "string",
+                    "description": "JSON array of reference roles."
+                  },
+                  "instruction": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "autoSelect": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -3415,6 +3478,44 @@
       }
     },
     "/api/v1/campaigns/{campaignId}/references/{referenceId}": {
+      "patch": {
+        "operationId": "EntityMediaController_updateReference",
+        "parameters": [
+          {
+            "name": "referenceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReferenceImageDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceImageDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "EntityMedia"
+        ]
+      },
       "delete": {
         "operationId": "EntityMediaController_deleteReference",
         "parameters": [
@@ -6315,6 +6416,38 @@
             "type": "object",
             "nullable": true
           },
+          "generationRequest": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "referenceRoles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whole_image",
+                "subject_identity",
+                "face",
+                "body",
+                "hair",
+                "clothing",
+                "armor_equipment",
+                "pose_composition",
+                "background",
+                "style",
+                "palette"
+              ]
+            }
+          },
+          "referenceInstruction": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 300
+          },
+          "referenceAutoSelect": {
+            "type": "boolean"
+          },
           "updatedAt": {
             "type": "number",
             "description": "Epoch milliseconds."
@@ -6330,6 +6463,8 @@
           "focalX",
           "focalY",
           "source",
+          "referenceRoles",
+          "referenceAutoSelect",
           "updatedAt"
         ]
       },
@@ -9005,6 +9140,33 @@
             "type": "object",
             "nullable": true,
             "maxLength": 300
+          },
+          "referenceRoles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whole_image",
+                "subject_identity",
+                "face",
+                "body",
+                "hair",
+                "clothing",
+                "armor_equipment",
+                "pose_composition",
+                "background",
+                "style",
+                "palette"
+              ]
+            }
+          },
+          "referenceInstruction": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 300
+          },
+          "referenceAutoSelect": {
+            "type": "boolean"
           }
         }
       },
@@ -9050,6 +9212,14 @@
             "type": "object",
             "nullable": true
           },
+          "reference_count": {
+            "type": "number",
+            "description": "How many selected visual references were included in this quote."
+          },
+          "reference_input_cost_included": {
+            "type": "boolean",
+            "description": "False when selected reference-token rates cannot be estimated; the total is then unavailable."
+          },
           "exchange_rate": {
             "$ref": "#/components/schemas/AiExchangeRateDto"
           }
@@ -9064,7 +9234,51 @@
           "pricing_available",
           "estimated_cost_usd",
           "estimated_cost_eur",
+          "reference_count",
+          "reference_input_cost_included",
           "exchange_rate"
+        ]
+      },
+      "ReferenceDirectiveDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Candidate id, for example `media:<uuid>`."
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whole_image",
+                "subject_identity",
+                "face",
+                "body",
+                "hair",
+                "clothing",
+                "armor_equipment",
+                "pose_composition",
+                "background",
+                "style",
+                "palette"
+              ]
+            }
+          },
+          "instruction": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 300
+          },
+          "priority": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "roles",
+          "priority"
         ]
       },
       "GenerateEntityImageDto": {
@@ -9091,6 +9305,13 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "references": {
+            "description": "Provider-neutral reference manifest. Takes precedence over legacy `reference_ids`.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferenceDirectiveDto"
             }
           }
         },
@@ -9275,7 +9496,7 @@
               "entity",
               "scratch"
             ],
-            "description": "`scratch` is a picture handed to this one generation and stored nowhere."
+            "description": "`scratch` is kept privately for one durable job, then deleted."
           },
           "imageUrl": {
             "type": "string"
@@ -9283,13 +9504,44 @@
           "label": {
             "type": "object",
             "nullable": true
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whole_image",
+                "subject_identity",
+                "face",
+                "body",
+                "hair",
+                "clothing",
+                "armor_equipment",
+                "pose_composition",
+                "background",
+                "style",
+                "palette"
+              ]
+            }
+          },
+          "instruction": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 300
+          },
+          "auto_selected": {
+            "type": "boolean",
+            "description": "Whether the UI should select this candidate before the paid confirmation."
           }
         },
         "required": [
           "id",
           "scope",
           "imageUrl",
-          "label"
+          "label",
+          "roles",
+          "instruction",
+          "auto_selected"
         ]
       },
       "TraitEvidenceDto": {
@@ -9520,6 +9772,33 @@
             "type": "object",
             "nullable": true
           },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whole_image",
+                "subject_identity",
+                "face",
+                "body",
+                "hair",
+                "clothing",
+                "armor_equipment",
+                "pose_composition",
+                "background",
+                "style",
+                "palette"
+              ]
+            }
+          },
+          "instruction": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 300
+          },
+          "auto_select": {
+            "type": "boolean"
+          },
           "created_at": {
             "type": "number"
           }
@@ -9532,7 +9811,45 @@
           "width",
           "height",
           "label",
+          "roles",
+          "instruction",
+          "auto_select",
           "created_at"
+        ]
+      },
+      "UpdateReferenceImageDto": {
+        "type": "object",
+        "properties": {
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whole_image",
+                "subject_identity",
+                "face",
+                "body",
+                "hair",
+                "clothing",
+                "armor_equipment",
+                "pose_composition",
+                "background",
+                "style",
+                "palette"
+              ]
+            }
+          },
+          "instruction": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 300
+          },
+          "auto_select": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "roles"
         ]
       },
       "AskEstimateDto": {

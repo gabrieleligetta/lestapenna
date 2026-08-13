@@ -13,9 +13,9 @@
  * The three modes are three answers to one question — *where do the words come
  * from* — and they share everything after it:
  *
- *  - **auto** — the campaign's own records. The dossier when there is one; the
- *    old sheet-and-RAG brief, with its one text call, only as a fallback for a
- *    subject nobody has analysed yet.
+ *  - **auto** — the campaign's analysed appearance dossier. If there is no
+ *    dossier, generation stops before a provider is called: a sheet summary is
+ *    not an identity record and must not silently stand in for one.
  *  - **prompt** — the person's words, and only those. No text call at all:
  *    someone who wrote what they want has already done the work, and paying a
  *    model to reword them would be charging for the privilege.
@@ -28,12 +28,8 @@
  * language.
  */
 
-import { getMetadataClient } from './config';
-import { generateText } from './llm/generate';
 import type { ImageShape } from './llm/image';
-import { searchKnowledge } from './rag/search';
-import { scopeForCampaign } from './ai/scope';
-import { subjectFacts, SUBJECT_KIND, type SubjectKind } from './entityFacts';
+import { SUBJECT_KIND, type SubjectKind } from './entityFacts';
 import { shotLines, type ImageShot } from './imageShot';
 import { campaignRepository } from '../db/repositories/CampaignRepository';
 import {
@@ -49,12 +45,6 @@ import type {
     PersonAppearance,
     PlaceAppearance,
 } from '../db/types';
-
-/** How many retrieved passages the fallback brief gets. A description, not a chapter. */
-const RAG_PASSAGES = 4;
-
-/** A retrieved passage longer than this is a scene, not a description of anything. */
-const MAX_PASSAGE_CHARS = 600;
 
 /** The user's own text: long enough for a real description, short of an essay. */
 export const MAX_USER_PROMPT_CHARS = 1000;
@@ -143,11 +133,21 @@ export interface PortraitPromptRequest {
  * failure of the server.
  */
 export class NothingToDrawError extends Error {
-    readonly code = 'NOTHING_TO_DRAW';
+    readonly code: string = 'NOTHING_TO_DRAW';
 
     constructor(message: string) {
         super(message);
         this.name = 'NothingToDrawError';
+    }
+}
+
+/** Auto and mixed generation require an analysed appearance record. */
+export class AppearanceDossierRequiredError extends NothingToDrawError {
+    readonly code = 'APPEARANCE_DOSSIER_REQUIRED';
+
+    constructor() {
+        super('Analyse this subject\'s appearance before using campaign-based image generation');
+        this.name = 'AppearanceDossierRequiredError';
     }
 }
 
@@ -166,9 +166,8 @@ export interface PortraitPrompt {
 /**
  * Builds the prompt for one portrait.
  *
- * Where a text call survives — a subject with no dossier — it runs on the
- * **metadata** phase: the cheapest one every table has configured, and turning
- * notes into a paragraph is the mechanical work that phase exists for.
+ * Campaign-based modes have no fallback text call: without a dossier they stop
+ * before a provider is reached. Prompt-only mode stays local as well.
  */
 export async function buildPortraitPrompt(request: PortraitPromptRequest): Promise<PortraitPrompt> {
     const { campaignId, entityType, entityId, mode } = request;
@@ -208,7 +207,7 @@ export async function buildPortraitPrompt(request: PortraitPromptRequest): Promi
         };
     }
 
-    return buildBriefedPrompt({ campaignId, entityType, entityId, mode, userPrompt, style, shape, shot });
+    throw new AppearanceDossierRequiredError();
 }
 
 /**
@@ -295,108 +294,6 @@ function list(values: Array<string | null | undefined | false>): string | null {
 function artDirection(campaignId: number, kind: SubjectKind): string {
     const own = campaignRepository.getCampaignById(campaignId)?.art_direction;
     return own?.trim() ? own.trim() : DEFAULT_STYLE[kind];
-}
-
-const BRIEF_SYSTEM = [
-    'You write briefs for an image generation model, for a fantasy tabletop campaign.',
-    'You are given what a campaign records about one subject, and possibly a request from the player.',
-    'Return ONE paragraph, at most 120 words, describing only what can be seen:',
-    'physique, age, colouring, hair, clothing, materials, posture, notable marks, and the immediate surroundings.',
-    'Use only what the material states. Do not add a detail because it is likely or typical — a subject the material does not describe stays undescribed.',
-    'Never mention game statistics, plot, names, or anything abstract — a model cannot draw a reputation.',
-    'If the material contradicts itself, prefer the most recent and the most specific.',
-    'Do not add commentary, headings, or quotation marks: return the paragraph and nothing else.',
-].join(' ');
-
-/**
- * The path for a subject with no dossier yet.
- *
- * Kept because a table should be able to generate a picture the day it installs
- * this, before analysing anything — but it is the weaker route, and the UI says
- * so rather than pretending the two are equivalent.
- */
-async function buildBriefedPrompt(input: {
-    campaignId: number;
-    entityType: EntityMediaType;
-    entityId: string;
-    mode: ImageGenerationMode;
-    userPrompt: string;
-    style: string;
-    shape: ImageShape;
-    shot: string;
-}): Promise<PortraitPrompt> {
-    const { campaignId, entityType, entityId, mode, userPrompt, style, shape, shot } = input;
-
-    const sheet = subjectFacts(campaignId, entityType, entityId);
-    if (!sheet) throw new NothingToDrawError('This entity does not exist in this campaign');
-
-    const spoken = await spokenDescriptions(campaignId, sheet.name);
-
-    const sources: Array<'sheet' | 'rag' | 'user'> = [];
-    const material: string[] = [];
-
-    if (sheet.facts.length > 0) {
-        sources.push('sheet');
-        material.push(`What the campaign records about ${sheet.name}:\n${sheet.facts.join('\n')}`);
-    }
-    if (spoken.length > 0) {
-        sources.push('rag');
-        material.push(`What was said about them at the table:\n${spoken.map(passage => `- ${passage}`).join('\n')}`);
-    }
-    if (mode === 'mixed' && userPrompt) {
-        sources.push('user');
-        material.push(
-            `The player asks for this, and it overrides anything above that contradicts it:\n${userPrompt}`,
-        );
-    }
-
-    if (material.length === 0) {
-        throw new NothingToDrawError('There is nothing recorded about this entity to draw from yet');
-    }
-
-    const brief = await generateText({
-        route: await getMetadataClient(scopeForCampaign(campaignId)),
-        label: 'image-prompt',
-        system: BRIEF_SYSTEM,
-        prompt: material.join('\n\n'),
-        temperature: 0.7,
-        maxTokens: 400,
-    });
-
-    return {
-        prompt: [style, brief.content.trim(), shot, NO_INVENTION_RULE, NO_TEXT_RULE].join('\n\n'),
-        sources,
-        shape,
-        usedTextCall: true,
-        textUsage: brief.usage,
-    };
-}
-
-/**
- * What was said out loud about this subject, through the RAG.
- *
- * The weaker half of the fallback: one fixed query returning whatever is most
- * similar. The dossier path replaces it with a run that can follow a subject
- * into their faction and quote the transcript — this remains for subjects
- * nobody has analysed.
- */
-async function spokenDescriptions(campaignId: number, name: string): Promise<string[]> {
-    try {
-        const passages = await searchKnowledge(
-            campaignId,
-            `physical appearance and description of ${name}`,
-            RAG_PASSAGES,
-        );
-        return passages
-            .map(passage => passage.trim())
-            .filter(passage => passage !== '')
-            .map(passage => passage.slice(0, MAX_PASSAGE_CHARS));
-    } catch {
-        // A campaign with no index yet, or an embedding node that is off. The
-        // sheet alone still makes a usable portrait, and failing the whole
-        // request over the optional half would be the wrong trade.
-        return [];
-    }
 }
 
 export type { EntityAppearance };

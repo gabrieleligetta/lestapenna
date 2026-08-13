@@ -2082,6 +2082,69 @@
   cursor: pointer;
 }
 
+.entity-image-generator__reference-list li {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+}
+
+.entity-image-generator__reference-list li.is-selected {
+  width: min(100%, 24rem);
+  border-color: var(--border);
+  background: var(--surface-subtle, var(--surface));
+}
+
+.entity-image-generator__reference-summary {
+  justify-self: start;
+}
+
+.entity-image-generator__reference-contract,
+.reference-metadata,
+.reference-images__editor,
+.entity-media-manager__reference-editor {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.reference-metadata__roles {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.reference-metadata__role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-1) var(--space-2);
+}
+
+.reference-metadata__role-grid label {
+  display: flex;
+  max-width: none;
+  flex-direction: row;
+  justify-content: start;
+}
+
+.entity-image-generator__priority {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.entity-image-generator__manifest ol {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.entity-image-generator__manifest li {
+  display: grid;
+  gap: 2px;
+}
+
 .entity-image-generator__reference-list img {
   width: 7rem;
   height: 7rem;
@@ -2142,7 +2205,7 @@
   display: grid;
   gap: var(--space-1);
   justify-items: center;
-  max-width: 9rem;
+  width: min(100%, 22rem);
 }
 
 .reference-images__item img {
@@ -2151,6 +2214,10 @@
   object-fit: cover;
   border-radius: var(--radius-2);
   border: 1px solid var(--border);
+}
+
+.entity-media-manager__gallery li:has(.entity-media-manager__reference-editor) {
+  max-width: 22rem;
 }
 
 .entity-media-manager {
@@ -2243,7 +2310,18 @@
   background: color-mix(in srgb, var(--surface-raised) 94%, var(--spell) 6%);
 }
 
-.entity-image-generator__preview img {
+.entity-image-generator__preview-zoom {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-2);
+  background: none;
+  cursor: zoom-in;
+}
+
+.entity-image-generator__preview-zoom img {
+  display: block;
   max-width: 100%;
   max-height: 22rem;
   border-radius: var(--radius-2);

@@ -117,6 +117,10 @@ export interface EntityImage {
      */
     generationMode?: ImageGenerationMode | null;
     generationPrompt?: string | null;
+    generationRequest?: ImageGenerationRequest | null;
+    referenceRoles?: ReferenceRole[];
+    referenceInstruction?: string | null;
+    referenceAutoSelect?: boolean;
     updatedAt: number;
 }
 
@@ -136,6 +140,8 @@ export interface ImageGenerationEstimate {
     pricing_available: boolean;
     estimated_cost_usd: number | null;
     estimated_cost_eur: number | null;
+    reference_count: number;
+    reference_input_cost_included: boolean;
     exchange_rate: AiExchangeRate;
 }
 
@@ -174,7 +180,7 @@ export type AiJobStatus =
     | 'succeeded' | 'discarded' | 'failed' | 'expired';
 
 export type AiJobErrorKind =
-    | 'refused' | 'not_configured' | 'provider' | 'storage' | 'interrupted' | 'internal';
+    | 'refused' | 'reference' | 'not_configured' | 'provider' | 'storage' | 'interrupted' | 'internal';
 
 /** What a POST that starts paid work answers with. */
 export interface AiJobAccepted {
@@ -229,10 +235,48 @@ export interface ImageShot {
 /** A picture a generation could draw from, for the picker to list. */
 export interface ReferenceCandidate {
     id: string;
-    /** `scratch` is a picture handed to one generation and stored nowhere. */
+    /** `scratch` is kept privately for one durable job, then deleted. */
     scope: ReferenceScope | 'scratch';
     imageUrl: string;
     label: string | null;
+    roles: ReferenceRole[];
+    instruction: string | null;
+    auto_selected: boolean;
+}
+
+export const REFERENCE_ROLES = [
+    'whole_image',
+    'subject_identity',
+    'face',
+    'body',
+    'hair',
+    'clothing',
+    'armor_equipment',
+    'pose_composition',
+    'background',
+    'style',
+    'palette',
+] as const;
+
+export type ReferenceRole = typeof REFERENCE_ROLES[number];
+
+export interface ReferenceDirective {
+    id: string;
+    roles: ReferenceRole[];
+    instruction: string | null;
+    priority: number;
+}
+
+export interface ReferenceManifestEntry extends ReferenceDirective {
+    label: string | null;
+    scope: ReferenceScope | 'scratch';
+}
+
+export interface ImageGenerationRequest {
+    mode: ImageGenerationMode;
+    prompt: string | null;
+    shot: ImageShot | null;
+    references: ReferenceManifestEntry[];
 }
 
 export interface EntityProfile {
@@ -288,6 +332,9 @@ export interface ReferenceImage {
     width: number;
     height: number;
     label: string | null;
+    roles: ReferenceRole[];
+    instruction: string | null;
+    auto_select: boolean;
     created_at: number;
 }
 

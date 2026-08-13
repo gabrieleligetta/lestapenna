@@ -44,7 +44,7 @@ import {
     EntityProfileEstimateDto,
     UpdateEntityProfileDto,
 } from './dto/entityProfile.dto';
-import { ReferenceImageDto } from './dto/referenceImage.dto';
+import { ReferenceImageDto, UpdateReferenceImageDto } from './dto/referenceImage.dto';
 import { EntityProfileService } from './entityProfile.service';
 import { ReferenceImagesService } from './referenceImages.service';
 import { IMAGE_GENERATION_MODES, REFERENCE_SCOPES, type ImageGenerationMode } from '../../db/types';
@@ -229,6 +229,24 @@ export class EntityMediaController {
         return this.generation.estimate(request, entityType, entityId, chosen);
     }
 
+    /** Full-draft estimate, including selected reference input costs and limits. */
+    @Post(':campaignId/:entityType/:entityId/image/generate/estimate')
+    @ApiParam({ name: 'entityType', enum: ['npc', 'location', 'character', 'artifact'] })
+    @ApiOkResponse({ type: ImageGenerationEstimateDto })
+    estimateGenerationDraft(
+        @Req() request: AuthenticatedRequest,
+        @Param('entityType') entityType: string,
+        @Param('entityId') entityId: string,
+        @Body() body: GenerateEntityImageDto,
+    ): Promise<ImageGenerationEstimateDto> {
+        return this.generation.estimate(
+            request,
+            entityType,
+            entityId,
+            body ?? ({} as GenerateEntityImageDto),
+        );
+    }
+
     /**
      * Accepts the request to draw a picture, and hands back the job.
      *
@@ -274,8 +292,8 @@ export class EntityMediaController {
     /**
      * The pictures this generation could draw from.
      *
-     * Listed rather than chosen for the person: nothing is sent unless they
-     * tick it, because every reference is input tokens on their own account.
+     * Contextual defaults can be preselected, but every choice is listed for
+     * the person to inspect or clear before confirming the paid request.
      */
     @Get(':campaignId/:entityType/:entityId/image/generate/references')
     @ApiParam({ name: 'entityType', enum: ['npc', 'location', 'character', 'artifact'] })
@@ -291,10 +309,9 @@ export class EntityMediaController {
     /**
      * A picture for this generation only.
      *
-     * It is held in memory and stored nowhere — not in the gallery, not in the
-     * references, not in the object store. Somebody who wants to try a pose
-     * from a photograph they will not keep should not have to file it first
-     * and delete it after.
+     * It is not catalogued in the gallery or permanent references. Its private
+     * bytes are kept only long enough for the durable asynchronous job to use
+     * them, then removed automatically.
      */
     @Post(':campaignId/references/one-time')
     @ApiConsumes('multipart/form-data')
@@ -492,6 +509,9 @@ export class EntityMediaController {
                 scope: { type: 'string', enum: ['campaign', 'faction'] },
                 key: { type: 'string' },
                 label: { type: 'string', maxLength: 120 },
+                roles: { type: 'string', description: 'JSON array of reference roles.' },
+                instruction: { type: 'string', maxLength: 300 },
+                autoSelect: { type: 'boolean' },
             },
         },
     })
@@ -502,6 +522,9 @@ export class EntityMediaController {
         let scope = '';
         let key = '';
         let label: string | null = null;
+        let roles: unknown = undefined;
+        let instruction: string | null = null;
+        let autoSelect: unknown = undefined;
 
         try {
             for await (const part of request.parts()) {
@@ -515,6 +538,14 @@ export class EntityMediaController {
                 if (part.fieldname === 'scope') scope = part.value;
                 else if (part.fieldname === 'key') key = part.value;
                 else if (part.fieldname === 'label') label = part.value;
+                else if (part.fieldname === 'roles') {
+                    try {
+                        roles = JSON.parse(part.value);
+                    } catch {
+                        throw new BadRequestException('roles must be a JSON array');
+                    }
+                } else if (part.fieldname === 'instruction') instruction = part.value;
+                else if (part.fieldname === 'autoSelect') autoSelect = part.value;
                 else throw new BadRequestException(`Unexpected multipart field: ${part.fieldname}`);
             }
         } catch (error) {
@@ -526,7 +557,25 @@ export class EntityMediaController {
         }
 
         if (!file) throw new BadRequestException('Multipart field file is required');
-        return this.references.add(request, this.references.parseScope(scope), key, file, label);
+        return this.references.add(
+            request,
+            this.references.parseScope(scope),
+            key,
+            file,
+            label,
+            { roles, instruction, autoSelect },
+        );
+    }
+
+    @Patch(':campaignId/references/:referenceId')
+    @ApiOkResponse({ type: ReferenceImageDto })
+    updateReference(
+        @Req() request: AuthenticatedRequest,
+        @Param('referenceId') referenceId: string,
+        @Body() body: UpdateReferenceImageDto,
+    ): ReferenceImageDto {
+        assertMutationOrigin(request);
+        return this.references.update(request, referenceId, body ?? ({} as UpdateReferenceImageDto));
     }
 
     @Delete(':campaignId/references/:referenceId')

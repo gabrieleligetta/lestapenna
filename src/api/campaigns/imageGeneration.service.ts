@@ -10,7 +10,13 @@ import { phaseConfigFor } from '../../bard/config';
 import { getImageClient } from '../../bard/config';
 import { scopeForCampaign } from '../../bard/ai/scope';
 import { generateImage, ImageRefusedError } from '../../bard/llm/image';
-import { buildPortraitPrompt, MAX_USER_PROMPT_CHARS, NothingToDrawError } from '../../bard/imagePrompt';
+import {
+    AppearanceDossierRequiredError,
+    buildPortraitPrompt,
+    describeFromDossier,
+    MAX_USER_PROMPT_CHARS,
+    NothingToDrawError,
+} from '../../bard/imagePrompt';
 import { transformImageVariants } from '../../utils/imageTransform';
 import {
     calculateActualAiCost,
@@ -19,7 +25,12 @@ import {
     usdToEur,
     UNAVAILABLE_EXCHANGE_RATE,
 } from '../../services/aiCostTransparency';
-import { imageCostUsdFor, resolvePricingFor, hasKnownPrice } from '../../services/pricingSource';
+import {
+    costUsdFor,
+    imageCostUsdFor,
+    resolvePricingFor,
+    hasKnownPrice,
+} from '../../services/pricingSource';
 import {
     ActiveJobExistsError,
     aiJobRepository,
@@ -34,7 +45,10 @@ import { IMAGE_GENERATION_MODES, type ImageGenerationMode } from '../../db/types
 import { logger } from '../../utils/logger';
 import { EntityMediaService } from './entityMedia.service';
 import { EntityMediaStorage, type EntityMediaReadResult } from '../../services/entityMediaStorage';
-import { ReferenceImagesService } from './referenceImages.service';
+import {
+    ReferenceImagesService,
+    ReferenceUnavailableError,
+} from './referenceImages.service';
 import { AiJobsService, toAiJobDto } from './aiJobs.service';
 import { subjectFacts } from '../../bard/entityFacts';
 import { exchangeRateDto } from './dto/cost.dto';
@@ -45,6 +59,12 @@ import type {
     ReferenceCandidateDto,
 } from './dto/imageGeneration.dto';
 import type { EntityImageDto } from './dto/media.dto';
+import {
+    ReferenceContractError,
+    normalizeReferenceSelections,
+    validateReferenceCapabilities,
+    type ReferenceManifestEntry,
+} from '../../bard/imageReferences';
 
 const log = logger('ImageGeneration');
 
@@ -55,7 +75,9 @@ interface ImageJobParams {
     mode: ImageGenerationMode;
     userPrompt: string | null;
     shot: GenerateEntityImageDto['shot'];
-    referenceIds: string[];
+    references: ReferenceManifestEntry[];
+    /** Jobs queued by the previous API shape remain readable during rollout. */
+    referenceIds?: string[];
 }
 
 /** What the finished job says about the picture it produced. */
@@ -65,6 +87,9 @@ interface ImageJobResult {
     mode: ImageGenerationMode;
     prompt: string;
     sources: Array<'dossier' | 'sheet' | 'rag' | 'user'>;
+    references: ReferenceManifestEntry[];
+    shot: GenerateEntityImageDto['shot'];
+    user_prompt: string | null;
     media_id?: string;
 }
 
@@ -105,28 +130,48 @@ export class ImageGenerationService implements AiJobHandler {
         request: AuthenticatedRequest,
         rawType: string,
         entityId: string,
-        mode: ImageGenerationMode,
+        draft: ImageGenerationMode | GenerateEntityImageDto,
     ): Promise<ImageGenerationEstimateDto> {
         const campaignId = request.campaignId!;
         const entity = this.media.resolveEntity(campaignId, rawType, entityId);
         this.media.assertCanWrite(request, entity);
 
+        const body = typeof draft === 'string'
+            ? { mode: draft } as GenerateEntityImageDto
+            : draft;
+        const mode = this.validateMode(body.mode);
+        // The legacy GET estimate has no body and therefore cannot carry the
+        // prompt. It remains a coarse mode-only quote during rollout; the SPA
+        // uses the POST draft estimate, which validates and prices the real job.
+        if (typeof draft !== 'string') this.validateUserPrompt(body.prompt, mode);
+        this.assertDossier(campaignId, entity.entityType, entityId, mode);
+        const references = this.referenceManifest(campaignId, body);
+
         const scope = scopeForCampaign(campaignId);
         const image = phaseConfigFor('image', scope);
+        try {
+            validateReferenceCapabilities(image.provider, image.model, references);
+        } catch (error) {
+            if (error instanceof ReferenceContractError) throw new BadRequestException(error.message);
+            throw error;
+        }
         const imagePricing = resolvePricingFor(image.provider, image.model, scope);
         const imageCostUsd = imageCostUsdFor(imagePricing, image.model, 1);
-
-        // In auto and mixed a text model writes the brief first. Quoting only
-        // the picture would understate what the click actually costs.
-        const writesBrief = mode !== 'prompt';
-        const text = writesBrief ? phaseConfigFor('metadata', scope) : null;
-        const textCost = text
-            ? calculateActualAiCost(text.provider, text.model, BRIEF_TOKEN_FORECAST, scope)
-            : null;
-
-        const totalUsd = imageCostUsd === null || (textCost && textCost.costUsd === null)
+        // A dossier is assembled locally, so none of the three modes pays a
+        // text model. Reference inputs can carry their own token charge. This
+        // is a forecast (actual usage comes from the provider), and becomes
+        // unknown rather than zero when no input-token rate is available.
+        const referenceInputUsd = references.length === 0
+            ? 0
+            : costUsdFor(imagePricing, {
+                input: references.length * REFERENCE_INPUT_TOKEN_FORECAST,
+                output: 0,
+                cached: 0,
+            });
+        const referenceInputCostIncluded = references.length === 0 || referenceInputUsd !== null;
+        const totalUsd = imageCostUsd === null || referenceInputUsd === null
             ? null
-            : imageCostUsd + (textCost?.costUsd ?? 0);
+            : imageCostUsd + referenceInputUsd;
 
         const exchangeRate = totalUsd === null ? UNAVAILABLE_EXCHANGE_RATE : await getUsdEurRate();
 
@@ -134,12 +179,14 @@ export class ImageGenerationService implements AiJobHandler {
             mode,
             provider: image.provider,
             model: image.model,
-            text_provider: text?.provider ?? null,
-            text_model: text?.model ?? null,
+            text_provider: null,
+            text_model: null,
             billable: true,
-            pricing_available: imageCostUsd !== null && hasKnownPrice(imagePricing.source),
+            pricing_available: totalUsd !== null && hasKnownPrice(imagePricing.source),
             estimated_cost_usd: totalUsd,
             estimated_cost_eur: totalUsd === null ? null : usdToEur(totalUsd, exchangeRate),
+            reference_count: references.length,
+            reference_input_cost_included: referenceInputCostIncluded,
             exchange_rate: exchangeRateDto(exchangeRate),
         };
     }
@@ -186,13 +233,24 @@ export class ImageGenerationService implements AiJobHandler {
 
         const mode = this.validateMode(body.mode);
         const userPrompt = this.validateUserPrompt(body.prompt, mode);
+        this.assertDossier(campaignId, entity.entityType, entityId, mode);
+        const references = this.referenceManifest(campaignId, body);
+        const configured = phaseConfigFor('image', scopeForCampaign(campaignId));
+        try {
+            validateReferenceCapabilities(configured.provider, configured.model, references);
+        } catch (error) {
+            if (error instanceof ReferenceContractError) {
+                throw new BadRequestException(error.message);
+            }
+            throw error;
+        }
         const params: ImageJobParams = {
             rawType,
             entityId,
             mode,
             userPrompt,
             shot: body.shot ?? null,
-            referenceIds: Array.isArray(body.reference_ids) ? body.reference_ids : [],
+            references,
         };
 
         try {
@@ -208,6 +266,16 @@ export class ImageGenerationService implements AiJobHandler {
                 requestedBy: request.webSession.discordUserId,
                 params,
             });
+            try {
+                this.references.attachScratch(campaignId, job.id, references);
+            } catch (error) {
+                aiJobRepository.markFailed(
+                    job.id,
+                    'reference',
+                    (error as Error).message,
+                );
+                throw new BadRequestException((error as Error).message);
+            }
             aiJobEvents.emitEnqueued();
             return { job_id: job.id, status: job.status };
         } catch (error) {
@@ -232,6 +300,10 @@ export class ImageGenerationService implements AiJobHandler {
 
         const campaignId = job.campaign_id;
         const entity = this.media.resolveEntity(campaignId, params.rawType, params.entityId);
+        const referenceManifest = params.references ?? this.references.snapshotChosen(
+            campaignId,
+            (params.referenceIds ?? []).map((id, index) => ({ id, priority: index + 1 })),
+        );
 
         let brief;
         try {
@@ -244,6 +316,7 @@ export class ImageGenerationService implements AiJobHandler {
                 shot: params.shot ?? null,
             });
         } catch (error) {
+            await this.references.releaseScratch(campaignId, referenceManifest);
             if (error instanceof NothingToDrawError) {
                 throw new AiJobFailure('refused', error.message);
             }
@@ -253,7 +326,27 @@ export class ImageGenerationService implements AiJobHandler {
         // Only what was asked for. Each reference is input tokens on the table's
         // own account, so they travel because somebody ticked them, never
         // because the server thought they might help.
-        const references = await this.references.collectChosen(campaignId, params.referenceIds);
+        const configured = phaseConfigFor('image', scopeForCampaign(campaignId));
+        try {
+            validateReferenceCapabilities(configured.provider, configured.model, referenceManifest);
+        } catch (error) {
+            await this.references.releaseScratch(campaignId, referenceManifest);
+            if (error instanceof ReferenceContractError) {
+                throw new AiJobFailure('reference', error.message);
+            }
+            throw error;
+        }
+
+        let references;
+        try {
+            references = await this.references.collectChosen(campaignId, referenceManifest, job.id);
+        } catch (error) {
+            await this.references.releaseScratch(campaignId, referenceManifest);
+            if (error instanceof ReferenceUnavailableError) {
+                throw new AiJobFailure('reference', error.message);
+            }
+            throw error;
+        }
 
         let drawn;
         try {
@@ -270,6 +363,11 @@ export class ImageGenerationService implements AiJobHandler {
                 throw new AiJobFailure('refused', error.message);
             }
             throw error;
+        } finally {
+            // A one-time reference has completed its only job whether the
+            // provider drew or refused. Its metadata remains in the job's
+            // immutable manifest, while the private bytes are removed.
+            await this.references.releaseScratch(campaignId, referenceManifest);
         }
 
         const cost = await this.recordSpend(job, campaignId, drawn, brief.textUsage);
@@ -293,6 +391,9 @@ export class ImageGenerationService implements AiJobHandler {
                 mode: params.mode,
                 prompt: brief.prompt,
                 sources: brief.sources,
+                references: referenceManifest,
+                shot: params.shot ?? null,
+                user_prompt: params.userPrompt,
             };
             return { status: 'awaiting_review', originalKey, displayKey, summary: result };
         } catch (error) {
@@ -347,6 +448,12 @@ export class ImageGenerationService implements AiJobHandler {
                 mode: params?.mode ?? 'auto',
                 prompt: result?.prompt ?? null,
                 userPrompt: params?.userPrompt ?? null,
+                request: params ? {
+                    mode: params.mode,
+                    prompt: params.userPrompt,
+                    shot: params.shot ?? null,
+                    references: result?.references ?? params.references ?? [],
+                } : null,
             },
         );
 
@@ -403,6 +510,33 @@ export class ImageGenerationService implements AiJobHandler {
         if (updated) aiJobEvents.emitChanged(updated);
     }
 
+    private referenceManifest(
+        campaignId: number,
+        body: Pick<GenerateEntityImageDto, 'references' | 'reference_ids'>,
+    ): ReferenceManifestEntry[] {
+        try {
+            const selections = normalizeReferenceSelections(body.references, body.reference_ids);
+            return this.references.snapshotChosen(campaignId, selections);
+        } catch (error) {
+            if (error instanceof ReferenceContractError || error instanceof ReferenceUnavailableError) {
+                throw new BadRequestException(error.message);
+            }
+            throw error;
+        }
+    }
+
+    private assertDossier(
+        campaignId: number,
+        entityType: Parameters<typeof describeFromDossier>[1],
+        entityId: string,
+        mode: ImageGenerationMode,
+    ): void {
+        if (mode === 'prompt') return;
+        if (!describeFromDossier(campaignId, entityType, entityId)) {
+            throw new BadRequestException(new AppearanceDossierRequiredError().message);
+        }
+    }
+
     private validateMode(raw: unknown): ImageGenerationMode {
         if (typeof raw !== 'string' || !IMAGE_GENERATION_MODES.includes(raw as ImageGenerationMode)) {
             throw new BadRequestException(
@@ -433,9 +567,9 @@ export class ImageGenerationService implements AiJobHandler {
     /**
      * Writes what was actually spent to `ai_usage_log`.
      *
-     * Two rows where there were two calls, because they are two models at two
-     * rates and merging them would make either one unattributable. The picture's
-     * cost comes from the per-image path, the brief's from the per-token one.
+     * The picture's fixed output price and any reported reference-input tokens
+     * are combined under the image phase. `textUsage` stays readable only for
+     * jobs queued before dossier assembly became local.
      *
      * The job is stamped with the run id **first**, before either write can
      * fail: from that moment the register says the provider was paid, which is
@@ -452,7 +586,17 @@ export class ImageGenerationService implements AiJobHandler {
         const runId = `AIJOB:${job.id}`;
 
         const imagePricing = resolvePricingFor(drawn.provider as never, drawn.model, scope);
-        const imageUsd = imageCostUsdFor(imagePricing, drawn.model, 1);
+        const imageOutputUsd = imageCostUsdFor(imagePricing, drawn.model, 1);
+        const imageInputUsd = drawn.usage.input === 0
+            ? 0
+            : costUsdFor(imagePricing, {
+                input: Math.max(0, drawn.usage.input - drawn.usage.cached),
+                output: 0,
+                cached: drawn.usage.cached,
+            });
+        const imageUsd = imageOutputUsd === null || imageInputUsd === null
+            ? null
+            : imageOutputUsd + imageInputUsd;
 
         aiJobRepository.recordSpend(job.id, {
             usageRunId: runId,
@@ -528,12 +672,5 @@ export class ImageGenerationService implements AiJobHandler {
     }
 }
 
-/**
- * What writing one brief costs, for the estimate only.
- *
- * The brief is a bounded job — a page of notes in, a paragraph out — so a fixed
- * forecast is honest here in a way it would not be for a summary. The actual
- * figure logged afterwards comes from the tokens the provider reports, never
- * from this.
- */
-const BRIEF_TOKEN_FORECAST = { input: 1_200, output: 160 };
+/** Conservative forecast only; actual input tokens always come from the provider. */
+const REFERENCE_INPUT_TOKEN_FORECAST = 1_500;

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
-import type { EntityImage, MediaEntityType } from '../api/types';
+import type { EntityImage, MediaEntityType, ReferenceRole } from '../api/types';
 import { useEntityImages } from '../api/hooks';
 import { useT } from '../i18n';
 import { ConfirmModal } from './ConfirmModal';
 import { EntityImageGenerator } from './EntityImageGenerator';
 import { Icon } from './icons';
+import { ReferenceMetadataFields } from './ReferenceMetadataFields';
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const ACCEPTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -210,6 +211,11 @@ export function EntityMediaManager({
                                         >
                                             {t.media.removeOne}
                                         </button>
+                                        <GalleryReferenceEditor
+                                            campaignId={campaignId}
+                                            picture={picture}
+                                            onSaved={refresh}
+                                        />
                                     </li>
                                 ))}
                             </ul>
@@ -329,5 +335,80 @@ export function EntityMediaManager({
                 }}
             />
         </section>
+    );
+}
+
+function GalleryReferenceEditor({
+    campaignId,
+    picture,
+    onSaved,
+}: {
+    campaignId: string;
+    picture: EntityImage;
+    onSaved: () => Promise<void>;
+}) {
+    const t = useT();
+    const [open, setOpen] = useState(false);
+    const [roles, setRoles] = useState<ReferenceRole[]>(picture.referenceRoles ?? ['subject_identity']);
+    const [instruction, setInstruction] = useState(picture.referenceInstruction ?? '');
+    const [autoSelect, setAutoSelect] = useState(picture.referenceAutoSelect ?? false);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        setRoles(picture.referenceRoles ?? ['subject_identity']);
+        setInstruction(picture.referenceInstruction ?? '');
+        setAutoSelect(picture.referenceAutoSelect ?? false);
+    }, [picture.id, picture.referenceRoles, picture.referenceInstruction, picture.referenceAutoSelect]);
+
+    async function save() {
+        setSaving(true);
+        setError(null);
+        try {
+            await apiFetch(`/campaigns/${campaignId}/media/${encodeURIComponent(picture.id)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    referenceRoles: roles,
+                    referenceInstruction: instruction.trim() || null,
+                    referenceAutoSelect: autoSelect,
+                }),
+            });
+            await onSaved();
+            setOpen(false);
+        } catch (reason) {
+            setError(reason instanceof Error ? reason.message : t.common.error);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="entity-media-manager__reference-editor">
+            <button type="button" className="text-button" onClick={() => setOpen((value) => !value)}>
+                {t.references.editDefaults}
+            </button>
+            {open && (
+                <>
+                    <ReferenceMetadataFields
+                        roles={roles}
+                        instruction={instruction}
+                        autoSelect={autoSelect}
+                        disabled={saving}
+                        // The main portrait is a contextual default. It remains
+                        // visible and deselectable in each generation; this
+                        // persistent toggle applies to the rest of the gallery.
+                        showAutoSelect={!picture.isPrimary}
+                        onRolesChange={setRoles}
+                        onInstructionChange={setInstruction}
+                        onAutoSelectChange={setAutoSelect}
+                    />
+                    <button type="button" disabled={saving} onClick={() => void save()}>
+                        {t.references.saveDefaults}
+                    </button>
+                    {error && <span className="form-error" role="alert">{error}</span>}
+                </>
+            )}
+        </div>
     );
 }

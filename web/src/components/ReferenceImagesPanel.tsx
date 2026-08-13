@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
 import { useReferenceImages } from '../api/hooks';
-import type { ReferenceScope } from '../api/types';
+import type { ReferenceImage, ReferenceRole, ReferenceScope } from '../api/types';
 import { useT } from '../i18n';
 import { ConfirmModal } from './ConfirmModal';
 import { Empty } from './StateViews';
 import { FormFeedback } from './FormFeedback';
+import { ReferenceMetadataFields } from './ReferenceMetadataFields';
 
 /**
  * The pictures the image model is told to draw from.
@@ -29,10 +30,15 @@ export function ReferenceImagesPanel({
     canEdit: boolean;
 }) {
     const t = useT();
-    const { data: references, isLoading, add, remove } = useReferenceImages(campaignId, scope, scopeKey);
+    const { data: references, isLoading, add, update, remove } = useReferenceImages(campaignId, scope, scopeKey);
     const fileInput = useRef<HTMLInputElement>(null);
 
     const [label, setLabel] = useState('');
+    const [roles, setRoles] = useState<ReferenceRole[]>(
+        scope === 'campaign' ? ['style'] : ['clothing', 'armor_equipment'],
+    );
+    const [instruction, setInstruction] = useState('');
+    const [autoSelect, setAutoSelect] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [removing, setRemoving] = useState<string | null>(null);
@@ -41,8 +47,9 @@ export function ReferenceImagesPanel({
         setBusy(true);
         setError(null);
         try {
-            await add(file, label.trim() || null);
+            await add(file, label.trim() || null, roles, instruction.trim() || null, autoSelect);
             setLabel('');
+            setInstruction('');
             if (fileInput.current) fileInput.current.value = '';
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : t.common.error);
@@ -81,13 +88,24 @@ export function ReferenceImagesPanel({
                             />
                             {reference.label && <span className="card-meta">{reference.label}</span>}
                             {canEdit && (
-                                <button
-                                    type="button"
-                                    className="text-button"
-                                    onClick={() => setRemoving(reference.id)}
-                                >
-                                    {t.references.remove}
-                                </button>
+                                <SavedReferenceEditor
+                                    reference={reference}
+                                    busy={busy}
+                                    onSave={async (metadata) => {
+                                        setBusy(true);
+                                        setError(null);
+                                        try {
+                                            await update(reference.id, metadata);
+                                            return true;
+                                        } catch (reason) {
+                                            setError(reason instanceof Error ? reason.message : t.common.error);
+                                            return false;
+                                        } finally {
+                                            setBusy(false);
+                                        }
+                                    }}
+                                    onRemove={() => setRemoving(reference.id)}
+                                />
                             )}
                         </li>
                     ))}
@@ -109,6 +127,16 @@ export function ReferenceImagesPanel({
                             onChange={(event) => setLabel(event.currentTarget.value)}
                         />
                     </label>
+                    <ReferenceMetadataFields
+                        roles={roles}
+                        instruction={instruction}
+                        autoSelect={autoSelect}
+                        disabled={busy}
+                        showAutoSelect
+                        onRolesChange={setRoles}
+                        onInstructionChange={setInstruction}
+                        onAutoSelectChange={setAutoSelect}
+                    />
                     <label>
                         <span>{busy ? t.references.adding : t.references.add}</span>
                         <input
@@ -139,5 +167,59 @@ export function ReferenceImagesPanel({
                 onConfirm={() => void confirmRemove()}
             />
         </section>
+    );
+}
+
+function SavedReferenceEditor({
+    reference,
+    busy,
+    onSave,
+    onRemove,
+}: {
+    reference: ReferenceImage;
+    busy: boolean;
+    onSave: (metadata: Pick<ReferenceImage, 'roles' | 'instruction' | 'auto_select'>) => Promise<boolean>;
+    onRemove: () => void;
+}) {
+    const t = useT();
+    const [open, setOpen] = useState(false);
+    const [roles, setRoles] = useState(reference.roles);
+    const [instruction, setInstruction] = useState(reference.instruction ?? '');
+    const [autoSelect, setAutoSelect] = useState(reference.auto_select);
+
+    return (
+        <div className="reference-images__editor">
+            <button type="button" className="text-button" onClick={() => setOpen((value) => !value)}>
+                {t.references.editDefaults}
+            </button>
+            {open && (
+                <>
+                    <ReferenceMetadataFields
+                        roles={roles}
+                        instruction={instruction}
+                        autoSelect={autoSelect}
+                        disabled={busy}
+                        showAutoSelect
+                        onRolesChange={setRoles}
+                        onInstructionChange={setInstruction}
+                        onAutoSelectChange={setAutoSelect}
+                    />
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void onSave({
+                            roles,
+                            instruction: instruction.trim() || null,
+                            auto_select: autoSelect,
+                        }).then((saved) => { if (saved) setOpen(false); })}
+                    >
+                        {t.references.saveDefaults}
+                    </button>
+                </>
+            )}
+            <button type="button" className="text-button" onClick={onRemove}>
+                {t.references.remove}
+            </button>
+        </div>
     );
 }

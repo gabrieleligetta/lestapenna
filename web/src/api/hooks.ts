@@ -1338,16 +1338,41 @@ export function useReferenceImages(
         queryKey: ['campaigns', campaignId, 'references', scope, key],
     });
 
-    async function add(file: File, label: string | null) {
+    async function add(
+        file: File,
+        label: string | null,
+        roles: ReferenceImage['roles'],
+        instruction: string | null,
+        autoSelect: boolean,
+    ) {
         const body = new FormData();
         body.append('file', file);
         body.append('scope', scope);
         if (key) body.append('key', key);
         if (label) body.append('label', label);
+        body.append('roles', JSON.stringify(roles));
+        if (instruction) body.append('instruction', instruction);
+        body.append('autoSelect', String(autoSelect));
         const saved = await apiFetch<ReferenceImage>(`/campaigns/${campaignId}/references`, {
             method: 'POST',
             body,
         });
+        await invalidate();
+        return saved;
+    }
+
+    async function update(
+        id: string,
+        metadata: Pick<ReferenceImage, 'roles' | 'instruction' | 'auto_select'>,
+    ) {
+        const saved = await apiFetch<ReferenceImage>(
+            `/campaigns/${campaignId}/references/${encodeURIComponent(id)}`,
+            {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(metadata),
+            },
+        );
         await invalidate();
         return saved;
     }
@@ -1359,7 +1384,7 @@ export function useReferenceImages(
         await invalidate();
     }
 
-    return { ...query, add, remove };
+    return { ...query, add, update, remove };
 }
 
 /**

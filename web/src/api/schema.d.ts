@@ -1357,7 +1357,7 @@ export interface paths {
         };
         get: operations["EntityMediaController_estimateGeneration"];
         put?: never;
-        post?: never;
+        post: operations["EntityMediaController_estimateGenerationDraft"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1553,7 +1553,7 @@ export interface paths {
         delete: operations["EntityMediaController_deleteReference"];
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["EntityMediaController_updateReference"];
         trace?: never;
     };
     "/api/v1/campaigns/{campaignId}/references/{referenceId}/image": {
@@ -2458,6 +2458,12 @@ export interface components {
             /** @enum {string|null} */
             generationMode?: "auto" | "prompt" | "mixed" | null;
             generationPrompt?: Record<string, never> | null;
+            generationRequest?: {
+                [key: string]: unknown;
+            } | null;
+            referenceRoles: ("whole_image" | "subject_identity" | "face" | "body" | "hair" | "clothing" | "armor_equipment" | "pose_composition" | "background" | "style" | "palette")[];
+            referenceInstruction?: string | null;
+            referenceAutoSelect: boolean;
             /** @description Epoch milliseconds. */
             updatedAt: number;
         };
@@ -3154,6 +3160,9 @@ export interface components {
             focalX?: number;
             focalY?: number;
             altText?: Record<string, never> | null;
+            referenceRoles?: ("whole_image" | "subject_identity" | "face" | "body" | "hair" | "clothing" | "armor_equipment" | "pose_composition" | "background" | "style" | "palette")[];
+            referenceInstruction?: string | null;
+            referenceAutoSelect?: boolean;
         };
         ImageGenerationEstimateDto: {
             /** @enum {string} */
@@ -3169,7 +3178,18 @@ export interface components {
             pricing_available: boolean;
             estimated_cost_usd: Record<string, never> | null;
             estimated_cost_eur: Record<string, never> | null;
+            /** @description How many selected visual references were included in this quote. */
+            reference_count: number;
+            /** @description False when selected reference-token rates cannot be estimated; the total is then unavailable. */
+            reference_input_cost_included: boolean;
             exchange_rate: components["schemas"]["AiExchangeRateDto"];
+        };
+        ReferenceDirectiveDto: {
+            /** @description Candidate id, for example `media:<uuid>`. */
+            id: string;
+            roles: ("whole_image" | "subject_identity" | "face" | "body" | "hair" | "clothing" | "armor_equipment" | "pose_composition" | "background" | "style" | "palette")[];
+            instruction?: string | null;
+            priority: number;
         };
         GenerateEntityImageDto: {
             /** @enum {string} */
@@ -3180,6 +3200,8 @@ export interface components {
                 [key: string]: unknown;
             };
             reference_ids?: string[];
+            /** @description Provider-neutral reference manifest. Takes precedence over legacy `reference_ids`. */
+            references?: components["schemas"]["ReferenceDirectiveDto"][];
         };
         AiJobAcceptedDto: {
             job_id: string;
@@ -3226,12 +3248,16 @@ export interface components {
         ReferenceCandidateDto: {
             id: string;
             /**
-             * @description `scratch` is a picture handed to this one generation and stored nowhere.
+             * @description `scratch` is kept privately for one durable job, then deleted.
              * @enum {string}
              */
             scope: "campaign" | "faction" | "entity" | "scratch";
             imageUrl: string;
             label: Record<string, never> | null;
+            roles: ("whole_image" | "subject_identity" | "face" | "body" | "hair" | "clothing" | "armor_equipment" | "pose_composition" | "background" | "style" | "palette")[];
+            instruction: string | null;
+            /** @description Whether the UI should select this candidate before the paid confirmation. */
+            auto_selected: boolean;
         };
         TraitEvidenceDto: {
             /** @description Dotted path into the appearance, e.g. `hair.colour`. */
@@ -3302,7 +3328,15 @@ export interface components {
             width: number;
             height: number;
             label: Record<string, never> | null;
+            roles: ("whole_image" | "subject_identity" | "face" | "body" | "hair" | "clothing" | "armor_equipment" | "pose_composition" | "background" | "style" | "palette")[];
+            instruction: string | null;
+            auto_select: boolean;
             created_at: number;
+        };
+        UpdateReferenceImageDto: {
+            roles: ("whole_image" | "subject_identity" | "face" | "body" | "hair" | "clothing" | "armor_equipment" | "pose_composition" | "background" | "style" | "palette")[];
+            instruction?: string | null;
+            auto_select?: boolean;
         };
         AskEstimateDto: {
             /** @description Provider that will answer, on the user's own account (BYOK). */
@@ -5690,6 +5724,32 @@ export interface operations {
             };
         };
     };
+    EntityMediaController_estimateGenerationDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entityType: "npc" | "location" | "character" | "artifact";
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateEntityImageDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageGenerationEstimateDto"];
+                };
+            };
+        };
+    };
     EntityMediaController_generate: {
         parameters: {
             query?: never;
@@ -6011,6 +6071,10 @@ export interface operations {
                     scope: "campaign" | "faction";
                     key?: string;
                     label?: string;
+                    /** @description JSON array of reference roles. */
+                    roles?: string;
+                    instruction?: string;
+                    autoSelect?: boolean;
                 };
             };
         };
@@ -6041,6 +6105,31 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    EntityMediaController_updateReference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                referenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateReferenceImageDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceImageDto"];
+                };
             };
         };
     };

@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EntityImageGenerator } from './EntityImageGenerator';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -11,6 +11,29 @@ afterAll(() => server.close());
 
 const BASE = '/api/v1/campaigns/7/npc/npc1/image/generate';
 
+beforeEach(() => {
+    server.use(
+        http.get('/api/v1/campaigns/7/npc/npc1/profile', () => HttpResponse.json({
+            kind: 'person',
+            fields: ['hair.colour'],
+            manual_fields: [],
+            appearance: { hair: { colour: 'white' } },
+            appearance_text: 'white hair',
+            personality: null,
+            personality_text: null,
+            evidence: [],
+            confidence: 'HIGH',
+            is_manual: false,
+            provider: 'gemini',
+            model: 'gemini-3-flash-preview',
+            generated_at: 1,
+            stale_since_session_id: null,
+        })),
+        http.get(`${BASE}/references`, () => HttpResponse.json([])),
+        http.get(`${BASE}/pending`, () => HttpResponse.json(null)),
+    );
+});
+
 const ESTIMATE = {
     mode: 'auto',
     provider: 'gemini',
@@ -21,6 +44,8 @@ const ESTIMATE = {
     pricing_available: true,
     estimated_cost_usd: 0.0405,
     estimated_cost_eur: 0.037,
+    reference_count: 0,
+    reference_input_cost_included: true,
     exchange_rate: { source: 'ECB', usd_per_eur: 1.1, rate_date: '2026-08-10', fetched_at: 1 },
 };
 
@@ -85,11 +110,67 @@ function render(props: Partial<Parameters<typeof EntityImageGenerator>[0]> = {})
  * without seeing the price, and that an unknown rate is never dressed up as free.
  */
 describe('EntityImageGenerator', () => {
+    it('preselects contextual references and sends several tags plus one instruction', async () => {
+        const user = userEvent.setup();
+        let quoted: any;
+        server.use(
+            http.get(`${BASE}/references`, () => HttpResponse.json([{
+                id: 'reference:style',
+                scope: 'campaign',
+                imageUrl: '/style.webp',
+                label: 'Campaign style',
+                roles: ['style'],
+                instruction: null,
+                auto_selected: true,
+            }, {
+                id: 'media:m1',
+                scope: 'entity',
+                imageUrl: '/reference.webp',
+                label: 'Astrid source',
+                roles: ['subject_identity'],
+                instruction: null,
+                auto_selected: true,
+            }])),
+            http.post(`${BASE}/estimate`, async ({ request }) => {
+                quoted = await request.json();
+                return HttpResponse.json({ ...ESTIMATE, reference_count: 2 });
+            }),
+        );
+
+        render();
+        const astridToggle = await screen.findByRole('checkbox', { name: /Astrid source/ });
+        expect(astridToggle).toBeChecked();
+        const astrid = within(astridToggle.closest('li')!);
+        expect(astrid.getByRole('checkbox', { name: 'Subject identity' })).toBeChecked();
+        await user.click(astrid.getByRole('checkbox', { name: 'Hair' }));
+        await user.type(
+            astrid.getByPlaceholderText(/keep the clothing design/i),
+            'Keep the same face and make the robe white.',
+        );
+        await user.click(screen.getByRole('button', { name: /^Generate$/ }));
+
+        await waitFor(() => expect(quoted).toBeTruthy());
+        expect(quoted.references).toEqual([
+            {
+                id: 'media:m1',
+                roles: ['subject_identity', 'hair'],
+                instruction: 'Keep the same face and make the robe white.',
+                priority: 1,
+            },
+            {
+                id: 'reference:style',
+                roles: ['style'],
+                instruction: null,
+                priority: 2,
+            },
+        ]);
+    });
+
     it('shows the cost and waits for a confirmation before spending anything', async () => {
         const user = userEvent.setup();
         const generate = vi.fn();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => {
                 generate();
                 return HttpResponse.json(ACCEPTED, { status: 202 });
@@ -112,7 +193,7 @@ describe('EntityImageGenerator', () => {
         const user = userEvent.setup();
         const generate = vi.fn();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => {
                 generate();
                 return HttpResponse.json(ACCEPTED, { status: 202 });
@@ -131,7 +212,7 @@ describe('EntityImageGenerator', () => {
         const user = userEvent.setup();
         const commit = vi.fn();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => HttpResponse.json(ACCEPTED, { status: 202 })),
             ...jobRoutes(),
             http.post(`${BASE}/job-1/commit`, () => {
@@ -150,6 +231,12 @@ describe('EntityImageGenerator', () => {
         expect(preview).toHaveAttribute('src', `${BASE}/job-1/preview`);
         // The picture is being offered, not yet put on the sheet.
         expect(commit).not.toHaveBeenCalled();
+
+        await user.click(screen.getByRole('button', { name: 'Enlarge image' }));
+        expect(screen.getByRole('dialog').querySelector('img'))
+            .toHaveAttribute('src', `${BASE}/job-1/preview`);
+        await user.keyboard('{Escape}');
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
         await user.click(screen.getByRole('button', { name: 'Keep this image' }));
         await waitFor(() => expect(commit).toHaveBeenCalled());
@@ -178,7 +265,7 @@ describe('EntityImageGenerator', () => {
     it('says so while it is drawing, and that leaving is safe', async () => {
         const user = userEvent.setup();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => HttpResponse.json(ACCEPTED, { status: 202 })),
             ...jobRoutes({ status: 'running', finished_at: null }),
         );
@@ -193,7 +280,7 @@ describe('EntityImageGenerator', () => {
     it('says the price is unknown rather than implying the picture was free', async () => {
         const user = userEvent.setup();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => HttpResponse.json(ACCEPTED, { status: 202 })),
             ...jobRoutes({ cost_usd: null, cost_eur: null, pricing_available: false }),
         );
@@ -236,13 +323,13 @@ describe('EntityImageGenerator', () => {
 
         expect(screen.getByRole('radio', { name: /Both/ })).toBeChecked();
         expect(screen.getByRole('textbox')).toHaveValue('make him much older');
-        expect(screen.getByRole('button', { name: /Generate again/ })).toBeEnabled();
+        await waitFor(() => expect(screen.getByRole('button', { name: /Generate again/ })).toBeEnabled());
     });
 
     it('reports a refusal as something to change, not as a broken key', async () => {
         const user = userEvent.setup();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => HttpResponse.json(
                 { message: 'The image provider refused this prompt: blocked by the safety filter' },
                 { status: 400 },
@@ -262,7 +349,7 @@ describe('EntityImageGenerator', () => {
         // «internal server error», which is a sentence about this app.
         const user = userEvent.setup();
         server.use(
-            http.get(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
+            http.post(`${BASE}/estimate`, () => HttpResponse.json(ESTIMATE)),
             http.post(BASE, () => HttpResponse.json(
                 { message: 'The gemini model did not answer: it is momentarily overloaded' },
                 { status: 502 },

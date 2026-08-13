@@ -80,6 +80,7 @@ import { signIn } from '../../fixtures/signIn';
 import { campaignRepository } from '../../../src/db/repositories/CampaignRepository';
 import { npcRepository } from '../../../src/db/repositories/NpcRepository';
 import { entityMediaRepository } from '../../../src/db/repositories/EntityMediaRepository';
+import { entityProfileRepository } from '../../../src/db/repositories/EntityProfileRepository';
 import { ImageRefusedError } from '../../../src/bard/llm/image';
 import { config } from '../../../src/config';
 import { db } from '../../../src/db';
@@ -129,6 +130,18 @@ describe('Entity image generation', () => {
         npcShortId = (db.prepare(
             'SELECT short_id FROM npc_dossier WHERE campaign_id = ?',
         ).get(campaignId) as { short_id: string }).short_id;
+        entityProfileRepository.upsert({
+            campaign_id: campaignId,
+            entity_type: 'npc',
+            entity_key: npcShortId,
+            appearance: { age_band: 'young adult', hair: { colour: 'pale blond' } },
+            personality: null,
+            evidence: [],
+            confidence: 'HIGH',
+            provider: 'gemini',
+            model: 'gemini-3-flash-preview',
+            isManual: false,
+        });
 
         managerCookie = 'image-gen-manager-session';
         readerCookie = 'image-gen-reader-session';
@@ -155,10 +168,10 @@ describe('Entity image generation', () => {
 
         mockBuildPortraitPrompt.mockResolvedValue({
             prompt: 'A pale young man in a fur-lined cloak.',
-            sources: ['sheet', 'rag'],
+            sources: ['dossier'],
             shape: 'portrait',
-            usedTextCall: true,
-            textUsage: { input: 1200, output: 150, cached: 0 },
+            usedTextCall: false,
+            textUsage: null,
         });
         mockGenerateImage.mockResolvedValue({
             bytes: drawn,
@@ -213,7 +226,7 @@ describe('Entity image generation', () => {
         });
     }
 
-    it('quotes both calls before spending anything', async () => {
+    it('quotes the complete local-dossier request before spending anything', async () => {
         const auto = await fastify.inject({
             method: 'GET',
             url: `${base()}/generate/estimate?mode=auto`,
@@ -221,9 +234,8 @@ describe('Entity image generation', () => {
         });
         expect(auto.statusCode).toBe(200);
         const autoBody = auto.json();
-        // In auto a text model writes the brief before the image model draws it:
-        // quoting only the picture would understate the click.
-        expect(autoBody.text_model).not.toBeNull();
+        // Dossier assembly is local: only the image provider is billable.
+        expect(autoBody.text_model).toBeNull();
         expect(autoBody.billable).toBe(true);
         expect(autoBody.estimated_cost_usd).toBeGreaterThan(0);
 
@@ -234,7 +246,7 @@ describe('Entity image generation', () => {
         });
         // Nobody is paid to paraphrase words the person already wrote.
         expect(written.json().text_model).toBeNull();
-        expect(written.json().estimated_cost_usd).toBeLessThan(autoBody.estimated_cost_usd);
+        expect(written.json().estimated_cost_usd).toBe(autoBody.estimated_cost_usd);
     });
 
     it('refuses a reader, in the same way an upload does', async () => {
@@ -263,6 +275,25 @@ describe('Entity image generation', () => {
         expect((await generate({ mode: 'prompt' })).statusCode).toBe(400);
         expect((await generate({ mode: 'prompt', prompt: '   ' })).statusCode).toBe(400);
         expect(mockGenerateImage).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing selected reference before enqueueing or calling the provider', async () => {
+        const response = await generate({
+            mode: 'auto',
+            references: [{
+                id: 'media:no-such-picture',
+                roles: ['subject_identity', 'face'],
+                instruction: 'Keep the same face.',
+                priority: 1,
+            }],
+        });
+
+        expect(response.statusCode).toBe(400);
+        expect(response.json().message).toContain('unavailable');
+        expect(mockGenerateImage).not.toHaveBeenCalled();
+        expect(db.prepare(
+            "SELECT COUNT(*) AS n FROM ai_job WHERE campaign_id = ? AND status IN ('queued', 'running')",
+        ).get(campaignId)).toMatchObject({ n: 0 });
     });
 
     it('survives the request that asked for it, and commits on a later one', async () => {
@@ -326,9 +357,14 @@ describe('Entity image generation', () => {
         // The person's words, not the expanded brief that reached the provider.
         expect(image.generationPrompt).toBe('make him much older');
         expect(image.generationPrompt).not.toContain('fur-lined cloak');
+        expect(image.generationRequest).toMatchObject({
+            mode: 'mixed',
+            prompt: 'make him much older',
+            references: [],
+        });
     });
 
-    it('writes what was spent to the ledger, one row per model', async () => {
+    it('writes the image spend to the ledger without inventing a text call', async () => {
         const { job } = await generateAndRun({ mode: 'auto' });
         expect(job.status).toBe('awaiting_review');
 
@@ -336,8 +372,7 @@ describe('Entity image generation', () => {
             'SELECT phase, model, cost_usd, pricing_source FROM ai_usage_log WHERE campaign_id = ? ORDER BY phase',
         ).all(campaignId) as Array<{ phase: string; model: string; cost_usd: number; pricing_source: string }>;
 
-        // Two calls at two rates: merging them would make either unattributable.
-        expect(rows.map(r => r.phase)).toEqual(['image', 'image-prompt']);
+        expect(rows.map(r => r.phase)).toEqual(['image']);
         expect(rows[0].model).toBe('imagen-4.0-generate-001');
         expect(rows[0].cost_usd).toBeCloseTo(0.04, 4);
         expect(rows[0].pricing_source).toBe('builtin');
@@ -362,12 +397,11 @@ describe('Entity image generation', () => {
         // the only paid call that leaves no ledger row would leave no trace at all.
         expect(job.charged).toBe(true);
         // The picture's rate is unknown, so no row claims a spend for it — a
-        // zero there would read as free. The brief's rate is perfectly known,
-        // and that half is still recorded: half a ledger beats none.
+        // zero there would read as free. Dossier assembly made no other call.
         const rows = db.prepare(
             'SELECT phase FROM ai_usage_log WHERE campaign_id = ?',
         ).all(campaignId) as Array<{ phase: string }>;
-        expect(rows.map(r => r.phase)).toEqual(['image-prompt']);
+        expect(rows.map(r => r.phase)).toEqual([]);
     });
 
     it('reports a provider refusal as something to change, not a broken key', async () => {
@@ -449,16 +483,12 @@ describe('Entity image generation', () => {
     it('reaches the real prompt builder with an id it can actually resolve', async () => {
         const { buildPortraitPrompt } = jest.requireActual('../../../src/bard/imagePrompt');
         mockBuildPortraitPrompt.mockImplementation((request: unknown) => buildPortraitPrompt(request));
-        mockGenerateText.mockResolvedValue({
-            content: 'A pale young man in a fur-lined cloak.',
-            usage: { input: 400, output: 90, cached: 0 },
-        });
-
         const { job } = await generateAndRun({ mode: 'auto' });
 
         expect(job.status).toBe('awaiting_review');
-        // The brief was written from the NPC the URL names, not from nothing.
-        expect(mockGenerateText.mock.calls[0][0].prompt).toContain('Heir to a cold throne');
+        // The dossier was resolved by the public id from the URL.
+        expect(mockGenerateImage.mock.calls[0][0].prompt).toContain('pale blond');
+        expect(mockGenerateText).not.toHaveBeenCalled();
     });
 
     /**

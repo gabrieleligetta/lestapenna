@@ -6,7 +6,22 @@ export interface EntityMediaRef {
     entityKey: string;
 }
 
-export type NewEntityMedia = Omit<EntityMediaEntry, 'created_at' | 'updated_at' | 'is_primary'>;
+export type NewEntityMedia = Omit<
+    EntityMediaEntry,
+    | 'created_at'
+    | 'updated_at'
+    | 'is_primary'
+    | 'generation_request_json'
+    | 'reference_roles_json'
+    | 'reference_instruction'
+    | 'reference_auto_select'
+> & Partial<Pick<
+    EntityMediaEntry,
+    | 'generation_request_json'
+    | 'reference_roles_json'
+    | 'reference_instruction'
+    | 'reference_auto_select'
+>>;
 
 /** How many pictures one entity may hold. Enough for a gallery, short of a folder. */
 export const MAX_IMAGES_PER_ENTITY = 12;
@@ -100,14 +115,22 @@ export const entityMediaRepository = {
                     display_object_key, thumbnail_object_key,
                     width, height, size_bytes, focal_x, focal_y, alt_text,
                     source, generation_mode, generation_prompt, generation_user_prompt,
+                    generation_request_json, reference_roles_json, reference_instruction,
+                    reference_auto_select,
                     is_primary, uploaded_by, created_at, updated_at
                 ) VALUES (
                     @id, @campaign_id, @entity_type, @entity_key,
                     @display_object_key, @thumbnail_object_key,
                     @width, @height, @size_bytes, @focal_x, @focal_y, @alt_text,
                     @source, @generation_mode, @generation_prompt, @generation_user_prompt,
+                    @generation_request_json, @reference_roles_json, @reference_instruction,
+                    @reference_auto_select,
                     @is_primary, @uploaded_by, @created_at, @updated_at
             )`).run({
+                generation_request_json: null,
+                reference_roles_json: null,
+                reference_instruction: null,
+                reference_auto_select: 0,
                 ...entry,
                 is_primary: existing.length === 0 ? 1 : 0,
                 created_at: now,
@@ -190,6 +213,27 @@ export const entityMediaRepository = {
             SET ${assignments.join(', ')}, updated_at = @updatedAt
             WHERE campaign_id = @campaignId AND id = @id
         `).run(params);
+        return entityMediaRepository.getById(campaignId, id);
+    },
+
+    updateReferenceMetadata(
+        campaignId: number,
+        id: string,
+        fields: Pick<EntityMediaEntry, 'reference_roles_json' | 'reference_instruction' | 'reference_auto_select'>,
+    ): EntityMediaEntry | null {
+        db.prepare(`
+            UPDATE entity_media
+            SET reference_roles_json = ?, reference_instruction = ?,
+                reference_auto_select = ?, updated_at = ?
+            WHERE campaign_id = ? AND id = ?
+        `).run(
+            fields.reference_roles_json,
+            fields.reference_instruction,
+            fields.reference_auto_select,
+            Date.now(),
+            campaignId,
+            id,
+        );
         return entityMediaRepository.getById(campaignId, id);
     },
 

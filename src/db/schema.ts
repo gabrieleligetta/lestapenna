@@ -63,7 +63,7 @@ const TABLES: string[] = [
         result_original_key TEXT,
         result_display_key TEXT,
         error_kind TEXT CHECK(error_kind IS NULL OR error_kind IN (
-            'refused', 'not_configured', 'provider', 'storage', 'interrupted', 'internal')),
+            'refused', 'reference', 'not_configured', 'provider', 'storage', 'interrupted', 'internal')),
         error_message TEXT,
         provider TEXT,
         model TEXT,
@@ -265,6 +265,12 @@ const TABLES: string[] = [
         generation_mode TEXT,
         generation_prompt TEXT,
         generation_user_prompt TEXT,
+        -- The complete provider-neutral request and this picture's defaults
+        -- when it is used as a visual reference in a later generation.
+        generation_request_json TEXT,
+        reference_roles_json TEXT,
+        reference_instruction TEXT,
+        reference_auto_select INTEGER NOT NULL DEFAULT 0,
         -- Exactly one row per entity carries a 1: the picture the sheet shows.
         -- The rest are the gallery, and are still drawn from as references.
         is_primary INTEGER NOT NULL DEFAULT 1,
@@ -341,9 +347,39 @@ const TABLES: string[] = [
         height INTEGER NOT NULL,
         size_bytes INTEGER NOT NULL,
         label TEXT,
+        roles_json TEXT,
+        instruction TEXT,
+        auto_select INTEGER NOT NULL DEFAULT 1,
         uploaded_by TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )`,
+    /*
+     * A picture handed to one generation only.
+     *
+     * It is durable because the generation itself is a durable asynchronous
+     * job: keeping these bytes in a process Map made a queued job lose its
+     * selected reference on every restart. The janitor deletes expired objects
+     * and rows, while `job_id` prevents one scratch upload being reused by two
+     * paid requests.
+     */
+    `CREATE TABLE IF NOT EXISTS image_reference_scratch (
+        id TEXT PRIMARY KEY,
+        campaign_id INTEGER NOT NULL,
+        object_key TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        label TEXT,
+        roles_json TEXT,
+        instruction TEXT,
+        uploaded_by TEXT NOT NULL,
+        job_id TEXT,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+        FOREIGN KEY(job_id) REFERENCES ai_job(id) ON DELETE SET NULL
     )`,
     `CREATE TABLE IF NOT EXISTS faction_affiliations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -641,7 +677,7 @@ const TABLES: string[] = [
 )`,
 ];
 
-/** 52 indici espliciti; quelli di PRIMARY KEY/UNIQUE li crea SQLite. */
+/** 53 indici espliciti; quelli di PRIMARY KEY/UNIQUE li crea SQLite. */
 const INDEXES: string[] = [
     `CREATE INDEX IF NOT EXISTS idx_ai_job_campaign ON ai_job (campaign_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_ai_job_requester ON ai_job (requested_by, created_at DESC)`,
@@ -680,6 +716,7 @@ const INDEXES: string[] = [
     `CREATE INDEX IF NOT EXISTS idx_entity_media_campaign ON entity_media(campaign_id, entity_type, entity_key)`,
     `CREATE INDEX IF NOT EXISTS idx_entity_profile_campaign ON entity_profile(campaign_id, entity_type, entity_key)`,
     `CREATE INDEX IF NOT EXISTS idx_reference_image_scope ON reference_image(campaign_id, scope, scope_key)`,
+    `CREATE INDEX IF NOT EXISTS idx_image_reference_scratch_expiry ON image_reference_scratch(expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_faction_affiliations_entity ON faction_affiliations (entity_type, entity_id)`,
     `CREATE INDEX IF NOT EXISTS idx_faction_affiliations_faction ON faction_affiliations (faction_id)`,
     `CREATE INDEX IF NOT EXISTS idx_faction_history_entity ON faction_history(campaign_id, entity_id)`,
@@ -784,6 +821,13 @@ const SCHEMA_UPGRADES: string[] = [
     `ALTER TABLE entity_media ADD COLUMN generation_mode TEXT`,
     `ALTER TABLE entity_media ADD COLUMN generation_prompt TEXT`,
     `ALTER TABLE entity_media ADD COLUMN generation_user_prompt TEXT`,
+    `ALTER TABLE entity_media ADD COLUMN generation_request_json TEXT`,
+    `ALTER TABLE entity_media ADD COLUMN reference_roles_json TEXT`,
+    `ALTER TABLE entity_media ADD COLUMN reference_instruction TEXT`,
+    `ALTER TABLE entity_media ADD COLUMN reference_auto_select INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE reference_image ADD COLUMN roles_json TEXT`,
+    `ALTER TABLE reference_image ADD COLUMN instruction TEXT`,
+    `ALTER TABLE reference_image ADD COLUMN auto_select INTEGER NOT NULL DEFAULT 1`,
     // How this table's pictures should look, in the table's own words. It is a
     // campaign-wide art direction rather than a per-image style, because the
     // point of it is that the gallery looks like one world; NULL keeps the
@@ -883,6 +927,10 @@ function rebuildEntityMediaForGallery(): void {
                 generation_mode TEXT,
                 generation_prompt TEXT,
                 generation_user_prompt TEXT,
+                generation_request_json TEXT,
+                reference_roles_json TEXT,
+                reference_instruction TEXT,
+                reference_auto_select INTEGER NOT NULL DEFAULT 0,
                 is_primary INTEGER NOT NULL DEFAULT 1,
                 uploaded_by TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
@@ -904,12 +952,69 @@ function rebuildEntityMediaForGallery(): void {
     console.log('[DB] 🖼️ entity_media rebuilt: every existing picture kept, and marked as its entity\'s main one.');
 }
 
+/** Adds the `reference` failure kind to databases created before this feature. */
+function rebuildAiJobForReferenceFailures(): void {
+    const table = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ai_job'",
+    ).get() as { sql: string } | undefined;
+    if (!table?.sql || table.sql.includes("'reference'")) return;
+
+    console.log('[DB] 🖼️ Rebuilding ai_job to record reference failures…');
+    db.pragma('foreign_keys = OFF');
+    try {
+        db.transaction(() => {
+            db.exec(`CREATE TABLE ai_job__reference_error (
+                id TEXT PRIMARY KEY,
+                campaign_id INTEGER NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('image', 'appearance', 'quest-audit', 'character-bio')),
+                target_type TEXT NOT NULL CHECK(target_type IN ('npc', 'location', 'character', 'artifact', 'campaign')),
+                target_key TEXT NOT NULL,
+                target_label TEXT,
+                requested_by TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN (
+                    'queued', 'running', 'awaiting_review', 'succeeded', 'discarded', 'failed', 'expired')),
+                params_json TEXT NOT NULL,
+                result_json TEXT,
+                result_original_key TEXT,
+                result_display_key TEXT,
+                error_kind TEXT CHECK(error_kind IS NULL OR error_kind IN (
+                    'refused', 'reference', 'not_configured', 'provider', 'storage', 'interrupted', 'internal')),
+                error_message TEXT,
+                provider TEXT,
+                model TEXT,
+                pricing_available INTEGER,
+                usage_run_id TEXT,
+                seen_at INTEGER,
+                created_at INTEGER NOT NULL,
+                started_at INTEGER,
+                finished_at INTEGER,
+                expires_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+            )`);
+            db.exec(`INSERT INTO ai_job__reference_error SELECT * FROM ai_job`);
+            db.exec('DROP TABLE ai_job');
+            db.exec('ALTER TABLE ai_job__reference_error RENAME TO ai_job');
+        })();
+    } finally {
+        db.pragma('foreign_keys = ON');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_ai_job_campaign ON ai_job (campaign_id, created_at DESC)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_ai_job_requester ON ai_job (requested_by, created_at DESC)');
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_job_active
+        ON ai_job (campaign_id, kind, target_type, target_key)
+        WHERE status IN ('queued', 'running')`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_ai_job_claimable ON ai_job (created_at) WHERE status = 'queued'");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_ai_job_expiry ON ai_job (expires_at) WHERE status = 'awaiting_review'");
+}
+
 export const initDatabase = () => {
     // Mandatory order: tables before the indexes and triggers that reference them.
     for (const statement of [...TABLES, ...INDEXES, ...TRIGGERS]) {
         db.exec(statement);
     }
     applySchemaUpgrades();
+    rebuildAiJobForReferenceFailures();
     // After the column upgrades: the rebuild copies whatever columns it finds.
     rebuildEntityMediaForGallery();
 };

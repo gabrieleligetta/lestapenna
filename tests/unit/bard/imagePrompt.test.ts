@@ -70,7 +70,11 @@ jest.mock('../../../src/bard/ai/scope', () => ({
     scopeForCampaign: (campaignId: number) => ({ guildId: 'g1', campaignId }),
 }));
 
-import { buildPortraitPrompt, shapeFor } from '../../../src/bard/imagePrompt';
+import {
+    AppearanceDossierRequiredError,
+    buildPortraitPrompt,
+    shapeFor,
+} from '../../../src/bard/imagePrompt';
 
 const PRINCE = {
     name: 'Principe Belgarde',
@@ -208,15 +212,13 @@ describe('drawing from the appearance dossier', () => {
         expect(result.prompt).not.toContain('deserters');
     });
 
-    it('falls back to the brief when the dossier is empty rather than absent', async () => {
+    it('refuses an empty dossier instead of silently replacing identity with a sheet summary', async () => {
         mockGetProfile.mockReturnValue(dossier({}));
 
-        const result = await buildPortraitPrompt({
+        await expect(buildPortraitPrompt({
             campaignId: 1, entityType: 'npc', entityId: 'astr1', mode: 'auto',
-        });
-
-        expect(result.sources).toEqual(['sheet', 'rag']);
-        expect(result.usedTextCall).toBe(true);
+        })).rejects.toBeInstanceOf(AppearanceDossierRequiredError);
+        expect(mockGenerateText).not.toHaveBeenCalled();
     });
 
     it('assembles a place and an object from their own vocabulary', async () => {
@@ -294,74 +296,37 @@ describe('mode: prompt', () => {
 });
 
 describe('mode: auto', () => {
-    it('draws on the sheet and on what was said at the table', async () => {
-        const result = await buildPortraitPrompt({
+    it('requires an appearance dossier before any provider is called', async () => {
+        await expect(buildPortraitPrompt({
             campaignId: 1,
             entityType: 'npc',
             entityId: 'wkgkd',
             mode: 'auto',
-        });
-
-        expect(result.sources).toEqual(['sheet', 'rag']);
-        expect(result.usedTextCall).toBe(true);
-        expect(result.textUsage).toEqual({ input: 400, output: 90, cached: 0 });
-
-        const material = mockGenerateText.mock.calls[0][0].prompt as string;
-        expect(material).toContain('Heir to the throne');
-        // The half the card fields cannot give: a sheet says he is a prince,
-        // the transcript says he never takes off his gloves.
-        expect(material).toContain('He never takes off his gloves.');
+        })).rejects.toBeInstanceOf(AppearanceDossierRequiredError);
+        expect(mockGenerateText).not.toHaveBeenCalled();
+        expect(mockSearchKnowledge).not.toHaveBeenCalled();
     });
 
-    it('prefers what a person wrote by hand over what the AI generated', async () => {
-        mockGetNpc.mockReturnValue({
-            ...PRINCE,
-            description: 'A haughty young noble.',
-            manual_description: 'Scarred, missing his left eye.',
-        });
-
-        await buildPortraitPrompt({
-            campaignId: 1, entityType: 'npc', entityId: 'wkgkd', mode: 'auto',
-        });
-
-        const material = mockGenerateText.mock.calls[0][0].prompt as string;
-        expect(material).toContain('Scarred, missing his left eye.');
-        expect(material).not.toContain('A haughty young noble.');
-    });
-
-    it('still works when the campaign has no index yet', async () => {
-        // An unindexed campaign or a sleeping embedding node is a normal state,
-        // not a reason to refuse a portrait the sheet alone can support.
-        mockSearchKnowledge.mockRejectedValue(new Error('no vectors'));
-
+    it('assembles a dossier locally without a text-model charge', async () => {
+        mockGetProfile.mockReturnValue(dossier({
+            hair: { colour: 'white' },
+            eyes: 'amber',
+        }));
         const result = await buildPortraitPrompt({
             campaignId: 1, entityType: 'npc', entityId: 'wkgkd', mode: 'auto',
         });
 
-        expect(result.sources).toEqual(['sheet']);
-        expect(result.prompt).toContain('A pale young man in a fur-lined cloak.');
-    });
-
-    it('refuses on an entity that is not in this campaign', async () => {
-        mockGetNpc.mockReturnValue(null);
-
-        await expect(buildPortraitPrompt({
-            campaignId: 1, entityType: 'npc', entityId: 'nope', mode: 'auto',
-        })).rejects.toThrow();
-    });
-
-    it('asks the cheap phase to write the brief', async () => {
-        await buildPortraitPrompt({
-            campaignId: 1, entityType: 'npc', entityId: 'wkgkd', mode: 'auto',
-        });
-
-        expect(mockGetMetadataClient).toHaveBeenCalled();
-        expect(mockGenerateText.mock.calls[0][0].label).toBe('image-prompt');
+        expect(result.sources).toEqual(['dossier']);
+        expect(result.prompt).toContain('white');
+        expect(result.textUsage).toBeNull();
+        expect(mockGetMetadataClient).not.toHaveBeenCalled();
+        expect(mockGenerateText).not.toHaveBeenCalled();
     });
 });
 
 describe('mode: mixed', () => {
     it('states the person\'s words as binding over the material', async () => {
+        mockGetProfile.mockReturnValue(dossier({ hair: { colour: 'white' } }));
         const result = await buildPortraitPrompt({
             campaignId: 1,
             entityType: 'npc',
@@ -370,14 +335,12 @@ describe('mode: mixed', () => {
             userPrompt: 'make him much older',
         });
 
-        expect(result.sources).toEqual(['sheet', 'rag', 'user']);
-
-        const material = mockGenerateText.mock.calls[0][0].prompt as string;
-        expect(material).toContain('make him much older');
-        expect(material).toContain('overrides anything above');
+        expect(result.sources).toEqual(['dossier', 'user']);
+        expect(result.prompt).toContain('make him much older');
+        expect(result.prompt).toContain('overrides anything above');
         // Last, so the instruction it carries is the one still in view.
-        expect(material.indexOf('make him much older')).toBeGreaterThan(
-            material.indexOf('Heir to the throne'),
+        expect(result.prompt.indexOf('make him much older')).toBeGreaterThan(
+            result.prompt.indexOf('white'),
         );
     });
 });
@@ -391,9 +354,11 @@ describe('the house style', () => {
             manual_description: null,
         });
 
+        mockGetProfile.mockReturnValueOnce(dossier({ architecture: 'tower', light: 'moonlit' }));
         const place = await buildPortraitPrompt({
             campaignId: 1, entityType: 'location', entityId: 'cwxpj', mode: 'auto',
         });
+        mockGetProfile.mockReturnValueOnce(dossier({ hair: { colour: 'white' } }));
         const face = await buildPortraitPrompt({
             campaignId: 1, entityType: 'npc', entityId: 'wkgkd', mode: 'auto',
         });
@@ -408,6 +373,7 @@ describe('the house style', () => {
         const written = await buildPortraitPrompt({
             campaignId: 1, entityType: 'npc', entityId: 'wkgkd', mode: 'prompt', userPrompt: 'a knight',
         });
+        mockGetProfile.mockReturnValue(dossier({ hair: { colour: 'white' } }));
         const derived = await buildPortraitPrompt({
             campaignId: 1, entityType: 'npc', entityId: 'wkgkd', mode: 'auto',
         });

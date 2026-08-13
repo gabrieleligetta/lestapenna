@@ -11,17 +11,24 @@ import { canWriteCampaign } from '../../services/campaignAccess';
 import { EntityMediaStorage } from '../../services/entityMediaStorage';
 import { transformImageVariants } from '../../utils/imageTransform';
 import { factionRepository } from '../../db/repositories/FactionRepository';
-import {
-    entityScopeKey,
-    referenceImageRepository,
-} from '../../db/repositories/ReferenceImageRepository';
+import { referenceImageRepository } from '../../db/repositories/ReferenceImageRepository';
 import { entityMediaRepository } from '../../db/repositories/EntityMediaRepository';
 import type { EntityMediaType, ReferenceImageEntry, ReferenceScope } from '../../db/types';
 import { REFERENCE_SCOPES } from '../../db/types';
 import type { ReferenceImage } from '../../bard/llm/image';
-import { MAX_REFERENCE_IMAGES } from '../../bard/llm/image';
+import {
+    MAX_REFERENCE_IMAGES,
+    ReferenceContractError,
+    defaultReferenceRoles,
+    normalizeReferenceInstruction,
+    normalizeReferenceRoles,
+    parseStoredReferenceRoles,
+    type ReferenceManifestEntry,
+    type ReferenceRole,
+} from '../../bard/imageReferences';
+import { scratchReferenceRepository } from '../../db/repositories/ScratchReferenceRepository';
 import { logger } from '../../utils/logger';
-import type { ReferenceImageDto } from './dto/referenceImage.dto';
+import type { ReferenceImageDto, UpdateReferenceImageDto } from './dto/referenceImage.dto';
 import type { ReferenceCandidateDto } from './dto/imageGeneration.dto';
 
 const log = logger('ReferenceImages');
@@ -41,30 +48,25 @@ const log = logger('ReferenceImages');
  * own prefix: same bucket, same credentials, same absence of a new env var.
  */
 /**
- * How long a one-time reference waits to be used, and how many can wait.
+ * How long a one-time reference waits to be attached to a job.
  *
  * It is a scratch pad, not storage: a picture handed to a single generation and
- * then forgotten. Keeping it anywhere durable would be the opposite of what was
- * asked for — «without it being taken from or added to the gallery».
+ * then forgotten. Durability here is transport durability, not cataloguing: it
+ * is never added to the gallery or the permanent reference collection.
  */
 const SCRATCH_TTL_MS = 30 * 60 * 1000;
-const MAX_SCRATCH = 24;
+const ATTACHED_SCRATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-interface ScratchReference {
-    campaignId: number;
-    bytes: Buffer;
-    mimeType: string;
-    label: string | null;
-    previewDataUri: string;
-    createdAt: number;
+export class ReferenceUnavailableError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ReferenceUnavailableError';
+    }
 }
 
 @Injectable()
 export class ReferenceImagesService {
     private readonly storage = new EntityMediaStorage();
-
-    /** One-time references, held in memory and never written anywhere. */
-    private readonly scratch = new Map<string, ScratchReference>();
 
     list(request: AuthenticatedRequest, scope: ReferenceScope, scopeKey: string): ReferenceImageDto[] {
         const campaignId = request.campaignId!;
@@ -96,6 +98,9 @@ export class ReferenceImagesService {
                 scope: row.scope,
                 imageUrl: `/api/v1/campaigns/${campaignId}/references/${row.id}/image`,
                 label: row.label,
+                roles: parseStoredReferenceRoles(row.roles_json, defaultReferenceRoles(row.scope)),
+                instruction: row.instruction,
+                auto_selected: row.auto_select === 1,
             }));
 
         return [
@@ -109,6 +114,11 @@ export class ReferenceImagesService {
                 scope: 'entity' as const,
                 imageUrl: `/api/v1/campaigns/${campaignId}/media/${row.id}/display`,
                 label: row.alt_text,
+                roles: parseStoredReferenceRoles(row.reference_roles_json, defaultReferenceRoles('entity')),
+                instruction: row.reference_instruction,
+                // The current portrait is always pertinent. Other gallery
+                // pictures opt in explicitly through their persistent default.
+                auto_selected: row.is_primary === 1 || row.reference_auto_select === 1,
             })),
         ];
     }
@@ -117,41 +127,104 @@ export class ReferenceImagesService {
      * Loads the pictures somebody actually chose.
      *
      * Nothing is loaded unasked: each reference is input tokens on the table's
-     * own account, so an empty list means an empty list. Anything unreadable is
-     * skipped rather than fatal — a missing reference makes a picture less
-     * specific, and refusing to draw at all would be the worse answer.
+     * own account, so an empty list means an empty list. A chosen reference is
+     * binding: unreadable input fails before the paid provider call instead of
+     * silently producing a different character.
      */
-    async collectChosen(campaignId: number, ids: string[]): Promise<ReferenceImage[]> {
-        if (!this.storage.isEnabled() || ids.length === 0) return [];
+    snapshotChosen(
+        campaignId: number,
+        selections: Array<{
+            id: string;
+            roles?: ReferenceRole[];
+            instruction?: string | null;
+            priority?: number;
+        }>,
+    ): ReferenceManifestEntry[] {
+        return selections.map((selection, index) => {
+            const candidate = this.resolveMetadata(campaignId, selection.id, false);
+            if (!candidate) {
+                throw new ReferenceUnavailableError(`Selected reference ${selection.id} is unavailable`);
+            }
+            return {
+                id: selection.id,
+                scope: candidate.scope,
+                label: candidate.label,
+                roles: selection.roles ?? candidate.roles,
+                instruction: selection.instruction === undefined
+                    ? candidate.instruction
+                    : selection.instruction,
+                priority: selection.priority ?? index + 1,
+            };
+        });
+    }
+
+    attachScratch(campaignId: number, jobId: string, manifest: ReferenceManifestEntry[]): void {
+        const scratch = manifest.filter(reference => reference.id.startsWith('scratch:'));
+        const ids = scratch.map(reference => reference.id.slice('scratch:'.length));
+        try {
+            if (scratchReferenceRepository.attachManyToJob(
+                campaignId,
+                ids,
+                jobId,
+                Date.now() + ATTACHED_SCRATCH_TTL_MS,
+            )) return;
+        } catch (error) {
+            if ((error as Error).message !== 'SCRATCH_REFERENCE_ATTACH_RACE') throw error;
+        }
+        throw new ReferenceUnavailableError('One or more one-time references are unavailable');
+    }
+
+    async collectChosen(
+        campaignId: number,
+        manifest: ReferenceManifestEntry[],
+        jobId: string,
+    ): Promise<ReferenceImage[]> {
+        if (manifest.length === 0) return [];
+        if (!this.storage.isEnabled()) {
+            throw new ReferenceUnavailableError('Reference image storage is not configured');
+        }
 
         const loaded: ReferenceImage[] = [];
-        for (const id of ids.slice(0, MAX_REFERENCE_IMAGES)) {
+        if (manifest.length > MAX_REFERENCE_IMAGES) {
+            throw new ReferenceUnavailableError(
+                `At most ${MAX_REFERENCE_IMAGES} reference images may be loaded`,
+            );
+        }
+        for (const directive of [...manifest].sort((a, b) => a.priority - b.priority)) {
+            const { id } = directive;
             const [kind, key] = id.split(':', 2);
-            if (!key) continue;
+            if (!key) throw new ReferenceUnavailableError(`Selected reference ${id} is invalid`);
 
             if (kind === 'reference') {
                 const row = referenceImageRepository.getById(campaignId, key);
-                if (!row) continue;
+                if (!row) throw new ReferenceUnavailableError(`Selected reference ${id} no longer exists`);
                 const bytes = await this.readBytes(row.object_key);
-                if (bytes) loaded.push({ bytes, mimeType: row.mime_type, label: row.label ?? row.scope });
+                if (!bytes) throw new ReferenceUnavailableError(`Selected reference ${id} cannot be read`);
+                loaded.push({ ...directive, bytes, mimeType: row.mime_type });
                 continue;
             }
 
             if (kind === 'media') {
                 const row = entityMediaRepository.getById(campaignId, key);
-                if (!row) continue;
+                if (!row) throw new ReferenceUnavailableError(`Selected reference ${id} no longer exists`);
                 const bytes = await this.readBytes(row.display_object_key);
-                if (bytes) loaded.push({ bytes, mimeType: 'image/webp', label: row.alt_text ?? 'entity' });
+                if (!bytes) throw new ReferenceUnavailableError(`Selected reference ${id} cannot be read`);
+                loaded.push({ ...directive, bytes, mimeType: 'image/webp' });
                 continue;
             }
 
             if (kind === 'scratch') {
-                const held = this.scratch.get(key);
-                // Another campaign's scratch is not reachable even by guessing
-                // an id, and an expired one simply is not there any more.
-                if (!held || held.campaignId !== campaignId) continue;
-                loaded.push({ bytes: held.bytes, mimeType: held.mimeType, label: held.label ?? 'one-off' });
+                const row = scratchReferenceRepository.getById(campaignId, key);
+                if (!row || row.job_id !== jobId || row.expires_at <= Date.now()) {
+                    throw new ReferenceUnavailableError(`One-time reference ${directive.label ?? key} is unavailable`);
+                }
+                const bytes = await this.readBytes(row.object_key);
+                if (!bytes) throw new ReferenceUnavailableError(`One-time reference ${directive.label ?? key} cannot be read`);
+                loaded.push({ ...directive, bytes, mimeType: row.mime_type });
+                continue;
             }
+
+            throw new ReferenceUnavailableError(`Selected reference ${id} has an unknown kind`);
         }
         return loaded;
     }
@@ -159,10 +232,9 @@ export class ReferenceImagesService {
     /**
      * Takes a picture for this generation only.
      *
-     * It never reaches the gallery, the reference table or the object store: it
-     * lives in memory until it is used or expires. Somebody who wants to try a
-     * pose from a photograph they will not keep should not have to file it
-     * first and delete it after.
+     * It never reaches the gallery or permanent reference table. It does reach
+     * object storage, because the generation job is durable and may run after a
+     * restart; the row and object expire automatically.
      */
     async holdScratch(
         request: AuthenticatedRequest,
@@ -171,25 +243,41 @@ export class ReferenceImagesService {
     ): Promise<ReferenceCandidateDto> {
         const campaignId = request.campaignId!;
         this.assertCanWrite(request);
+        if (!this.storage.isEnabled()) {
+            throw new ServiceUnavailableException('Entity media storage is not configured');
+        }
 
         const variants = await transformImageVariants(file);
-        this.sweepScratch();
-
-        const id = randomUUID();
-        this.scratch.set(id, {
-            campaignId,
-            bytes: variants.display,
-            mimeType: 'image/webp',
-            label: label?.trim() || null,
-            previewDataUri: `data:image/webp;base64,${variants.thumbnail.toString('base64')}`,
-            createdAt: Date.now(),
-        });
+        const objectKey = `references/${campaignId}/scratch/${randomUUID()}.webp`;
+        await this.storage.put(objectKey, variants.display);
+        let saved;
+        try {
+            saved = scratchReferenceRepository.add({
+                campaign_id: campaignId,
+                object_key: objectKey,
+                mime_type: 'image/webp',
+                width: variants.width,
+                height: variants.height,
+                size_bytes: variants.display.length,
+                label: label?.trim() || null,
+                roles_json: JSON.stringify(defaultReferenceRoles('scratch')),
+                instruction: null,
+                uploaded_by: request.webSession.discordUserId,
+                expires_at: Date.now() + SCRATCH_TTL_MS,
+            });
+        } catch (error) {
+            await this.storage.delete(objectKey).catch(() => undefined);
+            throw error;
+        }
 
         return {
-            id: `scratch:${id}`,
+            id: `scratch:${saved.id}`,
             scope: 'scratch',
-            imageUrl: this.scratch.get(id)!.previewDataUri,
-            label: label?.trim() || null,
+            imageUrl: `data:image/webp;base64,${variants.thumbnail.toString('base64')}`,
+            label: saved.label,
+            roles: defaultReferenceRoles('scratch'),
+            instruction: null,
+            auto_selected: true,
         };
     }
 
@@ -199,6 +287,7 @@ export class ReferenceImagesService {
         scopeKey: string,
         file: Buffer,
         label: string | null,
+        metadata?: { roles?: unknown; instruction?: unknown; autoSelect?: unknown },
     ): Promise<ReferenceImageDto> {
         const campaignId = request.campaignId!;
         this.assertCanWrite(request);
@@ -212,6 +301,20 @@ export class ReferenceImagesService {
         }
 
         const key = this.normalizeKey(campaignId, scope, scopeKey);
+        let roles: ReferenceRole[];
+        let instruction: string | null;
+        try {
+            roles = metadata?.roles === undefined
+                ? defaultReferenceRoles(scope)
+                : normalizeReferenceRoles(metadata.roles);
+            instruction = normalizeReferenceInstruction(metadata?.instruction);
+        } catch (error) {
+            if (error instanceof ReferenceContractError) throw new BadRequestException(error.message);
+            throw error;
+        }
+        const autoSelect = metadata?.autoSelect === undefined
+            ? true
+            : metadata.autoSelect === true || metadata.autoSelect === 'true';
         const variants = await transformImageVariants(file);
         const objectKey = `references/${campaignId}/${scope}/${randomUUID()}.webp`;
         await this.storage.put(objectKey, variants.display);
@@ -226,11 +329,41 @@ export class ReferenceImagesService {
             height: variants.height,
             size_bytes: variants.display.length,
             label: label?.trim() || null,
+            roles_json: JSON.stringify(roles),
+            instruction,
+            auto_select: autoSelect ? 1 : 0,
             uploaded_by: request.webSession.discordUserId,
         });
 
         await this.forget(evicted);
         return toReferenceImageDto(saved);
+    }
+
+    update(
+        request: AuthenticatedRequest,
+        id: string,
+        body: UpdateReferenceImageDto,
+    ): ReferenceImageDto {
+        this.assertCanWrite(request);
+        const existing = referenceImageRepository.getById(request.campaignId!, id);
+        if (!existing) throw new NotFoundException('No such reference image');
+        let roles: ReferenceRole[];
+        let instruction: string | null;
+        try {
+            roles = normalizeReferenceRoles(body.roles);
+            instruction = normalizeReferenceInstruction(body.instruction);
+        } catch (error) {
+            if (error instanceof ReferenceContractError) throw new BadRequestException(error.message);
+            throw error;
+        }
+        const updated = referenceImageRepository.updateMetadata(request.campaignId!, id, {
+            roles_json: JSON.stringify(roles),
+            instruction,
+            auto_select: body.auto_select === undefined
+                ? existing.auto_select
+                : body.auto_select ? 1 : 0,
+        });
+        return toReferenceImageDto(updated!);
     }
 
     async remove(request: AuthenticatedRequest, id: string): Promise<void> {
@@ -254,17 +387,61 @@ export class ReferenceImagesService {
         return raw as ReferenceScope;
     }
 
-    /** Drops what has expired, then the oldest if the pad is still too full. */
-    private sweepScratch(): void {
-        const now = Date.now();
-        for (const [id, held] of this.scratch) {
-            if (now - held.createdAt > SCRATCH_TTL_MS) this.scratch.delete(id);
+    /** Deletes one-time inputs once the provider no longer needs their bytes. */
+    async releaseScratch(campaignId: number, manifest: ReferenceManifestEntry[]): Promise<void> {
+        for (const reference of manifest) {
+            if (!reference.id.startsWith('scratch:')) continue;
+            const id = reference.id.slice('scratch:'.length);
+            const row = scratchReferenceRepository.getById(campaignId, id);
+            if (!row) continue;
+            try {
+                await this.storage.delete(row.object_key);
+                scratchReferenceRepository.remove(campaignId, id);
+            } catch (error) {
+                // Preserve the row so the janitor retains a pointer it can use
+                // to retry deletion after the object store recovers.
+                log.warn(`Could not release one-time reference ${row.object_key}: ${(error as Error).message}`);
+            }
         }
-        if (this.scratch.size < MAX_SCRATCH) return;
-        const oldest = [...this.scratch.entries()]
-            .sort((a, b) => a[1].createdAt - b[1].createdAt)
-            .slice(0, this.scratch.size - MAX_SCRATCH + 1);
-        for (const [id] of oldest) this.scratch.delete(id);
+    }
+
+    private resolveMetadata(
+        campaignId: number,
+        id: string,
+        allowAttachedScratch: boolean,
+    ): Pick<ReferenceManifestEntry, 'scope' | 'label' | 'roles' | 'instruction'> | null {
+        const [kind, key] = id.split(':', 2);
+        if (!key) return null;
+
+        if (kind === 'reference') {
+            const row = referenceImageRepository.getById(campaignId, key);
+            return row ? {
+                scope: row.scope,
+                label: row.label,
+                roles: parseStoredReferenceRoles(row.roles_json, defaultReferenceRoles(row.scope)),
+                instruction: row.instruction,
+            } : null;
+        }
+        if (kind === 'media') {
+            const row = entityMediaRepository.getById(campaignId, key);
+            return row ? {
+                scope: 'entity',
+                label: row.alt_text,
+                roles: parseStoredReferenceRoles(row.reference_roles_json, defaultReferenceRoles('entity')),
+                instruction: row.reference_instruction,
+            } : null;
+        }
+        if (kind === 'scratch') {
+            const row = scratchReferenceRepository.getById(campaignId, key);
+            if (!row || row.expires_at <= Date.now() || (!allowAttachedScratch && row.job_id !== null)) return null;
+            return {
+                scope: 'scratch',
+                label: row.label,
+                roles: parseStoredReferenceRoles(row.roles_json, defaultReferenceRoles('scratch')),
+                instruction: row.instruction,
+            };
+        }
+        return null;
     }
 
     private assertCanWrite(request: AuthenticatedRequest): void {
@@ -296,7 +473,7 @@ export class ReferenceImagesService {
             if (!response.ok) return null;
             return Buffer.from(await response.arrayBuffer());
         } catch (error) {
-            log.warn(`Reference image unreadable, generating without it: ${(error as Error).message}`);
+            log.warn(`Reference image unreadable: ${(error as Error).message}`);
             return null;
         }
     }
@@ -321,6 +498,9 @@ function toReferenceImageDto(row: ReferenceImageEntry): ReferenceImageDto {
         width: row.width,
         height: row.height,
         label: row.label,
+        roles: parseStoredReferenceRoles(row.roles_json, defaultReferenceRoles(row.scope)),
+        instruction: row.instruction,
+        auto_select: row.auto_select === 1,
         created_at: row.created_at,
     };
 }

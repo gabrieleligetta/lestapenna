@@ -54,7 +54,6 @@ function transcription(overrides: Partial<TranscriptionSettings> = {}): Transcri
 
 function handlers(settingsBody = settings(), campaigns: unknown[] = []) {
     return [
-        jsonGet('/guilds/g1', { id: 'g1', name: 'Server di prova', icon: null, canManage: true }),
         jsonGet('/guilds/g1/ai-settings', settingsBody),
         jsonGet('/guilds/g1/ai-settings/models', {
             provider: 'gemini', quality: [], fast: [], transcription: [], image: [], refreshed_at: null,

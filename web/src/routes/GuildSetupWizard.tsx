@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
     useCreateCampaign,
-    useGuild,
     useGuildAiSettings,
     useGuildAiSettingsActions,
     useGuildCampaigns,
@@ -50,7 +49,6 @@ export function GuildSetupWizard() {
     const t = useT();
     const navigate = useNavigate();
 
-    const guild = useGuild(guildId);
     const settings = useGuildAiSettings(guildId);
     const transcription = useTranscriptionSettings(guildId);
     const campaigns = useGuildCampaigns(guildId);
@@ -123,8 +121,6 @@ export function GuildSetupWizard() {
                 )}
                 <Link to={`/guilds/${guildId}/ai`}>{t.setup.exit}</Link>
             </div>
-
-            <p className="settings-hint">{guild.data?.name}</p>
         </div>
     );
 }

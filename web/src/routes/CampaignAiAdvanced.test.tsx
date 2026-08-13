@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { CampaignAiAdvanced } from './CampaignAiAdvanced';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { http, HttpResponse, jsonGet, server } from '../test/server';
-import type { AiModelOption, AiPhaseConfig, ProviderModels } from '../api/types';
+import type { AiModelOption, AiPhaseConfig, AiPhaseOverride, ProviderModels } from '../api/types';
 
 function option(overrides: Partial<AiModelOption> & { id: string }): AiModelOption {
     return {
@@ -35,6 +35,9 @@ const MODELS: ProviderModels = {
 const EFFECTIVE: AiPhaseConfig[] = [
     { phase: 'summary', provider: 'gemini', model: 'gemini-3.1-pro-preview', tier: 'quality' },
     { phase: 'narrativeFilter', provider: 'gemini', model: 'gemini-3-flash-preview', tier: 'fast' },
+    // The server sends it, because the effective config includes it. This
+    // section must still refuse to offer it as an override.
+    { phase: 'embedding', provider: 'gemini', model: 'gemini-embedding-001', tier: null },
 ];
 
 function estimate(body: Record<string, unknown>) {
@@ -54,13 +57,13 @@ function estimate(body: Record<string, unknown>) {
     }));
 }
 
-function renderAdvanced(readOnly = false) {
+function renderAdvanced(readOnly = false, overrides: AiPhaseOverride[] = []) {
     return renderWithProviders(
         <CampaignAiAdvanced
             campaignId="1"
             guildId="g1"
             effective={EFFECTIVE}
-            overrides={[]}
+            overrides={overrides}
             readOnly={readOnly}
         />,
     );
@@ -155,6 +158,39 @@ describe('CampaignAiAdvanced', () => {
         await user.selectOptions(providers[0], 'openai');
         await user.click(screen.getByRole('button', { name: 'Save' }));
 
+        await waitFor(() => expect(sent).toEqual({ overrides: [] }));
+    });
+
+    it('does not offer indexing as an override, and says where it is changed', async () => {
+        // The row used to be here and was worse than missing: it offered the
+        // text catalogue — models with no embeddings endpoint — and wrote a
+        // setting nothing reads, since embedding is pinned to the campaign.
+        const user = userEvent.setup();
+        server.use(jsonGet('/guilds/g1/ai-settings/models', MODELS));
+        renderAdvanced();
+        await open(user);
+
+        expect(screen.queryByText('Indexing')).not.toBeInTheDocument();
+        expect(screen.getByText(/Campaign memory \(RAG\)/)).toBeInTheDocument();
+    });
+
+    it('never sends an embedding override, even from a stale draft', async () => {
+        const user = userEvent.setup();
+        let sent: Record<string, unknown> | null = null;
+        server.use(
+            jsonGet('/guilds/g1/ai-settings/models', MODELS),
+            http.put('/api/v1/campaigns/1/ai-settings/phases', async ({ request }) => {
+                sent = (await request.json()) as Record<string, unknown>;
+                return HttpResponse.json([]);
+            }),
+        );
+        renderAdvanced(false, [{ phase: 'embedding', provider: 'gemini', model: 'gemini-embedding-001' }]);
+        await open(user);
+
+        await user.click(screen.getByRole('button', { name: 'Save' }));
+
+        // The server refuses it with a 400; the page must not be the thing that
+        // triggers one on a plain save.
         await waitFor(() => expect(sent).toEqual({ overrides: [] }));
     });
 

@@ -140,14 +140,46 @@ async function chooseDefault(scope: AiScope, probeOllama: boolean): Promise<Embe
     if (ollamaUrl && (!probeOllama || await isOllamaAlive(ollamaUrl))) {
         return EMBEDDING_MODELS[DEFAULT_LOCAL_EMBEDDING_MODEL];
     }
+    return chooseCloudDefault(scope);
+}
 
-    // No hardware of their own: we look at which key they actually have.
+/** The cloud model of whichever key the table actually has. */
+function chooseCloudDefault(scope: AiScope): EmbeddingModelInfo | null {
     for (const provider of ['openai', 'gemini'] as AIProvider[]) {
         if (resolveCredentials(provider, scope).source !== 'none') {
             return EMBEDDING_MODELS[DEFAULT_CLOUD_EMBEDDING_MODEL[provider]!];
         }
     }
     return null;
+}
+
+/**
+ * Which model this scope would index with, for a page that only wants to say so.
+ *
+ * The settings page used to answer this through the generic per-phase resolver,
+ * which reads `ai.config.json` and therefore always answered «Ollama,
+ * nomic-embed-text» — free, on your own hardware. That is not where embedding
+ * comes from: `resolveEmbedding` reads the model **pinned to the campaign**, and
+ * failing that falls back to the key the table has. A table with no Ollama and a
+ * Gemini key was being told its indexing ran at home while it was billed to
+ * Google, which is the one thing the cost layer exists to prevent.
+ *
+ * Synchronous, and deliberately without the liveness probe: this is a read of a
+ * settings page, not the moment of indexing. It therefore assumes a configured
+ * Ollama is reachable — the same assumption the cost estimate makes.
+ */
+export function describeEmbedding(scope: AiScope): EmbeddingModelInfo | null {
+    const pinned = scope.campaignId ? pinnedFor(scope.campaignId) : undefined;
+    if (pinned?.embedding_model) {
+        return EMBEDDING_MODELS[pinned.embedding_model] ?? {
+            provider: 'ollama',
+            model: pinned.embedding_model,
+            dimension: pinned.embedding_dimension ?? 0,
+            usdPerMillionTokens: 0,
+        };
+    }
+    if (tenantOllamaUrl(scope)) return EMBEDDING_MODELS[DEFAULT_LOCAL_EMBEDDING_MODEL];
+    return chooseCloudDefault(scope);
 }
 
 function credsFor(provider: AIProvider, scope: AiScope): ResolvedCredentials {

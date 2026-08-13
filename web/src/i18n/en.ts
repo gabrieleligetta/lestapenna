@@ -867,6 +867,7 @@ export const en = {
         manageLink: 'Manage for this server →',
         advancedTitle: 'Advanced settings',
         advancedIntro: 'Override the model of a single phase for this campaign only. Keys stay with the server: this moves which model, never who pays.',
+        embeddingElsewhere: 'Indexing is not here: the model is pinned to the campaign at its first run, and switching it makes everything already indexed unreadable — so it is changed under «Campaign memory (RAG)», which prices recalculating the fragments first.',
 
         phaseNames: {
             speechToText: 'Audio transcription',

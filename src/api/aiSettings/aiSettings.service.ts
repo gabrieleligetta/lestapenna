@@ -20,7 +20,7 @@ import {
     listOllamaModels,
     type TenantAiSettings,
 } from '../../bard/ai/resolver';
-import { EMBEDDING_MODELS, tenantOllamaUrl } from '../../bard/ai/embeddings';
+import { EMBEDDING_MODELS, describeEmbedding, tenantOllamaUrl } from '../../bard/ai/embeddings';
 import { estimateReindex, reindexCampaign } from '../../bard/rag/reindex';
 import { estimatePhaseCost, estimateSessionCost } from '../../services/sessionCostEstimator';
 import { getUsdEurRate, usdToEur } from '../../services/aiCostTransparency';
@@ -92,6 +92,22 @@ const MODEL_MAX_CHARS = 120;
 
 /** Every phase a campaign may override: the session pipeline plus the on-demand ones. */
 const CONFIGURABLE_PHASES: readonly AiPhase[] = [...ALL_AI_PHASES, ...ON_DEMAND_AI_PHASES];
+
+/**
+ * The phases a campaign may actually override, which is not all of them.
+ *
+ * `embedding` is out, and it was never in: nothing reads
+ * `settings.phases.embedding`. Embedding resolves from the model **pinned to
+ * the campaign** at its first indexing, in a column of its own, so an override
+ * written here changed nothing at run time while making the effective-config
+ * table announce a model that would never be used.
+ *
+ * The real control is the reindex flow, and it has to be: switching model makes
+ * every fragment already indexed invisible to search, so it asks first and
+ * prices the recalculation. A select that saved silently could throw away a
+ * campaign's whole memory with one click.
+ */
+const OVERRIDABLE_PHASES: readonly AiPhase[] = CONFIGURABLE_PHASES.filter(phase => phase !== 'embedding');
 
 /** The catalogue speaks camelCase, the API snake_case. Only the names change. */
 function toModelOptionDto(option: ModelOption): ModelOptionDto {
@@ -714,11 +730,17 @@ export class AiSettingsService {
     campaignOverrides(campaignId: number): PhaseOverrideDto[] {
         const stored = tenantAiSettingsRepository
             .get<TenantAiSettings>('campaign', String(campaignId))?.settings;
-        return Object.entries(stored?.phases ?? {}).map(([phase, choice]) => ({
-            phase: phase as AiPhase,
-            provider: choice!.provider,
-            model: choice!.model,
-        }));
+        return Object.entries(stored?.phases ?? {})
+            // An `embedding` entry can only be a leftover from when the UI
+            // offered that row. Hiding it here is what lets it heal: the page
+            // never shows it, so the next save — which replaces the set
+            // wholesale — drops it from storage.
+            .filter(([phase]) => OVERRIDABLE_PHASES.includes(phase as AiPhase))
+            .map(([phase, choice]) => ({
+                phase: phase as AiPhase,
+                provider: choice!.provider,
+                model: choice!.model,
+            }));
     }
 
     /**
@@ -736,7 +758,17 @@ export class AiSettingsService {
     ): PhaseOverrideDto[] {
         const phases: TenantAiSettings['phases'] = {};
         for (const override of overrides ?? []) {
-            if (!CONFIGURABLE_PHASES.includes(override.phase)) {
+            // Refused rather than dropped: nothing legitimate sends `embedding`
+            // any more, so a request carrying one is a stale client or a direct
+            // call, and letting it through silently would leave the caller
+            // believing it had changed which model indexes this campaign.
+            if (override.phase === 'embedding') {
+                throw new BadRequestException(
+                    'The embedding model is not a per-phase override: it is pinned to the campaign '
+                    + 'and changed through a reindex, which prices recalculating the existing fragments',
+                );
+            }
+            if (!OVERRIDABLE_PHASES.includes(override.phase)) {
                 throw new BadRequestException(`Unknown phase: ${override.phase}`);
             }
             // The key check is the guild's, because the key is: a campaign
@@ -1038,6 +1070,20 @@ export class AiSettingsService {
         // are configurable per campaign like the others, while staying out of
         // the readiness check that decides whether a table may record at all.
         return [...ALL_AI_PHASES, ...ON_DEMAND_AI_PHASES].map(phase => {
+            // Embedding does not come from the per-phase resolver. It is pinned
+            // to the campaign at its first indexing and falls back to the key
+            // the table has, so asking `ai.config.json` produced a permanent
+            // «Ollama · nomic-embed-text» — free, on your own hardware — for
+            // tables whose indexing was in fact billed to Gemini.
+            if (phase === 'embedding') {
+                const embedding = describeEmbedding(scope);
+                return {
+                    phase,
+                    provider: embedding?.provider ?? ctx.phaseConfig(phase).provider,
+                    model: embedding?.model ?? ctx.phaseConfig(phase).model,
+                    tier: null,
+                };
+            }
             const config = ctx.phaseConfig(phase);
             return { phase, provider: config.provider, model: config.model, tier: tierOfPhase(phase) };
         });

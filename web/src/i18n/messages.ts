@@ -925,6 +925,8 @@ export interface Messages {
         manageLink: string;
         advancedTitle: string;
         advancedIntro: string;
+        /** Indexing is not overridable here: it is pinned to the campaign and changed by a reindex. */
+        embeddingElsewhere: string;
 
         /**
          * Readable names for the nine pipeline phases.

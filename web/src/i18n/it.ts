@@ -867,6 +867,7 @@ export const it = {
         manageLink: 'Gestisci per questo server →',
         advancedTitle: 'Impostazioni avanzate',
         advancedIntro: 'Sovrascrivi il modello di una singola fase, solo per questa campagna. Le chiavi restano del server: qui si sposta quale modello, mai chi paga.',
+        embeddingElsewhere: 'L\u2019indicizzazione non sta qui: il modello si fissa sulla campagna alla prima passata, e cambiarlo rende illeggibile tutto quello che \u00e8 gi\u00e0 indicizzato \u2014 quindi si cambia in \u00abMemoria della campagna (RAG)\u00bb, che prima ti dice quanto costa ricalcolare i frammenti.',
 
         phaseNames: {
             speechToText: 'Trascrizione dell\'audio',

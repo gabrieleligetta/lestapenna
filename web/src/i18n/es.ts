@@ -867,6 +867,7 @@ export const es = {
         manageLink: 'Gestionar para este servidor →',
         advancedTitle: 'Ajustes avanzados',
         advancedIntro: 'Sobrescribe el modelo de una sola fase, solo para esta campaña. Las claves siguen siendo del servidor: aquí se cambia qué modelo, nunca quién paga.',
+        embeddingElsewhere: 'La indexaci\u00f3n no est\u00e1 aqu\u00ed: el modelo se fija en la campa\u00f1a en la primera pasada, y cambiarlo vuelve ilegible todo lo ya indexado \u2014 as\u00ed que se cambia en \u00abMemoria de la campa\u00f1a (RAG)\u00bb, que antes te dice cu\u00e1nto cuesta recalcular los fragmentos.',
 
         phaseNames: {
             speechToText: 'Transcripción del audio',

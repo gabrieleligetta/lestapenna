@@ -152,6 +152,39 @@ describe('The table\'s AI settings (web)', () => {
         });
     });
 
+    describe('what the effective table says about indexing', () => {
+        it('names the model the table would really index with, not the file default', async () => {
+            // The generic per-phase resolver reads ai.config.json and always
+            // answered «Ollama · nomic-embed-text» — free, on your own hardware.
+            // Embedding does not come from there: with no machine of its own,
+            // a table falls back to the cloud model of the key it has, and this
+            // one is billed to Gemini.
+            await mutate('PUT', `${base}/credentials/gemini`, { api_key: 'AIza-per-indicizzare' });
+            await mutate('PUT', `${base}/transcription`, { engine: 'cloud', cloud_model: 'gemini-3.6-flash' });
+
+            const body = JSON.parse((await get(base)).payload);
+            const embedding = body.effective.find((p: any) => p.phase === 'embedding');
+
+            expect(embedding.provider).toBe('gemini');
+            expect(embedding.model).toBe('gemini-embedding-001');
+        });
+
+        it('says Ollama when the table does have a machine of its own', async () => {
+            // The Ollama node lives on the same host as the transcription PC:
+            // with one configured, indexing really is free and local.
+            await mutate('PUT', `${base}/credentials/gemini`, { api_key: 'AIza-comunque' });
+            await mutate('PUT', `${base}/transcription`, {
+                engine: 'remote', remote_url: 'http://100.64.0.1:3001',
+            });
+
+            const body = JSON.parse((await get(base)).payload);
+            const embedding = body.effective.find((p: any) => p.phase === 'embedding');
+
+            expect(embedding.provider).toBe('ollama');
+            expect(embedding.model).toBe('nomic-embed-text');
+        });
+    });
+
     describe('la chiave non esce mai', () => {
         it('no route returns the value, only the last few digits', async () => {
             const testCredential = ['unit', 'test', 'credential', '1234'].join('-');
@@ -406,6 +439,34 @@ describe('The table\'s AI settings (web)', () => {
                 .toBe('solo-per-questa-campagna');
             // The other phase of the same group is untouched.
             expect(view.effective.find((p: any) => p.phase === 'analyst').model).toBe('gruppo-qualita');
+        });
+
+        it('refuses to override the embedding model, and says where it is changed', async () => {
+            // Nothing reads `phases.embedding`: embedding resolves from the model
+            // pinned to the campaign. Accepting it would have written a setting
+            // that changes nothing while making the effective table announce a
+            // model that never runs.
+            const response = await mutate('PUT', phasesUrl(), {
+                overrides: [{ phase: 'embedding', provider: 'gemini', model: 'gemini-3.1-pro-preview' }],
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(response.payload).toMatch(/reindex/i);
+        });
+
+        it('hides a legacy embedding override instead of serving it back', async () => {
+            // Written before the row was removed. Filtering it on read is what
+            // lets it heal: the page never shows it, so the next save — which
+            // replaces the set wholesale — drops it from storage.
+            tenantAiSettingsRepository.put('campaign', String(campaignId), {
+                phases: {
+                    embedding: { provider: 'gemini', model: 'gemini-3.1-pro-preview' },
+                    summary: { provider: 'gemini', model: 'un-modello' },
+                },
+            }, ADMIN);
+
+            const view = JSON.parse((await get(`/api/v1/campaigns/${campaignId}/ai-settings/effective`)).payload);
+            expect(view.overrides.map((o: any) => o.phase)).toEqual(['summary']);
         });
 
         it('does not touch the other campaigns of the same guild', async () => {

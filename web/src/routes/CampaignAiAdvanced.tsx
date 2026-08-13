@@ -40,6 +40,11 @@ export function CampaignAiAdvanced({
     // showing values the server no longer held.
     useEffect(() => { setDraft(overrides); }, [overrides]);
 
+    // Embedding is not overridable: it is pinned to the campaign and changed
+    // through the reindex flow, which is the only place that can price making
+    // the existing fragments unreadable. The server refuses it too.
+    const overridablePhases = effective.filter((phase) => phase.phase !== 'embedding');
+
     function overrideFor(phase: string): AiPhaseOverride | undefined {
         return draft.find((entry) => entry.phase === phase);
     }
@@ -54,8 +59,12 @@ export function CampaignAiAdvanced({
 
     async function save() {
         // Only overrides with a model written in are sent: a half-filled row
-        // would save a phase pointed at nothing.
-        const complete = draft.filter((entry) => entry.model.trim() !== '');
+        // would save a phase pointed at nothing. Embedding is dropped rather
+        // than sent to be refused: a legacy value could still be sitting in a
+        // draft seeded before this page stopped offering it.
+        const complete = draft.filter(
+            (entry) => entry.model.trim() !== '' && entry.phase !== 'embedding',
+        );
         const result = await actions.save(complete);
         if (result) {
             setDraft(result);
@@ -72,7 +81,18 @@ export function CampaignAiAdvanced({
             <summary><h2>{t.aiSettings.advancedTitle}</h2></summary>
             <p className="settings-hint">{t.aiSettings.advancedIntro}</p>
 
-            {effective.map((phase) => (
+            {/*
+              * Indexing is not here, and the row that used to be was worse than
+              * missing: it offered the text catalogue — models that cannot
+              * embed — and wrote a setting nothing reads, because embedding
+              * resolves from the model pinned to the campaign, not from the
+              * per-phase overrides. Changing it also makes every fragment
+              * already indexed invisible to search, which is why its real
+              * control prices the recalculation before doing it.
+              */}
+            <p className="settings-hint">{t.aiSettings.embeddingElsewhere}</p>
+
+            {overridablePhases.map((phase) => (
                 <PhaseRow
                     key={phase.phase}
                     campaignId={campaignId}
@@ -111,9 +131,11 @@ function PhaseRow({
     const provider = override?.provider ?? null;
     const models = useProviderModels(guildId, active ? provider : null);
 
-    // Which half of the catalogue this phase belongs to. `embedding` and the
-    // correction are in neither group, and for them the full list is the honest
-    // answer rather than an arbitrary half.
+    // Which half of the catalogue this phase belongs to. The transcript
+    // correction is in neither group but is still a text phase, so the full
+    // list is the honest answer rather than an arbitrary half. Embedding used
+    // to land here too and got the same text catalogue — models that cannot
+    // embed at all; it is no longer among the rows.
     const options = phase.phase === 'image'
         // Not a tier and not a text model: offering the text catalogue here
         // would fill the select with models that cannot draw.

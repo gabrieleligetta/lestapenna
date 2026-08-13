@@ -867,6 +867,7 @@ export const fr = {
         manageLink: 'Gérer pour ce serveur →',
         advancedTitle: 'Paramètres avancés',
         advancedIntro: 'Remplacez le modèle d\'une seule phase, pour cette campagne uniquement. Les clés restent au serveur : on change quel modèle, jamais qui paie.',
+        embeddingElsewhere: 'L\u2019indexation n\u2019est pas ici : le mod\u00e8le est fix\u00e9 sur la campagne d\u00e8s la premi\u00e8re passe, et en changer rend illisible tout ce qui est d\u00e9j\u00e0 index\u00e9 \u2014 cela se change donc dans \u00ab M\u00e9moire de la campagne (RAG) \u00bb, qui chiffre d\u2019abord le reclacul des fragments.',
 
         phaseNames: {
             speechToText: 'Transcription de l\'audio',

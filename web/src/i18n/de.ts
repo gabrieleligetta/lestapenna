@@ -867,6 +867,7 @@ export const de = {
         manageLink: 'Für diesen Server verwalten →',
         advancedTitle: 'Erweiterte Einstellungen',
         advancedIntro: 'Überschreibe das Modell einer einzelnen Phase, nur für diese Kampagne. Die Schlüssel bleiben beim Server: hier ändert sich welches Modell, nie wer zahlt.',
+        embeddingElsewhere: 'Die Indizierung steht nicht hier: Das Modell wird beim ersten Durchlauf an die Kampagne gebunden, und es zu wechseln macht alles bereits Indizierte unlesbar \u2014 ge\u00e4ndert wird es daher unter \u00abGed\u00e4chtnis der Kampagne (RAG)\u00bb, das zuerst beziffert, was das Neuberechnen der Fragmente kostet.',
 
         phaseNames: {
             speechToText: 'Transkription des Tons',

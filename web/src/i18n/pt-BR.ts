@@ -867,6 +867,7 @@ export const ptBR = {
         manageLink: 'Gerenciar para este servidor →',
         advancedTitle: 'Configurações avançadas',
         advancedIntro: 'Sobrescreva o modelo de uma única fase, só para esta campanha. As chaves continuam sendo do servidor: aqui muda qual modelo, nunca quem paga.',
+        embeddingElsewhere: 'A indexa\u00e7\u00e3o n\u00e3o fica aqui: o modelo \u00e9 fixado na campanha na primeira passagem, e troc\u00e1-lo torna ileg\u00edvel tudo o que j\u00e1 foi indexado \u2014 ent\u00e3o se muda em \u00abMem\u00f3ria da campanha (RAG)\u00bb, que antes diz quanto custa recalcular os fragmentos.',
 
         phaseNames: {
             speechToText: 'Transcrição do áudio',

@@ -363,34 +363,39 @@ export function EntityImageGenerator({
                                     : -1;
                                 return (
                                 <li key={candidate.id} className={directive ? 'is-selected' : undefined}>
-                                    <label className="entity-image-generator__reference-summary">
-                                        <input
-                                            type="checkbox"
-                                            checked={Boolean(directive)}
-                                            disabled={busy !== null}
-                                            onChange={(event) => {
-                                                const { checked } = event.target;
-                                                setReferences((current) => {
-                                                    if (!checked) {
-                                                        return normalizePriorities(current.filter((item) => item.id !== candidate.id));
-                                                    }
-                                                    if (current.length >= 6) {
-                                                        setError(t.references.referenceLimit);
-                                                        return current;
-                                                    }
-                                                    setError(null);
-                                                    return normalizePriorities([
-                                                        ...current,
-                                                        directiveFor(candidate, current.length + 1),
-                                                    ]);
-                                                });
-                                            }}
-                                        />
+                                    <button
+                                        type="button"
+                                        className="entity-image-generator__reference-summary"
+                                        aria-pressed={Boolean(directive)}
+                                        disabled={busy !== null}
+                                        onClick={() => {
+                                            const checked = !directive;
+                                            setReferences((current) => {
+                                                if (!checked) {
+                                                    return normalizePriorities(current.filter((item) => item.id !== candidate.id));
+                                                }
+                                                if (current.length >= 6) {
+                                                    setError(t.references.referenceLimit);
+                                                    return current;
+                                                }
+                                                setError(null);
+                                                return normalizePriorities([
+                                                    ...current,
+                                                    directiveFor(candidate, current.length + 1),
+                                                ]);
+                                            });
+                                        }}
+                                    >
                                         <img src={candidate.imageUrl} alt="" loading="lazy" />
                                         <span className="card-meta">
                                             {candidate.label ?? t.media.referenceScopes[candidate.scope]}
                                         </span>
-                                    </label>
+                                        {directive && (
+                                            <span className="entity-image-generator__reference-selected" aria-hidden="true">
+                                                <Icon name="check" />
+                                            </span>
+                                        )}
+                                    </button>
                                     {directive && (
                                         <div className="entity-image-generator__reference-contract">
                                             <ReferenceMetadataFields

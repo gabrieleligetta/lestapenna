@@ -445,6 +445,7 @@ export const ptBR = {
         empty: 'Nenhuma imagem de referência.',
         tags: 'O que aproveitar desta imagem',
         tagsHint: 'Você pode escolher vários itens. “Imagem inteira” exclui as outras tags.',
+        addTag: 'Adicionar tag',
         roleNames: {
             whole_image: 'Imagem inteira', subject_identity: 'Identidade do sujeito', face: 'Rosto',
             body: 'Corpo e proporções', hair: 'Cabelo', clothing: 'Vestuário',

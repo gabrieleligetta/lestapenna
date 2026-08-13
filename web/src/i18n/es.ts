@@ -445,6 +445,7 @@ export const es = {
         empty: 'Todavía no hay imágenes de referencia.',
         tags: 'Qué tomar de esta imagen',
         tagsHint: 'Puedes elegir varios elementos. «Imagen completa» excluye las demás etiquetas.',
+        addTag: 'Añadir etiqueta',
         roleNames: {
             whole_image: 'Imagen completa', subject_identity: 'Identidad del sujeto', face: 'Rostro',
             body: 'Cuerpo y proporciones', hair: 'Cabello', clothing: 'Vestimenta',

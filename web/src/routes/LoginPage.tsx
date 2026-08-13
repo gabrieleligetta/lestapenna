@@ -19,13 +19,15 @@ export function LoginPage() {
     return (
         <div className="login-page">
             <div className="login-gate">
-                <img
-                    className="login-mark"
-                    src={`${import.meta.env.BASE_URL}assets/mark.svg`}
-                    alt=""
-                    width="80"
-                    height="80"
-                />
+                <div className="login-mark-frame">
+                    <img
+                        className="login-mark"
+                        src={`${import.meta.env.BASE_URL}assets/mark.svg`}
+                        alt=""
+                        width="80"
+                        height="80"
+                    />
+                </div>
                 <h1>{t.login.title}</h1>
                 <p>{t.login.subtitle}</p>
                 <a className="button-discord" href={loginUrl()}>

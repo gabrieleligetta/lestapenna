@@ -445,6 +445,7 @@ export interface Messages {
         empty: string;
         tags: string;
         tagsHint: string;
+        addTag: string;
         roleNames: Record<string, string>;
         instruction: string;
         instructionPlaceholder: string;

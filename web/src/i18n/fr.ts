@@ -445,6 +445,7 @@ export const fr = {
         empty: 'Aucune image de référence.',
         tags: 'Éléments à reprendre de cette image',
         tagsHint: 'Vous pouvez choisir plusieurs éléments. « Image entière » exclut les autres tags.',
+        addTag: 'Ajouter un tag',
         roleNames: {
             whole_image: 'Image entière', subject_identity: 'Identité du sujet', face: 'Visage',
             body: 'Corps et proportions', hair: 'Cheveux', clothing: 'Vêtements',

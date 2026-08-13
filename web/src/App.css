@@ -125,8 +125,7 @@
   overflow: hidden;
 }
 
-.login-gate::before,
-.login-gate::after {
+.login-gate::before {
   position: absolute;
   z-index: -1;
   content: '';
@@ -143,23 +142,33 @@
   background: radial-gradient(circle, var(--glow), transparent 68%);
 }
 
-.login-gate::after {
+.login-mark-frame {
+  position: relative;
   width: 5rem;
   height: 5rem;
-  left: 50%;
-  top: 1.35rem;
-  transform: translateX(-50%);
+  margin-inline: auto;
+}
+
+.login-mark-frame::before {
+  position: absolute;
+  /* The mark is a rounded square, not a circle. Keep its halo outside that
+     silhouette instead of letting a circular plate peek out underneath it. */
+  inset: -0.4rem;
+  content: '';
   border: 1px solid color-mix(in srgb, var(--gold) 44%, transparent);
+  border-radius: 1.75rem;
   box-shadow:
-    0 0 0 0.55rem color-mix(in srgb, var(--gold) 5%, transparent),
+    0 0 0 0.4rem color-mix(in srgb, var(--gold) 5%, transparent),
     0 0 38px var(--glow);
   opacity: 0.72;
+  pointer-events: none;
 }
 
 .login-mark {
   position: relative;
-  width: 5rem;
-  height: 5rem;
+  display: block;
+  width: 100%;
+  height: 100%;
   filter: drop-shadow(0 0 1.2rem var(--glow));
 }
 
@@ -2074,12 +2083,48 @@
   list-style: none;
 }
 
-.entity-image-generator__reference-list label {
+.entity-image-generator__reference-summary {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 2px;
+  width: 7rem;
   max-width: 7rem;
+  padding: var(--space-1);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  background: transparent;
+  box-shadow: none;
   cursor: pointer;
+}
+
+.entity-image-generator__reference-summary:hover,
+.entity-image-generator__reference-summary[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--spell) 52%, var(--border));
+  background: color-mix(in srgb, var(--spell-soft) 58%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--glow) 70%, transparent);
+  transform: translateY(-1px);
+}
+
+.entity-image-generator__reference-selected {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  display: grid;
+  width: 1.45rem;
+  height: 1.45rem;
+  place-items: center;
+  color: white;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--spell);
+  box-shadow: var(--shadow-sm);
+}
+
+.entity-image-generator__reference-selected .icon {
+  width: 0.8rem;
+  height: 0.8rem;
 }
 
 .entity-image-generator__reference-list li {
@@ -2111,22 +2156,172 @@
 }
 
 .reference-metadata__roles {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.reference-metadata__role-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: var(--space-1) var(--space-2);
+  gap: var(--space-1);
 }
 
-.reference-metadata__role-grid label {
+.reference-metadata__label {
+  font-weight: 600;
+}
+
+.reference-metadata > label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+}
+
+.reference-metadata > label > span {
+  display: block;
+  font-weight: 600;
+}
+
+.reference-metadata > label > textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 5rem;
+  line-height: 1.45;
+  border-color: color-mix(in srgb, var(--spell) 18%, var(--border));
+  background: color-mix(in srgb, var(--bg) 92%, var(--spell-soft));
+}
+
+.reference-metadata > label > textarea:focus-visible {
+  border-color: var(--spell);
+}
+
+.reference-metadata__tag-picker,
+.reference-metadata__tags {
   display: flex;
-  max-width: none;
-  flex-direction: row;
-  justify-content: start;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.reference-metadata__tag {
+  --reference-tag-color: var(--spell);
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.3rem 0.65rem;
+  color: color-mix(in srgb, var(--reference-tag-color) 76%, var(--text));
+  font-size: var(--fs-0);
+  font-weight: 750;
+  line-height: 1.2;
+  border: 1px solid color-mix(in srgb, var(--reference-tag-color) 40%, var(--border));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--reference-tag-color) 13%, var(--surface));
+}
+
+.reference-metadata__tag[data-role='whole_image'],
+.reference-metadata__tag[data-role='style'],
+.reference-metadata__tag[data-role='palette'] {
+  --reference-tag-color: var(--gold);
+}
+
+.reference-metadata__tag[data-role='clothing'],
+.reference-metadata__tag[data-role='armor_equipment'] {
+  --reference-tag-color: var(--aether);
+}
+
+.reference-metadata__tag[data-role='pose_composition'],
+.reference-metadata__tag[data-role='background'] {
+  --reference-tag-color: var(--success-text);
+}
+
+.reference-metadata__tag button {
+  display: grid;
+  width: 1.15rem;
+  min-height: 1.15rem;
+  place-items: center;
+  padding: 0;
+  color: inherit;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+
+.reference-metadata__tag button:hover {
+  background: color-mix(in srgb, var(--reference-tag-color) 18%, transparent);
+}
+
+.reference-metadata__tag button .icon {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.reference-metadata__add-tag {
+  display: inline-flex !important;
+  width: auto;
+}
+
+.reference-metadata__add-tag select {
+  width: auto;
+  min-width: 9.5rem;
+  min-height: 2rem;
+  padding-block: 0.25rem;
+  color: var(--spell);
+  font-size: var(--fs-0);
+  font-weight: 750;
+  border-color: color-mix(in srgb, var(--spell) 42%, var(--border));
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--spell-soft) 38%, var(--surface));
+}
+
+.reference-metadata__auto-select {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2rem;
+  padding: 0;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.reference-metadata__auto-select:hover {
+  color: var(--spell);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.reference-metadata__switch-track {
+  display: flex;
+  width: 2.4rem;
+  height: 1.35rem;
+  align-items: center;
+  padding: 0.12rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+}
+
+.reference-metadata__switch-track > span {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) ease;
+}
+
+.reference-metadata__auto-select[aria-checked='true'] .reference-metadata__switch-track {
+  border-color: var(--spell);
+  background: color-mix(in srgb, var(--spell) 24%, var(--surface));
+}
+
+.reference-metadata__auto-select[aria-checked='true'] .reference-metadata__switch-track > span {
+  background: var(--spell);
+  transform: translateX(1rem);
 }
 
 .entity-image-generator__priority {

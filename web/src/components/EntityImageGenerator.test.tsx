@@ -138,11 +138,13 @@ describe('EntityImageGenerator', () => {
         );
 
         render();
-        const astridToggle = await screen.findByRole('checkbox', { name: /Astrid source/ });
-        expect(astridToggle).toBeChecked();
+        const astridToggle = await screen.findByRole('button', { name: /Astrid source/ });
+        expect(astridToggle).toHaveAttribute('aria-pressed', 'true');
         const astrid = within(astridToggle.closest('li')!);
-        expect(astrid.getByRole('checkbox', { name: 'Subject identity' })).toBeChecked();
-        await user.click(astrid.getByRole('checkbox', { name: 'Hair' }));
+        expect(astrid.queryByRole('checkbox')).not.toBeInTheDocument();
+        expect(astrid.getByText('Subject identity')).toBeInTheDocument();
+        await user.selectOptions(astrid.getByRole('combobox', { name: 'Add a tag' }), 'hair');
+        expect(astrid.getByText('Hair')).toBeInTheDocument();
         await user.type(
             astrid.getByPlaceholderText(/keep the clothing design/i),
             'Keep the same face and make the robe white.',

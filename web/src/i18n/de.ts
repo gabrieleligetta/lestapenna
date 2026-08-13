@@ -445,6 +445,7 @@ export const de = {
         empty: 'Noch keine Referenzbilder.',
         tags: 'Was aus diesem Bild übernommen wird',
         tagsHint: 'Mehrere Elemente sind möglich. „Gesamtes Bild“ schließt alle anderen Tags aus.',
+        addTag: 'Tag hinzufügen',
         roleNames: {
             whole_image: 'Gesamtes Bild', subject_identity: 'Identität des Motivs', face: 'Gesicht',
             body: 'Körper und Proportionen', hair: 'Haare', clothing: 'Kleidung',

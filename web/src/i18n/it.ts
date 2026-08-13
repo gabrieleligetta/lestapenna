@@ -445,6 +445,7 @@ export const it = {
         empty: 'Nessuna immagine di riferimento.',
         tags: 'Cosa prendere da questa immagine',
         tagsHint: 'Puoi scegliere più elementi. “Tutta l’immagine” esclude gli altri tag.',
+        addTag: 'Aggiungi un tag',
         roleNames: {
             whole_image: 'Tutta l’immagine', subject_identity: 'Identità del soggetto', face: 'Volto',
             body: 'Corpo e proporzioni', hair: 'Capelli', clothing: 'Vestiario',

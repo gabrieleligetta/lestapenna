@@ -445,6 +445,7 @@ export const en = {
         empty: 'No reference pictures yet.',
         tags: 'What to take from this image',
         tagsHint: 'You can choose several items. “Whole image” excludes all other tags.',
+        addTag: 'Add a tag',
         roleNames: {
             whole_image: 'Whole image', subject_identity: 'Subject identity', face: 'Face',
             body: 'Body and proportions', hair: 'Hair', clothing: 'Clothing',

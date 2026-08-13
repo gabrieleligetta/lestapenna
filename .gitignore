@@ -82,8 +82,10 @@ yarn.lock
 # `/docs/*` and not `/docs/`: git does not descend into an ignored directory, so
 # with the second form the exception below would never even be read.
 /docs/*
-# The self-hosting guide, on the other hand, is exactly what a cloner needs.
+# The self-hosting and capacity guides, on the other hand, are exactly what a
+# cloner needs. They contain no production identifiers or private topology.
 !/docs/SELF-HOSTING.md
+!/docs/INFRASTRUCTURE.md
 /CLAUDE.md
 
 # Screenshot scaricati da una segnalazione per guardarli: sono immagini di un

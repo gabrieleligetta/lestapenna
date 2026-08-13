@@ -17,6 +17,9 @@ jest.mock('../../../src/state/sessionState', () => {
         autoLeaveTimers: new Map(),
         incrementRecordingCount: jest.fn().mockResolvedValue(undefined),
         decrementRecordingCount: jest.fn().mockResolvedValue(undefined),
+        acquireRecordingCapacity: jest.fn().mockResolvedValue({ acquired: true, active: 1, limit: 2, pendingForGuild: 0 }),
+        releaseRecordingCapacity: jest.fn().mockResolvedValue(undefined),
+        getRecordingCapacityLimit: jest.fn().mockReturnValue(2),
         resetRecordingState: jest.fn().mockResolvedValue(undefined),
     };
 });

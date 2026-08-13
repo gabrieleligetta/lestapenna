@@ -146,6 +146,16 @@ interface LinksConfig {
      * from the environment alone.
      */
     donationActive: boolean;
+    /**
+     * The second channel, with its own flag for the same reason.
+     *
+     * Two channels and not one because they are ready at different times:
+     * Ko-fi accepts money as soon as its Stripe onboarding clears, while GitHub
+     * Sponsors waits on a tax and banking profile that can take weeks. A single
+     * pair of fields would force the slower one to hold the faster one back.
+     */
+    kofiUrl: string;
+    kofiActive: boolean;
     repoUrl: string;
     /** The web app: same origin as the OAuth callback. */
     webAppUrl: string;
@@ -301,6 +311,8 @@ export const config = {
         return {
             donationUrl: getEnv('DONATION_URL', false, 'https://github.com/sponsors/gabrieleligetta'),
             donationActive: getBool('DONATION_ACTIVE', false),
+            kofiUrl: getEnv('KOFI_URL', false, 'https://ko-fi.com/gabrieleligetta'),
+            kofiActive: getBool('KOFI_ACTIVE', true),
             repoUrl: getEnv('REPO_URL', false, 'https://github.com/gabrieleligetta/lestapenna'),
             webAppUrl: publicBaseUrl,
             nudgesEnabled: getBool('COMMUNITY_NUDGES', true),

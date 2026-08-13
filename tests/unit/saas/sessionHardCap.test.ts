@@ -19,11 +19,6 @@ jest.mock('../../../src/state/sessionState', () => ({
     decrementRecordingCount: (...args: unknown[]) => decrementRecordingCountMock(...args),
 }));
 
-const waitForCompletionAndSummarizeMock = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../src/publisher', () => ({
-    waitForCompletionAndSummarize: (...args: unknown[]) => waitForCompletionAndSummarizeMock(...args),
-}));
-
 const getGuildConfigMock = jest.fn().mockReturnValue(undefined);
 jest.mock('../../../src/db', () => ({
     getGuildConfig: (...args: unknown[]) => getGuildConfigMock(...args),
@@ -65,7 +60,7 @@ describe('Session hard cap (10h technical safety stop)', () => {
         await jest.advanceTimersByTimeAsync(SESSION_HARD_CAP_MINUTES * 60 * 1000 - 1000);
 
         expect(disconnectMock).not.toHaveBeenCalled();
-        expect(waitForCompletionAndSummarizeMock).not.toHaveBeenCalled();
+        expect(launchSessionProcessingMock).not.toHaveBeenCalled();
     });
 
     it('stops the session automatically once the 10h cap is reached', async () => {
@@ -77,7 +72,6 @@ describe('Session hard cap (10h technical safety stop)', () => {
         expect(deleteActiveSessionMock).toHaveBeenCalledWith('guild-1');
         expect(disconnectMock).toHaveBeenCalledWith('guild-1', { processSession: false });
         expect(launchSessionProcessingMock).toHaveBeenCalledWith('sess-1', 'guild-1');
-        expect(waitForCompletionAndSummarizeMock).toHaveBeenCalledWith(fakeClient, 'sess-1', undefined);
     });
 
     it('does not act if the session already ended by other means (stop/auto-leave)', async () => {
@@ -88,7 +82,7 @@ describe('Session hard cap (10h technical safety stop)', () => {
         await jest.advanceTimersByTimeAsync(SESSION_HARD_CAP_MINUTES * 60 * 1000);
 
         expect(disconnectMock).not.toHaveBeenCalled();
-        expect(waitForCompletionAndSummarizeMock).not.toHaveBeenCalled();
+        expect(launchSessionProcessingMock).not.toHaveBeenCalled();
     });
 
     it('clearSessionHardCap cancels a pending timer', async () => {

@@ -28,6 +28,16 @@
 		reverse_proxy dnd-bot:3000
 	}
 
+	# `/app` without the trailing slash is the one URL a person actually types,
+	# and it used to render a blank page. `handle_path` strips the prefix and
+	# serves index.html either way, so the shell loads and the bundle runs — but
+	# Vite's base is `/app/` and React Router refuses to match a URL that does
+	# not start with its basename, so it mounts nothing and says so only in the
+	# console. Canonicalising here rather than loosening the basename keeps one
+	# URL for one page, and fixes it before a byte of JavaScript is fetched.
+	@appNoSlash path /app
+	redir @appNoSlash /app/ 308
+
 	# React SPA (web/), built and baked into this image by Dockerfile.caddy —
 	# ADR-001: Caddy serves it statically, no Node/Vite runtime involved.
 	# handle_path strips the /app prefix before looking files up on disk

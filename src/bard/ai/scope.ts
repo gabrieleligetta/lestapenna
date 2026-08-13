@@ -88,7 +88,7 @@ export function scopeForSession(sessionId: string): AiScope | undefined {
     const guildId = guildIdForSession(sessionId);
     if (!guildId) return undefined;
     const campaignId = campaignIdForSession(sessionId);
-    return campaignId ? { guildId, campaignId } : { guildId };
+    return campaignId ? { guildId, campaignId, sessionId } : { guildId, sessionId };
 }
 
 /**

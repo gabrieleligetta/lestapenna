@@ -40,21 +40,30 @@ export function CampaignsPage() {
                     {t.campaigns.title} — {guild?.name}
                 </h1>
                 <Empty message={t.campaigns.empty} />
+
+                {/*
+                  * A server with no campaigns has, almost always, no keys and no
+                  * transcription engine either: creating a campaign here used to
+                  * produce a table that still could not record, and nothing said
+                  * so. The guided path is the primary action; creating just the
+                  * campaign stays available for whoever already knows.
+                  */}
+                <p>
+                    <Link className="arcane-button" to={`/guilds/${guildId}/setup`}>{t.setup.nav}</Link>
+                </p>
+
+                <p>
+                    <button type="button" onClick={() => setCreating(true)}>
+                        {t.campaignAdmin.emptyCta}
+                    </button>
+                </p>
+
                 <p className="guild-ai-link">
-                    {/* It has to be reachable from somewhere: with no keys the
-                        table cannot record, so the link sits next to the
-                        server's campaigns rather than hidden in the settings. */}
                     <Link to={`/guilds/${guildId}/ai`}>{t.aiSettings.nav}</Link>
                     {' · '}
                     {/* Next to the keys, because that is where someone goes when
                         they start wondering what this thing holds about them. */}
                     <Link to={`/guilds/${guildId}/privacy`}>{t.privacy.nav}</Link>
-                </p>
-
-                <p>
-                    <button type="button" className="primary" onClick={() => setCreating(true)}>
-                        {t.campaignAdmin.emptyCta}
-                    </button>
                 </p>
                 {modal}
             </div>

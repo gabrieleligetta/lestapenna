@@ -2,6 +2,15 @@ import { createNestApp } from '../../../src/api/main';
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { FastifyInstance } from 'fastify';
 
+jest.mock('../../../src/services/operationalHealth', () => ({
+    getOperationalHealth: jest.fn().mockResolvedValue({
+        status: 'ok',
+        role: 'all',
+        timestamp: new Date().toISOString(),
+        criticalReasons: [],
+    }),
+}));
+
 let app: NestFastifyApplication;
 let fastify: FastifyInstance;
 
@@ -69,8 +78,12 @@ describe('API Server', () => {
             const body = JSON.parse(response.payload);
             expect(body.license).toBe('AGPL-3.0');
             expect(typeof body.repo_url).toBe('string');
-            expect(typeof body.donation.url).toBe('string');
-            expect(typeof body.donation.active).toBe('boolean');
+            expect(Array.isArray(body.donations)).toBe(true);
+            for (const channel of body.donations) {
+                expect(['kofi', 'github']).toContain(channel.platform);
+                expect(typeof channel.url).toBe('string');
+                expect(typeof channel.active).toBe('boolean');
+            }
         });
     });
 

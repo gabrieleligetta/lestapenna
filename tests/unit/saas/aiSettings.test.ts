@@ -21,6 +21,8 @@ jest.mock('../../../src/bard/ai/providerFactory', () => ({
     probeProviderCredentials: (...args: unknown[]) => probeMock(...args),
 }));
 
+import http from 'http';
+import type { AddressInfo } from 'net';
 import { createNestApp } from '../../../src/api/main';
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { FastifyInstance } from 'fastify';
@@ -194,7 +196,45 @@ describe('The table\'s AI settings (web)', () => {
         });
     });
 
+    /**
+     * Both keys in the vault.
+     *
+     * Choosing a model on a provider the table has no key for is refused, so a
+     * test about *saving a choice* has to start from a table that could actually
+     * make it. The `beforeEach` above wipes the secrets on purpose — the tests
+     * about the absence of a key need that — so the seeding is local.
+     */
+    function seedBothKeys() {
+        tenantSecretsRepository.put({ scope: 'guild', scopeId: GUILD, secretKey: 'openai.apiKey' }, 'sk-seed');
+        tenantSecretsRepository.put({ scope: 'guild', scopeId: GUILD, secretKey: 'gemini.apiKey' }, 'AIza-seed');
+    }
+
     describe('scelta dei modelli', () => {
+        beforeEach(seedBothKeys);
+
+        it('refuses a provider this table has no key for', async () => {
+            db.prepare('DELETE FROM tenant_secrets WHERE scope_id = ?').run(GUILD);
+
+            const response = await mutate('PUT', base, {
+                quality: { provider: 'openai', model: 'un-modello-pro' },
+            });
+
+            // A configuration that looks saved and stops mid-session is worse
+            // than a refusal at the moment of the choice.
+            expect(response.statusCode).toBe(400);
+            expect(response.payload).toContain('openai');
+        });
+
+        it('accepts ollama with no key at all: it is the table\'s own hardware', async () => {
+            db.prepare('DELETE FROM tenant_secrets WHERE scope_id = ?').run(GUILD);
+
+            const response = await mutate('PUT', base, {
+                fast: { provider: 'ollama', model: 'qwen3:8b' },
+            });
+
+            expect(response.statusCode).toBe(200);
+        });
+
         it('saves the two groups and applies them to the phases', async () => {
             const response = await mutate('PUT', base, {
                 quality: { provider: 'openai', model: 'un-modello-pro' },
@@ -349,6 +389,9 @@ describe('The table\'s AI settings (web)', () => {
         // A function, not a constant: `campaignId` is assigned in beforeAll,
         // after the describe body has already been evaluated.
         const phasesUrl = () => `/api/v1/campaigns/${campaignId}/ai-settings/phases`;
+
+        // The key check on an override is the guild's, because the key is.
+        beforeEach(seedBothKeys);
 
         it('the campaign override beats the guild\'s group', async () => {
             await mutate('PUT', base, { quality: { provider: 'openai', model: 'gruppo-qualita' } });
@@ -729,6 +772,163 @@ describe('The table\'s AI settings (web)', () => {
             const response = await mutate('PUT', url, {
                 engine: 'remote', remote_url: 'http://pc:3001', wake: { method: 'router-inventato' },
             });
+            expect(response.statusCode).toBe(400);
+        });
+    });
+
+    describe('the state of the table\'s own machine', () => {
+        const url = `${base}/transcription`;
+
+        /** A stand-in for lesta-penna-ai-server, answering only what is asked of it. */
+        async function fakeMachine(routes: Record<string, { code: number; body?: unknown }>) {
+            const server = http.createServer((request, response) => {
+                const route = routes[request.url ?? ''];
+                if (!route) {
+                    response.writeHead(404).end();
+                    return;
+                }
+                response.writeHead(route.code, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify(route.body ?? {}));
+            });
+            await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+            const port = (server.address() as AddressInfo).port;
+            return {
+                origin: `http://127.0.0.1:${port}`,
+                close: () => new Promise<void>(resolve => { server.close(() => resolve()); }),
+            };
+        }
+
+        it('reports the accelerator, the loaded model and the uptime', async () => {
+            // The probe already called /health and threw the body away: «on» and
+            // «on, running the model you chose, since this afternoon» are not
+            // the same answer to somebody checking before a session.
+            const machine = await fakeMachine({
+                '/health': {
+                    code: 200,
+                    body: {
+                        status: 'ok',
+                        hardware: { cpu: 'Ryzen 7', cpuCores: 16, totalMemory: '32GB', freeMemory: '20GB' },
+                        whisper: { gpu: true, model: 'large-v3', accelerator: 'RTX 5060 TI (CUDA)' },
+                        process: { uptime: '4200s' },
+                    },
+                },
+            });
+            await mutate('PUT', url, { engine: 'remote', remote_url: machine.origin });
+
+            const body = JSON.parse((await get(`${url}/status`)).payload);
+            expect(body.status).toBe('OK');
+            expect(body.health).toMatchObject({
+                gpu: true,
+                accelerator: 'RTX 5060 TI (CUDA)',
+                model: 'large-v3',
+                cpu_cores: 16,
+                uptime_seconds: 4200,
+            });
+            expect(body.checked_at).toBeGreaterThan(0);
+
+            await machine.close();
+        });
+
+        it('says «we do not know» for what an older machine does not report', async () => {
+            // The table owns that computer and may not have updated it. A
+            // missing figure is null, never an invented default.
+            const machine = await fakeMachine({ '/health': { code: 200, body: { status: 'ok' } } });
+            await mutate('PUT', url, { engine: 'remote', remote_url: machine.origin });
+
+            const body = JSON.parse((await get(`${url}/status`)).payload);
+            expect(body.status).toBe('OK');
+            expect(body.health).toEqual({
+                gpu: null, accelerator: null, model: null, cpu: null,
+                cpu_cores: null, total_memory: null, free_memory: null, uptime_seconds: null,
+            });
+
+            await machine.close();
+        });
+
+        it('a switched-off machine is a state, not an error', async () => {
+            await mutate('PUT', url, { engine: 'remote', remote_url: 'http://127.0.0.1:9' });
+
+            const response = await get(`${url}/status`);
+            expect(response.statusCode).toBe(200);
+            expect(JSON.parse(response.payload)).toMatchObject({ status: 'UNREACHABLE', health: null });
+        });
+
+        it('distinguishes a refused token from a machine that is off', async () => {
+            const machine = await fakeMachine({ '/health': { code: 401 } });
+            await mutate('PUT', url, { engine: 'remote', remote_url: machine.origin });
+
+            expect(JSON.parse((await get(`${url}/status`)).payload).status).toBe('UNAUTHORIZED');
+
+            await machine.close();
+        });
+
+        it('waking returns as soon as the request has left, not when the PC is up', async () => {
+            // A boot takes minutes; a request held open that long dies to a
+            // proxy timeout and leaves the page unable to say what happened.
+            await mutate('PUT', url, {
+                engine: 'remote',
+                remote_url: 'http://127.0.0.1:9',
+                wake: { mac_address: 'AA:BB:CC:DD:EE:FF', method: 'udp', options: { targetHost: '127.0.0.1' } },
+            });
+
+            const response = await mutate('POST', `${url}/wake`);
+            expect(response.statusCode).toBe(202);
+            const body = JSON.parse(response.payload);
+            expect(body.status).toBe('WAKING');
+            expect(body.boot_timeout_ms).toBeGreaterThan(0);
+        });
+
+        it('refuses to wake a table that has no MAC to wake', async () => {
+            await mutate('PUT', url, { engine: 'remote', remote_url: 'http://127.0.0.1:9' });
+
+            const body = JSON.parse((await mutate('POST', `${url}/wake`)).payload);
+            expect(body.status).toBe('NOT_CONFIGURED');
+        });
+    });
+
+    describe('shutting the machine down by hand', () => {
+        const url = `${base}/transcription`;
+
+        it('refuses when the table did not opt in', async () => {
+            await mutate('PUT', url, { engine: 'remote', remote_url: 'http://127.0.0.1:9' });
+
+            // Switching off somebody's home computer is an effect that has to be
+            // asked for, not inferred — same rule as the automatic one.
+            const body = JSON.parse((await mutate('POST', `${url}/shutdown`)).payload);
+            expect(body.status).toBe('DISABLED');
+        });
+
+        it('refuses when no shutdown token is stored', async () => {
+            await mutate('PUT', url, {
+                engine: 'remote', remote_url: 'http://127.0.0.1:9', shutdown_enabled: true,
+            });
+
+            const body = JSON.parse((await mutate('POST', `${url}/shutdown`)).payload);
+            expect(body.status).toBe('NO_TOKEN');
+        });
+
+        it('stores the shutdown token, and never gives it back', async () => {
+            // Read from the vault since the post-session shutdown existed, and
+            // writable from nowhere until this route: remote shutdown was, in
+            // practice, unconfigurable from the web.
+            const stored = await mutate('PUT', `${url}/shutdown-token`, { value: 'token-di-spegnimento' });
+            expect(stored.statusCode).toBe(204);
+
+            const body = JSON.parse((await get(url)).payload);
+            expect(body.remote.shutdown_token_configured).toBe(true);
+            expect(JSON.stringify(body)).not.toContain('token-di-spegnimento');
+        });
+
+        it('is a separate permission from reading: one token does not imply the other', async () => {
+            await mutate('PUT', `${url}/auth-token`, { value: 'solo-lettura' });
+
+            const body = JSON.parse((await get(url)).payload);
+            expect(body.remote.auth_token_configured).toBe(true);
+            expect(body.remote.shutdown_token_configured).toBe(false);
+        });
+
+        it('refuses an empty token instead of storing one', async () => {
+            const response = await mutate('PUT', `${url}/shutdown-token`, { value: '   ' });
             expect(response.statusCode).toBe(400);
         });
     });

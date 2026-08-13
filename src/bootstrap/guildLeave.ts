@@ -3,6 +3,7 @@ import { config } from '../config';
 import { eraseGuildData } from '../services/dataErasure';
 import { disconnect } from '../services/recorder';
 import { logger } from '../utils/logger';
+import { releaseRecordingCapacity } from '../state/sessionState';
 
 const log = logger('GuildLeave');
 
@@ -59,6 +60,8 @@ export function registerGuildLeaveHandler(client: Client) {
             await disconnect(guild.id, { processSession: false });
         } catch (error) {
             log.warn(`Could not close the recording session: ${(error as Error).message}`);
+        } finally {
+            await releaseRecordingCapacity(guild.id);
         }
 
         try {

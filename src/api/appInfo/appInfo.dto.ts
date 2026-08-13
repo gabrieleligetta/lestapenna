@@ -11,8 +11,17 @@ import { ApiProperty } from '@nestjs/swagger';
  * exists on the bot side.
  */
 
-export class DonationInfoDto {
-    @ApiProperty({ description: 'Empty when this instance asks for nothing.' })
+/** The platforms this instance can name. Fixed, because each one has a mark drawn for it. */
+export type DonationPlatform = 'github' | 'kofi';
+
+export class DonationChannelDto {
+    @ApiProperty({
+        enum: ['github', 'kofi'],
+        description: 'Which platform, so the button can show that platform’s own mark.',
+    })
+    platform!: DonationPlatform;
+
+    @ApiProperty({ description: 'Where it points. Channels with no URL are not returned at all.' })
     url!: string;
 
     @ApiProperty({
@@ -24,8 +33,13 @@ export class DonationInfoDto {
 }
 
 export class AppInfoDto {
-    @ApiProperty({ type: DonationInfoDto })
-    donation!: DonationInfoDto;
+    @ApiProperty({
+        type: [DonationChannelDto],
+        description:
+            'Every channel this instance offers, in display order. Empty when it asks for ' +
+            'nothing — a fork that wants no donations configures no URL and the bar shows none.',
+    })
+    donations!: DonationChannelDto[];
 
     @ApiProperty()
     repo_url!: string;

@@ -51,7 +51,10 @@ export const recordingRepository = {
     },
 
     getUnprocessedRecordings: (): Recording[] => {
-        return db.prepare("SELECT * FROM recordings WHERE status = 'PENDING'").all() as Recording[];
+        return db.prepare(`
+            SELECT * FROM recordings
+            WHERE status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING', 'TRANSCRIBED')
+        `).all() as Recording[];
     },
 
     resetSessionData: (sessionId: string): Recording[] => {
@@ -67,8 +70,9 @@ export const recordingRepository = {
     resetUnfinishedRecordings: (sessionId: string): Recording[] => {
         db.prepare(`
              UPDATE recordings 
-             SET status = 'PENDING' 
-             WHERE session_id = ? AND (status = 'PROCESSING' OR status = 'FAILED')
+             SET status = 'PENDING', error_log = NULL
+             WHERE session_id = ?
+             AND status IN ('PROCESSING', 'FAILED', 'ERROR')
          `).run(sessionId);
 
         return recordingRepository.getSessionRecordings(sessionId);

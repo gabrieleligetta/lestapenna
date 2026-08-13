@@ -1,7 +1,5 @@
-import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { disconnect } from '../../services/recorder';
-import { waitForCompletionAndSummarize } from '../../publisher';
 import { getActiveSession, deleteActiveSession, decrementRecordingCount } from '../../state/sessionState';
 import { clearSessionHardCap } from '../../services/sessionHardCap';
 import { t } from '../../i18n';
@@ -29,7 +27,14 @@ export const stopCommand: Command = {
 
         if (!sessionId) {
             // Disconnect anyway if requested, just to be safe
-            await disconnect(message.guild!.id);
+            try {
+                await disconnect(message.guild!.id);
+            } finally {
+                // A stale voice connection can outlive its Redis session after a
+                // partial crash/reset. Releasing is idempotent and prevents that
+                // stale admission slot from blocking another guild.
+                await decrementRecordingCount(message.guild!.id);
+            }
             await message.reply(t(ctx.locale, 'session.noActiveButDisconnected'));
             return;
         }
@@ -38,11 +43,14 @@ export const stopCommand: Command = {
         await deleteActiveSession(message.guild!.id);
         clearSessionHardCap(message.guild!.id);
 
-        // 2. Resume the queue (per session: decrement the counter, resume when nobody is recording)
-        await decrementRecordingCount();
-
-        // 3. Disconnect and back up, then start the processing.
-        await disconnect(message.guild!.id, { processSession: false });
+        // Keep the capacity slot until every encoder is closed and its final
+        // segment is secured. Otherwise another guild could enter while this
+        // one still consumes the resources the slot is meant to protect.
+        try {
+            await disconnect(message.guild!.id, { processSession: false });
+        } finally {
+            await decrementRecordingCount(message.guild!.id);
+        }
 
         const stopMsg = t(ctx.locale, 'session.stopped', { id: sessionId })
             + communityLine(ctx.guildId, ctx.locale);
@@ -52,10 +60,7 @@ export const stopCommand: Command = {
             await message.reply(stopMsg);
         }
 
-        launchSessionProcessing(sessionId, message.guild!.id);
+        launchSessionProcessing(sessionId, message.guild!.id, message.channel.id);
         console.log(`[Flow] Sessione terminata. I worker elaboreranno i file accumulati...`);
-
-        // 4. Monitoraggio
-        await waitForCompletionAndSummarize(client, sessionId, message.channel as TextChannel);
     }
 };

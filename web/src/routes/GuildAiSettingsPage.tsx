@@ -3,7 +3,9 @@ import { useParams } from 'react-router-dom';
 import {
     useGuildAiSettings,
     useGuildAiSettingsActions,
+    useGuildCampaigns,
     useProviderModels,
+    useTranscriptionSettings,
 } from '../api/hooks';
 import type {
     AiCredentialStatus,
@@ -18,21 +20,12 @@ import { ConfirmModal } from '../components/ConfirmModal';
 import { ErrorState, Loading } from '../components/StateViews';
 import { TranscriptionSettings } from './TranscriptionSettings';
 import { ModelSelect } from '../components/ModelSelect';
-import { PROVIDER_CONSOLE, providerName } from '../components/aiLabels';
-import { SessionCostPanel } from './SessionCostPanel';
+import { PROVIDER_CONSOLE, phaseName, providerName } from '../components/aiLabels';
+import { credentialFieldId, providerAvailability } from '../components/aiProviders';
+import { PricingOverrides, SessionEstimatePanel } from './SessionCostPanel';
 import { FormFeedback } from '../components/FormFeedback';
-
-
-/**
- * The selectable providers: only the ones that cover the whole pipeline on their own.
- *
- * Anthropic does not transcribe and has no embedding models; Ollama Cloud does
- * not transcribe. A table configured on them would stop halfway through a
- * session, and would find out after recording. `ollama` stays because it is not
- * a key but the table's own hardware, and together with its PC for
- * transcription it gives a complete flow at zero cost.
- */
-const ALL_PROVIDERS: AiProvider[] = ['openai', 'gemini', 'ollama'];
+import { SetupChecklist } from '../components/SetupChecklist';
+import { buildChecklist } from '../components/setupChecklistModel';
 
 /**
  * The table's keys and models.
@@ -50,6 +43,10 @@ export function GuildAiSettingsPage() {
     const t = useT();
     const settings = useGuildAiSettings(guildId);
     const actions = useGuildAiSettingsActions(guildId);
+    // Both already fetched by the sections below; the checklist reads the same
+    // cached answers rather than adding an endpoint of its own.
+    const transcription = useTranscriptionSettings(guildId);
+    const campaigns = useGuildCampaigns(guildId);
 
     const [quality, setQuality] = useState<TierChoice | null>(null);
     const [fast, setFast] = useState<TierChoice | null>(null);
@@ -96,6 +93,14 @@ export function GuildAiSettingsPage() {
             </p>
             {readOnly && <p className="settings-hint">{t.aiSettings.manageOnly}</p>}
 
+            {/* The four gaps, each with its own remedy, before the six sections
+                that used to be the only way to find out which one was open. */}
+            <SetupChecklist
+                items={buildChecklist(t, data, transcription.data, campaigns.data?.length)}
+                guildId={guildId}
+                canManage={!readOnly}
+            />
+
             <section className="settings-section">
                 <h2>{t.aiSettings.keysTitle}</h2>
                 <p className="settings-hint">{t.aiSettings.keysIntro}</p>
@@ -126,6 +131,7 @@ export function GuildAiSettingsPage() {
                     hint={t.aiSettings.tierQualityHint}
                     value={quality}
                     disabled={actions.busy || readOnly}
+                    credentials={data.credentials}
                     onChange={setQuality}
                 />
                 <TierPicker
@@ -135,6 +141,7 @@ export function GuildAiSettingsPage() {
                     hint={t.aiSettings.tierFastHint}
                     value={fast}
                     disabled={actions.busy || readOnly}
+                    credentials={data.credentials}
                     onChange={setFast}
                 />
 
@@ -145,24 +152,56 @@ export function GuildAiSettingsPage() {
                     hint={t.aiSettings.imageIntro}
                     value={imageModel}
                     disabled={actions.busy || readOnly}
+                    credentials={data.credentials}
                     emptyHint={t.aiSettings.imageNone}
                     onChange={setImageModel}
                 />
+
+                {/* Splitting the two groups across providers loses no prompt cache
+                    — the phases of one share no prefix with the other's — but it
+                    does mean two accounts to keep in credit, which is worth
+                    knowing before the evening the second one runs dry. */}
+                {quality && fast && quality.provider !== fast.provider && (
+                    <p className="settings-hint">
+                        {t.aiSettings.mixedProviders(
+                            providerName(t, quality.provider),
+                            providerName(t, fast.provider),
+                        )}
+                    </p>
+                )}
 
                 <FormFeedback error={actions.error} saved={saved} savedLabel={t.aiSettings.saved} />
 
                 <button type="submit" disabled={actions.busy || readOnly}>{t.aiSettings.save}</button>
             </form>
 
-            <TranscriptionSettings guildId={guildId} readOnly={readOnly} />
+            <TranscriptionSettings guildId={guildId} readOnly={readOnly} credentials={data.credentials} />
 
-            <SessionCostPanel guildId={guildId} readOnly={readOnly} />
+            {/*
+              * Below here nothing is configured, only consulted.
+              *
+              * Open, the cost estimate, the declared rates and the nine-row
+              * phase table tripled the page and buried the three sections that
+              * actually decide whether the table can record. Closed, they are
+              * one click from whoever went looking for them.
+              */}
+            <details className="settings-details">
+                <summary>{t.costs.title}</summary>
+                <SessionEstimatePanel guildId={guildId} />
+            </details>
 
-            <section className="settings-section">
-                <h2>{t.aiSettings.effectiveTitle}</h2>
-                <p className="settings-hint">{t.aiSettings.effectiveIntro}</p>
-                <EffectiveTable phases={data.effective} phaseLabel={t.aiSettings.phase} />
-            </section>
+            <details className="settings-details">
+                <summary>{t.costs.pricingTitle}</summary>
+                <PricingOverrides guildId={guildId} readOnly={readOnly} />
+            </details>
+
+            <details className="settings-details">
+                <summary>{t.aiSettings.effectiveTitle}</summary>
+                <section className="settings-section">
+                    <p className="settings-hint">{t.aiSettings.effectiveIntro}</p>
+                    <EffectiveTable phases={data.effective} phaseLabel={t.aiSettings.phase} />
+                </section>
+            </details>
 
             <ConfirmModal
                 open={pendingRemoval !== null}
@@ -216,6 +255,7 @@ function CredentialRow({
 
             <div className="ai-credential__row">
                 <input
+                    id={credentialFieldId(credential.provider)}
                     type="password"
                     value={draft}
                     autoComplete="off"
@@ -293,8 +333,8 @@ function StatusLine({ status, console }: { status: SecretVerifyStatus; console: 
  * the control is identical, so it is the same component with a different list —
  * a second picker would have been this one with one line changed.
  */
-function TierPicker({
-    guildId, kind, label, hint, value, disabled, onChange, emptyHint,
+export function TierPicker({
+    guildId, kind, label, hint, value, disabled, credentials, onChange, emptyHint,
 }: {
     guildId: string;
     kind: AiTier | 'image';
@@ -302,6 +342,8 @@ function TierPicker({
     hint: string;
     value: TierChoice | null;
     disabled: boolean;
+    /** What the table has a key for. Decides which providers can be picked. */
+    credentials: AiCredentialStatus[];
     onChange: (choice: TierChoice | null) => void;
     /** Shown when the chosen provider offers nothing of this kind. */
     emptyHint?: string;
@@ -314,6 +356,9 @@ function TierPicker({
         : kind === 'fast'
             ? models.data?.fast
             : models.data?.image;
+
+    const availability = providerAvailability(credentials);
+    const blocked = availability.filter((entry) => !entry.usable);
 
     return (
         <fieldset className="ai-tier">
@@ -331,10 +376,35 @@ function TierPicker({
                     }}
                 >
                     <option value="">{t.aiSettings.useDefault}</option>
-                    {ALL_PROVIDERS.map((provider) => (
-                        <option key={provider} value={provider}>{providerName(t, provider)}</option>
+                    {availability.map(({ provider, usable, troubled }) => (
+                        <option
+                            key={provider}
+                            value={provider}
+                            // A provider without a key stays in the list: hiding it
+                            // means nobody ever discovers it was an option. It is
+                            // simply not choosable, and says why.
+                            disabled={!usable}
+                        >
+                            {usable
+                                ? providerName(t, provider)
+                                    + (troubled ? ` — ${t.aiSettings.providerKeyTroubled}` : '')
+                                : t.aiSettings.providerNeedsKey(providerName(t, provider))}
+                        </option>
                     ))}
                 </select>
+                {/* The remedy has to be one click away, not a scroll and a guess. */}
+                {blocked.length > 0 && (
+                    <small className="settings-hint">
+                        {blocked.map(({ provider }, index) => (
+                            <span key={provider}>
+                                {index > 0 && ' · '}
+                                <a href={`#${credentialFieldId(provider)}`}>
+                                    {t.aiSettings.providerAddKey(providerName(t, provider))}
+                                </a>
+                            </span>
+                        ))}
+                    </small>
+                )}
             </label>
 
             {value && (
@@ -384,7 +454,9 @@ export function EffectiveTable({
                 <tbody>
                     {phases.map((phase) => (
                         <tr key={phase.phase}>
-                            <td>{phase.phase}</td>
+                            {/* The raw ids — `narrativeFilter`, `reconcile` — ask
+                                the reader to know the pipeline to read the table. */}
+                            <td>{phaseName(t, phase.phase)}</td>
                             <td>{providerName(t, phase.provider)}</td>
                             <td><code>{phase.model}</code></td>
                         </tr>

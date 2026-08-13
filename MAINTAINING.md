@@ -159,6 +159,45 @@ semplice indisponibilità non deve mai essere trattato come una rimozione.
 
 ## Infrastruttura e workflow
 
+La decisione operativa corrente è **una sola VM, due processi applicativi**:
+gateway Discord/API e worker di processing hanno immagini uguali ma ruoli
+separati. La coda Redis è il confine durevole; il gateway non deve fare mix,
+trascrizioni o attese lunghe. Il worker ammette due trascrizioni in parallelo ma
+una sola per sessione, così gilde diverse avanzano senza sovraccaricare il PC
+remoto di un singolo tavolo. Il limite pubblico iniziale è due gilde in
+registrazione e due sessioni pendenti per gilda. Aumentarlo richiede prima una
+prova di carico sulla shape reale e il controllo di `/health`.
+
+La spesa infrastrutturale desiderata resta `0` finché la VM gratuita regge. Non
+aggiungere Lambda/Functions, un database gestito o autoscaling come reazione a
+una coda lunga: il processing è differibile, mentre un servizio serverless ha
+limiti di durata, trasferimenti e costi variabili. Le donazioni possono finanziare
+capacità cloud condivisa, ma non danno priorità e non vanno promesse come entrata.
+
+SQLite in WAL è intenzionalmente mantenuto finché entrambi i processi restano
+sullo stesso host. Ha `busy_timeout=10s`, backup Litestream e un probe ripetibile
+con `npm run infra:probe-sqlite`. Pianificare PostgreSQL soltanto se almeno una
+di queste condizioni è vera:
+
+- gateway e worker devono essere distribuiti su host distinti;
+- serve alta disponibilità o più di un gateway;
+- sotto il carico target compaiono errori `SQLITE_BUSY` non recuperati;
+- il probe fallisce ripetutamente sulla stessa classe di hardware;
+- tempi di scrittura/backup incidono sulla registrazione nonostante il worker
+  isolato e i limiti di ammissione.
+
+La motivazione estesa e la procedura di scaling sono in
+[`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md). Questa sezione è la memoria
+vincolante: non migrare il database solo per prepararsi a un traffico ipotetico.
+
+La baseline del 13 agosto 2026 (report + backup DB + OCI a 1 minuto) misura
+2,86–4,60% CPU media VM durante registrazioni reali da 4–5 parlanti, p95 massimo
+5,69% e nessuna concorrenza tra gilde. La lunga saturazione del 21–22 luglio era
+Whisper locale e non va usata per stimare l'acquisizione attuale. Tenere il
+limite a 2 finché due prove concorrenti da almeno 30 minuti non soddisfano il
+protocollo in `docs/INFRASTRUCTURE.md`. L'ammissione è per gilda: non troncare o
+limitare i partecipanti di una sessione già accettata.
+
 - SSH in Terraform usa `ssh_allowed_cidr`, senza default permissivo, e vieta
   `0.0.0.0/0`. Usare normalmente l'IP amministrativo con `/32`.
 - Il cloud-init non deve svuotare `iptables`.

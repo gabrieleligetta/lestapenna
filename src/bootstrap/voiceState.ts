@@ -1,8 +1,12 @@
 import { Client, VoiceBasedChannel, TextChannel } from 'discord.js';
-import { getActiveSession, deleteActiveSession, decrementRecordingCount, autoLeaveTimers } from '../state/sessionState';
+import {
+    getActiveSession,
+    deleteActiveSession,
+    decrementRecordingCount,
+    autoLeaveTimers,
+} from '../state/sessionState';
 import { disconnect, resubscribeMemberOnRejoin } from '../services/recorder';
 import { getGuildConfig } from '../db';
-import { waitForCompletionAndSummarize } from '../publisher';
 import { clearSessionHardCap } from '../services/sessionHardCap';
 import { config } from '../config';
 import { launchSessionProcessing } from '../services/sessionProcessing';
@@ -34,7 +38,9 @@ export function registerVoiceStateHandler(client: Client) {
             resubscribeMemberOnRejoin(guild.id, newState.member.id);
         }
 
-        checkAutoLeave(botMember.voice.channel, client);
+        void checkAutoLeave(botMember.voice.channel, client).catch(error => {
+            console.warn(`[VoiceState] Controllo auto-leave fallito per ${guild.id}:`, error);
+        });
     });
 }
 
@@ -60,8 +66,11 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
                     // Drop the session from Redis IMMEDIATELY — prevents the race with $termina
                     await deleteActiveSession(guildId);
                     clearSessionHardCap(guildId);
-                    await decrementRecordingCount();
-                    await disconnect(guildId, { processSession: false });
+                    try {
+                        await disconnect(guildId, { processSession: false });
+                    } finally {
+                        await decrementRecordingCount(guildId);
+                    }
 
                     // Try to get command channel for notifications (optional)
                     const commandChannelId = getGuildConfig(guildId, 'cmd_channel_id');
@@ -76,8 +85,7 @@ export async function checkAutoLeave(channel: VoiceBasedChannel, client: Client)
                             console.warn(`⚠️ Impossibile accedere al canale comandi ${commandChannelId}`);
                         }
                     }
-                    launchSessionProcessing(sessionId, guildId);
-                    await waitForCompletionAndSummarize(client, sessionId, ch);
+                    launchSessionProcessing(sessionId, guildId, ch?.id);
                 } else {
                     await disconnect(guildId);
                 }

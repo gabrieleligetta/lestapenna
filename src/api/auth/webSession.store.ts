@@ -13,15 +13,58 @@ import Redis from 'ioredis';
 import { config } from '../../config';
 import { DiscordGuildSummary } from './discordOAuth.service';
 
-const redis = new Redis({
+const redis = process.env.DISABLE_REDIS === 'true' ? null : new Redis({
     host: config.redis.host,
     port: config.redis.port,
     maxRetriesPerRequest: null,
     lazyConnect: true,
 });
-redis.connect().catch(() => {
+redis?.connect().catch(() => {
     // Reconnects automatically; callers see failures per-command, not here.
 });
+
+interface MemoryEntry {
+    value: string;
+    expiresAt: number;
+}
+
+// Used only by tests/local harnesses that explicitly disable Redis. Production
+// remains Redis-backed so OAuth attempts and logins survive process restarts.
+const memoryStore = new Map<string, MemoryEntry>();
+
+function memoryGet(key: string): string | null {
+    const entry = memoryStore.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        memoryStore.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+async function getValue(key: string): Promise<string | null> {
+    return redis ? redis.get(key) : memoryGet(key);
+}
+
+async function setValue(key: string, value: string, ttlSeconds: number): Promise<void> {
+    if (redis) {
+        await redis.set(key, value, 'EX', ttlSeconds);
+        return;
+    }
+    memoryStore.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+}
+
+async function deleteValue(key: string): Promise<void> {
+    if (redis) await redis.del(key);
+    else memoryStore.delete(key);
+}
+
+async function ttlSeconds(key: string): Promise<number> {
+    if (redis) return redis.ttl(key);
+    const entry = memoryStore.get(key);
+    if (!entry || memoryGet(key) === null) return -2;
+    return Math.max(1, Math.ceil((entry.expiresAt - Date.now()) / 1000));
+}
 
 const OAUTH_ATTEMPT_PREFIX = 'lp:oauth-attempt:';
 const OAUTH_ATTEMPT_TTL_SECONDS = 600; // 10 minutes to complete the Discord redirect round-trip
@@ -47,39 +90,38 @@ export interface WebSessionData {
 }
 
 export async function storeOAuthAttempt(state: string, attempt: OAuthAttempt): Promise<void> {
-    await redis.set(`${OAUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(attempt), 'EX', OAUTH_ATTEMPT_TTL_SECONDS);
+    await setValue(`${OAUTH_ATTEMPT_PREFIX}${state}`, JSON.stringify(attempt), OAUTH_ATTEMPT_TTL_SECONDS);
 }
 
 /** Deletes the attempt on read (single use) — a second callback with the same state must fail. */
 export async function consumeOAuthAttempt(state: string): Promise<OAuthAttempt | null> {
     const key = `${OAUTH_ATTEMPT_PREFIX}${state}`;
-    const raw = await redis.get(key);
+    const raw = await getValue(key);
     if (!raw) return null;
-    await redis.del(key);
+    await deleteValue(key);
     return JSON.parse(raw) as OAuthAttempt;
 }
 
 export async function createWebSession(sessionId: string, data: WebSessionData): Promise<void> {
-    await redis.set(
+    await setValue(
         `${WEB_SESSION_PREFIX}${sessionId}`,
         JSON.stringify(data),
-        'EX',
         config.discordOAuth.sessionTtlSeconds,
     );
 }
 
 export async function getWebSession(sessionId: string): Promise<WebSessionData | null> {
-    const raw = await redis.get(`${WEB_SESSION_PREFIX}${sessionId}`);
+    const raw = await getValue(`${WEB_SESSION_PREFIX}${sessionId}`);
     return raw ? (JSON.parse(raw) as WebSessionData) : null;
 }
 
 /** Overwrites the stored session (e.g. after a token refresh or a guilds re-fetch) without resetting its TTL countdown. */
 export async function updateWebSession(sessionId: string, data: WebSessionData): Promise<void> {
     const key = `${WEB_SESSION_PREFIX}${sessionId}`;
-    const ttl = await redis.ttl(key);
-    await redis.set(key, JSON.stringify(data), 'EX', ttl > 0 ? ttl : config.discordOAuth.sessionTtlSeconds);
+    const ttl = await ttlSeconds(key);
+    await setValue(key, JSON.stringify(data), ttl > 0 ? ttl : config.discordOAuth.sessionTtlSeconds);
 }
 
 export async function destroyWebSession(sessionId: string): Promise<void> {
-    await redis.del(`${WEB_SESSION_PREFIX}${sessionId}`);
+    await deleteValue(`${WEB_SESSION_PREFIX}${sessionId}`);
 }

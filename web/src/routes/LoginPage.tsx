@@ -5,6 +5,7 @@ import { useT } from '../i18n';
 import { peekReturnPath } from '../returnPath';
 import { Loading } from '../components/StateViews';
 import { SupportBar } from '../components/SupportBar';
+import { LoginDonationButtons } from '../components/LoginDonationButtons';
 
 export function LoginPage() {
     const { data: me, isLoading } = useMe();
@@ -30,6 +31,7 @@ export function LoginPage() {
                 <a className="button-discord" href={loginUrl()}>
                     {t.login.cta}
                 </a>
+                <LoginDonationButtons />
             </div>
             <SupportBar />
         </div>

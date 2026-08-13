@@ -36,7 +36,7 @@
     "sodium-native": "^4.3.1"
   },
   "name": "lestapenna",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "index.js",
   "author": "Lestapenna contributors <info@lestapenna.quest>",
   "license": "AGPL-3.0-or-later",
@@ -60,6 +60,7 @@
     "admin:rebuild": "ts-node src/admin/run_rebuild.ts",
     "admin:reassess-npc-history": "ts-node src/admin/reassessExistingNpcHistory.ts",
     "db:init": "ts-node src/scripts/init_db.ts",
+    "infra:probe-sqlite": "ts-node src/scripts/sqlite-contention-probe.ts",
     "secrets:generate-key": "ts-node src/scripts/generate_secrets_key.ts",
     "secrets:rotate": "ts-node src/scripts/rotate_secrets.ts",
     "secrets:set": "ts-node src/scripts/set_secret.ts",

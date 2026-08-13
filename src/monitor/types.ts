@@ -5,6 +5,21 @@
 import type { FxSource } from '../services/aiCostTransparency';
 
 export type MonitorProvider = 'openai' | 'gemini' | 'ollama' | 'ollama-cloud' | 'anthropic';
+export type RuntimePhase = 'recording' | 'queued' | 'processing' | 'finalization' | 'other';
+
+export interface CapacitySample {
+    timestamp: number;
+    role: string;
+    phase: RuntimePhase;
+    processCpuPercent: number;
+    processRamMB: number;
+    systemCpuPercent: number;
+    freeRamMB: number;
+    loadAverage1m: number;
+    eventLoopLagMs: number;
+    activeFfmpegEncoders?: number;
+    activeRecordingGuilds?: number;
+}
 
 export interface CostBreakdown {
     phase: string;           // 'analyst', 'map', 'summary', 'chat', 'embeddings', 'metadata'
@@ -49,9 +64,44 @@ export interface SessionMetrics {
         cpuSamples: number[];
         ramSamplesMB: number[];
     };
+    /**
+     * Same samples split by runtime role. `resourceUsage` stays for backwards
+     * compatibility and aggregate reports; this field tells us whether voice
+     * acquisition or background processing consumed the headroom.
+     */
+    resourceUsageByRole?: Record<string, {
+        cpuSamples: number[];
+        ramSamplesMB: number[];
+    }>;
+    recordingMetrics?: {
+        startedAt: number;
+        endedAt?: number;
+        humanParticipants: number;
+        maxFfmpegEncoders: number;
+        maxConcurrentRecordingGuilds: number;
+    };
+    /** 15-second host/process samples used for capacity planning. No user IDs. */
+    capacitySamples?: CapacitySample[];
+    runtimePhaseTransitions?: Array<{
+        timestamp: number;
+        role: string;
+        phase: RuntimePhase;
+    }>;
+    runtimeContexts?: Record<string, {
+        logicalCpuCount: number;
+        totalRamMB: number;
+        platform: NodeJS.Platform;
+        architecture: string;
+        nodeVersion: string;
+        configuredRecordingGuildLimit: number;
+        configuredMixConcurrency: number;
+        configuredUploadConcurrency: number;
+    }>;
     systemHealth?: {
         minFreeRamMB: number; // Minima RAM libera osservata
         maxCpuLoad: number;   // Massimo Load Average (1min)
+        /** Worst delay observed by the monitor's 5s timer. */
+        maxEventLoopLagMs?: number;
     };
     whisperMetrics?: {
         avgProcessingRatio: number;  // Processing time / audio duration

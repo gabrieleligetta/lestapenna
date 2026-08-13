@@ -32,6 +32,10 @@ process.env.EMAIL_DRY_RUN_DIR = path.join(os.tmpdir(), `lestapenna_test_email_${
 process.env.DEV_GUILD_ID = '';
 // Channel restriction comes from getGuildConfig DB call in tests, not env var.
 process.env.DISCORD_COMMAND_AND_RESPONSE_CHANNEL_ID = '';
+// Unit/e2e tests use deterministic in-memory queue/admission/web-session
+// adapters. They must not open sockets to a developer's local Redis instance
+// or keep Jest alive after the assertions have completed.
+process.env.DISABLE_REDIS = 'true';
 // Deterministic AI config: without this override the tests would inherit the
 // machine's ai.config.local.json (e.g. the agentic pipeline active in strict
 // mode), making the outcome depend on the developer's environment.

@@ -13,6 +13,8 @@ import type { Secret } from '../../services/secretVault';
 export interface AiScope {
     guildId: string;
     campaignId?: number;
+    /** Present for work that belongs to one recorded session (including jobs). */
+    sessionId?: string;
 }
 
 export type AiPhase =

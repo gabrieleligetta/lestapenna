@@ -49,7 +49,14 @@ jest.mock('../../../src/db', () => ({
 }));
 jest.mock('../../../src/services/queue', () => ({ audioQueue: { add: jest.fn() } }));
 jest.mock('../../../src/services/backup', () => ({ uploadToOracle: jest.fn().mockResolvedValue('ok') }));
-jest.mock('../../../src/monitor', () => ({ monitor: { logFileUpload: jest.fn(), startSession: jest.fn() } }));
+jest.mock('../../../src/monitor', () => ({
+    monitor: {
+        logFileUpload: jest.fn(),
+        startSession: jest.fn(),
+        logActiveFfmpegEncoders: jest.fn(),
+        logRecordingEnded: jest.fn(),
+    },
+}));
 jest.mock('../../../src/services/sessionMixer', () => ({ mixSessionAudio: jest.fn().mockResolvedValue('/tmp/fake.mp3') }));
 
 import { connectToChannel, resubscribeMemberOnRejoin, pauseRecording, disconnect } from '../../../src/services/recorder';

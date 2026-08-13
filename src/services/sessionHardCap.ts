@@ -10,7 +10,6 @@
 import { Client, TextChannel } from 'discord.js';
 import { disconnect } from './recorder';
 import { getActiveSession, deleteActiveSession, decrementRecordingCount } from '../state/sessionState';
-import { waitForCompletionAndSummarize } from '../publisher';
 import { getGuildConfig } from '../db';
 import { logger } from '../utils/logger';
 import { launchSessionProcessing } from './sessionProcessing';
@@ -40,8 +39,11 @@ export function scheduleSessionHardCap(guildId: string, sessionId: string, clien
         log.warn(`Sessione ${sessionId}: limite tecnico di ${SESSION_HARD_CAP_MINUTES} minuti raggiunto, arresto automatico.`);
 
         await deleteActiveSession(guildId);
-        await decrementRecordingCount();
-        await disconnect(guildId, { processSession: false });
+        try {
+            await disconnect(guildId, { processSession: false });
+        } finally {
+            await decrementRecordingCount(guildId);
+        }
 
         const commandChannelId = getGuildConfig(guildId, 'cmd_channel_id');
         let channel: TextChannel | undefined;
@@ -56,8 +58,8 @@ export function scheduleSessionHardCap(guildId: string, sessionId: string, clien
             }
         }
 
-        launchSessionProcessing(sessionId, guildId);
-        await waitForCompletionAndSummarize(client, sessionId, channel);
+        if (channel) launchSessionProcessing(sessionId, guildId, channel.id);
+        else launchSessionProcessing(sessionId, guildId);
     }, SESSION_HARD_CAP_MINUTES * 60 * 1000);
 
     hardCapTimers.set(guildId, timer);

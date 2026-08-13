@@ -292,6 +292,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["AiSettingsController_remotePcStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guilds/{guildId}/ai-settings/transcription/wake": {
         parameters: {
             query?: never;
@@ -302,6 +318,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["AiSettingsController_wakeTranscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["AiSettingsController_shutdownRemotePc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/shutdown-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["AiSettingsController_putTranscriptionShutdownToken"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1877,6 +1925,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["AppInfoController_getAppInfo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/privacy": {
         parameters: {
             query?: never;
@@ -1933,6 +1997,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["LandingController_getCookies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["LandingController_getNotice"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2062,6 +2142,8 @@ export interface components {
             model: Record<string, never> | null;
             /** @description Whether an auth token is stored for it. Never the token. */
             auth_token_configured: boolean;
+            /** @description Whether a shutdown token is stored. Separate from the auth token on purpose: switching a computer off is not the same permission as reading from it. */
+            shutdown_token_configured: boolean;
             /** @description Ask the machine to shut down when a session ends. Opt-in: it is someone's home PC. */
             shutdown_enabled: boolean;
             wake: components["schemas"]["WakeSettingsDto"];
@@ -2122,6 +2204,42 @@ export interface components {
             /** @enum {string} */
             status: "OK" | "UNREACHABLE" | "UNAUTHORIZED" | "NOT_CONFIGURED";
             detail: Record<string, never> | null;
+        };
+        RemotePcHealthDto: {
+            gpu: Record<string, never> | null;
+            accelerator: Record<string, never> | null;
+            /** @description The Whisper model currently loaded on it. */
+            model: Record<string, never> | null;
+            cpu: Record<string, never> | null;
+            cpu_cores: Record<string, never> | null;
+            total_memory: Record<string, never> | null;
+            free_memory: Record<string, never> | null;
+            uptime_seconds: Record<string, never> | null;
+        };
+        RemotePcStatusDto: {
+            /**
+             * @description UNREACHABLE is the normal state of a home computer, not a fault.
+             * @enum {string}
+             */
+            status: "OK" | "UNREACHABLE" | "UNAUTHORIZED" | "NOT_CONFIGURED";
+            detail: Record<string, never> | null;
+            /** @description When the server asked, in epoch milliseconds. */
+            checked_at: number;
+            health: components["schemas"]["RemotePcHealthDto"] | null;
+        };
+        WakeAcceptedDto: {
+            /** @enum {string} */
+            status: "WAKING" | "NOT_CONFIGURED" | "FAILED";
+            detail: Record<string, never> | null;
+            /** @description How long the machine is allowed to take, in milliseconds. */
+            boot_timeout_ms: number;
+        };
+        ShutdownResultDto: {
+            /** @enum {string} */
+            status: "SCHEDULED" | "DISABLED" | "NO_TOKEN" | "BUSY" | "NOT_CONFIGURED" | "UNREACHABLE" | "UNAUTHORIZED";
+            detail: Record<string, never> | null;
+            /** @description Seconds before it switches off. Null when it will not. */
+            delay_seconds: Record<string, never> | null;
         };
         WakeFieldDto: {
             name: string;
@@ -3409,6 +3527,24 @@ export interface components {
              */
             createdAt: number;
         };
+        DonationChannelDto: {
+            /**
+             * @description Which platform, so the button can show that platform’s own mark.
+             * @enum {string}
+             */
+            platform: "github" | "kofi";
+            /** @description Where it points. Channels with no URL are not returned at all. */
+            url: string;
+            /** @description False when the URL exists but does not accept money yet: the UI names the channel without making it clickable. */
+            active: boolean;
+        };
+        AppInfoDto: {
+            /** @description Every channel this instance offers, in display order. Empty when it asks for nothing — a fork that wants no donations configures no URL and the bar shows none. */
+            donations: components["schemas"]["DonationChannelDto"][];
+            repo_url: string;
+            /** @example AGPL-3.0 */
+            license: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -3906,7 +4042,7 @@ export interface operations {
             };
         };
     };
-    AiSettingsController_wakeTranscription: {
+    AiSettingsController_remotePcStatus: {
         parameters: {
             query?: never;
             header?: never;
@@ -3922,8 +4058,74 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TranscriptionProbeDto"];
+                    "application/json": components["schemas"]["RemotePcStatusDto"];
                 };
+            };
+        };
+    };
+    AiSettingsController_wakeTranscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guildId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WakeAcceptedDto"];
+                };
+            };
+        };
+    };
+    AiSettingsController_shutdownRemotePc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guildId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShutdownResultDto"];
+                };
+            };
+        };
+    };
+    AiSettingsController_putTranscriptionShutdownToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guildId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutWakeSecretDto"];
+            };
+        };
+        responses: {
+            /** @description Token stored, encrypted at rest. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -6794,6 +6996,25 @@ export interface operations {
             };
         };
     };
+    AppInfoController_getAppInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInfoDto"];
+                };
+            };
+        };
+    };
     LandingController_getPrivacy: {
         parameters: {
             query?: never;
@@ -6846,6 +7067,23 @@ export interface operations {
         };
     };
     LandingController_getCookies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    LandingController_getNotice: {
         parameters: {
             query?: never;
             header?: never;

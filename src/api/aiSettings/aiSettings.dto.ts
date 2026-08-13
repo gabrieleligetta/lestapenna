@@ -284,6 +284,12 @@ export class RemoteTranscriptionDto {
     @ApiProperty({ description: 'Whether an auth token is stored for it. Never the token.' })
     auth_token_configured!: boolean;
 
+    @ApiProperty({
+        description: 'Whether a shutdown token is stored. Separate from the auth token on '
+            + 'purpose: switching a computer off is not the same permission as reading from it.',
+    })
+    shutdown_token_configured!: boolean;
+
     @ApiProperty({ description: 'Ask the machine to shut down when a session ends. Opt-in: it is someone\'s home PC.' })
     shutdown_enabled!: boolean;
 
@@ -416,6 +422,72 @@ export class TranscriptionProbeDto {
     status!: 'OK' | 'UNREACHABLE' | 'UNAUTHORIZED' | 'NOT_CONFIGURED';
 
     @ApiProperty({ nullable: true }) detail!: string | null;
+}
+
+/**
+ * What the table's machine says about itself.
+ *
+ * The probe already called `/health` and threw the body away. That body carries
+ * the GPU, the loaded model and the uptime — the difference between «on» and
+ * «on, with the right model, since this afternoon», which is what somebody
+ * checking before a session actually wants to know.
+ */
+export class RemotePcHealthDto {
+    @ApiProperty({ nullable: true }) gpu!: boolean | null;
+    @ApiProperty({ nullable: true }) accelerator!: string | null;
+    @ApiProperty({ nullable: true, description: 'The Whisper model currently loaded on it.' })
+    model!: string | null;
+    @ApiProperty({ nullable: true }) cpu!: string | null;
+    @ApiProperty({ nullable: true }) cpu_cores!: number | null;
+    @ApiProperty({ nullable: true }) total_memory!: string | null;
+    @ApiProperty({ nullable: true }) free_memory!: string | null;
+    @ApiProperty({ nullable: true }) uptime_seconds!: number | null;
+}
+
+export class RemotePcStatusDto {
+    @ApiProperty({
+        enum: ['OK', 'UNREACHABLE', 'UNAUTHORIZED', 'NOT_CONFIGURED'],
+        description: 'UNREACHABLE is the normal state of a home computer, not a fault.',
+    })
+    status!: 'OK' | 'UNREACHABLE' | 'UNAUTHORIZED' | 'NOT_CONFIGURED';
+
+    @ApiProperty({ nullable: true }) detail!: string | null;
+
+    @ApiProperty({ description: 'When the server asked, in epoch milliseconds.' })
+    checked_at!: number;
+
+    @ApiProperty({ type: RemotePcHealthDto, nullable: true })
+    health!: RemotePcHealthDto | null;
+}
+
+/** The answer to «switch it on»: the request left, the machine has not arrived yet. */
+export class WakeAcceptedDto {
+    @ApiProperty({ enum: ['WAKING', 'NOT_CONFIGURED', 'FAILED'] })
+    status!: 'WAKING' | 'NOT_CONFIGURED' | 'FAILED';
+
+    @ApiProperty({ nullable: true }) detail!: string | null;
+
+    @ApiProperty({ description: 'How long the machine is allowed to take, in milliseconds.' })
+    boot_timeout_ms!: number;
+}
+
+/**
+ * The answer to «switch it off».
+ *
+ * The refusals are not errors: each names a thing to configure, or a reason to
+ * wait. Shutting a machine down while it is still transcribing would throw the
+ * session away, so that one is a refusal too.
+ */
+export class ShutdownResultDto {
+    @ApiProperty({
+        enum: ['SCHEDULED', 'DISABLED', 'NO_TOKEN', 'BUSY', 'NOT_CONFIGURED', 'UNREACHABLE', 'UNAUTHORIZED'],
+    })
+    status!: 'SCHEDULED' | 'DISABLED' | 'NO_TOKEN' | 'BUSY' | 'NOT_CONFIGURED' | 'UNREACHABLE' | 'UNAUTHORIZED';
+
+    @ApiProperty({ nullable: true }) detail!: string | null;
+
+    @ApiProperty({ nullable: true, description: 'Seconds before it switches off. Null when it will not.' })
+    delay_seconds!: number | null;
 }
 
 export class PhaseOverrideDto {

@@ -21,7 +21,10 @@ import type {
     CampaignTranscription,
     SessionCostEstimate,
     TranscriptionPatch,
+    RemotePcStatus,
+    ShutdownResult,
     TranscriptionProbe,
+    WakeAccepted,
     TranscriptionSettings,
     WakeMethod,
     TierChoice,
@@ -1041,11 +1044,35 @@ export function useTranscriptionActions(guildId: string) {
         error,
         save: (patch: TranscriptionPatch) => run<TranscriptionSettings>(base, 'PUT', patch),
         test: () => run<TranscriptionProbe>(`${base}/test`, 'POST'),
-        wake: () => run<TranscriptionProbe>(`${base}/wake`, 'POST'),
+        // Returns as soon as the magic packet has left: a boot takes minutes,
+        // and the page follows the machine through `useRemotePcStatus`.
+        wake: () => run<WakeAccepted>(`${base}/wake`, 'POST'),
+        shutdown: () => run<ShutdownResult>(`${base}/shutdown`, 'POST'),
         saveWakeSecret: (method: string, field: string, value: string) =>
             run<void>(`/guilds/${guildId}/ai-settings/wake-secrets/${method}/${field}`, 'PUT', { value }),
         saveAuthToken: (value: string) => run<void>(`${base}/auth-token`, 'PUT', { value }),
+        saveShutdownToken: (value: string) => run<void>(`${base}/shutdown-token`, 'PUT', { value }),
     };
+}
+
+/**
+ * The state of the table's machine.
+ *
+ * `refetchInterval` is driven by the caller and is off at rest: a home computer
+ * on somebody's tailnet should not be polled all evening because a settings
+ * page happens to be open in a tab. While it boots, it is exactly what draws
+ * the progress.
+ */
+export function useRemotePcStatus(guildId: string, enabled: boolean, refetchInterval: number | false = false) {
+    return useQuery({
+        queryKey: ['guilds', guildId, 'ai-settings', 'transcription', 'status'],
+        queryFn: () => apiFetch<RemotePcStatus>(`/guilds/${guildId}/ai-settings/transcription/status`),
+        enabled: !!guildId && enabled,
+        refetchInterval,
+        // A machine that does not answer is an answer, not a failure to retry.
+        retry: false,
+        staleTime: 0,
+    });
 }
 
 /** What this campaign will actually use, and the overrides set on it. */

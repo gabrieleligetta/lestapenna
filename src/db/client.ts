@@ -14,6 +14,10 @@ if (!fs.existsSync(dataDir)) {
 
 export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
+// The gateway and the processing worker share this local database. WAL permits
+// readers during writes; busy_timeout turns a short write collision into a
+// bounded wait instead of a user-visible SQLITE_BUSY failure.
+db.pragma(`busy_timeout = ${Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '10000', 10) || 10000}`);
 // better-sqlite3 does NOT enable foreign keys by default: without this pragma every
 // ON DELETE CASCADE/SET NULL in the schema is ignored, and deleting a campaign
 // would leave orphans in npc_dossier, knowledge_fragments, history, etc.

@@ -5,14 +5,17 @@ import { config } from '../config';
 function createDisabledQueue(name: string): any {
     return {
         name,
+        async add(_jobName: string, data: unknown) { return { id: `${name}-disabled`, data }; },
         async pause() { /* disabled in local harness */ },
         async resume() { /* disabled in local harness */ },
-        async getJobs() { return []; }
+        async getJobs() { return []; },
+        async getJob() { return undefined; },
+        async getJobCounts() { return { waiting: 0, active: 0, delayed: 0, failed: 0, completed: 0 }; },
     };
 }
 
 // Configurazione Redis
-const connection = {
+export const queueConnection = {
     host: config.redis.host,
     port: config.redis.port
 };
@@ -20,12 +23,26 @@ const connection = {
 // Coda Audio (Trascrizione)
 export const audioQueue = process.env.DISABLE_REDIS === 'true'
     ? createDisabledQueue('audio-processing')
-    : new Queue('audio-processing', { connection });
+    : new Queue('audio-processing', { connection: queueConnection });
 
 // Coda Correzione (AI Post-Processing)
 export const correctionQueue = process.env.DISABLE_REDIS === 'true'
     ? createDisabledQueue('correction-processing')
-    : new Queue('correction-processing', { connection });
+    : new Queue('correction-processing', { connection: queueConnection });
+
+/** One durable orchestration job per stopped recording session. */
+export const sessionProcessingQueue = process.env.DISABLE_REDIS === 'true'
+    ? createDisabledQueue('session-processing')
+    : new Queue('session-processing', { connection: queueConnection });
+
+/**
+ * Final AI/RAG/Discord work runs beside the gateway because it needs the live
+ * Discord client. Keeping it on its own queue means a command handler never
+ * polls for hours and a gateway restart does not lose the hand-off.
+ */
+export const sessionFinalizationQueue = process.env.DISABLE_REDIS === 'true'
+    ? createDisabledQueue('session-finalization')
+    : new Queue('session-finalization', { connection: queueConnection });
 
 /**
  * Removes ALL the jobs (active ones included) belonging to a given session from both queues.
@@ -33,7 +50,7 @@ export const correctionQueue = process.env.DISABLE_REDIS === 'true'
 export async function removeSessionJobs(sessionId: string) {
     let removedCount = 0;
 
-    const queues = [audioQueue, correctionQueue];
+    const queues = [audioQueue, correctionQueue, sessionProcessingQueue, sessionFinalizationQueue];
 
     for (const queue of queues) {
         // Fetch every job in any state

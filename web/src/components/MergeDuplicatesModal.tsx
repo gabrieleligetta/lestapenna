@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Modal } from './Modal';
+import { Stepper } from './Stepper';
 import { Loading, Empty } from './StateViews';
 import { useMergeMembers, useMergePreview, useMergeDuplicates } from '../api/hooks';
 import { useT } from '../i18n';
@@ -125,24 +126,11 @@ export function MergeDuplicatesModal({ open, onClose, campaignId, guildId, entit
                         <span className="merge-modal__eyebrow">{t.merge.button}</span>
                         <h2>{title}</h2>
                     </div>
-                    <ol className="merge-steps" aria-label={t.merge.title}>
-                        {(['review', 'confirm', 'success'] as const).map((step, index) => (
-                            <li
-                                key={step}
-                                className={[
-                                    'merge-steps__item',
-                                    mode === step ? 'is-active' : '',
-                                    (mode === 'confirm' && step === 'review') || mode === 'success' && step !== 'success'
-                                        ? 'is-complete'
-                                        : '',
-                                ].filter(Boolean).join(' ')}
-                                aria-current={mode === step ? 'step' : undefined}
-                            >
-                                <span>{index + 1}</span>
-                                {step === 'review' ? t.merge.review : step === 'confirm' ? t.merge.confirm : t.merge.success}
-                            </li>
-                        ))}
-                    </ol>
+                    <Stepper
+                        steps={[t.merge.review, t.merge.confirm, t.merge.success]}
+                        current={['review', 'confirm', 'success'].indexOf(mode)}
+                        label={t.merge.title}
+                    />
                 </header>
                 {mode === 'review' && (
                     <ReviewStep

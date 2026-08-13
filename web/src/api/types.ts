@@ -11,13 +11,19 @@ export interface Me {
  * A fork changes its own links from the environment, so these cannot be baked
  * into the bundle at build time.
  */
+export type DonationPlatform = 'github' | 'kofi';
+
+export interface DonationChannel {
+    /** Which platform, so the button can carry that platform's own mark. */
+    platform: DonationPlatform;
+    url: string;
+    /** False when the URL exists but does not accept money yet. */
+    active: boolean;
+}
+
 export interface AppInfo {
-    donation: {
-        /** Empty when this instance asks for nothing: the item disappears. */
-        url: string;
-        /** False when the URL exists but does not accept money yet. */
-        active: boolean;
-    };
+    /** Every channel this instance offers. Empty when it asks for nothing. */
+    donations: DonationChannel[];
     repo_url: string;
     license: string;
 }
@@ -1128,6 +1134,8 @@ export interface TranscriptionSettings {
         /** Chosen among those installed on that PC. Null leaves the choice to the PC. */
         model: string | null;
         auth_token_configured: boolean;
+        /** Separate from the auth token: switching a computer off is not reading from it. */
+        shutdown_token_configured: boolean;
         shutdown_enabled: boolean;
         wake: WakeSettings;
     };
@@ -1151,6 +1159,52 @@ export interface TranscriptionPatch {
 export interface TranscriptionProbe {
     status: 'OK' | 'UNREACHABLE' | 'UNAUTHORIZED' | 'NOT_CONFIGURED';
     detail: string | null;
+}
+
+/**
+ * What the table's machine says about itself.
+ *
+ * Every field is optional on purpose: the table owns that computer and may be
+ * running an older build of the Whisper server. A missing figure is `null` —
+ * «we do not know» — never a made-up default.
+ */
+export interface RemotePcHealth {
+    gpu: boolean | null;
+    accelerator: string | null;
+    /** The Whisper model currently loaded on it. */
+    model: string | null;
+    cpu: string | null;
+    cpu_cores: number | null;
+    total_memory: string | null;
+    free_memory: string | null;
+    uptime_seconds: number | null;
+}
+
+export interface RemotePcStatus {
+    /** UNREACHABLE is a home computer's normal state, not a fault. */
+    status: 'OK' | 'UNREACHABLE' | 'UNAUTHORIZED' | 'NOT_CONFIGURED';
+    detail: string | null;
+    checked_at: number;
+    health: RemotePcHealth | null;
+}
+
+/** The answer to «switch it on»: the request left, the machine has not arrived. */
+export interface WakeAccepted {
+    status: 'WAKING' | 'NOT_CONFIGURED' | 'FAILED';
+    detail: string | null;
+    boot_timeout_ms: number;
+}
+
+/**
+ * The answer to «switch it off».
+ *
+ * The refusals are statuses, not errors: each names a thing to configure or a
+ * reason to wait, and they are five different remedies.
+ */
+export interface ShutdownResult {
+    status: 'SCHEDULED' | 'DISABLED' | 'NO_TOKEN' | 'BUSY' | 'NOT_CONFIGURED' | 'UNREACHABLE' | 'UNAUTHORIZED';
+    detail: string | null;
+    delay_seconds: number | null;
 }
 
 export interface CampaignAiSettings {

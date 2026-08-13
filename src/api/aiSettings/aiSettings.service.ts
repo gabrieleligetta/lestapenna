@@ -33,7 +33,8 @@ import {
     wakeSecretKey,
     type TranscriptionSettings,
 } from '../../bard/ai/transcription';
-import { listWakeMethods, wakeAndWait, wakeMethod } from '../../services/wake';
+import { listWakeMethods, sendWakeRequest, wakeMethod } from '../../services/wake';
+import { hasPendingTranscriptionWork } from '../../services/remoteWhisperPower';
 import {
     ALL_AI_PHASES,
     ON_DEMAND_AI_PHASES,
@@ -69,6 +70,10 @@ import {
     type SessionCostEstimateDto,
     type ReindexResultDto,
     type TranscriptionProbeDto,
+    type RemotePcHealthDto,
+    type RemotePcStatusDto,
+    type ShutdownResultDto,
+    type WakeAcceptedDto,
     type TranscriptionSettingsDto,
     type UpdateTranscriptionDto,
     type UpdateGuildAiSettingsDto,
@@ -106,6 +111,14 @@ function toModelOptionDto(option: ModelOption): ModelOptionDto {
 /** The cheapest of the known transcription models. */
 const DEFAULT_CLOUD_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 
+/**
+ * How long a machine is given to come up, when the table has not configured one.
+ *
+ * Only reached by the refusal branch of «switch it on», which still has to tell
+ * the page how long it would have waited. Same figure as `resolveTranscription`.
+ */
+const DEFAULT_BOOT_TIMEOUT_MS = 180_000;
+
 @Injectable()
 export class AiSettingsService {
     read(guildId: string, canManage = false): GuildAiSettingsDto {
@@ -141,7 +154,7 @@ export class AiSettingsService {
             if (!(tier in patch)) continue;
             const choice = patch[tier];
             if (choice === null) delete tiers[tier];
-            else if (choice !== undefined) tiers[tier] = this.validateChoice(choice, tier);
+            else if (choice !== undefined) tiers[tier] = this.validateChoice(guildId, choice, tier);
         }
 
         // The image model is a phase override, not a group: there is one image
@@ -149,7 +162,7 @@ export class AiSettingsService {
         const phases = { ...current.phases };
         if ('image' in patch) {
             if (patch.image === null) delete phases.image;
-            else if (patch.image !== undefined) phases.image = this.validateChoice(patch.image, null);
+            else if (patch.image !== undefined) phases.image = this.validateChoice(guildId, patch.image, null);
         }
 
         tenantAiSettingsRepository.put('guild', guildId, { ...current, tiers, phases }, actorUserId);
@@ -271,6 +284,9 @@ export class AiSettingsService {
                 model: stored.remote?.model ?? null,
                 auth_token_configured: tenantSecretsRepository.getMeta({
                     scope: 'guild', scopeId: guildId, secretKey: 'remoteWhisper.authToken',
+                }) !== undefined,
+                shutdown_token_configured: tenantSecretsRepository.getMeta({
+                    scope: 'guild', scopeId: guildId, secretKey: 'remoteWhisper.shutdownToken',
                 }) !== undefined,
                 shutdown_enabled: stored.power?.shutdownEnabled === true,
                 wake: {
@@ -406,17 +422,36 @@ export class AiSettingsService {
      * `PUT`, which instead returns the state.
      */
     putTranscriptionAuthToken(guildId: string, token: string, actorUserId: string): void {
+        this.putRemoteWhisperSecret(guildId, 'remoteWhisper.authToken', token, actorUserId);
+    }
+
+    /**
+     * The token that lets this table switch its own machine off.
+     *
+     * A separate secret from the auth token, matching the machine's own
+     * separation (`REMOTE_SHUTDOWN_TOKEN` next to the auth one): reading
+     * transcripts from a computer and turning it off are not the same
+     * permission. It was read from the vault since the automatic post-session
+     * shutdown existed, but nothing could ever write it — which is why remote
+     * shutdown was, in practice, unconfigurable from the web.
+     */
+    putTranscriptionShutdownToken(guildId: string, token: string, actorUserId: string): void {
+        this.putRemoteWhisperSecret(guildId, 'remoteWhisper.shutdownToken', token, actorUserId);
+    }
+
+    private putRemoteWhisperSecret(
+        guildId: string,
+        secretKey: string,
+        token: string,
+        actorUserId: string,
+    ): void {
         if (!secretVault.isEnabled()) {
             throw new ServiceUnavailableException('The secret vault is not configured on this instance');
         }
         const trimmed = token?.trim();
         if (!trimmed) throw new BadRequestException('The token must not be empty');
 
-        tenantSecretsRepository.put(
-            { scope: 'guild', scopeId: guildId, secretKey: 'remoteWhisper.authToken' },
-            trimmed,
-            actorUserId,
-        );
+        tenantSecretsRepository.put({ scope: 'guild', scopeId: guildId, secretKey }, trimmed, actorUserId);
         invalidateTenant(guildId);
     }
 
@@ -428,26 +463,93 @@ export class AiSettingsService {
      * "unreachable" even to someone whose setup is perfectly fine.
      */
     async testTranscription(guildId: string): Promise<TranscriptionProbeDto> {
+        const { health: _health, checked_at: _checkedAt, ...probe } = await this.remotePcStatus(guildId);
+        return probe;
+    }
+
+    /**
+     * The state of the table's machine, with what it says about itself.
+     *
+     * Same probe as `testTranscription`, except it keeps the body. `/health` on
+     * the machine reports the GPU, the Whisper model currently loaded and the
+     * uptime; discarding all of it left the page able to say «on» and nothing
+     * else, which is not what someone checking before a session wants to know.
+     *
+     * A `GET`, because it changes nothing and the page asks it on open and on a
+     * timer while the machine boots.
+     */
+    async remotePcStatus(guildId: string): Promise<RemotePcStatusDto> {
+        const checkedAt = Date.now();
         const resolved = resolveTranscription({ guildId });
+
         if (resolved.engine !== 'remote') {
             return {
                 status: 'NOT_CONFIGURED',
                 detail: 'Nessun PC configurato per questo tavolo.',
+                checked_at: checkedAt,
+                health: null,
             };
         }
 
         try {
-            await axios.get(`${resolved.remote.url}/health`, {
+            const response = await axios.get(`${resolved.remote.url}/health`, {
                 timeout: resolved.remote.connectTimeoutMs,
                 headers: resolved.remote.authHeaders,
             });
-            return { status: 'OK', detail: null };
+            return {
+                status: 'OK',
+                detail: null,
+                checked_at: checkedAt,
+                health: this.parseRemoteHealth(response.data),
+            };
         } catch (error: any) {
             if (error?.response?.status === 401 || error?.response?.status === 403) {
-                return { status: 'UNAUTHORIZED', detail: 'Il PC ha rifiutato il token.' };
+                return {
+                    status: 'UNAUTHORIZED',
+                    detail: 'Il PC ha rifiutato il token.',
+                    checked_at: checkedAt,
+                    health: null,
+                };
             }
-            return { status: 'UNREACHABLE', detail: redactKeyLike(String(error?.message ?? '')).slice(0, 300) };
+            // Being switched off is a home computer's normal state, not a fault.
+            return {
+                status: 'UNREACHABLE',
+                detail: redactKeyLike(String(error?.message ?? '')).slice(0, 300),
+                checked_at: checkedAt,
+                health: null,
+            };
         }
+    }
+
+    /**
+     * The machine's own `/health` body, read defensively.
+     *
+     * Every field is optional: the table controls that machine and may be
+     * running an older build of `lesta-penna-ai-server`. A missing field is
+     * `null` — «we do not know» — never a made-up default.
+     */
+    private parseRemoteHealth(body: any): RemotePcHealthDto | null {
+        if (!body || typeof body !== 'object') return null;
+
+        const asString = (value: unknown) => (typeof value === 'string' ? value : null);
+        const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+        // `uptime` arrives as "3600s" from the machine, not as a number.
+        const seconds = (value: unknown) => {
+            if (typeof value === 'number' && Number.isFinite(value)) return value;
+            const match = typeof value === 'string' ? value.match(/^(\d+)\s*s$/) : null;
+            return match ? Number(match[1]) : null;
+        };
+
+        return {
+            gpu: typeof body.whisper?.gpu === 'boolean' ? body.whisper.gpu : null,
+            accelerator: asString(body.whisper?.accelerator),
+            model: asString(body.whisper?.model),
+            cpu: asString(body.hardware?.cpu),
+            cpu_cores: asNumber(body.hardware?.cpuCores),
+            total_memory: asString(body.hardware?.totalMemory),
+            free_memory: asString(body.hardware?.freeMemory),
+            uptime_seconds: seconds(body.process?.uptime),
+        };
     }
 
     /**
@@ -498,26 +600,94 @@ export class AiSettingsService {
      * a boot legitimately takes minutes, and two buttons tell the story of
      * something that happens in two stages better.
      */
-    async wakeTranscription(guildId: string): Promise<TranscriptionProbeDto> {
+    async wakeTranscription(guildId: string): Promise<WakeAcceptedDto> {
         const resolved = resolveTranscription({ guildId });
+
         if (resolved.engine !== 'remote' || !resolved.remote.wake.macAddress) {
-            return { status: 'NOT_CONFIGURED', detail: 'Nessun MAC configurato: non c\'è nulla da svegliare.' };
+            return {
+                status: 'NOT_CONFIGURED',
+                detail: 'Nessun MAC configurato: non c\'è nulla da svegliare.',
+                boot_timeout_ms: DEFAULT_BOOT_TIMEOUT_MS,
+            };
         }
 
-        const result = await wakeAndWait({
+        const bootTimeoutMs = resolved.remote.wake.bootTimeoutMs;
+
+        // Sends and returns, instead of holding the request open for the three
+        // minutes a boot can take: a request that long dies to a proxy timeout
+        // and leaves the page unable to say whether anything happened at all.
+        // The caller polls the status endpoint, which is also what draws the
+        // progress. The worker keeps using `wakeAndWait`, because it does have
+        // to know the answer before deciding where to transcribe.
+        const sent = await sendWakeRequest({
             macAddress: resolved.remote.wake.macAddress,
             method: resolved.remote.wake.method,
             options: resolved.remote.wake.options,
             secrets: resolved.remote.wake.secrets,
-            healthUrl: `${resolved.remote.url}/health`,
-            healthHeaders: resolved.remote.authHeaders,
-            bootTimeoutMs: resolved.remote.wake.bootTimeoutMs,
-            pollIntervalMs: resolved.remote.wake.pollIntervalMs,
         });
 
-        return result.success
-            ? { status: 'OK', detail: null }
-            : { status: 'UNREACHABLE', detail: 'Il PC non ha risposto entro il tempo di avvio.' };
+        return sent.sent
+            ? { status: 'WAKING', detail: null, boot_timeout_ms: bootTimeoutMs }
+            : { status: 'FAILED', detail: redactKeyLike(sent.reason).slice(0, 300), boot_timeout_ms: bootTimeoutMs };
+    }
+
+    /**
+     * Switches the table's machine off, now, because somebody asked.
+     *
+     * The automatic shutdown at the end of a session already existed; this is
+     * the same request with a person behind it, and it needs the same guard:
+     * audio still in the queue means the session would be lost, so it refuses.
+     *
+     * The refusals are statuses, not exceptions. Each of them names something
+     * to configure or a reason to wait, and an HTTP error would flatten five
+     * different remedies into one red box.
+     */
+    async shutdownRemotePc(guildId: string): Promise<ShutdownResultDto> {
+        const resolved = resolveTranscription({ guildId });
+
+        if (resolved.engine !== 'remote' || !resolved.remote.url) {
+            return { status: 'NOT_CONFIGURED', detail: 'Nessun PC configurato per questo tavolo.', delay_seconds: null };
+        }
+        if (!resolved.remote.shutdownEnabled) {
+            return { status: 'DISABLED', detail: null, delay_seconds: null };
+        }
+        if (Object.keys(resolved.remote.shutdownHeaders).length === 0) {
+            return { status: 'NO_TOKEN', detail: null, delay_seconds: null };
+        }
+        if (await hasPendingTranscriptionWork()) {
+            return { status: 'BUSY', detail: null, delay_seconds: null };
+        }
+
+        const delaySeconds = resolved.remote.shutdownDelaySeconds;
+
+        try {
+            await axios.post(
+                `${resolved.remote.url}/shutdown`,
+                { shutdown: true, delaySeconds, reason: 'manual_request' },
+                {
+                    timeout: resolved.remote.connectTimeoutMs,
+                    headers: { 'Content-Type': 'application/json', ...resolved.remote.shutdownHeaders },
+                },
+            );
+            return { status: 'SCHEDULED', detail: null, delay_seconds: delaySeconds };
+        } catch (error: any) {
+            const status = error?.response?.status;
+            if (status === 401 || status === 403) {
+                // 403 is what the machine answers when its own
+                // ENABLE_REMOTE_SHUTDOWN is off: the table said yes here and no
+                // there, and only the machine's side can fix it.
+                return {
+                    status: status === 403 ? 'DISABLED' : 'UNAUTHORIZED',
+                    detail: 'Il PC ha rifiutato la richiesta di spegnimento.',
+                    delay_seconds: null,
+                };
+            }
+            return {
+                status: 'UNREACHABLE',
+                detail: redactKeyLike(String(error?.message ?? '')).slice(0, 300),
+                delay_seconds: null,
+            };
+        }
     }
 
     /**
@@ -569,8 +739,10 @@ export class AiSettingsService {
             if (!CONFIGURABLE_PHASES.includes(override.phase)) {
                 throw new BadRequestException(`Unknown phase: ${override.phase}`);
             }
+            // The key check is the guild's, because the key is: a campaign
+            // override moves which model, never who pays for it.
             phases[override.phase] = this.validateChoice(
-                { provider: override.provider, model: override.model }, 'fast',
+                guildId, { provider: override.provider, model: override.model }, 'fast',
             );
         }
 
@@ -949,10 +1121,33 @@ export class AiSettingsService {
         return model;
     }
 
+    /**
+     * Whether this table can actually reach a provider.
+     *
+     * `ollama` is the table's own hardware and takes no key, so it is always
+     * reachable; everything else needs a credential in the vault. Checked on
+     * write only: a configuration saved before a key was removed must stay
+     * readable, or the settings page would fail to load exactly when someone
+     * comes to fix it.
+     */
+    private hasCredentialFor(guildId: string, provider: AIProvider): boolean {
+        const secretKey = SECRET_KEY_BY_PROVIDER[provider];
+        if (!secretKey) return true;
+        return tenantSecretsRepository.getMeta({ scope: 'guild', scopeId: guildId, secretKey }) !== undefined;
+    }
+
     /** `tier` is null for a choice that is not one of the two groups, like the image model. */
-    private validateChoice(choice: TierChoiceDto, tier: AiTier | null): TierChoiceDto {
+    private validateChoice(guildId: string, choice: TierChoiceDto, tier: AiTier | null): TierChoiceDto {
         if (!AI_PROVIDERS.includes(choice.provider)) {
             throw new BadRequestException(`Unknown provider: ${choice.provider}`);
+        }
+        // Saving a model on a provider with no key produces a table that looks
+        // configured and stops mid-session. The UI already greys those options
+        // out; this is what makes it true rather than merely displayed.
+        if (!this.hasCredentialFor(guildId, choice.provider)) {
+            throw new BadRequestException(
+                `No API key is configured for ${choice.provider}: add the key before choosing its models`,
+            );
         }
         const model = typeof choice.model === 'string' ? choice.model.trim() : '';
         if (!model) {

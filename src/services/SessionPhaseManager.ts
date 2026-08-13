@@ -48,7 +48,7 @@ class SessionPhaseManagerImpl {
             SELECT COUNT(*) AS count
             FROM recordings
             WHERE session_id = ?
-            AND status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING', 'TRANSCRIBED')
+            AND status IN ('PENDING', 'SECURED', 'QUEUED', 'PROCESSING', 'TRANSCRIBED', 'FAILED', 'ERROR')
         `).get(sessionId) as { count: number };
 
         return row.count > 0;
@@ -139,6 +139,14 @@ class SessionPhaseManagerImpl {
      * If crashed after transcription: restart from summarization (transcripts are valid)
      */
     getRecoveryStartPhase(sessionId: string, currentPhase: SessionPhase): 'TRANSCRIBING' | 'SUMMARIZING' | null {
+        // A session may have been marked DONE by an older worker even though a
+        // retryable recording was already ERROR. Treat the recording rows as
+        // the source of truth: a genuinely complete DONE session remains
+        // immutable, while an incomplete one can safely resume from audio.
+        if (currentPhase === 'DONE') {
+            return this.hasIncompleteTranscripts(sessionId) ? 'TRANSCRIBING' : null;
+        }
+
         // ERROR phase: inspect the real state of the transcriptions instead of
         // blindly restarting from TRANSCRIBING (which includes the audio mix).
         // When the transcriptions are complete, jump straight to the summary —
@@ -167,7 +175,7 @@ class SessionPhaseManagerImpl {
         }
 
         // If we crashed after transcription is complete, just redo summary
-        if (POST_TRANSCRIPT_PHASES.includes(currentPhase) && currentPhase !== 'DONE') {
+        if (POST_TRANSCRIPT_PHASES.includes(currentPhase)) {
             return 'SUMMARIZING';
         }
 

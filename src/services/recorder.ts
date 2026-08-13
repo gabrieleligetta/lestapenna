@@ -12,17 +12,15 @@ import * as prism from 'prism-media';
 import * as path from 'path';
 import { Transform, TransformCallback } from 'stream';
 import { spawn, ChildProcess } from 'child_process';
-import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign, getSessionRecordings } from '../db';
-import { audioQueue } from './queue';
+import { addRecording, updateRecordingStatus, getCampaignLocation, getActiveCampaign } from '../db';
 import { uploadToOracle } from './backup';
 import { monitor } from '../monitor';
-import { mixSessionAudio } from './sessionMixer';
 import { clearRecording } from './recordingNotice';
 import { getDiscordClient } from '../discordClient';
 import { appendSegmentDiagnostic } from './audioDiagnostics';
-import { sessionPhaseManager } from './SessionPhaseManager';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { launchSessionProcessing } from './sessionProcessing';
 
 const log = logger('Recorder');
 
@@ -214,6 +212,8 @@ export function pauseRecording(guildId: string) {
         }
     }
     if (closedCount > 0) {
+        const sessionId = guildToSession.get(guildId);
+        if (sessionId) monitor.logActiveFfmpegEncoders(sessionId, 0);
         console.log(`[Recorder] ⏸️ ${closedCount} stream audio chiusi per la pausa (Guild ${guildId}).`);
     }
 }
@@ -504,6 +504,10 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
         .pipe(ffmpeg.stdin!);
 
     activeStreams.set(streamKey, { ffmpeg, decoder, silenceInjector, opusStream, currentPath: filepath, sessionId });
+    monitor.logActiveFfmpegEncoders(
+        sessionId,
+        Array.from(activeStreams.keys()).filter(key => key.startsWith(`${guildId}-`)).length,
+    );
 
     log.info(`Registrazione iniziata per utente ${userId}: ${filename}`, { guildId, sessionId });
 
@@ -598,6 +602,10 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
             if (activeStreams.get(streamKey)?.ffmpeg === ffmpeg) {
                 activeStreams.delete(streamKey);
             }
+            monitor.logActiveFfmpegEncoders(
+                sessionId,
+                Array.from(activeStreams.keys()).filter(key => key.startsWith(`${guildId}-`)).length,
+            );
 
             // 🆕 ALWAYS remove from pending, even on error
             const pending = pendingFileProcessing.get(guildId);
@@ -630,6 +638,10 @@ function createListeningStream(receiver: any, userId: string, sessionId: string,
                 try { ffmpeg.kill('SIGKILL'); } catch {}
                 if (activeStreams.has(streamKey)) {
                     activeStreams.delete(streamKey);
+                    monitor.logActiveFfmpegEncoders(
+                        sessionId,
+                        Array.from(activeStreams.keys()).filter(key => key.startsWith(`${guildId}-`)).length,
+                    );
                 }
             }
         }, STALE_TIMEOUT_MS).unref(); // unref() so Node's process exit is not blocked
@@ -660,13 +672,13 @@ async function onFileClosed(userId: string, filePath: string, fileName: string, 
         const uploaded = await uploadToOracle(filePath, fileName, sessionId);
         if (uploaded) {
             updateRecordingStatus(fileName, 'SECURED');
-            monitor.logFileUpload(fileSizeMB, fileSizeMB, true); // Assume 1:1 compression when the original size is unknown
+            monitor.logFileUpload(fileSizeMB, fileSizeMB, true, sessionId); // Assume 1:1 compression when the original size is unknown
         } else {
-            monitor.logFileUpload(fileSizeMB, 0, false);
+            monitor.logFileUpload(fileSizeMB, 0, false, sessionId);
         }
     } catch (err) {
         log.error(`Fallimento upload per ${fileName}`, { guildId }, err as Error);
-        monitor.logFileUpload(fileSizeMB, 0, false);
+        monitor.logFileUpload(fileSizeMB, 0, false, sessionId);
     }
 
     // 3. DO NOT ENQUEUE TRANSCRIPTION NOW.
@@ -781,6 +793,7 @@ export async function disconnect(guildId: string, options: DisconnectOptions = {
     }
 
     const sessionId = guildToSession.get(guildId);
+    if (sessionId) monitor.logRecordingEnded(sessionId);
     guildToSession.delete(guildId);
     pendingFileProcessing.delete(guildId);
     fileProcessingResolvers.delete(guildId);
@@ -841,51 +854,8 @@ export async function disconnect(guildId: string, options: DisconnectOptions = {
     // disconnect() returns right after E.D.; waitForCompletionAndSummarize() can start
     // immediately because the SECURED files are already considered "pending" by the poller.
     if (sessionId && options.processSession !== false) {
-        void enqueueSessionProcessing(sessionId, guildId);
+        launchSessionProcessing(sessionId, guildId);
     }
 
     return true;
-}
-
-/**
- * Starts the costly pipeline. Safe to call again: queue job ids and recording
- * statuses make the handoff idempotent.
- *
- * (It used to wait on a billing authorization. There is no billing any more —
- * under BYOK the cost lands on the table's own provider account.)
- */
-export async function enqueueSessionProcessing(sessionId: string, guildId: string): Promise<void> {
-    log.info('Avvio Mix Sessione e Fase Whisper (background)', { guildId, sessionId });
-    try {
-        await mixSessionAudio(sessionId, true);
-
-        const recordings = getSessionRecordings(sessionId);
-        log.info(`Accodamento ${recordings.length} file per trascrizione`, { guildId, sessionId });
-
-        for (const rec of recordings) {
-            if (rec.status === 'PENDING' || rec.status === 'SECURED') {
-                await audioQueue.add('transcribe-job', {
-                    sessionId: rec.session_id,
-                    fileName: rec.filename,
-                    filePath: rec.filepath,
-                    userId: rec.user_id
-                }, {
-                    jobId: rec.filename,
-                    attempts: 5,
-                    backoff: { type: 'exponential', delay: 2000 },
-                    removeOnComplete: true,
-                    removeOnFail: false
-                });
-            }
-        }
-        log.info('Fase Whisper avviata', { guildId, sessionId });
-    } catch (e: any) {
-        log.error('Errore nella fase finale Mix/Whisper', { guildId }, e as Error);
-        try {
-            sessionPhaseManager.markFailed(sessionId, `Mix/Whisper: ${e?.message || e}`);
-        } catch (markErr) {
-            console.error(`[Recorder] ❌ markFailed fallito per ${sessionId}:`, markErr);
-        }
-        throw e;
-    }
 }

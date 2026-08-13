@@ -55,6 +55,8 @@ export interface Messages {
         label: string;
         tagline: string;
         donate: string;
+        /** Accessible name of a donation button, naming the platform it opens. */
+        donateOn: (platform: string) => string;
         /** Title of the donation item while the channel is not open yet. */
         donateInactive: string;
         source: string;
@@ -890,6 +892,25 @@ export interface Messages {
         tierFast: string;
         tierFastHint: string;
         provider: string;
+        /**
+         * A provider the table has no key for.
+         *
+         * It stays in the select, disabled: hiding it means nobody ever learns
+         * it was an option.
+         */
+        providerNeedsKey: (provider: string) => string;
+        /** Link next to a blocked select, straight to that provider's key field. */
+        providerAddKey: (provider: string) => string;
+        /** A stored key that last answered with a refusal or an exhausted quota. */
+        providerKeyTroubled: string;
+        /**
+         * The two groups sitting on different providers.
+         *
+         * Legitimate, and not a cost trap in itself — the phases of one group
+         * share nothing with the other's, so no prompt cache is lost by
+         * splitting them. What it does mean is two accounts to keep in credit.
+         */
+        mixedProviders: (quality: string, fast: string) => string;
         model: string;
         modelCustom: string;
         recommended: string;
@@ -1021,6 +1042,112 @@ export interface Messages {
         freeOnOwnMachine: string;
         save: string;
         saved: string;
+    };
+    /**
+     * The guided first configuration, and the checklist that summarises it.
+     *
+     * A table cannot record without a key and a transcription engine, and until
+     * now the settings page said so in one red line that pointed nowhere. The
+     * four gaps are not interchangeable — each has its own remedy — so each gets
+     * its own row, and the wizard walks them in the order they depend on.
+     */
+    setup: {
+        nav: string;
+        title: string;
+        intro: string;
+        /** Shown to someone who can read the settings but not change them. */
+        readOnly: string;
+        exit: string;
+
+        checklistTitle: string;
+        checklistReady: string;
+        checklistOutstanding: (count: string) => string;
+        resume: string;
+
+        checkKeys: string;
+        checkKeysDone: string;
+        checkKeysMissing: (providers: string) => string;
+        checkModels: string;
+        checkModelsDone: string;
+        /** Leaving the instance default is a choice, not a gap. */
+        checkModelsDefault: string;
+        checkTranscription: string;
+        checkTranscriptionDone: string;
+        checkTranscriptionNoKey: string;
+        checkTranscriptionMissing: string;
+        checkCampaign: string;
+        checkCampaignDone: string;
+        checkCampaignMissing: string;
+
+        stepKey: string;
+        stepModels: string;
+        stepTranscription: string;
+        stepCampaign: string;
+        stepReady: string;
+        back: string;
+        next: string;
+        finish: string;
+
+        keyTitle: string;
+        keyIntro: string;
+        keyProviderOllama: string;
+        keyProviderOllamaHint: string;
+        keySaveAndVerify: string;
+        keyVerified: string;
+        keyStored: (hint: string) => string;
+
+        modelsTitle: string;
+        modelsIntro: string;
+        transcriptionTitle: string;
+        transcriptionIntro: string;
+
+        campaignTitle: string;
+        campaignIntro: string;
+        campaignAlready: (name: string) => string;
+
+        readyTitle: string;
+        readyIntro: string;
+        /** The non-AI prerequisites `$listen` still checks before recording. */
+        readyWorld: string;
+        readyWorldHint: string;
+        readyNickname: string;
+        readyNicknameHint: string;
+        readyGoToCampaign: string;
+    };
+
+    /**
+     * The table's own transcription machine.
+     *
+     * Being switched off is its normal state, not a fault: it is somebody's home
+     * computer. Everything here says so — the status is a fact with a timestamp,
+     * waking it is its own button, and shutting it down asks first.
+     */
+    remotePc: {
+        title: string;
+        intro: string;
+        statusOnline: string;
+        statusOffline: string;
+        statusBooting: string;
+        statusUnauthorized: string;
+        statusNotConfigured: string;
+        lastChecked: (time: string) => string;
+        neverChecked: string;
+        recheck: string;
+        wake: string;
+        shutdown: string;
+        hardware: (gpu: string, model: string) => string;
+        uptime: (duration: string) => string;
+        booting: (elapsed: string, total: string) => string;
+        bootTimedOut: string;
+        shutdownQuestion: string;
+        shutdownConsequence: string;
+        shutdownScheduled: (seconds: string) => string;
+        /** Refusals that are not errors: they say what to configure. */
+        shutdownNoToken: string;
+        shutdownDisabled: string;
+        shutdownBusy: string;
+        shutdownToken: string;
+        shutdownTokenHint: string;
     };
     summaryFlow: {
         title: string;

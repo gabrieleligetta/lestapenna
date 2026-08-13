@@ -6,7 +6,6 @@ import { TextChannel } from 'discord.js';
 import { getSessionRecordings, getSessionCampaignId } from '../../db';
 import { prepareCleanText, generateSummary, ToneKey } from '../../bard';
 import { normalizeSummaryNames } from '../../utils/normalize';
-import { audioQueue } from '../../services/queue';
 import { unloadTranscriptionModels } from '../../workers';
 import { t, getGuildLocale } from '../../i18n';
 
@@ -57,15 +56,10 @@ export class PipelineService {
      * Unloads transcription models to free memory
      */
     async unloadModels(): Promise<void> {
-        console.log(`[Monitor] ⏸️ Pausa coda audio per unload modello...`);
-        await audioQueue.pause();
         try {
             await unloadTranscriptionModels();
         } catch (e: any) {
             console.warn(`[Monitor] ⚠️ Errore durante unload modello: ${e.message}`);
-        } finally {
-            console.log(`[Monitor] ▶️ Ripresa coda audio...`);
-            await audioQueue.resume();
         }
     }
 

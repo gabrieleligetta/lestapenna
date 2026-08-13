@@ -198,6 +198,63 @@
   transform: translateY(-2px);
 }
 
+.login-support {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.login-support__label {
+  color: var(--text-muted);
+  font-size: var(--fs-0);
+  font-weight: 700;
+}
+
+.login-support__buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.login-support__button {
+  --brand: var(--gold);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.62rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 52%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--text);
+  font-size: var(--fs-0);
+  font-weight: 700;
+  text-decoration: none;
+  transition: background var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
+}
+
+.login-support__button:hover {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+  transform: translateY(-1px);
+}
+
+.login-support__button .brand-icon {
+  width: 1rem;
+  height: 1rem;
+  color: var(--brand);
+}
+
+.login-support__button--kofi {
+  --brand: #ff5e5b;
+}
+
+.login-support__button--github {
+  --brand: #db61a2;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -340,6 +397,56 @@
   opacity: 0.6;
   text-decoration: underline dotted;
   text-underline-offset: 0.2em;
+}
+
+/* The two donation buttons.
+   Pill-shaped rather than plain links, because they are the one thing in this
+   bar that leaves the site: they should look like a destination, not like the
+   licence next to them. `--brand` is set per platform below and is the only
+   thing that differs between them. */
+.support-bar__donate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.28rem var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--brand) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  color: var(--text);
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.support-bar a.support-bar__donate:hover {
+  background: color-mix(in srgb, var(--brand) 20%, transparent);
+  border-color: color-mix(in srgb, var(--brand) 70%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--brand) 70%, transparent);
+  color: var(--text);
+}
+
+/* The mark takes the brand colour; the label stays readable text. Tinting both
+   would fail contrast on Ko-fi's red against this surface. */
+.support-bar__donate .brand-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: none;
+  color: var(--brand);
+}
+
+.support-bar__donate--kofi {
+  --brand: #ff5e5b;
+}
+
+.support-bar__donate--github {
+  --brand: #db61a2;
+}
+
+/* Declared but not open yet: same shape, drained of colour, and not a link. */
+.support-bar__donate--pending {
+  cursor: default;
+  opacity: 0.55;
+  filter: grayscale(1);
 }
 
 /* Login sits outside the shell and would otherwise have nothing to pin the bar
@@ -3170,6 +3277,8 @@ button.primary:hover:not(:disabled) {
 
 .merge-steps {
   display: grid;
+  /* Il numero di colonne lo dichiara il componente: la modale di merge ne ha
+     tre, il wizard di configurazione cinque. */
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-1);
   margin: 0;
@@ -4687,6 +4796,112 @@ button.primary:hover:not(:disabled) {
 
 .guild-ai-link {
   margin: 0 0 var(--space-4);
+}
+
+/* Cosa manca ancora a questo tavolo, prima di tutto il resto: le quattro
+   mancanze non sono intercambiabili, e ognuna ha il suo rimedio. */
+.setup-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: var(--surface);
+}
+
+.setup-checklist h2 {
+  margin: 0;
+}
+
+.setup-checklist__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-checklist__row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+/* Il colore non basta da solo: l'icona porta la forma, e il testo il resto. */
+.setup-checklist__icon {
+  align-self: center;
+  color: var(--text-muted);
+}
+
+.setup-checklist__row.is-done .setup-checklist__icon {
+  color: var(--success-text);
+}
+
+.setup-checklist__row.is-missing .setup-checklist__icon {
+  color: var(--danger);
+}
+
+.setup-checklist__label {
+  font-weight: 600;
+}
+
+.setup-checklist__detail {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-1);
+}
+
+@media (max-width: 30rem) {
+  /* Sotto i 480px le tre colonne diventano illeggibili: il dettaglio va sotto. */
+  .setup-checklist__row {
+    grid-template-columns: auto 1fr;
+  }
+
+  .setup-checklist__detail {
+    grid-column: 2;
+  }
+}
+
+/* Lo stato del computer del tavolo: il fatto per cui si apre questa pagina
+   prima di una sessione, che prima non era scritto da nessuna parte. */
+.remote-pc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+}
+
+.remote-pc__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.remote-pc__status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+/* Stima costi, prezzi propri e tabella per-fase: si consultano, non si
+   configurano, e aperte trasformavano la pagina in un muro. */
+.settings-details > summary {
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--fs-3);
+  font-weight: 600;
+}
+
+.settings-details[open] > summary {
+  margin-bottom: var(--space-4);
 }
 
 .ai-credential {

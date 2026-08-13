@@ -20,6 +20,18 @@ const LENGTHS = [60, 120, 180, 240, 300];
  * is the only way this page can lie about somebody else's money.
  */
 export function SessionCostPanel({ guildId, readOnly }: { guildId: string; readOnly: boolean }) {
+    return (
+        <>
+            <SessionEstimatePanel guildId={guildId} />
+            {/* Kept here for anyone still mounting the pair together; the
+                settings page collapses each half separately. */}
+            <PricingOverrides guildId={guildId} readOnly={readOnly} />
+        </>
+    );
+}
+
+/** What a session would cost, at the models currently configured. */
+export function SessionEstimatePanel({ guildId }: { guildId: string }) {
     const t = useT();
     const { locale } = useLocale();
     const [minutes, setMinutes] = useState(240);
@@ -34,7 +46,6 @@ export function SessionCostPanel({ guildId, readOnly }: { guildId: string; readO
     };
 
     return (
-        <>
             <section className="settings-section">
                 <h2>{t.costs.title}</h2>
                 <p className="settings-hint">{t.costs.intro}</p>
@@ -116,13 +127,10 @@ export function SessionCostPanel({ guildId, readOnly }: { guildId: string; readO
                     </>
                 )}
             </section>
-
-            <PricingOverrides guildId={guildId} readOnly={readOnly} />
-        </>
     );
 }
 
-function PricingOverrides({ guildId, readOnly }: { guildId: string; readOnly: boolean }) {
+export function PricingOverrides({ guildId, readOnly }: { guildId: string; readOnly: boolean }) {
     const t = useT();
     const stored = usePricingOverrides(guildId);
     const actions = usePricingActions(guildId);

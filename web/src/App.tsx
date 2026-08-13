@@ -14,6 +14,7 @@ import { NotFoundPage } from './routes/NotFoundPage';
 import { BardChatPage } from './routes/BardChatPage';
 import { CampaignSettingsPage } from './routes/CampaignSettingsPage';
 import { GuildAiSettingsPage } from './routes/GuildAiSettingsPage';
+import { GuildSetupWizard } from './routes/GuildSetupWizard';
 import { GuildPrivacyPage } from './routes/GuildPrivacyPage';
 import { RequireAuth } from './routes/RequireAuth';
 import { LegalGate } from './routes/LegalGate';
@@ -39,6 +40,10 @@ function App() {
                     <Route path="/guilds/:guildId/campaigns" element={<CampaignsPage />} />
                     {/* The keys belong to the server, not to the campaign: the route sits under the guild. */}
                     <Route path="/guilds/:guildId/ai" element={<GuildAiSettingsPage />} />
+                    {/* The same settings, walked in the order they depend on. A
+                        route rather than a modal: it is long, it is resumable,
+                        and it has to be linkable from the bot's refusals. */}
+                    <Route path="/guilds/:guildId/setup" element={<GuildSetupWizard />} />
                     {/* Your data on this server: a copy, or its erasure. Guild-scoped
                         because that is the scope the erasure actually works on. */}
                     <Route path="/guilds/:guildId/privacy" element={<GuildPrivacyPage />} />

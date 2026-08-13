@@ -1,12 +1,9 @@
-import { Message, TextChannel } from 'discord.js';
+import { TextChannel } from 'discord.js';
 import { Command, CommandContext } from '../types';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
-import { resetUnfinishedRecordings } from '../../db';
-import { audioQueue, removeSessionJobs } from '../../services/queue';
-import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../../publisher';
-import { monitor } from '../../monitor';
-import { processSessionReport } from '../../reporter';
-import { mixSessionAudio } from '../../services/sessionMixer';
+import { getSessionGuildId, resetUnfinishedRecordings } from '../../db';
+import { removeSessionJobs } from '../../services/queue';
+import { enqueueSessionFinalization, enqueueSessionProcessing } from '../../services/sessionProcessing';
 import { t } from '../../i18n';
 import { assertSessionInGuild } from '../utils/sessionScope';
 
@@ -98,13 +95,12 @@ export const recoverCommand: Command = {
             return;
         }
 
-        if (phaseInfo.phase === 'DONE' || phaseInfo.phase === 'IDLE') {
-            await message.reply(t(ctx.locale, 'admin.recoverAlreadyState', { id: sessionId, phase: phaseInfo.phase }));
-            return;
-        }
-
         const recoveryPhase = sessionPhaseManager.getRecoveryStartPhase(sessionId, phaseInfo.phase);
         if (!recoveryPhase) {
+            if (phaseInfo.phase === 'DONE' || phaseInfo.phase === 'IDLE') {
+                await message.reply(t(ctx.locale, 'admin.recoverAlreadyState', { id: sessionId, phase: phaseInfo.phase }));
+                return;
+            }
             await message.reply(t(ctx.locale, 'admin.recoverPhaseUnsupported', { phase: phaseInfo.phase }));
             return;
         }
@@ -112,59 +108,18 @@ export const recoverCommand: Command = {
         await message.reply(t(ctx.locale, 'admin.recoverStarted', { id: sessionId, phase: phaseInfo.phase, recovery: recoveryPhase }));
 
         try {
-            // Logic adapted from startup recovery
+            await removeSessionJobs(sessionId);
+            const guildId = getSessionGuildId(sessionId)!;
+
             if (recoveryPhase === 'TRANSCRIBING') {
-                // Session mix (as in the normal disconnect flow)
-                try {
-                    await (message.channel as TextChannel).send(t(ctx.locale, 'admin.recoverMixing'));
-                    await mixSessionAudio(sessionId, true);
-                } catch (mixErr: any) {
-                    console.warn(`[Recover] ⚠️ Mix audio fallito (non bloccante): ${mixErr.message}`);
-                    await (message.channel as TextChannel).send(t(ctx.locale, 'admin.recoverMixFailed', { message: mixErr.message }));
-                }
-
-                await removeSessionJobs(sessionId);
                 const filesToProcess = resetUnfinishedRecordings(sessionId);
-
-                if (filesToProcess.length === 0) {
-                    // Try summarizing
-                    monitor.startSession(sessionId);
-                    await waitForCompletionAndSummarizeUtil(message.client, sessionId, message.channel as TextChannel);
-                    await monitor.endSession();
-                } else {
-                    for (const job of filesToProcess) {
-                        await audioQueue.add('transcribe-job', {
-                            sessionId: job.session_id,
-                            fileName: job.filename,
-                            filePath: job.filepath,
-                            userId: job.user_id
-                        }, {
-                            jobId: job.filename,
-                            attempts: 5,
-                            backoff: { type: 'exponential', delay: 2000 },
-                            removeOnComplete: true,
-                            removeOnFail: false
-                        });
-                    }
-                    await (message.channel as TextChannel).send(t(ctx.locale, 'admin.recoverRequeued', { count: filesToProcess.length }));
-
-                    monitor.startSession(sessionId);
-                    await waitForCompletionAndSummarizeUtil(message.client, sessionId, message.channel as TextChannel);
-                    const metrics = await monitor.endSession();
-                    if (metrics) await processSessionReport(metrics);
-                }
-
+                sessionPhaseManager.setPhase(sessionId, 'TRANSCRIBING');
+                await enqueueSessionProcessing(sessionId, guildId, message.channel.id);
+                await (message.channel as TextChannel).send(t(ctx.locale, 'admin.recoverRequeued', { count: filesToProcess.length }));
             } else {
-                // Summarizing / Late phases
-                monitor.startSession(sessionId);
-                await waitForCompletionAndSummarizeUtil(message.client, sessionId, message.channel as TextChannel);
-                const metrics = await monitor.endSession();
-                if (metrics) await processSessionReport(metrics);
+                sessionPhaseManager.setPhase(sessionId, 'SUMMARIZING');
+                await enqueueSessionFinalization(sessionId, guildId, message.channel.id);
             }
-
-            // Success handled by waitForCompletionAndSummarizeUtil notification logic?
-            // Usually yes, but we can confirm here.
-            // Wait, waitFor... sends messages to channel if passed.
 
         } catch (err: any) {
             console.error(`[Recover] Error:`, err);

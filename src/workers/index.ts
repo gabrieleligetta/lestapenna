@@ -6,6 +6,7 @@ import { Worker, Job } from 'bullmq';
 import { updateRecordingStatus } from '../db';
 import { scribaProcessor, unloadTranscriptionModels } from './scriba';
 import { correctionProcessor } from './correction';
+import { sessionProcessingProcessor } from '../services/sessionProcessing';
 
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -17,12 +18,18 @@ export * from './correction';
 export * from './utils';
 
 export function startWorker() {
+    const audioConcurrency = Math.max(
+        1,
+        Number.parseInt(process.env.AUDIO_WORKER_CONCURRENCY || '2', 10) || 2,
+    );
     const audioWorker = new Worker('audio-processing', scribaProcessor, {
         connection: {
             host: config.redis.host,
             port: config.redis.port
         },
-        concurrency: 1,
+        // SessionProcessing enqueues one file at a time per session, so this
+        // parallelism serves different guilds without flooding one remote PC.
+        concurrency: audioConcurrency,
         lockDuration: 7200000, // 2 ore
         lockRenewTime: 30000,  // Renew every 30s, comfortably inside the 2h window
         maxStalledCount: 1,    // Allow one stall recovery before declaring failure
@@ -34,6 +41,20 @@ export function startWorker() {
             port: config.redis.port
         },
         concurrency: 2
+    });
+
+    const sessionWorker = new Worker('session-processing', sessionProcessingProcessor, {
+        connection: {
+            host: config.redis.host,
+            port: config.redis.port
+        },
+        // Orchestrations may wait on different tables' remote transcription at
+        // once. sessionProcessing.ts still serializes the CPU-heavy mix itself.
+        concurrency: Math.max(2, Number.parseInt(process.env.SESSION_ORCHESTRATION_CONCURRENCY || '10', 10) || 10),
+        // Sessions may sit behind remote transcription for many hours.
+        lockDuration: 26 * 60 * 60 * 1000,
+        lockRenewTime: 30_000,
+        maxStalledCount: 1,
     });
 
     const handleFailure = (workerName: string) => async (job: Job | undefined, err: Error) => {
@@ -58,8 +79,9 @@ export function startWorker() {
 
     audioWorker.on('failed', handleFailure('Scriba'));
     correctionWorker.on('failed', handleFailure('Correttore'));
+    sessionWorker.on('failed', handleFailure('Sessione'));
 
-    log.info('Workers avviati: Scriba (Audio) e Correttore (AI)');
+    log.info(`Workers avviati: Session orchestration (10, mix seriale), Scriba (${audioConcurrency}), Correttore (2)`);
 
     // Graceful shutdown handler
     const shutdown = async () => {
@@ -67,7 +89,8 @@ export function startWorker() {
         try {
             await Promise.allSettled([
                 audioWorker.close(),
-                correctionWorker.close()
+                correctionWorker.close(),
+                sessionWorker.close(),
             ]);
             log.info('Workers chiusi con successo.');
         } catch (err) {
@@ -78,5 +101,5 @@ export function startWorker() {
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
 
-    return { audioWorker, correctionWorker, shutdown };
+    return { audioWorker, correctionWorker, sessionWorker, shutdown };
 }

@@ -21,6 +21,16 @@ export async function processSessionReport(metrics: SessionMetrics) {
     const maxRam = metrics.resourceUsage.ramSamplesMB.length > 0
         ? Math.max(...metrics.resourceUsage.ramSamplesMB)
         : 0;
+    const recordingDurationMin = metrics.recordingMetrics?.endedAt
+        ? (metrics.recordingMetrics.endedAt - metrics.recordingMetrics.startedAt) / 60000
+        : 0;
+    const roleUsage = Object.entries(metrics.resourceUsageByRole ?? {}).map(([role, samples]) => {
+        const roleAvgCpu = samples.cpuSamples.length
+            ? samples.cpuSamples.reduce((sum, value) => sum + value, 0) / samples.cpuSamples.length
+            : 0;
+        const roleMaxRam = samples.ramSamplesMB.length ? Math.max(...samples.ramSamplesMB) : 0;
+        return `${role}: CPU media ${roleAvgCpu.toFixed(1)}%, RAM max ${roleMaxRam} MB`;
+    }).join('; ') || 'N/A';
 
     // Calcolo DB Growth
     const dbStartMB = (metrics.dbStartSizeBytes || 0) / (1024 * 1024);
@@ -72,8 +82,11 @@ Ecco le metriche della sessione:
 
 **SYSTEM RESOURCES**
 - Durata: ${durationMin.toFixed(2)} min
+- Registrazione: ${recordingDurationMin.toFixed(2)} min, ${metrics.recordingMetrics?.humanParticipants ?? 'N/A'} partecipanti
+- Picco acquisizione: ${metrics.recordingMetrics?.maxFfmpegEncoders ?? 'N/A'} encoder FFmpeg, ${metrics.recordingMetrics?.maxConcurrentRecordingGuilds ?? 'N/A'} gilde contemporanee
 - CPU Media: ${avgCpu.toFixed(1)}%
 - RAM Max: ${maxRam} MB
+- Per ruolo: ${roleUsage}
 - DB Growth: ${dbGrowthMB.toFixed(3)} MB
 - Disk Used: ${diskUsedPct.toFixed(1)}% (${diskFree.toFixed(2)}GB free)
 ${thermalWarning}
@@ -81,6 +94,7 @@ ${thermalWarning}
 **SYSTEM HEALTH (VM)**
 - Min Free RAM: ${metrics.systemHealth?.minFreeRamMB || 'N/A'} MB (Critico se < 1000MB)
 - Max CPU Load: ${metrics.systemHealth?.maxCpuLoad.toFixed(2) || 'N/A'}
+- Max Event Loop Lag: ${metrics.systemHealth?.maxEventLoopLagMs?.toFixed(0) || 'N/A'} ms
 
 **WHISPER PERFORMANCE**
 - File Audio: ${metrics.totalFiles}
@@ -143,6 +157,14 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
          <tr>
             <td><strong>Process</strong> CPU/RAM</td>
             <td>${avgCpu.toFixed(1)}% / ${maxRam} MB</td>
+        </tr>
+        <tr>
+            <td><strong>Recording capacity</strong></td>
+            <td>${recordingDurationMin.toFixed(1)} min / ${metrics.recordingMetrics?.humanParticipants ?? 'N/A'} participants / ${metrics.recordingMetrics?.maxFfmpegEncoders ?? 'N/A'} FFmpeg / ${metrics.recordingMetrics?.maxConcurrentRecordingGuilds ?? 'N/A'} concurrent guilds</td>
+        </tr>
+        <tr>
+            <td><strong>Runtime roles</strong></td>
+            <td>${roleUsage}</td>
         </tr>
          <tr>
             <td>Errors</td>
@@ -214,8 +236,9 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
     fs.writeFileSync(logPath, statsJson);
 
     // 5. Upload su Oracle
+    let metricsUploaded = false;
     try {
-        await uploadToOracle(logPath, logFileName, undefined, `logs/${logFileName}`);
+        metricsUploaded = Boolean(await uploadToOracle(logPath, logFileName, undefined, `logs/${logFileName}`));
         console.log("[Reporter] ☁️ Metriche caricate su Oracle Cloud.");
     } catch (e) {
         console.error("[Reporter] ❌ Errore upload metriche:", e);
@@ -260,4 +283,5 @@ Rispondi in italiano, in modo conciso (max 10 righe), segnalando SOLO problemi R
     if (fs.existsSync(logPath)) {
         try { fs.unlinkSync(logPath); } catch (e) { }
     }
+    if (metricsUploaded) await monitor.clearCapacityCheckpoints(metrics.sessionId);
 }

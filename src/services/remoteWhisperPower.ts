@@ -4,7 +4,15 @@ import { currentAiScope } from '../bard/ai/ambientScope';
 import { resolveTranscription } from '../bard/ai/transcription';
 import type { AiScope } from '../bard/ai/types';
 
-async function hasPendingTranscriptionWork(): Promise<boolean> {
+/**
+ * Whether anything is still waiting to be transcribed or corrected.
+ *
+ * Exported because the manual shutdown button needs the same guard the
+ * automatic one has: switching the machine off with audio still in the queue
+ * loses the session, and a button that does it silently is worse than one that
+ * refuses and says why.
+ */
+export async function hasPendingTranscriptionWork(): Promise<boolean> {
     const [audioCounts, correctionCounts] = await Promise.all([
         audioQueue.getJobCounts('waiting', 'delayed', 'active'),
         correctionQueue.getJobCounts('waiting', 'delayed', 'active'),

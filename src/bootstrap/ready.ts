@@ -7,14 +7,12 @@ import { monitor, startMemoryMonitor } from '../monitor';
 import { startJanitor } from '../services/janitor';
 import { startModelCatalogRefresh } from '../services/modelCatalogRefresh';
 import { startWorker } from '../workers';
+import { startFinalizationWorker } from '../services/sessionFinalization';
+import { processRunsWorkers } from '../services/processRole';
 import {
     checkStorageUsage,
-    // uploadToOracle // used in recoverOrphanedFiles
 } from '../services/backup';
 import { uploadToOracle } from '../services/backup';
-import {
-    processSessionReport
-} from '../reporter';
 import { initIdentityGuard } from '../utils/identity';
 import {
     createSession,
@@ -31,15 +29,12 @@ import {
     getGuildConfig
 } from '../db';
 
-import { audioQueue, removeSessionJobs } from '../services/queue';
-// If waitForCompletionAndSummarize logic was different in index.ts, I should use the one from utils/publish if compatible.
-// index.ts used waitForCompletionAndSummarize(sessionId, channel).
-// utils/publish likely exports publishSummary, not waitFor...
-import { waitForCompletionAndSummarize as waitForCompletionAndSummarizeUtil } from '../publisher';
-import { sessionPhaseManager, SessionPhase } from '../services/SessionPhaseManager';
+import { sessionPhaseManager } from '../services/SessionPhaseManager';
 import { config } from '../config';
-import { resetRecordingState } from '../state/sessionState';
+import { deleteActiveSession, resetRecordingState } from '../state/sessionState';
 import { sendLanguageSelectThenWelcome, markGuildAsWelcomed, hasBeenWelcomed } from './guildJoin';
+import { enqueueSessionFinalization, enqueueSessionProcessing } from '../services/sessionProcessing';
+import { startOperationalAlerts } from '../services/operationalHealth';
 
 // Note: recoverOrphanedFiles and processOrphanedSessionsSequentially were local. Moving here.
 
@@ -63,7 +58,8 @@ export function registerReadyHandler(client: Client) {
 
         initIdentityGuard();
 
-        startWorker();
+        if (processRunsWorkers()) startWorker();
+        startFinalizationWorker(client);
 
         // execFile rather than exec: the argument is fixed here, but `exec`
         // opens a shell for every call and there is no reason to keep one around.
@@ -79,11 +75,17 @@ export function registerReadyHandler(client: Client) {
 
         monitor.startIdleMonitoring();
         startMemoryMonitor();
+        startOperationalAlerts(client);
         startJanitor(client);
         startModelCatalogRefresh();
 
+        // Any slot belonged to the process that just died. Clear admission
+        // state before accepting commands; incomplete sessions are recovered
+        // independently through their durable processing jobs.
+        await resetRecordingState();
+
         // 🆕 PHASE-BASED RECOVERY: Check for sessions interrupted by crash
-        await recoverIncompleteSessions(client);
+        await recoverIncompleteSessions();
 
         const recoveredSessionIds = await recoverOrphanedFiles();
 
@@ -96,7 +98,7 @@ export function registerReadyHandler(client: Client) {
 
         if (allPendingSessions.length > 0) {
             console.log(`📦 Trovati ${allPendingSessions.length} sessioni pendenti (Recovered + DB Orphans).`);
-            await processOrphanedSessionsSequentially(client, allPendingSessions);
+            await enqueueOrphanedSessions(allPendingSessions);
         } else {
             console.log('✅ Nessun lavoro in sospeso trovato.');
         }
@@ -234,7 +236,7 @@ function printRecentSessions(): void {
 /**
  * 🆕 Phase-based recovery for sessions interrupted mid-processing
  */
-async function recoverIncompleteSessions(client: Client): Promise<void> {
+async function recoverIncompleteSessions(): Promise<void> {
     console.log('🔍 Controllo sessioni interrotte per fase di processing...');
 
     const incompleteSessions = sessionPhaseManager.getIncompleteSessions();
@@ -257,17 +259,25 @@ async function recoverIncompleteSessions(client: Client): Promise<void> {
             continue;
         }
 
-        if (guildId) {
-            // We just log to console as requested.
-        } else {
+        if (!guildId) {
             console.warn(`[Recovery] ⚠️ Sessione ${sessionId} senza Guild ID associato.`);
+            continue;
         }
 
-        console.warn(`\n⚠️  [RECOVERY REQUIRED] Sessione interrotta rilevata!`);
-        console.warn(`   ID: ${sessionId}`);
-        console.warn(`   Fase: ${phase}`);
-        console.warn(`   Azione: Invia il comando \`$recover ${sessionId}\` su Discord per ripristinare.`);
-        console.warn(`   Oppure \`$reset ${sessionId}\` per cancellare e ricominciare.\n`);
+        const channelId = getGuildConfig(guildId, 'summary_channel_id')
+            || getGuildConfig(guildId, 'cmd_channel_id')
+            || undefined;
+        if (recoveryPhase === 'TRANSCRIBING') {
+            // A process restart permanently ended any live Discord capture.
+            // Remove its per-guild Redis marker as well as the global capacity
+            // slot, otherwise `$listen` would keep reporting a zombie session.
+            if (phase === 'RECORDING') await deleteActiveSession(guildId);
+            resetUnfinishedRecordings(sessionId);
+            await enqueueSessionProcessing(sessionId, guildId, channelId);
+        } else {
+            await enqueueSessionFinalization(sessionId, guildId, channelId);
+        }
+        console.warn(`[Recovery] Sessione ${sessionId} riaccodata da ${recoveryPhase}.`);
     }
 }
 
@@ -339,19 +349,6 @@ async function recoverOrphanedFiles(): Promise<string[]> {
             console.error(`[Recovery] Fallimento upload per ${file}:`, err);
         }
 
-        await audioQueue.add('transcribe-job', {
-            sessionId,
-            fileName: file,
-            filePath,
-            userId
-        }, {
-            jobId: file,
-            attempts: 5,
-            backoff: { type: 'exponential', delay: 2000 },
-            removeOnComplete: true,
-            removeOnFail: false
-        });
-
         recoveredCount++;
     }
 
@@ -363,92 +360,19 @@ async function recoverOrphanedFiles(): Promise<string[]> {
     return [...affectedSessionIds];
 }
 
-async function processOrphanedSessionsSequentially(client: Client, sessionIds: string[]) {
-    for (let i = 0; i < sessionIds.length; i++) {
-        const sessionId = sessionIds[i];
-
-        console.log(`\n${'='.repeat(60)}`);
-        console.log(`📊 [${i + 1}/${sessionIds.length}] Inizio recupero sessione: ${sessionId}`);
-        console.log(`${'='.repeat(60)}\n`);
-
-        monitor.startSession(sessionId);
-
-        try {
-            await removeSessionJobs(sessionId);
-            const filesToProcess = resetUnfinishedRecordings(sessionId);
-
-            if (filesToProcess.length === 0) {
-                console.log(`⚠️ Nessun file da processare per ${sessionId}. Skip.`);
-                continue;
-            }
-
-            console.log(`📁 Trovati ${filesToProcess.length} file da processare.`);
-
-            for (const job of filesToProcess) {
-                await audioQueue.add('transcribe-job', {
-                    sessionId: job.session_id,
-                    fileName: job.filename,
-                    filePath: job.filepath,
-                    userId: job.user_id
-                }, {
-                    jobId: job.filename,
-                    attempts: 5,
-                    backoff: { type: 'exponential', delay: 2000 },
-                    removeOnComplete: true,
-                    removeOnFail: false
-                });
-            }
-
-            console.log(`✅ ${filesToProcess.length} file accodati. Avvio processing...`);
-            await resetRecordingState();
-
-            const session = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?').get(sessionId) as { guild_id: string } | undefined;
-            let channel: TextChannel | null = null;
-
-            if (session) {
-                const targetChannelId = getGuildConfig(session.guild_id, 'summary_channel_id') || getGuildConfig(session.guild_id, 'cmd_channel_id');
-                if (targetChannelId) {
-                    try {
-                        channel = await client.channels.fetch(targetChannelId) as TextChannel;
-                        await channel.send(`🔄 **Sessione Recuperata** [${i + 1}/${sessionIds.length}]: \`${sessionId}\`\nElaborazione in corso...`);
-                    } catch (err) {
-                        console.warn(`⚠️ Impossibile accedere al canale ${targetChannelId}`);
-                    }
-                }
-            }
-
-            console.log(`⏳ Attendo completamento sessione ${sessionId}...`);
-
-            try {
-                // Use imported util or local compatible logic
-                // Assuming util takes (client, sessionId, channel)
-                await waitForCompletionAndSummarizeUtil(client, sessionId, channel as TextChannel);
-                console.log(`✅ Sessione ${sessionId} completata con successo!`);
-
-                const metrics = await monitor.endSession();
-                if (metrics) {
-                    console.log('[Monitor] 📊 Invio report sessione recuperata...');
-                    await processSessionReport(metrics);
-                }
-
-            } catch (err: any) {
-                console.error(`❌ Errore durante elaborazione ${sessionId}:`, err.message);
-                await monitor.endSession();
-                if (channel) {
-                    await channel.send(`⚠️ Errore durante elaborazione sessione \`${sessionId}\`. Usa \`$racconta ${sessionId}\` per riprovare.`).catch(() => { });
-                }
-            }
-
-            if (i < sessionIds.length - 1) {
-                console.log(`⏸️ Pausa 5s prima della prossima sessione...\n`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-
-        } catch (err: any) {
-            console.error(`❌ Errore critico sessione ${sessionId}:`, err.message);
+async function enqueueOrphanedSessions(sessionIds: string[]) {
+    for (const sessionId of sessionIds) {
+        const session = db.prepare('SELECT guild_id FROM sessions WHERE session_id = ?')
+            .get(sessionId) as { guild_id: string } | undefined;
+        if (!session?.guild_id) {
+            console.warn(`[Recovery] Sessione orfana ${sessionId} senza guild: skip.`);
+            continue;
         }
+        resetUnfinishedRecordings(sessionId);
+        const channelId = getGuildConfig(session.guild_id, 'summary_channel_id')
+            || getGuildConfig(session.guild_id, 'cmd_channel_id')
+            || undefined;
+        await enqueueSessionProcessing(sessionId, session.guild_id, channelId);
+        console.log(`[Recovery] Sessione orfana ${sessionId} accodata.`);
     }
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`✅ Tutte le ${sessionIds.length} sessioni orfane sono state elaborate!`);
-    console.log(`${'='.repeat(60)}\n`);
 }

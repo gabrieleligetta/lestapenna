@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 const mockSend = jest.fn();
 
@@ -38,6 +39,15 @@ describe('backup.ts — retry su errori transitori', () => {
             const result = await uploadToOracle(tmpFile, 'retry-upload-test.flac', undefined, 'custom/retry-upload-test.flac');
             expect(result).toBe('retry-upload-test.flac');
             expect(mockSend).toHaveBeenCalledTimes(2);
+            for (const [command] of mockSend.mock.calls) {
+                expect(command).toBeInstanceOf(PutObjectCommand);
+                expect(command.input.ContentLength).toBe(8);
+            }
+            expect(mockSend.mock.calls[0][0].input.Body)
+                .not.toBe(mockSend.mock.calls[1][0].input.Body);
+            expect(S3Client).toHaveBeenCalledWith(expect.objectContaining({
+                requestChecksumCalculation: 'WHEN_REQUIRED',
+            }));
         } finally {
             fs.unlinkSync(tmpFile);
         }

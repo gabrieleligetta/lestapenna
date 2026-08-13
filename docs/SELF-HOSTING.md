@@ -15,7 +15,10 @@ nel README.
   server di trascrizione
 
 Non serve un server potente: il lavoro pesante lo fanno i provider AI, o il PC
-di ciascun tavolo. Il bot muove file e coordina.
+di ciascun tavolo. Il bot muove file e coordina. Un'istanza dedicata evita però
+i limiti prudenziali del bot pubblico, che oggi accetta al massimo **due
+registrazioni contemporanee in due gilde Discord**: la continuità reale dipende
+sempre dalle risorse, dalla rete e dai backup che scegli tu.
 
 ## Avvio
 
@@ -34,6 +37,44 @@ npm run secrets:generate-key    # stampa una chiave: mettila in SECRETS_MASTER_K
 npm run db:init                 # crea lo schema
 docker compose up -d
 ```
+
+Il compose di sviluppo mantiene tutto nel processo `dnd-bot` (`PROCESS_ROLE=all`)
+per semplicità. Il compose di produzione separa invece due servizi costruiti
+dalla stessa immagine:
+
+- `dnd-bot` (`PROCESS_ROLE=gateway`) riceve Discord, registra l'audio, serve
+  l'API e pubblica i risultati;
+- `processing-worker` (`PROCESS_ROLE=worker`) miscela, carica, trascrive e avvia
+  il lavoro IA in background.
+
+Redis contiene le code durevoli. I due processi condividono i volumi SQLite e
+degli artefatti. Se il worker rallenta o viene riavviato, la registrazione in
+corso resta sul gateway e il lavoro accodato riparte; non viene più sospesa
+l'intera coda quando una qualunque gilda registra.
+
+Per una piccola istanza su una sola macchina, parti dai default e alzali solo
+dopo una prova di carico:
+
+```bash
+MAX_CONCURRENT_RECORDING_GUILDS=2
+MAX_PENDING_SESSIONS_PER_GUILD=2
+MAX_CONCURRENT_UPLOADS=2
+MIX_CONCURRENCY_LIMIT=1
+AUDIO_WORKER_CONCURRENCY=2
+SQLITE_BUSY_TIMEOUT_MS=10000
+```
+
+Il limite ammette o rifiuta una nuova gilda, non i singoli partecipanti: una
+sessione accettata non viene troncata se qualcuno entra dopo. Il default è
+dimensionato sul profilo tipico osservato di 4–5 parlanti per tavolo.
+La trascrizione avanza un file alla volta per sessione, ma due gilde possono
+trascrivere in parallelo; in questo modo il PC remoto di un tavolo resta stabile
+senza costringere tutti gli altri ad aspettarlo.
+
+Quando il limite è raggiunto il bot rifiuta una nuova registrazione con una
+spiegazione, invece di accettarla rischiando discontinuità. Per nascondere nei
+messaggi automatici il solo invito a donare usa `COMMUNITY_NUDGES=false`; il
+link al codice e la spiegazione del limite restano informazioni operative.
 
 ## La cassaforte
 
@@ -139,6 +180,20 @@ il link si apre e non chiede niente, il che è peggio che non averlo. Con
 pagina accetta davvero donazioni, senza toccare il codice. A `DONATION_URL`
 vuoto la voce non compare affatto, indipendentemente da questo.
 
+I canali sono **due, indipendenti**, ciascuno col proprio interruttore:
+
+```bash
+KOFI_URL=https://ko-fi.com/gabrieleligetta
+KOFI_ACTIVE=true
+```
+
+Sono separati perché diventano pronti in momenti diversi — Ko-fi incassa appena
+Stripe approva, GitHub Sponsors aspetta il profilo fiscale — e un flag solo
+costringerebbe il canale già funzionante ad aspettare l'altro. Ogni pulsante
+porta il marchio della sua piattaforma, così chi clicca sa dove sta andando
+prima di andarci. Chi fa un fork e non vuole donazioni svuota entrambi gli URL:
+la barra resta, senza pulsanti.
+
 ## Trascrizione
 
 Ogni tavolo sceglie per sé, dalla propria pagina impostazioni:
@@ -193,13 +248,22 @@ ragione.
 ## Manutenzione
 
 ```bash
-docker compose logs -f bot     # log
+docker compose logs -f dnd-bot processing-worker
 npm run db:init                # riapplica lo schema, idempotente
+npm run infra:probe-sqlite     # prova locale di contesa WAL, su DB temporaneo
 ```
 
 Il database sta in un volume Docker (`lestapenna_db_data`), non in un bind mount.
 Litestream lo replica in continuo se lo configuri: è il modo consigliato di
 tenerne una copia, ma ricorda dove **non** va la master key.
+
+SQLite resta la scelta consigliata finché gateway e worker vivono sulla stessa
+macchina: WAL, transazioni brevi e `busy_timeout` gestiscono i due processi senza
+aggiungere un servizio a pagamento o da amministrare. Non mettere il file su un
+filesystem di rete. PostgreSQL diventa il passo corretto quando gateway e worker
+devono stare su host diversi, serve alta disponibilità/multi-gateway, oppure il
+probe e i log mostrano errori `SQLITE_BUSY` persistenti. I dettagli e le soglie
+sono in [INFRASTRUCTURE.md](INFRASTRUCTURE.md).
 
 I backup del database vogliono `OCI_DB_BACKUP_BUCKET` — lo usano sia la replica
 Litestream sia lo snapshot notturno. **Non ha un default**: lasciato vuoto, il

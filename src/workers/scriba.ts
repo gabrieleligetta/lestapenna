@@ -27,6 +27,7 @@ import { sessionPhaseManager } from '../services/SessionPhaseManager';
 
 import { config } from '../config';
 import { wakeAndWait } from '../services/wake';
+import { isFinalAttempt } from './retryState';
 import { logger } from '../utils/logger';
 import { aiLanguageName, getCampaignLocale, whisperLanguage, type Locale } from '../i18n';
 import { transcribeWithGemini } from '../bard/geminiNativeTranscribe';
@@ -93,14 +94,23 @@ export async function unloadTranscriptionModels(scope?: AiScope): Promise<void> 
  * Is the table's PC answering? If it is off and has Wake-on-LAN configured,
  * switch it on and wait for it to come back up.
  */
-async function checkRemoteHealth(remote: ResolvedRemoteTranscription): Promise<boolean> {
+type RemoteHealthResult =
+    | { reachable: true }
+    | { reachable: false; reason: string };
+
+async function checkRemoteHealth(remote: ResolvedRemoteTranscription): Promise<RemoteHealthResult> {
     try {
         await axios.get(`${remote.url}/health`, { timeout: remote.connectTimeoutMs });
-        return true;
+        return { reachable: true };
     } catch {
         // Wake-up only starts if the table configured a MAC: without one there is
         // nothing to wake, and insisting only lengthens the wait.
-        if (!remote.wake.macAddress) return false;
+        if (!remote.wake.macAddress) {
+            return {
+                reachable: false,
+                reason: 'PC del tavolo offline e Wake-on-LAN non configurato per questa gilda',
+            };
+        }
 
         log.info('PC del tavolo offline — tentativo di accensione remota...');
         const result = await wakeAndWait({
@@ -113,7 +123,17 @@ async function checkRemoteHealth(remote: ResolvedRemoteTranscription): Promise<b
             bootTimeoutMs: remote.wake.bootTimeoutMs,
             pollIntervalMs: remote.wake.pollIntervalMs,
         });
-        return result.success;
+        if (result.success) return { reachable: true };
+        if (result.reason === 'boot_timeout') {
+            return {
+                reachable: false,
+                reason: `PC del tavolo non online entro ${Math.round(remote.wake.bootTimeoutMs / 1000)}s dopo il Wake-on-LAN`,
+            };
+        }
+        if (result.reason.startsWith('unknown_wake_method:')) {
+            return { reachable: false, reason: 'metodo Wake-on-LAN non riconosciuto' };
+        }
+        return { reachable: false, reason: 'richiesta di accensione remota fallita' };
     }
 }
 
@@ -136,10 +156,9 @@ async function transcribeRemote(
 
     // Health check before the upload: avoids pushing a file to Oracle that
     // nobody will download.
-    if (!await checkRemoteHealth(remote)) {
-        throw new Error(
-            `TRANSCRIPTION_UNAVAILABLE: PC del tavolo non raggiungibile entro ${remote.connectTimeoutMs / 1000}s`,
-        );
+    const health = await checkRemoteHealth(remote);
+    if (!health.reachable) {
+        throw new Error(`TRANSCRIPTION_UNAVAILABLE: ${health.reason}`);
     }
 
     try {
@@ -404,9 +423,6 @@ const runScribaJob = async (job: Job) => {
 
         if (result.error) {
             log.error(`Errore Whisper per ${fileName}: ${result.error}`, { sessionId });
-            updateRecordingStatus(fileName, 'ERROR', null, `Whisper Error: ${result.error}`);
-            monitor.logError('Worker', `Whisper failed: ${fileName} - ${result.error}`);
-            monitor.logJobFailed();
             throw new Error(result.error);
         }
 
@@ -487,9 +503,26 @@ const runScribaJob = async (job: Job) => {
 
     } catch (e: any) {
         log.error(`Errore trascrizione ${fileName}: ${e.message}`, { sessionId });
-        updateRecordingStatus(fileName, 'ERROR', null, e.message);
-        monitor.logError('Worker', `File: ${fileName} - ${e.message}`);
-        monitor.logJobFailed();
+        const configuredAttempts = typeof job.opts.attempts === 'number' ? job.opts.attempts : 1;
+        if (isFinalAttempt(job.attemptsMade, configuredAttempts)) {
+            updateRecordingStatus(fileName, 'ERROR', null, e.message);
+            monitor.logError('Worker', `File: ${fileName} - ${e.message}`);
+            monitor.logJobFailed();
+        } else {
+            // The orchestration worker treats ERROR as terminal. Keeping a
+            // retryable failure in QUEUED prevents a premature report while
+            // BullMQ is waiting to run the next attempt.
+            updateRecordingStatus(
+                fileName,
+                'QUEUED',
+                null,
+                `Tentativo ${job.attemptsMade + 1}/${configuredAttempts} fallito: ${e.message}`,
+            );
+            log.warn(
+                `Trascrizione ${fileName} ritentabile (${job.attemptsMade + 1}/${configuredAttempts})`,
+                { sessionId },
+            );
+        }
         throw e;
     }
 };

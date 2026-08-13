@@ -7,14 +7,16 @@ import {
     useWakeMethods,
 } from '../api/hooks';
 import type {
+    AiCredentialStatus,
     AiModelOption,
     TranscriptionEngine,
-    TranscriptionProbe,
     WakeMethod,
 } from '../api/types';
 import { ModelSelect } from '../components/ModelSelect';
 import { useT } from '../i18n';
 import { FormFeedback } from '../components/FormFeedback';
+import { providerAvailability } from '../components/aiProviders';
+import { RemotePcPanel } from '../components/RemotePcPanel';
 
 /** Hours of speech in a typical session, for the estimate. */
 const TYPICAL_SESSION_HOURS = 4;
@@ -27,7 +29,14 @@ const TYPICAL_SESSION_HOURS = 4;
  * often solved by turning a computer on. That is why the choice is exclusive
  * and switching the PC on is a button of its own.
  */
-export function TranscriptionSettings({ guildId, readOnly }: { guildId: string; readOnly: boolean }) {
+export function TranscriptionSettings({
+    guildId, readOnly, credentials,
+}: {
+    guildId: string;
+    readOnly: boolean;
+    /** What the table has a key for. Decides which cloud models are offered. */
+    credentials: AiCredentialStatus[];
+}) {
     const t = useT();
     const settings = useTranscriptionSettings(guildId);
     const methods = useWakeMethods(guildId);
@@ -42,7 +51,7 @@ export function TranscriptionSettings({ guildId, readOnly }: { guildId: string; 
     const [cloudModel, setCloudModel] = useState('gpt-4o-mini-transcribe');
     const [remoteModel, setRemoteModel] = useState('');
     const [tokenDraft, setTokenDraft] = useState('');
-    const [probe, setProbe] = useState<TranscriptionProbe | null>(null);
+    const [shutdownTokenDraft, setShutdownTokenDraft] = useState('');
     const [saved, setSaved] = useState(false);
 
     useEffect(() => {
@@ -69,9 +78,17 @@ export function TranscriptionSettings({ guildId, readOnly }: { guildId: string; 
     const geminiModels = useProviderModels(guildId, 'gemini');
     const remoteModels = useRemoteWhisperModels(guildId, engine === 'remote');
 
+    // Only what this table has a key for: a cloud model on a provider it cannot
+    // authenticate against is audio nobody will transcribe, discovered after the
+    // session rather than here.
+    const usableProviders = new Set(
+        providerAvailability(credentials)
+            .filter((entry) => entry.usable)
+            .map((entry) => entry.provider),
+    );
     const cloudModels: AiModelOption[] = [
-        ...(openaiModels.data?.transcription ?? []),
-        ...(geminiModels.data?.transcription ?? []),
+        ...(usableProviders.has('openai') ? openaiModels.data?.transcription ?? [] : []),
+        ...(usableProviders.has('gemini') ? geminiModels.data?.transcription ?? [] : []),
     ];
     const installedModels: AiModelOption[] = (remoteModels.data?.models ?? []).map((id) => ({
         id,
@@ -216,28 +233,17 @@ export function TranscriptionSettings({ guildId, readOnly }: { guildId: string; 
 
                     <p className="settings-hint">{t.transcription.freeOnOwnMachine}</p>
 
-                    <div className="ai-credential__row">
-                        <button type="button" disabled={disabled} onClick={async () => setProbe(await actions.test())}>
-                            {t.transcription.test}
-                        </button>
-                        {/* A separate action from the test: waking a machine
-                            takes minutes, and hiding it inside the test would
-                            make a computer that is merely booting look broken. */}
-                        <button type="button" disabled={disabled || !mac} onClick={async () => setProbe(await actions.wake())}>
-                            {t.transcription.wake}
-                        </button>
-                    </div>
-
-                    {probe && (
-                        <p className={probe.status === 'OK' ? 'status' : 'form-error'} role="status">
-                            {{
-                                OK: t.transcription.testOk,
-                                UNREACHABLE: t.transcription.testUnreachable,
-                                UNAUTHORIZED: t.transcription.testUnauthorized,
-                                NOT_CONFIGURED: t.transcription.testNotConfigured,
-                            }[probe.status]}
-                        </p>
-                    )}
+                    {/* The state of the machine, and the two buttons that change
+                        it, in one place. The old pair of buttons said nothing
+                        about the computer unless you pressed one of them. */}
+                    <RemotePcPanel
+                        guildId={guildId}
+                        enabled={engine === 'remote'}
+                        disabled={disabled}
+                        shutdownEnabled={shutdown}
+                        shutdownTokenConfigured={data.remote.shutdown_token_configured}
+                        canWake={mac.trim() !== ''}
+                    />
 
                     <label className="settings-form__check">
                         <input
@@ -250,6 +256,36 @@ export function TranscriptionSettings({ guildId, readOnly }: { guildId: string; 
                             {t.transcription.shutdown}
                             <small>{t.transcription.shutdownHint}</small>
                         </span>
+                    </label>
+
+                    {/* Needed by both the automatic shutdown and the button
+                        above, and until now writable from nowhere: the vault key
+                        was read by the post-session shutdown and had no route. */}
+                    <label>
+                        <span>{t.remotePc.shutdownToken}</span>
+                        <div className="ai-credential__row">
+                            <input
+                                type="password"
+                                value={shutdownTokenDraft}
+                                autoComplete="off"
+                                disabled={disabled}
+                                onChange={(event) => setShutdownTokenDraft(event.target.value)}
+                            />
+                            <button
+                                type="button"
+                                disabled={disabled || shutdownTokenDraft.trim() === ''}
+                                onClick={async () => {
+                                    await actions.saveShutdownToken(shutdownTokenDraft.trim());
+                                    setShutdownTokenDraft('');
+                                }}
+                            >
+                                {t.aiSettings.saveKey}
+                            </button>
+                        </div>
+                        <small>{t.remotePc.shutdownTokenHint}</small>
+                        {data.remote.shutdown_token_configured && (
+                            <small className="status">{t.transcription.authTokenConfigured}</small>
+                        )}
                     </label>
 
                     <fieldset className="ai-tier">

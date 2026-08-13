@@ -51,6 +51,7 @@ function transcription(overrides: Partial<TranscriptionSettings> = {}): Transcri
             url: 'http://100.64.0.1:3001',
             model: null,
             auth_token_configured: false,
+            shutdown_token_configured: false,
             shutdown_enabled: false,
             wake: { mac_address: null, method: 'udp', options: {}, configured_secrets: [] },
         },
@@ -113,6 +114,14 @@ function baseHandlers(settingsBody: GuildAiSettings, transcriptionBody = transcr
         jsonGet('/guilds/g1/ai-settings/wake-methods', WAKE_METHODS),
         jsonGet('/guilds/g1/ai-settings/session-estimate', ESTIMATE),
         jsonGet('/guilds/g1/ai-settings/pricing', []),
+        // The checklist reads the campaigns too: with nowhere to record into,
+        // a fully configured key is still a table that cannot start.
+        jsonGet('/guilds/g1/campaigns', []),
+        // A machine that does not answer is the default state of the fixture,
+        // as it is of a real one. Individual tests override it.
+        jsonGet('/guilds/g1/ai-settings/transcription/status', {
+            status: 'UNREACHABLE', detail: null, checked_at: 1, health: null,
+        }),
     ];
 }
 
@@ -293,6 +302,7 @@ describe('GuildAiSettingsPage', () => {
                     url: 'http://pc:3001',
                     model: null,
                     auth_token_configured: false,
+                    shutdown_token_configured: false,
                     shutdown_enabled: false,
                     wake: { mac_address: 'AA:BB:CC:DD:EE:FF', method: 'iliadbox', options: {}, configured_secrets: [] },
                 },
@@ -304,13 +314,144 @@ describe('GuildAiSettingsPage', () => {
         });
 
         it('accendere è un pulsante a sé, e senza MAC non si può premere', async () => {
-            // A boot takes minutes: hiding it inside the test would make a
+            // A boot takes minutes: hiding it inside the probe would make a
             // computer that is merely starting up look broken.
             server.use(...baseHandlers(settings(), transcription()));
             renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
 
-            expect(await screen.findByRole('button', { name: /prova la connessione|test connection/i })).toBeEnabled();
-            expect(screen.getByRole('button', { name: /accendi|turn the machine on/i })).toBeDisabled();
+            expect(await screen.findByRole('button', { name: /ricontrolla|check again/i })).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /^accendi$|^turn it on$/i })).toBeDisabled();
+        });
+    });
+
+    describe('the table\'s own machine', () => {
+        it('says whether it is on, and what it is running', async () => {
+            // The one fact somebody opens this page for before a session, and
+            // the one the probe used to throw away with the response body.
+            server.use(jsonGet('/guilds/g1/ai-settings/transcription/status', {
+                status: 'OK',
+                detail: null,
+                checked_at: Date.parse('2026-08-13T12:04:00Z'),
+                health: {
+                    gpu: true, accelerator: 'RTX 5060 TI (CUDA)', model: 'large-v3',
+                    cpu: null, cpu_cores: null, total_memory: null, free_memory: null, uptime_seconds: 4_200,
+                },
+            }), ...baseHandlers(settings()));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            expect(await screen.findByText(/^acceso$|^on$/i)).toBeInTheDocument();
+            // Accelerator and loaded model on one line: "on" alone does not tell
+            // you whether the machine is running the model you chose.
+            expect(screen.getByText(/RTX 5060 TI.*large-v3/)).toBeInTheDocument();
+            expect(screen.getByText(/1h 10m/)).toBeInTheDocument();
+        });
+
+        it('renders a switched-off machine as a state, not a failure', async () => {
+            server.use(jsonGet('/guilds/g1/ai-settings/transcription/status', {
+                status: 'UNREACHABLE', detail: 'connect ECONNREFUSED', checked_at: 1, health: null,
+            }), ...baseHandlers(settings()));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            // Being off is the normal state of somebody's home computer.
+            const badge = await screen.findByText(/^spento$|^off$/i);
+            expect(badge).toHaveClass('badge-neutral');
+        });
+
+        it('will not shut down a machine with no shutdown token stored', async () => {
+            server.use(
+                jsonGet('/guilds/g1/ai-settings/transcription/status', {
+                    status: 'OK', detail: null, checked_at: 1, health: null,
+                }),
+                ...baseHandlers(settings(), transcription({
+                    remote: {
+                        url: 'http://pc:3001',
+                        model: null,
+                        auth_token_configured: true,
+                        shutdown_token_configured: false,
+                        shutdown_enabled: true,
+                        wake: { mac_address: 'AA:BB:CC:DD:EE:FF', method: 'udp', options: {}, configured_secrets: [] },
+                    },
+                })),
+            );
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            expect(await screen.findByRole('button', { name: /^spegni$|^shut it down$/i })).toBeDisabled();
+            // And it says which field fixes it, next to the button.
+            expect(screen.getByText(/token di spegnimento qui sotto|shutdown token below/i)).toBeInTheDocument();
+        });
+    });
+
+    describe('providers the table has no key for', () => {
+        it('leaves them in the select, disabled, saying what they need', async () => {
+            // Hiding them would mean nobody ever discovers Gemini was an option;
+            // offering them as usual means saving a config that stops mid-session.
+            server.use(...baseHandlers(settings()));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            const blocked = await screen.findAllByRole('option', { name: /gemini.*(serve una chiave|a key is needed)/i });
+            expect(blocked.length).toBeGreaterThan(0);
+            blocked.forEach((entry) => expect(entry).toBeDisabled());
+        });
+
+        it('offers a configured provider, and Ollama without any key', async () => {
+            server.use(...baseHandlers(settings()));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            const openai = await screen.findAllByRole('option', { name: /^OpenAI$/ });
+            expect(openai[0]).toBeEnabled();
+            // Its models run on the table's own machine: there is no key to ask for.
+            const ollama = screen.getAllByRole('option', { name: /ollama/i })
+                .filter((entry) => !entry.textContent?.match(/serve una chiave|a key is needed/i));
+            expect(ollama[0]).toBeEnabled();
+        });
+
+        it('puts the remedy one click away', async () => {
+            server.use(...baseHandlers(settings()));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            const links = await screen.findAllByRole('link', { name: /aggiungi la chiave|add the .* key/i });
+            expect(links[0]).toHaveAttribute('href', '#ai-key-gemini');
+        });
+
+        it('names the phases instead of printing their ids', async () => {
+            server.use(...baseHandlers(settings()));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            await screen.findByText(/4f2a/);
+            expect(screen.queryByText('narrativeFilter')).not.toBeInTheDocument();
+        });
+    });
+
+    describe('the checklist at the top', () => {
+        it('names each gap separately, with its own remedy', async () => {
+            server.use(...baseHandlers(settings(), transcription({ usable: false, reason: 'NOT_CONFIGURED' })));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            // One red line naming a key told nothing about the other three gaps.
+            const checklist = await screen.findByRole('region', { name: /colpo d.occhio|at a glance/i });
+            expect(checklist).toHaveTextContent(/gemini/i);
+            expect(checklist).toHaveTextContent(/nessun motore scelto|no engine chosen/i);
+            expect(checklist).toHaveTextContent(/ancora nessuna campagna|no campaign on this server/i);
+        });
+
+        it('invites whoever can act, and only them', async () => {
+            server.use(...baseHandlers(settings({ can_manage: false })));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            await screen.findByText(/4f2a/);
+            expect(screen.queryByRole('link', { name: /riprendi la configurazione|pick up the configuration/i }))
+                .not.toBeInTheDocument();
+        });
+
+        it('says nothing is missing once everything is in place', async () => {
+            server.use(...baseHandlers(
+                settings({ ready: true, missing_providers: [], fast: { provider: 'openai', model: 'gpt-5.4-mini' } }),
+                transcription({ usable: true, reason: null }),
+            ));
+            server.use(jsonGet('/guilds/g1/campaigns', [{ id: 1, name: 'Il Trono', is_active: 1 }]));
+            renderWithProviders(<GuildAiSettingsPage />, { route: ROUTE, path: PATH });
+
+            expect(await screen.findByText(/non manca niente|nothing missing/i)).toBeInTheDocument();
         });
     });
 });

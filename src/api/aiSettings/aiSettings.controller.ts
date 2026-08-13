@@ -15,6 +15,7 @@ import {
 import {
     ApiForbiddenResponse,
     ApiNoContentResponse,
+    ApiAcceptedResponse,
     ApiOkResponse,
     ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
@@ -48,6 +49,9 @@ import {
     PutCredentialDto,
     PricingOverrideDto,
     PutWakeSecretDto,
+    RemotePcStatusDto,
+    ShutdownResultDto,
+    WakeAcceptedDto,
     SessionCostEstimateDto,
     UpdatePricingOverridesDto,
     TranscriptionProbeDto,
@@ -239,21 +243,80 @@ export class AiSettingsController {
     }
 
     /**
-     * Switches the PC on and waits.
+     * The state of the table's machine, and what it says about itself.
      *
-     * A separate action from the test, not a fallback inside it: a boot
+     * Read-only, like the model list: it reports what whoever can see the
+     * settings can already see. A `GET` because the page asks it when the
+     * section opens, and on a timer while the machine boots.
+     */
+    @Get('guilds/:guildId/ai-settings/transcription/status')
+    @UseGuards(GuildAccessGuard)
+    @ApiOkResponse({ type: RemotePcStatusDto })
+    remotePcStatus(@Param('guildId') guildId: string): Promise<RemotePcStatusDto> {
+        return this.settings.remotePcStatus(guildId);
+    }
+
+    /**
+     * Switches the PC on.
+     *
+     * A separate action from the probe, not a fallback inside it: a boot
      * legitimately takes minutes, and two buttons tell the story of something
-     * that happens in two stages better.
+     * that happens in two stages better. It returns as soon as the request has
+     * left — the page follows the machine through the status endpoint.
      */
     @Post('guilds/:guildId/ai-settings/transcription/wake')
     @UseGuards(GuildAccessGuard, GuildManageGuard)
-    @ApiOkResponse({ type: TranscriptionProbeDto })
+    @HttpCode(202)
+    @ApiAcceptedResponse({ type: WakeAcceptedDto })
     wakeTranscription(
         @Req() request: AuthenticatedRequest,
         @Param('guildId') guildId: string,
-    ): Promise<TranscriptionProbeDto> {
+    ): Promise<WakeAcceptedDto> {
         assertMutationOrigin(request);
         return this.settings.wakeTranscription(guildId);
+    }
+
+    /**
+     * Switches the PC off, now.
+     *
+     * The counterpart of the opt-in shutdown at the end of a session, with a
+     * person behind it. Refusals come back as statuses rather than errors:
+     * «no token», «disabled», «still transcribing» are three different things
+     * to do about it, and an HTTP error would flatten them into one.
+     */
+    @Post('guilds/:guildId/ai-settings/transcription/shutdown')
+    @UseGuards(GuildAccessGuard, GuildManageGuard)
+    @ApiOkResponse({ type: ShutdownResultDto })
+    shutdownRemotePc(
+        @Req() request: AuthenticatedRequest,
+        @Param('guildId') guildId: string,
+    ): Promise<ShutdownResultDto> {
+        assertMutationOrigin(request);
+        return this.settings.shutdownRemotePc(guildId);
+    }
+
+    /**
+     * The token that lets this table switch its own machine off.
+     *
+     * Separate from the auth token, matching the machine's own separation:
+     * reading transcripts from a computer and turning it off are not the same
+     * permission. Write-only, like every credential.
+     */
+    @Put('guilds/:guildId/ai-settings/transcription/shutdown-token')
+    @UseGuards(GuildAccessGuard, GuildManageGuard)
+    @HttpCode(204)
+    @ApiNoContentResponse({ description: 'Token stored, encrypted at rest.' })
+    putTranscriptionShutdownToken(
+        @Req() request: AuthenticatedRequest,
+        @Param('guildId') guildId: string,
+        @Body() body: PutWakeSecretDto,
+    ): void {
+        assertMutationOrigin(request);
+        this.settings.putTranscriptionShutdownToken(
+            guildId,
+            typeof body?.value === 'string' ? body.value : '',
+            request.webSession.discordUserId,
+        );
     }
 
     /** The ways of switching the PC on, with the fields each of them asks for. */

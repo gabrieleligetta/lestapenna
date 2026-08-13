@@ -11,6 +11,22 @@ import { logger } from '../utils/logger';
 const log = logger('Custode');
 
 let _s3Client: S3Client | null = null;
+const MAX_CONCURRENT_UPLOADS = Math.max(1, Number.parseInt(process.env.MAX_CONCURRENT_UPLOADS || '2', 10) || 2);
+let activeUploads = 0;
+const uploadWaiters: Array<() => void> = [];
+
+async function withUploadSlot<T>(work: () => Promise<T>): Promise<T> {
+    if (activeUploads >= MAX_CONCURRENT_UPLOADS) {
+        await new Promise<void>(resolve => uploadWaiters.push(resolve));
+    }
+    activeUploads++;
+    try {
+        return await work();
+    } finally {
+        activeUploads--;
+        uploadWaiters.shift()?.();
+    }
+}
 
 export function getS3Client(): S3Client {
     if (!_s3Client) {
@@ -29,7 +45,13 @@ export function getS3Client(): S3Client {
                 accessKeyId: accessKeyId,
                 secretAccessKey: secretAccessKey,
             },
-            forcePathStyle: true
+            forcePathStyle: true,
+            // OCI's S3 compatibility layer rejects the trailing checksums that
+            // recent AWS SDKs send as `Content-Encoding: aws-chunked`. Oracle's
+            // documented compatibility setting is WHEN_REQUIRED; PutObject does
+            // not require that optional trailer and can use a regular fixed-size
+            // request instead.
+            requestChecksumCalculation: 'WHEN_REQUIRED',
         });
     }
     return _s3Client;
@@ -182,8 +204,8 @@ export async function uploadToOracle(filePath: string, fileName: string, session
             return null;
         }
 
-        const fileContent = fs.readFileSync(filePath);
         const targetKey = customKey ? customKey : getPreferredKey(fileName, sessionId);
+        const contentLength = fs.statSync(filePath).size;
 
         // Determine the content type from the extension
         const extension = path.extname(fileName).toLowerCase();
@@ -194,14 +216,34 @@ export async function uploadToOracle(filePath: string, fileName: string, session
                         extension === '.txt' ? 'text/plain' :
                             'audio/x-pcm';
 
-        const command = new PutObjectCommand({
-            Bucket: getBucketName(),
-            Key: targetKey,
-            Body: fileContent,
-            ContentType: contentType
+        await withUploadSlot(async () => {
+            // A fresh stream is required for every retry. Reading the complete
+            // FLAC synchronously used to stop Discord's event loop and duplicate
+            // the file in heap while voices were arriving.
+            await withRetry(async () => {
+                const body = fs.createReadStream(filePath);
+                await new Promise<void>((resolve, reject) => {
+                    body.once('open', () => resolve());
+                    body.once('error', reject);
+                });
+                try {
+                    await getS3Client().send(new PutObjectCommand({
+                        Bucket: getBucketName(),
+                        Key: targetKey,
+                        Body: body,
+                        // A file stream has no intrinsic length. Declaring it
+                        // prevents transfer-encoding chunked and lets OCI reject
+                        // a truncated request instead of accepting ambiguity.
+                        ContentLength: contentLength,
+                        ContentType: contentType,
+                    }));
+                } finally {
+                    // The SDK normally drains it; explicit destruction also
+                    // makes mocked/short-circuited sends release the fd safely.
+                    body.destroy();
+                }
+            }, 3, 1000, `upload ${targetKey}`);
         });
-
-        await withRetry(() => getS3Client().send(command), 3, 1000, `upload ${targetKey}`);
         log.info(`Backup completato su Oracle: ${targetKey}`);
 
         return fileName;

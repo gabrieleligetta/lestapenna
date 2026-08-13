@@ -15,11 +15,14 @@ const emptyAiJobs = http.get('/api/v1/me/ai-jobs', () =>
 /**
  * The instance's own links, asked for by the support bar at the foot of every
  * page. Same reasoning as the register above, and the same defaults as a fresh
- * `.env`: a declared donation URL that is not open for business yet.
+ * `.env`: Ko-fi open, GitHub Sponsors declared but not open for business yet.
  */
 const defaultAppInfo = http.get('/api/v1/app-info', () =>
     HttpResponse.json({
-        donation: { url: 'https://github.com/sponsors/gabrieleligetta', active: false },
+        donations: [
+            { platform: 'kofi', url: 'https://ko-fi.com/gabrieleligetta', active: true },
+            { platform: 'github', url: 'https://github.com/sponsors/gabrieleligetta', active: false },
+        ],
         repo_url: 'https://github.com/gabrieleligetta/lestapenna',
         license: 'AGPL-3.0',
     }));

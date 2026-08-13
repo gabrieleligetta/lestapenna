@@ -1,9 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
+import { getOperationalHealth } from '../../services/operationalHealth';
 
 @Controller('health')
 export class HealthController {
     @Get()
-    check() {
-        return { status: 'ok', timestamp: new Date().toISOString() };
+    async check() {
+        return getOperationalHealth();
     }
 }

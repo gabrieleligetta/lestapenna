@@ -64,19 +64,19 @@ describe('deriving the scope', () => {
         // the very pipeline they configure — saved in the settings, ignored at
         // recording time.
         insertSession('sess-1', GUILD_A, campaignA);
-        expect(scopeForSession('sess-1')).toEqual({ guildId: GUILD_A, campaignId: campaignA });
+        expect(scopeForSession('sess-1')).toEqual({ guildId: GUILD_A, campaignId: campaignA, sessionId: 'sess-1' });
     });
 
     it('falls back to the campaign for a session with no guild', () => {
         // `sessions.guild_id` is nullable: the sessions predating
         // multi-guild do not have it, and those are exactly the ones already in production.
         insertSession('sess-legacy', null, campaignB);
-        expect(scopeForSession('sess-legacy')).toEqual({ guildId: GUILD_B, campaignId: campaignB });
+        expect(scopeForSession('sess-legacy')).toEqual({ guildId: GUILD_B, campaignId: campaignB, sessionId: 'sess-legacy' });
     });
 
     it('gives a guild-only scope to a session with no campaign', () => {
         insertSession('sess-senza-campagna', GUILD_A, null);
-        expect(scopeForSession('sess-senza-campagna')).toEqual({ guildId: GUILD_A });
+        expect(scopeForSession('sess-senza-campagna')).toEqual({ guildId: GUILD_A, sessionId: 'sess-senza-campagna' });
     });
 
     it('does not invent a guild for a session that leads nowhere', () => {
@@ -118,7 +118,7 @@ describe('scope ambientale', () => {
         // deploy still resolves.
         insertSession('sess-2', GUILD_B, campaignB);
         const seen = runWithSessionScope('sess-2', () => currentAiScope());
-        expect(seen).toEqual({ guildId: GUILD_B, campaignId: campaignB });
+        expect(seen).toEqual({ guildId: GUILD_B, campaignId: campaignB, sessionId: 'sess-2' });
     });
 });
 

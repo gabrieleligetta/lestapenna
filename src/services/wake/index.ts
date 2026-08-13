@@ -77,6 +77,34 @@ async function waitForHealth(
     return false;
 }
 
+/**
+ * Sends the wake request and returns, without waiting for the machine.
+ *
+ * The worker cannot use this — it has to know whether the PC came up before it
+ * decides where to transcribe — but a browser can: a boot takes minutes, and an
+ * HTTP request held open that long is a request that dies to a proxy timeout
+ * and leaves the page unable to say whether anything happened. The caller polls
+ * the status endpoint instead, which is also what shows the progress.
+ */
+export async function sendWakeRequest(
+    options: Pick<WakeAndWaitOptions, 'method' | 'macAddress' | 'options' | 'secrets'>,
+): Promise<{ sent: true } | { sent: false; reason: string }> {
+    const implementation = wakeMethod(options.method);
+    if (!implementation) return { sent: false, reason: `unknown_wake_method: ${options.method}` };
+
+    try {
+        await implementation.send({
+            macAddress: options.macAddress,
+            options: options.options,
+            secrets: options.secrets,
+        });
+        return { sent: true };
+    } catch (err: any) {
+        console.error(`[WoL] ❌ Impossibile inviare la richiesta di accensione: ${err.message}`);
+        return { sent: false, reason: `wake_request_failed: ${err.message}` };
+    }
+}
+
 /** Switches the PC on with the method the table chose and waits for it to answer. */
 export async function wakeAndWait(options: WakeAndWaitOptions): Promise<WakeResult> {
     const {
@@ -84,17 +112,10 @@ export async function wakeAndWait(options: WakeAndWaitOptions): Promise<WakeResu
         bootTimeoutMs = 180_000, pollIntervalMs = 5_000, healthHeaders = {},
     } = options;
 
-    const implementation = wakeMethod(method);
-    if (!implementation) return { success: false, reason: `unknown_wake_method: ${method}` };
-
     const start = Date.now();
 
-    try {
-        await implementation.send({ macAddress, options: fields, secrets });
-    } catch (err: any) {
-        console.error(`[WoL] ❌ Impossibile inviare la richiesta di accensione: ${err.message}`);
-        return { success: false, reason: `wake_request_failed: ${err.message}` };
-    }
+    const sent = await sendWakeRequest({ method, macAddress, options: fields, secrets });
+    if (!sent.sent) return { success: false, reason: sent.reason };
 
     // The BIOS takes a few seconds before the network card answers
     // anything: polling straight away would only produce a guaranteed failure.

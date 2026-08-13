@@ -14,7 +14,9 @@ const TEMP_DIR = config.paths.tempMixDir;
 
 // Configuration
 const BATCH_SIZE = 32;
-const CONCURRENCY_LIMIT = 4;
+// Production keeps this at one: the worker is intentionally background work
+// and must leave CPU headroom to the gateway's live per-speaker encoders.
+const CONCURRENCY_LIMIT = Math.max(1, Number.parseInt(process.env.MIX_CONCURRENCY_LIMIT || '1', 10) || 1);
 
 // Ensure directories exist
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });

@@ -574,9 +574,9 @@
         ]
       }
     },
-    "/api/v1/guilds/{guildId}/ai-settings/transcription/wake": {
-      "post": {
-        "operationId": "AiSettingsController_wakeTranscription",
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/status": {
+      "get": {
+        "operationId": "AiSettingsController_remotePcStatus",
         "parameters": [
           {
             "name": "guildId",
@@ -593,10 +593,103 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TranscriptionProbeDto"
+                  "$ref": "#/components/schemas/RemotePcStatusDto"
                 }
               }
             }
+          }
+        },
+        "tags": [
+          "AiSettings"
+        ]
+      }
+    },
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/wake": {
+      "post": {
+        "operationId": "AiSettingsController_wakeTranscription",
+        "parameters": [
+          {
+            "name": "guildId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WakeAcceptedDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AiSettings"
+        ]
+      }
+    },
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/shutdown": {
+      "post": {
+        "operationId": "AiSettingsController_shutdownRemotePc",
+        "parameters": [
+          {
+            "name": "guildId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShutdownResultDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AiSettings"
+        ]
+      }
+    },
+    "/api/v1/guilds/{guildId}/ai-settings/transcription/shutdown-token": {
+      "put": {
+        "operationId": "AiSettingsController_putTranscriptionShutdownToken",
+        "parameters": [
+          {
+            "name": "guildId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutWakeSecretDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Token stored, encrypted at rest."
           }
         },
         "tags": [
@@ -5135,6 +5228,10 @@
             "type": "boolean",
             "description": "Whether an auth token is stored for it. Never the token."
           },
+          "shutdown_token_configured": {
+            "type": "boolean",
+            "description": "Whether a shutdown token is stored. Separate from the auth token on purpose: switching a computer off is not the same permission as reading from it."
+          },
           "shutdown_enabled": {
             "type": "boolean",
             "description": "Ask the machine to shut down when a session ends. Opt-in: it is someone's home PC."
@@ -5147,6 +5244,7 @@
           "url",
           "model",
           "auth_token_configured",
+          "shutdown_token_configured",
           "shutdown_enabled",
           "wake"
         ]
@@ -5331,6 +5429,149 @@
         "required": [
           "status",
           "detail"
+        ]
+      },
+      "RemotePcHealthDto": {
+        "type": "object",
+        "properties": {
+          "gpu": {
+            "type": "object",
+            "nullable": true
+          },
+          "accelerator": {
+            "type": "object",
+            "nullable": true
+          },
+          "model": {
+            "type": "object",
+            "nullable": true,
+            "description": "The Whisper model currently loaded on it."
+          },
+          "cpu": {
+            "type": "object",
+            "nullable": true
+          },
+          "cpu_cores": {
+            "type": "object",
+            "nullable": true
+          },
+          "total_memory": {
+            "type": "object",
+            "nullable": true
+          },
+          "free_memory": {
+            "type": "object",
+            "nullable": true
+          },
+          "uptime_seconds": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "gpu",
+          "accelerator",
+          "model",
+          "cpu",
+          "cpu_cores",
+          "total_memory",
+          "free_memory",
+          "uptime_seconds"
+        ]
+      },
+      "RemotePcStatusDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "OK",
+              "UNREACHABLE",
+              "UNAUTHORIZED",
+              "NOT_CONFIGURED"
+            ],
+            "description": "UNREACHABLE is the normal state of a home computer, not a fault."
+          },
+          "detail": {
+            "type": "object",
+            "nullable": true
+          },
+          "checked_at": {
+            "type": "number",
+            "description": "When the server asked, in epoch milliseconds."
+          },
+          "health": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RemotePcHealthDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "detail",
+          "checked_at",
+          "health"
+        ]
+      },
+      "WakeAcceptedDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "WAKING",
+              "NOT_CONFIGURED",
+              "FAILED"
+            ]
+          },
+          "detail": {
+            "type": "object",
+            "nullable": true
+          },
+          "boot_timeout_ms": {
+            "type": "number",
+            "description": "How long the machine is allowed to take, in milliseconds."
+          }
+        },
+        "required": [
+          "status",
+          "detail",
+          "boot_timeout_ms"
+        ]
+      },
+      "ShutdownResultDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "DISABLED",
+              "NO_TOKEN",
+              "BUSY",
+              "NOT_CONFIGURED",
+              "UNREACHABLE",
+              "UNAUTHORIZED"
+            ]
+          },
+          "detail": {
+            "type": "object",
+            "nullable": true
+          },
+          "delay_seconds": {
+            "type": "object",
+            "nullable": true,
+            "description": "Seconds before it switches off. Null when it will not."
+          }
+        },
+        "required": [
+          "status",
+          "detail",
+          "delay_seconds"
         ]
       },
       "WakeFieldDto": {
@@ -10005,12 +10246,20 @@
           "createdAt"
         ]
       },
-      "DonationInfoDto": {
+      "DonationChannelDto": {
         "type": "object",
         "properties": {
+          "platform": {
+            "type": "string",
+            "enum": [
+              "github",
+              "kofi"
+            ],
+            "description": "Which platform, so the button can show that platform’s own mark."
+          },
           "url": {
             "type": "string",
-            "description": "Empty when this instance asks for nothing."
+            "description": "Where it points. Channels with no URL are not returned at all."
           },
           "active": {
             "type": "boolean",
@@ -10018,6 +10267,7 @@
           }
         },
         "required": [
+          "platform",
           "url",
           "active"
         ]
@@ -10025,8 +10275,12 @@
       "AppInfoDto": {
         "type": "object",
         "properties": {
-          "donation": {
-            "$ref": "#/components/schemas/DonationInfoDto"
+          "donations": {
+            "description": "Every channel this instance offers, in display order. Empty when it asks for nothing — a fork that wants no donations configures no URL and the bar shows none.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DonationChannelDto"
+            }
           },
           "repo_url": {
             "type": "string"
@@ -10037,7 +10291,7 @@
           }
         },
         "required": [
-          "donation",
+          "donations",
           "repo_url",
           "license"
         ]

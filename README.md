@@ -5,7 +5,7 @@
 **The Digital Bard** — records your tabletop RPG sessions on Discord,
 transcribes them, and writes the chronicle.
 
-Free. Open source. **No money, ever** — the AI runs on your own keys.
+Free. Open source. **No subscription** — the AI runs on your own keys.
 
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
@@ -70,6 +70,18 @@ Invite the bot to your server, open the settings, paste an OpenAI or Gemini key.
 The bot refuses to record until you have a transcription route configured — a
 recording with no engine behind it is audio nobody will ever be able to read,
 and it is better to say so beforehand than after four hours.
+
+The shared public bot currently runs on donated/free hardware and accepts at
+most **two simultaneous recordings across two Discord guilds** (one per guild).
+Recording is protected from background processing, but at busy times a new
+session may be refused until one of those recordings finishes. The message says
+why instead of pretending the service has unlimited resources.
+
+If you need dedicated capacity and control over availability, self-host the bot:
+it is the most reliable route and is exactly what the AGPL source is here for.
+If you prefer to improve the shared instance, `$dona` lists the ways to fund
+maintenance and additional cloud capacity. A donation never buys queue priority
+or private features.
 
 ## Self-hosting
 
@@ -145,6 +157,8 @@ question the Bard. The full list is in [`COMMANDS.md`](COMMANDS.md), or `$help`.
 
 - [`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md) — running it on your own server:
   the vault, key rotation, transcription, backups.
+- [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) — capacity limits, process
+  isolation, zero-budget scaling, and the SQLite/PostgreSQL decision.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute, and what I look for
   in a change.
 - [`SECURITY.md`](SECURITY.md) — how to report a vulnerability, and which areas
@@ -168,7 +182,9 @@ claim nothing over it.
 
 ## Supporting it
 
-There is nothing to buy. If the project is useful to you and you want to help it
-stay alive, you can
-[sponsor it on GitHub](https://github.com/sponsors/gabrieleligetta) — it is
-optional and unlocks nothing, because everything is free for everyone anyway.
+There is nothing to buy. The public instance currently runs on free hardware,
+so it is deliberately limited to **two simultaneous recordings**. If the project
+is useful to you, you can [sponsor it on GitHub](https://github.com/sponsors/gabrieleligetta)
+or use the other channel shown by `$dona`: contributions pay for maintenance and
+shared cloud capacity. They are optional and unlock nothing; self-hosting remains
+free and gives your table dedicated resources.

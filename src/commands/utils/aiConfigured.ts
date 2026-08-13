@@ -21,7 +21,11 @@ export async function assertAiConfigured(ctx: CommandContext): Promise<boolean> 
     });
     if (readiness.ready) return true;
 
-    const settingsUrl = `${config.discordOAuth.publicBaseUrl}/app/guilds/${ctx.guildId}/ai`;
+    // The guided path, not the settings page: whoever reaches this message has
+    // nothing configured, and the six sections of `/ai` are exactly what they
+    // could not get through on their own. `/setup` walks the same endpoints in
+    // the order they depend on, and links back to `/ai` from every step.
+    const settingsUrl = `${config.discordOAuth.publicBaseUrl}/app/guilds/${ctx.guildId}/setup`;
 
     // Two different gaps, two different remedies: without a transcription engine
     // there is no point getting just any key, you have to choose between your own

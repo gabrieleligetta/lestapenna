@@ -31,7 +31,15 @@ import { connectToChannel } from '../../services/recorder';
 import { randomUUID as uuidv4 } from 'crypto';
 import { sessionPhaseManager } from '../../services/SessionPhaseManager';
 import { checkAutoLeave } from '../../bootstrap/voiceState';
-import { setActiveSession, incrementRecordingCount, getActiveSession } from '../../state/sessionState';
+import {
+    acquireRecordingCapacity,
+    deleteActiveSession,
+    releaseRecordingCapacity,
+    setActiveSession,
+    incrementRecordingCount,
+    getActiveSession,
+    getRecordingCapacityLimit,
+} from '../../state/sessionState';
 import { isRecordingPaused } from '../../services/recorder';
 import { ensureTestEnvironment } from './testEnv';
 import { startWorldConfigurationFlow } from '../utils/worldConfig';
@@ -42,7 +50,8 @@ import { assertCampaignWrite } from '../utils/campaignWrite';
 import { assertAiConfigured } from '../utils/aiConfigured';
 import { sessionCostLine } from '../utils/sessionCostLine';
 import { communityLine } from '../utils/communityLine';
-import { announceRecording, markRecording } from '../../services/recordingNotice';
+import { announceRecording, clearRecording, markRecording } from '../../services/recordingNotice';
+import { config } from '../../config';
 
 export const listenCommand: Command = {
     name: 'listen',
@@ -62,7 +71,10 @@ export const listenCommand: Command = {
         if (existingSession) {
             const isPaused = isRecordingPaused(message.guild!.id);
             const hint = t(ctx.locale, isPaused ? 'session.hintPaused' : 'session.hintStop');
-            await message.reply(t(ctx.locale, 'session.alreadyActive', { id: `${existingSession.substring(0, 8)}...`, hint }));
+            await message.reply(t(ctx.locale, 'session.alreadyActive', {
+                hint,
+                limit: getRecordingCapacityLimit(),
+            }));
             return;
         }
 
@@ -181,35 +193,57 @@ export const listenCommand: Command = {
                 );
             }
 
-            // Before anything else: if the visible indicator cannot be shown, we do
-            // not record. An indicator that can be switched off is not an
-            // indicator.
-            if (!await markRecording(message.guild!, voiceChannel as VoiceChannel)) {
-                await message.reply(t(ctx.locale, 'recording.needNickname'));
+            const admission = await acquireRecordingCapacity(message.guild!.id);
+            if (!admission.acquired) {
+                const capacityMessage = t(
+                    ctx.locale,
+                    admission.reason === 'guild_backlog'
+                        ? 'session.capacityGuildBacklog'
+                        : 'session.capacityFull',
+                    {
+                        active: admission.active,
+                        limit: admission.limit,
+                        pending: admission.pendingForGuild,
+                        repo: config.links.repoUrl,
+                    },
+                );
+                const supportMessage = config.links.nudgesEnabled
+                    ? `\n\n${t(ctx.locale, 'session.capacitySupport')}`
+                    : '';
+                await message.reply(`${capacityMessage}${supportMessage}`);
                 return;
             }
-            await announceRecording(
-                message.guild!,
-                message.channel as TextChannel,
-                voiceChannel as VoiceChannel,
-                ctx.locale,
-            );
 
-            await setActiveSession(message.guild!.id, sessionId);
-            createSession(sessionId, message.guild!.id, ctx.activeCampaign!.id);
+            try {
+                // Before anything else: if the visible indicator cannot be shown, we do
+                // not record. An indicator that can be switched off is not an
+                // indicator.
+                if (!await markRecording(message.guild!, voiceChannel as VoiceChannel)) {
+                    await releaseRecordingCapacity(message.guild!.id);
+                    await message.reply(t(ctx.locale, 'recording.needNickname'));
+                    return;
+                }
+                await announceRecording(
+                    message.guild!,
+                    message.channel as TextChannel,
+                    voiceChannel as VoiceChannel,
+                    ctx.locale,
+                );
 
-            // 📊 Usage tracking: increment the sessions used
-            tenantRepository.incrementSessions(message.guild!.id);
-
-            // 📍 Set session phase to RECORDING
-            sessionPhaseManager.setPhase(sessionId, 'RECORDING');
-
-            monitor.startSession(sessionId);
-
-            await incrementRecordingCount();
-            console.log(`[Flow] Contatore recording incrementato per sessione ${sessionId}`);
-
-            await connectToChannel(voiceChannel, sessionId);
+                await setActiveSession(message.guild!.id, sessionId);
+                createSession(sessionId, message.guild!.id, ctx.activeCampaign!.id);
+                tenantRepository.incrementSessions(message.guild!.id);
+                sessionPhaseManager.setPhase(sessionId, 'RECORDING');
+                monitor.startSession(sessionId);
+                monitor.logRecordingStarted(sessionId, humanMembers.size, admission.active);
+                await incrementRecordingCount();
+                await connectToChannel(voiceChannel, sessionId);
+            } catch (error) {
+                await deleteActiveSession(message.guild!.id);
+                await releaseRecordingCapacity(message.guild!.id);
+                await clearRecording(message.guild!).catch(() => undefined);
+                throw error;
+            }
             scheduleSessionHardCap(message.guild!.id, sessionId, client);
             const startedMsg = t(ctx.locale, 'session.started', {
                 campaign: ctx.activeCampaign!.name,

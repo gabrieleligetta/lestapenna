@@ -31,6 +31,8 @@ import { factionRepository } from '../../db/repositories/FactionRepository';
 import { findCampaignByName } from '../../services/campaignSetup';
 import { normalizeLocale } from '../../i18n';
 import { resolveGuildDisplayNames } from '../../services/discordDirectory';
+import { TAROT_ARCANA, isTarotArcanum, resolveTarotArcanum } from '../../services/tarotArcana';
+import { coverUrl } from './campaignCover.service';
 import {
     CampaignMemberDto,
     CampaignMemberRoleDto,
@@ -251,6 +253,13 @@ export class CampaignTableController {
             campaignRepository.setCampaignArtDirection(campaignId, artDirection);
         }
 
+        if (body?.tarot_arcana !== undefined) {
+            if (!isTarotArcanum(body.tarot_arcana)) {
+                throw new BadRequestException(`tarot_arcana must be one of: ${TAROT_ARCANA.join(', ')}`);
+            }
+            campaignRepository.setCampaignTarotArcanum(campaignId, body.tarot_arcana);
+        }
+
         return this.readSettings(campaignId);
     }
 
@@ -265,6 +274,8 @@ export class CampaignTableController {
             party_name: factionRepository.getPartyFaction(campaignId)?.name ?? null,
             allow_auto_character_update: campaign.allow_auto_character_update === 1,
             art_direction: campaign.art_direction ?? null,
+            tarot_arcana: resolveTarotArcanum(campaign),
+            cover_url: coverUrl(campaign.id, campaign.cover_thumbnail_key),
         };
     }
 }

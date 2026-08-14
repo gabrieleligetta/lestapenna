@@ -47,6 +47,8 @@ import {
 import { ReferenceImageDto, UpdateReferenceImageDto } from './dto/referenceImage.dto';
 import { EntityProfileService } from './entityProfile.service';
 import { ReferenceImagesService } from './referenceImages.service';
+import { CampaignCoverDto } from './dto/campaignCover.dto';
+import { CampaignCoverService, COVER_VARIANTS } from './campaignCover.service';
 import { IMAGE_GENERATION_MODES, REFERENCE_SCOPES, type ImageGenerationMode } from '../../db/types';
 import { config } from '../../config';
 
@@ -91,6 +93,7 @@ export class EntityMediaController {
         private readonly generation: ImageGenerationService,
         private readonly profiles: EntityProfileService,
         private readonly references: ReferenceImagesService,
+        private readonly cover: CampaignCoverService,
     ) {}
 
     @Put(':campaignId/:entityType/:entityId/image')
@@ -601,6 +604,75 @@ export class EntityMediaController {
         reply.header('Cache-Control', 'private, max-age=300');
         reply.header('X-Content-Type-Options', 'nosniff');
         return reply.type(result.mimeType).send(result.bytes);
+    }
+
+    /**
+     * The picture on the campaign's card.
+     *
+     * A single slot rather than a gallery: a card shows one face, and offering
+     * a list here would only raise the question of which of them is on it.
+     */
+    @Put(':campaignId/cover')
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            required: ['file'],
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    @ApiOkResponse({ type: CampaignCoverDto })
+    async uploadCover(@Req() request: MultipartRequest): Promise<CampaignCoverDto> {
+        assertMutationOrigin(request);
+        let file: Buffer | undefined;
+
+        try {
+            for await (const part of request.parts()) {
+                if (part.type === 'file') {
+                    if (part.fieldname !== 'file') throw new BadRequestException('The image field must be named file');
+                    if (file) throw new BadRequestException('Only one image file may be uploaded');
+                    file = await part.toBuffer();
+                    continue;
+                }
+                throw new BadRequestException(`Unexpected multipart field: ${part.fieldname}`);
+            }
+        } catch (error) {
+            const code = (error as { code?: string }).code;
+            if (code === 'FST_REQ_FILE_TOO_LARGE' || code === 'FST_FILES_LIMIT') {
+                throw new BadRequestException('Image exceeds the 5 MiB limit');
+            }
+            throw error;
+        }
+
+        if (!file) throw new BadRequestException('Multipart field file is required');
+        return this.cover.upload(request, file);
+    }
+
+    @Delete(':campaignId/cover')
+    @HttpCode(204)
+    @ApiNoContentResponse()
+    @ApiNotFoundResponse({ description: 'This campaign has no cover.' })
+    async deleteCover(@Req() request: AuthenticatedRequest): Promise<void> {
+        assertMutationOrigin(request);
+        await this.cover.remove(request);
+    }
+
+    @Get(':campaignId/cover/:variant')
+    @ApiParam({ name: 'variant', enum: COVER_VARIANTS })
+    @ApiOkResponse({ content: { 'image/webp': { schema: { type: 'string', format: 'binary' } } } })
+    @ApiFoundResponse({ description: 'Redirect to a short-lived signed private-object URL.' })
+    @ApiNotFoundResponse({ description: 'This campaign has no cover.' })
+    async readCover(
+        @Req() request: AuthenticatedRequest,
+        @Param('variant') variant: string,
+        @Res() reply: FastifyReply,
+    ) {
+        const result = await this.cover.read(request.campaignId!, variant);
+        if (!result) return reply.status(404).send({ message: 'Cover image not found' });
+        reply.header('Cache-Control', 'private, max-age=300');
+        reply.header('X-Content-Type-Options', 'nosniff');
+        if (result.kind === 'redirect') return reply.redirect(result.url, 302);
+        return reply.type('image/webp').send(result.body);
     }
 
     @Get(':campaignId/media/:mediaId/:variant')

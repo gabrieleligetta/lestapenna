@@ -1,12 +1,24 @@
-import { REFERENCE_ROLES, type ReferenceRole } from '../api/types';
+import {
+    REFERENCE_ROLES,
+    REFERENCE_ROLES_BY_KIND,
+    type ReferenceRole,
+    type SubjectKind,
+} from '../api/types';
 import { useT } from '../i18n';
 import { Icon } from './icons';
 
-/** Provider-neutral controls shared by saved references and per-job overrides. */
+/**
+ * Provider-neutral controls shared by saved references and per-job overrides.
+ *
+ * `kind` narrows which tags are offered: a place is not asked about hair, an
+ * artifact is not asked about armour. Left out — on a campaign or faction
+ * picture, which may show anything — every tag stays on offer.
+ */
 export function ReferenceMetadataFields({
     roles,
     instruction,
     autoSelect,
+    kind,
     disabled = false,
     showAutoSelect = false,
     onRolesChange,
@@ -16,6 +28,7 @@ export function ReferenceMetadataFields({
     roles: ReferenceRole[];
     instruction: string;
     autoSelect?: boolean;
+    kind?: SubjectKind;
     disabled?: boolean;
     showAutoSelect?: boolean;
     onRolesChange: (roles: ReferenceRole[]) => void;
@@ -41,7 +54,10 @@ export function ReferenceMetadataFields({
         onRolesChange(REFERENCE_ROLES.filter((candidate) => next.includes(candidate)));
     }
 
-    const available = REFERENCE_ROLES.filter((role) => !roles.includes(role));
+    // Offered, not enforced: a tag saved before the picture was recatalogued
+    // still shows as a chip above, it simply cannot be added again from here.
+    const offered = kind ? REFERENCE_ROLES_BY_KIND[kind] : REFERENCE_ROLES;
+    const available = offered.filter((role) => !roles.includes(role));
 
     return (
         <div className="reference-metadata">

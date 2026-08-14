@@ -1,9 +1,14 @@
 import { db } from '../client';
 import { Campaign, CampaignSnapshot, LocationState } from '../types';
+import { drawTarotArcanum, type TarotArcanum } from '../../services/tarotArcana';
 
 export const campaignRepository = {
     createCampaign: (guildId: string, name: string): number => {
-        const info = db.prepare('INSERT INTO campaigns (guild_id, name, created_at) VALUES (?, ?, ?)').run(guildId, name, Date.now());
+        // The card is drawn once, here: a campaign arrives on the shelf already
+        // showing an arcanum, and the table changes it later if it wants to.
+        const info = db.prepare(
+            'INSERT INTO campaigns (guild_id, name, created_at, tarot_arcana) VALUES (?, ?, ?, ?)',
+        ).run(guildId, name, Date.now(), drawTarotArcanum());
         return info.lastInsertRowid as number;
     },
 
@@ -29,6 +34,29 @@ export const campaignRepository = {
     setCampaignArtDirection: (campaignId: number, artDirection: string | null): void => {
         const value = artDirection?.trim() ? artDirection.trim() : null;
         db.prepare('UPDATE campaigns SET art_direction = ? WHERE id = ?').run(value, campaignId);
+    },
+
+    /**
+     * The picture on the campaign's card.
+     *
+     * Both variants move together: a display object without its thumbnail would
+     * leave the card asking the browser to shrink a 1600px picture into a
+     * medallion the size of a coin.
+     */
+    setCampaignCover: (campaignId: number, objectKey: string, thumbnailKey: string): void => {
+        db.prepare(
+            'UPDATE campaigns SET cover_object_key = ?, cover_thumbnail_key = ?, cover_updated_at = ? WHERE id = ?',
+        ).run(objectKey, thumbnailKey, Date.now(), campaignId);
+    },
+
+    clearCampaignCover: (campaignId: number): void => {
+        db.prepare(
+            'UPDATE campaigns SET cover_object_key = NULL, cover_thumbnail_key = NULL, cover_updated_at = NULL WHERE id = ?',
+        ).run(campaignId);
+    },
+
+    setCampaignTarotArcanum: (campaignId: number, arcanum: TarotArcanum): void => {
+        db.prepare('UPDATE campaigns SET tarot_arcana = ? WHERE id = ?').run(arcanum, campaignId);
     },
 
     setActiveCampaign: (guildId: string, campaignId: number): void => {

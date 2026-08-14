@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useReferenceImages } from '../api/hooks';
 import type { ReferenceImage, ReferenceRole, ReferenceScope } from '../api/types';
 import { useT } from '../i18n';
@@ -17,6 +17,12 @@ import { ReferenceMetadataFields } from './ReferenceMetadataFields';
  * drawn. They are the same component because they are the same idea at two
  * distances, and the only difference worth showing is the sentence explaining
  * when each one is used.
+ *
+ * **Fields belong to one picture at a time.** The note and the tags used to sit
+ * loose at the bottom of the panel with no button under them, submitted as a
+ * side effect of picking a file — so they read as the settings of the pictures
+ * above, which have their own copy of the same fields. Choosing a file now
+ * opens a draft card that carries those fields and ends in an explicit button.
  */
 export function ReferenceImagesPanel({
     campaignId,
@@ -33,6 +39,9 @@ export function ReferenceImagesPanel({
     const { data: references, isLoading, add, update, remove } = useReferenceImages(campaignId, scope, scopeKey);
     const fileInput = useRef<HTMLInputElement>(null);
 
+    // The picture waiting to be described. Nothing is uploaded until the button
+    // below it is pressed, so the note being typed is the note that is sent.
+    const [draft, setDraft] = useState<{ file: File; previewUrl: string } | null>(null);
     const [label, setLabel] = useState('');
     const [roles, setRoles] = useState<ReferenceRole[]>(
         scope === 'campaign' ? ['style'] : ['clothing', 'armor_equipment'],
@@ -41,16 +50,36 @@ export function ReferenceImagesPanel({
     const [autoSelect, setAutoSelect] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [saved, setSaved] = useState(false);
     const [removing, setRemoving] = useState<string | null>(null);
 
-    async function upload(file: File) {
+    useEffect(() => () => { if (draft) URL.revokeObjectURL(draft.previewUrl); }, [draft]);
+
+    function chooseFile(file: File | null) {
+        setError(null);
+        setSaved(false);
+        setDraft((current) => {
+            if (current) URL.revokeObjectURL(current.previewUrl);
+            return file ? { file, previewUrl: URL.createObjectURL(file) } : null;
+        });
+    }
+
+    function discardDraft() {
+        chooseFile(null);
+        setLabel('');
+        setInstruction('');
+        if (fileInput.current) fileInput.current.value = '';
+    }
+
+    async function upload() {
+        if (!draft) return;
         setBusy(true);
         setError(null);
+        setSaved(false);
         try {
-            await add(file, label.trim() || null, roles, instruction.trim() || null, autoSelect);
-            setLabel('');
-            setInstruction('');
-            if (fileInput.current) fileInput.current.value = '';
+            await add(draft.file, label.trim() || null, roles, instruction.trim() || null, autoSelect);
+            discardDraft();
+            setSaved(true);
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : t.common.error);
         } finally {
@@ -94,8 +123,10 @@ export function ReferenceImagesPanel({
                                     onSave={async (metadata) => {
                                         setBusy(true);
                                         setError(null);
+                                        setSaved(false);
                                         try {
                                             await update(reference.id, metadata);
+                                            setSaved(true);
                                             return true;
                                         } catch (reason) {
                                             setError(reason instanceof Error ? reason.message : t.common.error);
@@ -115,46 +146,64 @@ export function ReferenceImagesPanel({
             )}
 
             {canEdit && (
-                <>
-                    <label>
-                        <span>{t.references.label}</span>
-                        <input
-                            type="text"
-                            value={label}
-                            maxLength={120}
-                            disabled={busy}
-                            placeholder={t.references.labelPlaceholder}
-                            onChange={(event) => setLabel(event.currentTarget.value)}
-                        />
-                    </label>
-                    <ReferenceMetadataFields
-                        roles={roles}
-                        instruction={instruction}
-                        autoSelect={autoSelect}
-                        disabled={busy}
-                        showAutoSelect
-                        onRolesChange={setRoles}
-                        onInstructionChange={setInstruction}
-                        onAutoSelectChange={setAutoSelect}
-                    />
-                    <label>
-                        <span>{busy ? t.references.adding : t.references.add}</span>
+                <div className="reference-images__add">
+                    <label className="reference-images__choose">
+                        <span>{draft ? t.references.chooseAnother : t.references.chooseImage}</span>
                         <input
                             ref={fileInput}
                             type="file"
                             accept="image/png,image/jpeg,image/webp"
                             disabled={busy}
-                            onChange={(event) => {
-                                const file = event.currentTarget.files?.[0];
-                                if (file) void upload(file);
-                            }}
+                            onChange={(event) => chooseFile(event.currentTarget.files?.[0] ?? null)}
                         />
                     </label>
+
+                    {draft && (
+                        <div className="reference-images__draft">
+                            <h3>{t.references.newReference}</h3>
+                            <img src={draft.previewUrl} alt="" />
+                            <label>
+                                <span>{t.references.label}</span>
+                                <input
+                                    type="text"
+                                    value={label}
+                                    maxLength={120}
+                                    disabled={busy}
+                                    placeholder={t.references.labelPlaceholder}
+                                    onChange={(event) => setLabel(event.currentTarget.value)}
+                                />
+                            </label>
+                            <ReferenceMetadataFields
+                                roles={roles}
+                                instruction={instruction}
+                                autoSelect={autoSelect}
+                                disabled={busy}
+                                showAutoSelect
+                                onRolesChange={setRoles}
+                                onInstructionChange={setInstruction}
+                                onAutoSelectChange={setAutoSelect}
+                            />
+                            <div className="reference-images__draft-actions">
+                                <button type="button" disabled={busy} onClick={() => void upload()}>
+                                    {busy ? t.references.adding : t.references.add}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="text-button"
+                                    disabled={busy}
+                                    onClick={discardDraft}
+                                >
+                                    {t.references.cancel}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <p className="settings-hint">{t.media.rightsHint}</p>
-                </>
+                </div>
             )}
 
-            <FormFeedback error={error} saved={false} savedLabel="" />
+            <FormFeedback error={error} saved={saved} savedLabel={t.references.defaultsSaved} />
 
             <ConfirmModal
                 open={removing !== null}
@@ -178,11 +227,12 @@ function SavedReferenceEditor({
 }: {
     reference: ReferenceImage;
     busy: boolean;
-    onSave: (metadata: Pick<ReferenceImage, 'roles' | 'instruction' | 'auto_select'>) => Promise<boolean>;
+    onSave: (metadata: Pick<ReferenceImage, 'label' | 'roles' | 'instruction' | 'auto_select'>) => Promise<boolean>;
     onRemove: () => void;
 }) {
     const t = useT();
     const [open, setOpen] = useState(false);
+    const [label, setLabel] = useState(reference.label ?? '');
     const [roles, setRoles] = useState(reference.roles);
     const [instruction, setInstruction] = useState(reference.instruction ?? '');
     const [autoSelect, setAutoSelect] = useState(reference.auto_select);
@@ -194,6 +244,19 @@ function SavedReferenceEditor({
             </button>
             {open && (
                 <>
+                    {/* The note is the only way to tell six pictures apart in a
+                        list, so it is correctable here and not only at upload. */}
+                    <label>
+                        <span>{t.references.label}</span>
+                        <input
+                            type="text"
+                            value={label}
+                            maxLength={120}
+                            disabled={busy}
+                            placeholder={t.references.labelPlaceholder}
+                            onChange={(event) => setLabel(event.currentTarget.value)}
+                        />
+                    </label>
                     <ReferenceMetadataFields
                         roles={roles}
                         instruction={instruction}
@@ -208,10 +271,11 @@ function SavedReferenceEditor({
                         type="button"
                         disabled={busy}
                         onClick={() => void onSave({
+                            label: label.trim() || null,
                             roles,
                             instruction: instruction.trim() || null,
                             auto_select: autoSelect,
-                        }).then((saved) => { if (saved) setOpen(false); })}
+                        }).then((stored) => { if (stored) setOpen(false); })}
                     >
                         {t.references.saveDefaults}
                     </button>

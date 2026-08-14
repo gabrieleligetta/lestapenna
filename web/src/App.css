@@ -2074,43 +2074,116 @@
   gap: var(--space-3);
 }
 
+/*
+ * The pictures a generation is allowed to look at.
+ *
+ * One shape for all of them: the picture fills a square frame of its own and
+ * the name sits in a strip underneath. Letting the two share a line is what
+ * made this ugly — a scope name like "Direzione artistica" then wrapped one
+ * word per line beside a squeezed thumbnail.
+ *
+ * Ticking a card promotes it to a full row, because what it opens (tags,
+ * instruction, priority) needs a width a thumbnail-sized tile cannot give,
+ * and a tall card in a wrapped row leaves holes around it.
+ */
 .entity-image-generator__reference-list {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
   gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.entity-image-generator__reference-summary {
+.entity-image-generator__reference-list > li {
+  display: grid;
+  align-content: start;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: var(--surface-raised);
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+
+.entity-image-generator__reference-list > li.is-selected {
+  grid-column: 1 / -1;
+  border-color: color-mix(in srgb, var(--spell) 52%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--spell) 30%, transparent),
+    var(--shadow-sm);
+}
+
+/* Two classes, because the media manager styles every bare button inside it. */
+.entity-image-generator__reference-list .entity-image-generator__reference-summary {
   position: relative;
   display: grid;
-  justify-items: center;
-  gap: 2px;
-  width: 7rem;
-  max-width: 7rem;
-  padding: var(--space-1);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
   color: var(--text);
-  border: 1px solid transparent;
-  border-radius: var(--radius-2);
+  font-weight: 400;
+  text-align: center;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   cursor: pointer;
 }
 
-.entity-image-generator__reference-summary:hover,
-.entity-image-generator__reference-summary[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--spell) 52%, var(--border));
-  background: color-mix(in srgb, var(--spell-soft) 58%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--glow) 70%, transparent);
-  transform: translateY(-1px);
+.entity-image-generator__reference-list .entity-image-generator__reference-summary:hover:not(:disabled) {
+  border: 0;
+  background: color-mix(in srgb, var(--spell-soft) 52%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+
+.entity-image-generator__reference-list img {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 0;
+  border-radius: 0;
+}
+
+.entity-image-generator__reference-list .card-meta {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  /* Two lines whether the name needs them or not, so a row of tiles ends flush. */
+  min-height: 3.1rem;
+  padding: var(--space-2);
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-0);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+/* Selected: the thumbnail keeps its frame on the left, the name gets the rest. */
+.entity-image-generator__reference-list > li.is-selected .entity-image-generator__reference-summary {
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: center;
+  padding-right: 2.75rem;
+  text-align: left;
+  background: color-mix(in srgb, var(--spell-soft) 42%, transparent);
+}
+
+.entity-image-generator__reference-list > li.is-selected .card-meta {
+  -webkit-line-clamp: 3;
+  min-height: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-1);
 }
 
 .entity-image-generator__reference-selected {
   position: absolute;
-  top: -0.35rem;
-  right: -0.35rem;
+  top: var(--space-2);
+  right: var(--space-2);
   display: grid;
   width: 1.45rem;
   height: 1.45rem;
@@ -2122,28 +2195,19 @@
   box-shadow: var(--shadow-sm);
 }
 
+.entity-image-generator__reference-list > li.is-selected .entity-image-generator__reference-selected {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .entity-image-generator__reference-selected .icon {
   width: 0.8rem;
   height: 0.8rem;
 }
 
-.entity-image-generator__reference-list li {
-  display: grid;
-  align-content: start;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-2);
-}
-
-.entity-image-generator__reference-list li.is-selected {
-  width: min(100%, 24rem);
-  border-color: var(--border);
-  background: var(--surface-subtle, var(--surface));
-}
-
-.entity-image-generator__reference-summary {
-  justify-self: start;
+.entity-image-generator__reference-contract {
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
 .entity-image-generator__reference-contract,
@@ -2222,13 +2286,20 @@
   --reference-tag-color: var(--gold);
 }
 
+/* What the subject is made of or wears — a place's stone reads like a
+   person's cloth, so they share a hue across the three kinds of subject. */
 .reference-metadata__tag[data-role='clothing'],
-.reference-metadata__tag[data-role='armor_equipment'] {
+.reference-metadata__tag[data-role='armor_equipment'],
+.reference-metadata__tag[data-role='materials'],
+.reference-metadata__tag[data-role='ornament'],
+.reference-metadata__tag[data-role='wear'] {
   --reference-tag-color: var(--aether);
 }
 
+/* Where the subject is and how it is framed. */
 .reference-metadata__tag[data-role='pose_composition'],
-.reference-metadata__tag[data-role='background'] {
+.reference-metadata__tag[data-role='background'],
+.reference-metadata__tag[data-role='landscape'] {
   --reference-tag-color: var(--success-text);
 }
 
@@ -2340,14 +2411,6 @@
   gap: 2px;
 }
 
-.entity-image-generator__reference-list img {
-  width: 7rem;
-  height: 7rem;
-  object-fit: cover;
-  border-radius: var(--radius-2);
-  border: 1px solid var(--border);
-}
-
 /* Stepping through an entity's pictures, full screen. */
 .image-lightbox__step {
   position: absolute;
@@ -2382,8 +2445,26 @@
   background: var(--surface);
 }
 
+/* Reads as the "and one more" slot at the end of the picker, so it wants the
+   same card language as the tiles above it — dashed, because nothing is held. */
 .entity-image-generator__one-time {
   margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-3);
+  background: color-mix(in srgb, var(--surface-2) 40%, transparent);
+}
+
+.entity-image-generator__one-time > span {
+  display: grid;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.entity-image-generator__one-time > span > small {
+  color: var(--text-muted);
+  font-weight: 400;
+  line-height: 1.4;
 }
 
 /* Reference pictures, in settings and on a faction sheet. */
@@ -2400,7 +2481,25 @@
   display: grid;
   gap: var(--space-1);
   justify-items: center;
-  width: min(100%, 22rem);
+  align-content: start;
+  /* Two to a row inside a 44rem settings section: at 22rem they missed by the
+     width of the gap and every picture sat on a line of its own. */
+  width: min(100%, 16rem);
+}
+
+/* Closed, this is two quiet links under a picture; opened, it is the form for
+   that one picture, and the fields want the whole width. */
+.reference-images__editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.reference-images__editor > label,
+.reference-images__editor > .reference-metadata {
+  flex: 1 1 100%;
 }
 
 .reference-images__item img {
@@ -2413,6 +2512,72 @@
 
 .entity-media-manager__gallery li:has(.entity-media-manager__reference-editor) {
   max-width: 22rem;
+}
+
+/* Adding one: a card that belongs to the picture just chosen, so the note and
+   the tags in it can never be mistaken for the settings of the ones above. */
+.reference-images__add {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.reference-images__choose {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.reference-images__draft {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  max-width: 34rem;
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--spell) 40%, var(--border));
+  border-radius: var(--radius-3);
+  background: color-mix(in srgb, var(--spell-soft) 34%, var(--surface));
+}
+
+.reference-images__draft > h3 {
+  margin: 0;
+  font-size: var(--fs-1);
+}
+
+.reference-images__draft > img {
+  width: 9rem;
+  height: 9rem;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+}
+
+/* The note field: a direct-child rule in the settings section styles the ones
+   at the top level, and never reaches this far down. */
+.reference-images__draft > label,
+.reference-images__editor > label {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.reference-images__draft > label > input,
+.reference-images__editor > label > input {
+  width: 100%;
+}
+
+.reference-images__draft > .reference-metadata {
+  width: 100%;
+}
+
+.reference-images__draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .entity-media-manager {
@@ -5476,3 +5641,274 @@ details.settings-section > summary > h2 {
 }
 
 .ai-job-list__item small { color: var(--text-muted); }
+
+/*
+ * The campaign's card, as it is set: the arcanum and the cover picture.
+ *
+ * The preview is a small copy of what the shelf shows — same medallion, same
+ * numeral, same gilt — because choosing between twenty-two names is guesswork
+ * unless the result is in front of you while you choose.
+ */
+.campaign-card-panel__layout {
+  display: grid;
+  gap: var(--space-4);
+  align-items: start;
+  grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
+}
+
+@media (max-width: 46rem) {
+  .campaign-card-panel__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.campaign-card-panel__preview {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+}
+
+.campaign-card-panel__cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/*
+ * Choosing the picture. The label is the control and the file input is hidden
+ * inside it — Chrome's own "Scegli file / Nessun file selezionato" is wider
+ * than the column it sits in, and says nothing this label does not.
+ * Clipped rather than `display: none`, so it can still be reached by keyboard.
+ */
+.campaign-card-panel__choose {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+  transition:
+    border-color var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+
+.campaign-card-panel__choose:hover {
+  border-color: var(--gold);
+  transform: translateY(-1px);
+}
+
+.campaign-card-panel__choose:has(input:focus-visible) {
+  outline: 2px solid var(--spell);
+  outline-offset: 2px;
+}
+
+.campaign-card-panel__choose:has(input:disabled) {
+  cursor: default;
+  opacity: 0.55;
+  transform: none;
+}
+
+.campaign-card-panel__choose input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.campaign-card-panel__deck {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+}
+
+/* The preview card. A miniature of the shelf's, not a second design. */
+.tarot-chip {
+  --chip-edge: #cba45d;
+  --chip-cover: #352146;
+  --chip-cover-deep: #1b1128;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  max-width: 13rem;
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--chip-edge) 60%, var(--border));
+  border-radius: var(--radius-3);
+  background:
+    radial-gradient(circle at 24% 14%, rgb(255 232 172 / 0.12), transparent 28%),
+    linear-gradient(160deg, var(--chip-cover), var(--chip-cover-deep));
+  box-shadow: inset 0 0 1.6rem rgb(0 0 0 / 0.4), var(--shadow-sm);
+  color: #f8ecd0;
+  text-align: center;
+}
+
+.tarot-chip--1 { --chip-edge: #83c6bd; --chip-cover: #163c48; --chip-cover-deep: #09242e; }
+.tarot-chip--2 { --chip-edge: #dfaa70; --chip-cover: #58302c; --chip-cover-deep: #2d1717; }
+.tarot-chip--3 { --chip-edge: #9fc47c; --chip-cover: #263f2d; --chip-cover-deep: #122218; }
+.tarot-chip--4 { --chip-edge: #92aee8; --chip-cover: #26345b; --chip-cover-deep: #121a35; }
+.tarot-chip--5 { --chip-edge: #d2a3be; --chip-cover: #493543; --chip-cover-deep: #271824; }
+
+.tarot-chip__numeral {
+  color: var(--chip-edge);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.tarot-chip__medallion {
+  display: grid;
+  place-items: center;
+  width: 5.4rem;
+  height: 5.4rem;
+  margin: var(--space-1) 0 var(--space-2);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--chip-edge) 70%, transparent);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 30%, rgb(255 232 172 / 0.14), transparent 68%);
+  box-shadow:
+    0 0 0 0.26rem color-mix(in srgb, var(--chip-cover-deep) 76%, transparent),
+    0 0 0 0.3rem color-mix(in srgb, var(--chip-edge) 34%, transparent);
+}
+
+.tarot-chip__medallion img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tarot-chip__art {
+  height: 4.1rem;
+  width: 3.1rem;
+  color: var(--chip-edge);
+}
+
+.tarot-chip__arcanum {
+  margin-top: var(--space-1);
+  color: var(--chip-edge);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.tarot-chip__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-1);
+  font-weight: 700;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+/* One arcanum to choose. A radio input with the card drawn around it: the
+   keyboard still moves through a radio group with the arrow keys. */
+.tarot-option {
+  display: grid;
+  justify-items: center;
+  gap: 0.1rem;
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  transition:
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+
+.tarot-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.tarot-option:hover {
+  border-color: var(--gold);
+  transform: translateY(-2px);
+}
+
+.tarot-option:has(input:focus-visible) {
+  outline: 2px solid var(--spell);
+  outline-offset: 2px;
+}
+
+.tarot-option:has(input:disabled) {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.tarot-option:has(input:disabled):hover {
+  transform: none;
+}
+
+.tarot-option.is-chosen {
+  border-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, var(--surface));
+  box-shadow: 0 0 0 1px var(--gold), 0 0 0.9rem color-mix(in srgb, var(--gold) 24%, transparent);
+  color: var(--text);
+}
+
+.tarot-option__numeral {
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--gold);
+}
+
+.tarot-option__art {
+  height: 2.1rem;
+  width: 1.6rem;
+  color: var(--gold);
+}
+
+.tarot-option.is-chosen .tarot-option__art {
+  animation: tarot-option-art 3.6s ease-in-out infinite;
+}
+
+@keyframes tarot-option-art {
+  0%, 100% { filter: drop-shadow(0 0 0.15rem color-mix(in srgb, var(--gold) 20%, transparent)); }
+  50% { filter: drop-shadow(0 0 0.45rem color-mix(in srgb, var(--gold) 50%, transparent)); }
+}
+
+.tarot-option__name {
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .campaign-card-panel__choose,
+  .tarot-option,
+  .tarot-option.is-chosen .tarot-option__art {
+    transition: none;
+    animation: none;
+  }
+
+  .campaign-card-panel__choose:hover,
+  .tarot-option:hover {
+    transform: none;
+  }
+}

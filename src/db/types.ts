@@ -109,6 +109,24 @@ export interface Campaign {
      * gallery looks like one world. Null keeps the built-in painterly default.
      */
     art_direction?: string | null;
+    /**
+     * The major arcanum this campaign's card is drawn as.
+     *
+     * NULL on campaigns older than the column: they fall back to a card derived
+     * from their id, so the shelf does not reshuffle itself between two loads
+     * (`services/tarotArcana.ts`).
+     */
+    tarot_arcana?: string | null;
+    /**
+     * The picture shown on the campaign's card, in two variants.
+     *
+     * Deliberately not a `reference_image` of scope 'campaign': those are handed
+     * to the image model, so a cover stored there would change what every later
+     * portrait looks like. A cover is chosen to be looked at, nothing else.
+     */
+    cover_object_key?: string | null;
+    cover_thumbnail_key?: string | null;
+    cover_updated_at?: number | null;
 }
 
 export interface KnowledgeFragment {

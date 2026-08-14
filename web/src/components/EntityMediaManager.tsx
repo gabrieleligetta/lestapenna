@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api/client';
+import { SUBJECT_KIND } from '../api/types';
 import type { EntityImage, MediaEntityType, ReferenceRole } from '../api/types';
 import { useEntityImages } from '../api/hooks';
 import { useT } from '../i18n';
@@ -213,6 +214,7 @@ export function EntityMediaManager({
                                         </button>
                                         <GalleryReferenceEditor
                                             campaignId={campaignId}
+                                            entityType={entityType}
                                             picture={picture}
                                             onSaved={refresh}
                                         />
@@ -340,10 +342,12 @@ export function EntityMediaManager({
 
 function GalleryReferenceEditor({
     campaignId,
+    entityType,
     picture,
     onSaved,
 }: {
     campaignId: string;
+    entityType: MediaEntityType;
     picture: EntityImage;
     onSaved: () => Promise<void>;
 }) {
@@ -394,6 +398,7 @@ function GalleryReferenceEditor({
                         roles={roles}
                         instruction={instruction}
                         autoSelect={autoSelect}
+                        kind={SUBJECT_KIND[entityType]}
                         disabled={saving}
                         // The main portrait is a contextual default. It remains
                         // visible and deselectable in each generation; this

@@ -1,3 +1,5 @@
+import type { TarotArcanum } from '../components/tarot';
+
 // Shape shared by every locale file — add new keys here first (mirrors the
 // bot's own convention: src/i18n/locales/en.ts is the source of types there).
 export interface Messages {
@@ -438,6 +440,10 @@ export interface Messages {
         factionHint: string;
         add: string;
         adding: string;
+        chooseImage: string;
+        chooseAnother: string;
+        newReference: string;
+        cancel: string;
         label: string;
         labelPlaceholder: string;
         remove: string;
@@ -822,6 +828,28 @@ export interface Messages {
         answeredBy: (model: string) => string;
         errorBusy: string;
         errorProvider: string;
+    };
+    /**
+     * The tarot card a campaign is shown as, and the two things about it a
+     * table can change. The arcana names are a fixed deck of twenty-two: they
+     * are translated rather than transliterated, because every language has
+     * called these cards something for five centuries.
+     */
+    tarot: {
+        sectionTitle: string;
+        sectionIntro: string;
+        arcanumLabel: string;
+        coverLabel: string;
+        coverHint: string;
+        chooseCover: string;
+        replaceCover: string;
+        removeCover: string;
+        removeCoverConfirm: string;
+        coverSaved: string;
+        coverAlt: (name: string) => string;
+        /** The card of one campaign, read out as a whole: name and arcanum. */
+        cardOf: (name: string, arcanum: string) => string;
+        arcana: Record<TarotArcanum, string>;
     };
     campaignAdmin: {
         settingsTitle: string;

@@ -7,6 +7,9 @@ import { assertMutationOrigin } from '../common/mutationOrigin';
 import { campaignRepository } from '../../db';
 import type { Campaign } from '../../db/types';
 import { createCampaignWithParty, findCampaignByName } from '../../services/campaignSetup';
+import { canWriteCampaign } from '../../services/campaignAccess';
+import { coverUrl } from '../campaigns/campaignCover.service';
+import { resolveTarotArcanum } from '../../services/tarotArcana';
 import { normalizeLocale } from '../../i18n';
 import { CreateCampaignDto } from '../campaigns/dto/table.dto';
 
@@ -21,7 +24,7 @@ function parseName(raw: unknown, field: string): string {
     return name;
 }
 
-function toCampaignSummary(c: Campaign) {
+function toCampaignSummary(c: Campaign, canWrite = false) {
     return {
         id: c.id,
         name: c.name,
@@ -32,6 +35,16 @@ function toCampaignSummary(c: Campaign) {
                 ? { macro: c.current_macro_location ?? null, micro: c.current_micro_location ?? null }
                 : null,
         language: c.language ?? null,
+        tarotArcanum: resolveTarotArcanum(c),
+        coverUrl: coverUrl(c.id, c.cover_thumbnail_key),
+        /**
+         * Whether this caller may change the campaign's cover.
+         *
+         * Decided here rather than in the browser: administering the Discord
+         * server and sitting at this table are two different things, and only
+         * the backend knows which of them the caller is.
+         */
+        canWrite,
     };
 }
 
@@ -48,8 +61,12 @@ export class GuildsController {
 
     @Get(':guildId/campaigns')
     @UseGuards(GuildAccessGuard)
-    getCampaigns(@Param('guildId') guildId: string) {
-        return campaignRepository.getCampaigns(guildId).map(toCampaignSummary);
+    getCampaigns(@Req() request: AuthenticatedRequest, @Param('guildId') guildId: string) {
+        const guildCanManage = request.guildAccess?.canManage ?? false;
+        return campaignRepository.getCampaigns(guildId).map((campaign) => toCampaignSummary(
+            campaign,
+            canWriteCampaign(campaign.id, request.webSession.discordUserId, { guildCanManage }),
+        ));
     }
 
     /**
@@ -103,6 +120,11 @@ export class GuildsController {
             partyName: body?.party_name === undefined ? undefined : parseName(body.party_name, 'party_name'),
         });
 
-        return toCampaignSummary(campaign);
+        return toCampaignSummary(
+            campaign,
+            canWriteCampaign(campaign.id, request.webSession.discordUserId, {
+                guildCanManage: request.guildAccess?.canManage ?? false,
+            }),
+        );
     }
 }

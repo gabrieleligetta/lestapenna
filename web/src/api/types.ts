@@ -1,3 +1,5 @@
+import type { TarotArcanum } from '../components/tarot';
+
 export interface Me {
     id: string;
     username: string;
@@ -42,6 +44,12 @@ export interface CampaignSummary {
     currentYear: number | null;
     currentLocation: { macro: string | null; micro: string | null } | null;
     language: string | null;
+    /** The major arcanum the card is drawn as. Dealt at creation, changed in the settings. */
+    tarotArcanum: TarotArcanum;
+    /** Where to fetch the cover thumbnail, or null when the card shows its sigil. */
+    coverUrl: string | null;
+    /** Whether this caller may change the cover. Decided by the server, never here. */
+    canWrite: boolean;
 }
 
 /** The caller's role in the campaign; `null` for anyone not at the table. */
@@ -252,6 +260,12 @@ export const REFERENCE_ROLES = [
     'hair',
     'clothing',
     'armor_equipment',
+    'architecture',
+    'landscape',
+    'materials',
+    'form',
+    'ornament',
+    'wear',
     'pose_composition',
     'background',
     'style',
@@ -259,6 +273,37 @@ export const REFERENCE_ROLES = [
 ] as const;
 
 export type ReferenceRole = typeof REFERENCE_ROLES[number];
+
+/** Which vocabulary of visible traits a subject has — mirrors SUBJECT_KIND on the server. */
+export type SubjectKind = 'person' | 'place' | 'object';
+
+export const SUBJECT_KIND: Record<MediaEntityType, SubjectKind> = {
+    npc: 'person',
+    character: 'person',
+    location: 'place',
+    artifact: 'object',
+};
+
+/**
+ * The tags worth offering for each kind of subject — mirrors
+ * REFERENCE_ROLES_BY_KIND on the server. A ruin has no hair and a sword has no
+ * armour; offering the tag anyway only invites a contract that cannot be met.
+ * Tags already saved on a picture stay visible whatever kind it now hangs on.
+ */
+export const REFERENCE_ROLES_BY_KIND: Record<SubjectKind, readonly ReferenceRole[]> = {
+    person: [
+        'whole_image', 'subject_identity', 'face', 'body', 'hair', 'clothing',
+        'armor_equipment', 'pose_composition', 'background', 'style', 'palette',
+    ],
+    place: [
+        'whole_image', 'subject_identity', 'architecture', 'materials', 'landscape',
+        'pose_composition', 'style', 'palette',
+    ],
+    object: [
+        'whole_image', 'subject_identity', 'form', 'materials', 'ornament', 'wear',
+        'pose_composition', 'background', 'style', 'palette',
+    ],
+};
 
 export interface ReferenceDirective {
     id: string;
@@ -890,6 +935,10 @@ export interface CampaignSettings {
     allow_auto_character_update: boolean;
     /** The house style for generated pictures. Null keeps the built-in one. */
     art_direction: string | null;
+    /** The major arcanum on the campaign's card. Never null: an unchosen campaign shows the card it was dealt. */
+    tarot_arcana: TarotArcanum;
+    /** Where to fetch the cover thumbnail, or null when the card shows its sigil. */
+    cover_url: string | null;
 }
 
 export interface CreateCampaignInput {

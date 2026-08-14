@@ -1,4 +1,5 @@
 import type { AIProvider } from '../config';
+import type { SubjectKind } from './entityFacts';
 
 /**
  * The visual facts one reference is allowed to contribute.
@@ -14,6 +15,12 @@ export const REFERENCE_ROLES = [
     'hair',
     'clothing',
     'armor_equipment',
+    'architecture',
+    'landscape',
+    'materials',
+    'form',
+    'ornament',
+    'wear',
     'pose_composition',
     'background',
     'style',
@@ -22,7 +29,34 @@ export const REFERENCE_ROLES = [
 
 export type ReferenceRole = (typeof REFERENCE_ROLES)[number];
 
+/**
+ * Which tags mean something for which kind of subject.
+ *
+ * A ruin has no hair and a sword has no armour, the same reason
+ * `APPEARANCE_FIELDS` is split by kind: offering a tag that cannot apply
+ * invites a contract the model can only ignore. This is the *offer*, not a
+ * validation rule — a tag already saved on a picture keeps working, because
+ * the entity it hangs on can be recatalogued and its contract must survive.
+ */
+export const REFERENCE_ROLES_BY_KIND: Record<SubjectKind, readonly ReferenceRole[]> = {
+    person: [
+        'whole_image', 'subject_identity', 'face', 'body', 'hair', 'clothing',
+        'armor_equipment', 'pose_composition', 'background', 'style', 'palette',
+    ],
+    place: [
+        'whole_image', 'subject_identity', 'architecture', 'materials', 'landscape',
+        'pose_composition', 'style', 'palette',
+    ],
+    object: [
+        'whole_image', 'subject_identity', 'form', 'materials', 'ornament', 'wear',
+        'pose_composition', 'background', 'style', 'palette',
+    ],
+};
+
 export const MAX_REFERENCE_INSTRUCTION_CHARS = 300;
+
+/** The note that tells a person which picture this is, in a list of six. */
+export const MAX_REFERENCE_LABEL_CHARS = 120;
 
 /** Product ceiling. Provider-specific limits can be lower. */
 export const MAX_REFERENCE_IMAGES = 6;
@@ -55,6 +89,12 @@ const ROLE_INSTRUCTIONS: Record<ReferenceRole, string> = {
     hair: 'Preserve the hair colour, length, texture and style.',
     clothing: 'Preserve the garment design, cut, layers, materials and visible details.',
     armor_equipment: 'Preserve the armour, weapons, equipment, insignia and their design language.',
+    architecture: 'Preserve the architectural forms, structures, layout and skyline of the place.',
+    landscape: 'Use the terrain, vegetation, sky and surrounding environment.',
+    materials: 'Preserve the materials, surfaces, textures and finish.',
+    form: 'Preserve the silhouette, shape and proportions of the object.',
+    ornament: 'Preserve the decoration, engraving, inlay, markings and other applied detail.',
+    wear: 'Preserve the age, damage, patina and signs of use.',
     pose_composition: 'Use the pose, camera angle, framing and composition.',
     background: 'Use the environment, architecture and background arrangement.',
     style: 'Use the artistic medium, rendering technique, texture and visual style.',
@@ -99,6 +139,21 @@ export function normalizeReferenceRoles(raw: unknown): ReferenceRole[] {
         throw new ReferenceContractError('whole_image cannot be combined with other reference tags');
     }
     return roles;
+}
+
+/** Same rule whether the note arrives with the upload or is corrected later. */
+export function normalizeReferenceLabel(raw: unknown): string | null {
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw !== 'string') {
+        throw new ReferenceContractError('A reference note must be text');
+    }
+    const value = raw.trim();
+    if (value.length > MAX_REFERENCE_LABEL_CHARS) {
+        throw new ReferenceContractError(
+            `A reference note must not exceed ${MAX_REFERENCE_LABEL_CHARS} characters`,
+        );
+    }
+    return value || null;
 }
 
 export function normalizeReferenceInstruction(raw: unknown): string | null {
@@ -311,8 +366,13 @@ export function imageModelCapabilities(
     return NO_REFERENCES;
 }
 
+/*
+ * Tags that say "this is the same subject", and therefore ask the model for the
+ * fidelity a likeness needs. A building's architecture and an artifact's
+ * silhouette are their likeness, exactly as a face is a person's.
+ */
 const IDENTITY_ROLES = new Set<ReferenceRole>([
-    'whole_image', 'subject_identity', 'face', 'body', 'hair',
+    'whole_image', 'subject_identity', 'face', 'body', 'hair', 'architecture', 'form',
 ]);
 
 export function validateReferenceCapabilities(

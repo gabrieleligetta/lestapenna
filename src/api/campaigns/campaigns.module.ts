@@ -9,6 +9,7 @@ import { EntityMediaService } from './entityMedia.service';
 import { ImageGenerationService } from './imageGeneration.service';
 import { EntityProfileService } from './entityProfile.service';
 import { ReferenceImagesService } from './referenceImages.service';
+import { CampaignCoverService } from './campaignCover.service';
 import { MergeService } from './merge/merge.service';
 import { EntityCrudController } from './crud/entity-crud.controller';
 import { EntityCrudService } from './crud/entity-crud.service';
@@ -53,6 +54,7 @@ import { AiJobRunnerProvider } from '../aiJobs/aiJobRunner.provider';
         ImageGenerationService,
         EntityProfileService,
         ReferenceImagesService,
+        CampaignCoverService,
         MergeService,
         EntityCrudService,
         AskService,

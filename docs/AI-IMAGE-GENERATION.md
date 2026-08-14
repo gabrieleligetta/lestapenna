@@ -41,12 +41,30 @@ I tag ammessi sono:
 - `whole_image` (esclusivo);
 - `subject_identity`, `face`, `body`, `hair`;
 - `clothing`, `armor_equipment`;
+- `architecture`, `landscape`, `materials`;
+- `form`, `ornament`, `wear`;
 - `pose_composition`, `background`, `style`, `palette`.
 
 La stessa immagine può avere più tag. `whole_image` non può essere combinato con
 gli altri perché autorizza già l'intero contenuto visivo. L'indicazione libera è
 facoltativa, lunga al massimo 300 caratteri, e serve anche per trasformazioni
 come «usa questo vestiario, ma colorato di bianco».
+
+**I tag offerti dipendono dal tipo di soggetto**, per la stessa ragione per cui
+`APPEARANCE_FIELDS` è diviso per tipo: una rovina non ha capelli e una spada non
+porta armatura. `REFERENCE_ROLES_BY_KIND` (`bard/imageReferences.ts`, rispecchiato
+in `web/src/api/types.ts`) dice cosa proporre a persona, luogo e oggetto —
+architettura, paesaggio e materiali per un luogo; forma, decori e usura per un
+artefatto. È **un'offerta, non una validazione**: l'API continua ad accettare
+qualunque tag noto, perché un'immagine catalogata prima può portarsi dietro un
+tag che oggi il suo soggetto non proporrebbe più, e il suo contratto deve
+continuare a valere. Un riferimento di campagna o di fazione, che può mostrare
+qualsiasi cosa, li vede tutti.
+
+`architecture` e `form` contano come tag d'identità (`IDENTITY_ROLES`): sono la
+somiglianza di un edificio e di un oggetto come il volto lo è di una persona,
+quindi chiedono la stessa fedeltà in ingresso e un modello che non sa
+preservare l'identità li rifiuta prima di spendere.
 
 L'ordine di risoluzione dei conflitti è fissato nel prompt inviato a entrambi i
 provider:

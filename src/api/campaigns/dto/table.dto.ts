@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { SUPPORTED_LOCALES } from '../../../i18n';
+import { TAROT_ARCANA, type TarotArcanum } from '../../../services/tarotArcana';
 
 export class CampaignMemberDto {
     @ApiProperty({ description: 'Discord user id.' })
@@ -51,6 +52,13 @@ export class CampaignSettingsDto {
         description: 'How this table\'s generated pictures should look. Null keeps the built-in painterly style.',
     })
     art_direction!: string | null;
+    @ApiProperty({
+        enum: TAROT_ARCANA,
+        description: 'The major arcanum the campaign card is drawn as. Never null: a campaign that has never chosen one shows the card it was dealt.',
+    })
+    tarot_arcana!: TarotArcanum;
+    @ApiProperty({ nullable: true, description: 'Where to fetch the cover thumbnail; null when the card shows its sigil.' })
+    cover_url!: string | null;
 }
 
 export class CampaignSettingsPatchDto {
@@ -60,6 +68,7 @@ export class CampaignSettingsPatchDto {
     @ApiProperty({ required: false, maxLength: 80 }) party_name?: string;
     @ApiProperty({ required: false }) allow_auto_character_update?: boolean;
     @ApiProperty({ required: false, nullable: true, maxLength: 400 }) art_direction?: string | null;
+    @ApiProperty({ required: false, enum: TAROT_ARCANA }) tarot_arcana?: TarotArcanum;
 }
 
 export class CreateCampaignDto {

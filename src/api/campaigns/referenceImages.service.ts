@@ -21,6 +21,7 @@ import {
     ReferenceContractError,
     defaultReferenceRoles,
     normalizeReferenceInstruction,
+    normalizeReferenceLabel,
     normalizeReferenceRoles,
     parseStoredReferenceRoles,
     type ReferenceManifestEntry,
@@ -308,6 +309,7 @@ export class ReferenceImagesService {
                 ? defaultReferenceRoles(scope)
                 : normalizeReferenceRoles(metadata.roles);
             instruction = normalizeReferenceInstruction(metadata?.instruction);
+            label = normalizeReferenceLabel(label);
         } catch (error) {
             if (error instanceof ReferenceContractError) throw new BadRequestException(error.message);
             throw error;
@@ -328,7 +330,7 @@ export class ReferenceImagesService {
             width: variants.width,
             height: variants.height,
             size_bytes: variants.display.length,
-            label: label?.trim() || null,
+            label,
             roles_json: JSON.stringify(roles),
             instruction,
             auto_select: autoSelect ? 1 : 0,
@@ -349,14 +351,20 @@ export class ReferenceImagesService {
         if (!existing) throw new NotFoundException('No such reference image');
         let roles: ReferenceRole[];
         let instruction: string | null;
+        // The note is what tells one picture from another in a list of six, so
+        // it is correctable here rather than only at upload. Left out of the
+        // body it keeps its current value; sent as null it is cleared.
+        let label: string | null;
         try {
             roles = normalizeReferenceRoles(body.roles);
             instruction = normalizeReferenceInstruction(body.instruction);
+            label = body.label === undefined ? existing.label : normalizeReferenceLabel(body.label);
         } catch (error) {
             if (error instanceof ReferenceContractError) throw new BadRequestException(error.message);
             throw error;
         }
         const updated = referenceImageRepository.updateMetadata(request.campaignId!, id, {
+            label,
             roles_json: JSON.stringify(roles),
             instruction,
             auto_select: body.auto_select === undefined

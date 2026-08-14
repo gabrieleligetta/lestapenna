@@ -3569,6 +3569,102 @@
         ]
       }
     },
+    "/api/v1/campaigns/{campaignId}/cover": {
+      "put": {
+        "operationId": "EntityMediaController_uploadCover",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignCoverDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "EntityMedia"
+        ]
+      },
+      "delete": {
+        "operationId": "EntityMediaController_deleteCover",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "This campaign has no cover."
+          }
+        },
+        "tags": [
+          "EntityMedia"
+        ]
+      }
+    },
+    "/api/v1/campaigns/{campaignId}/cover/{variant}": {
+      "get": {
+        "operationId": "EntityMediaController_readCover",
+        "parameters": [
+          {
+            "name": "variant",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "enum": [
+                "thumbnail",
+                "display"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "302": {
+            "description": "Redirect to a short-lived signed private-object URL."
+          },
+          "404": {
+            "description": "This campaign has no cover."
+          }
+        },
+        "tags": [
+          "EntityMedia"
+        ]
+      }
+    },
     "/api/v1/campaigns/{campaignId}/media/{mediaId}/{variant}": {
       "get": {
         "operationId": "EntityMediaController_read",
@@ -6433,6 +6529,12 @@
                 "hair",
                 "clothing",
                 "armor_equipment",
+                "architecture",
+                "landscape",
+                "materials",
+                "form",
+                "ornament",
+                "wear",
                 "pose_composition",
                 "background",
                 "style",
@@ -9153,6 +9255,12 @@
                 "hair",
                 "clothing",
                 "armor_equipment",
+                "architecture",
+                "landscape",
+                "materials",
+                "form",
+                "ornament",
+                "wear",
                 "pose_composition",
                 "background",
                 "style",
@@ -9258,6 +9366,12 @@
                 "hair",
                 "clothing",
                 "armor_equipment",
+                "architecture",
+                "landscape",
+                "materials",
+                "form",
+                "ornament",
+                "wear",
                 "pose_composition",
                 "background",
                 "style",
@@ -9517,6 +9631,12 @@
                 "hair",
                 "clothing",
                 "armor_equipment",
+                "architecture",
+                "landscape",
+                "materials",
+                "form",
+                "ornament",
+                "wear",
                 "pose_composition",
                 "background",
                 "style",
@@ -9784,6 +9904,12 @@
                 "hair",
                 "clothing",
                 "armor_equipment",
+                "architecture",
+                "landscape",
+                "materials",
+                "form",
+                "ornament",
+                "wear",
                 "pose_composition",
                 "background",
                 "style",
@@ -9832,12 +9958,24 @@
                 "hair",
                 "clothing",
                 "armor_equipment",
+                "architecture",
+                "landscape",
+                "materials",
+                "form",
+                "ornament",
+                "wear",
                 "pose_composition",
                 "background",
                 "style",
                 "palette"
               ]
             }
+          },
+          "label": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120,
+            "description": "Omit to keep the current note; null to clear it."
           },
           "instruction": {
             "type": "string",
@@ -9850,6 +9988,23 @@
         },
         "required": [
           "roles"
+        ]
+      },
+      "CampaignCoverDto": {
+        "type": "object",
+        "properties": {
+          "coverUrl": {
+            "type": "string",
+            "description": "Where the card fetches the cover thumbnail."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          }
+        },
+        "required": [
+          "coverUrl",
+          "updatedAt"
         ]
       },
       "AskEstimateDto": {
@@ -10210,6 +10365,39 @@
             "type": "object",
             "nullable": true,
             "description": "How this table's generated pictures should look. Null keeps the built-in painterly style."
+          },
+          "tarot_arcana": {
+            "type": "string",
+            "enum": [
+              "fool",
+              "magician",
+              "high_priestess",
+              "empress",
+              "emperor",
+              "hierophant",
+              "lovers",
+              "chariot",
+              "strength",
+              "hermit",
+              "wheel_of_fortune",
+              "justice",
+              "hanged_man",
+              "death",
+              "temperance",
+              "devil",
+              "tower",
+              "star",
+              "moon",
+              "sun",
+              "judgement",
+              "world"
+            ],
+            "description": "The major arcanum the campaign card is drawn as. Never null: a campaign that has never chosen one shows the card it was dealt."
+          },
+          "cover_url": {
+            "type": "object",
+            "nullable": true,
+            "description": "Where to fetch the cover thumbnail; null when the card shows its sigil."
           }
         },
         "required": [
@@ -10219,7 +10407,9 @@
           "current_year",
           "party_name",
           "allow_auto_character_update",
-          "art_direction"
+          "art_direction",
+          "tarot_arcana",
+          "cover_url"
         ]
       },
       "CampaignSettingsPatchDto": {
@@ -10256,6 +10446,33 @@
             "type": "object",
             "nullable": true,
             "maxLength": 400
+          },
+          "tarot_arcana": {
+            "type": "string",
+            "enum": [
+              "fool",
+              "magician",
+              "high_priestess",
+              "empress",
+              "emperor",
+              "hierophant",
+              "lovers",
+              "chariot",
+              "strength",
+              "hermit",
+              "wheel_of_fortune",
+              "justice",
+              "hanged_man",
+              "death",
+              "temperance",
+              "devil",
+              "tower",
+              "star",
+              "moon",
+              "sun",
+              "judgement",
+              "world"
+            ]
           }
         }
       },

@@ -408,4 +408,68 @@ describe('Entity media API (VIS-06)', () => {
         const detailAfterDelete = await get(`/api/v1/campaigns/${campaignId}/npcs/${npc.short_id}`);
         expect(JSON.parse(detailAfterDelete.payload).image).toBeNull();
     });
+
+    it('keeps one cover per campaign, writable by the table and readable from the card', async () => {
+        function uploadCover(cookie: string, input: Buffer = png, extraHeaders: Record<string, string> = {}) {
+            const multipart = multipartPayload(input);
+            return fastify.inject({
+                method: 'PUT',
+                url: `/api/v1/campaigns/${campaignId}/cover`,
+                headers: {
+                    ...cookieHeader(cookie),
+                    'content-type': `multipart/form-data; boundary=${multipart.boundary}`,
+                    ...extraHeaders,
+                },
+                payload: multipart.body,
+            });
+        }
+
+        const missing = await get(`/api/v1/campaigns/${campaignId}/cover/thumbnail`);
+        expect(missing.statusCode).toBe(404);
+
+        expect((await uploadCover(readerCookie)).statusCode).toBe(403);
+        expect((await uploadCover(managerCookie, Buffer.from('not an image'))).statusCode).toBe(400);
+        expect((await uploadCover(managerCookie, png, { origin: 'https://attacker.example' })).statusCode).toBe(400);
+
+        const stored = await uploadCover(managerCookie);
+        expect(stored.statusCode).toBe(200);
+        expect(JSON.parse(stored.payload).coverUrl).toBe(`/api/v1/campaigns/${campaignId}/cover/thumbnail`);
+
+        const thumbnail = await get(`/api/v1/campaigns/${campaignId}/cover/thumbnail`);
+        expect(thumbnail.statusCode).toBe(200);
+        expect(thumbnail.headers['content-type']).toContain('image/webp');
+        expect((await get(`/api/v1/campaigns/${campaignId}/cover/original`)).statusCode).toBe(400);
+
+        // Replacing a cover leaves no unreachable object behind.
+        const first = campaignRepository.getCampaignById(campaignId)!;
+        const replaced = await uploadCover(managerCookie);
+        expect(replaced.statusCode).toBe(200);
+        const second = campaignRepository.getCampaignById(campaignId)!;
+        expect(second.cover_object_key).not.toBe(first.cover_object_key);
+        await expect(fs.access(`${config.mediaStorage.localDirectory}/${first.cover_object_key}`)).rejects.toThrow();
+
+        // The card reads the cover, and whether this caller may change it, from
+        // the campaign list itself: no second request per card.
+        const listed = await get(`/api/v1/guilds/${GUILD_ID}/campaigns`);
+        expect(JSON.parse(listed.payload)).toContainEqual(
+            expect.objectContaining({
+                id: campaignId,
+                coverUrl: `/api/v1/campaigns/${campaignId}/cover/thumbnail`,
+                canWrite: true,
+            }),
+        );
+        const asReader = await get(`/api/v1/guilds/${GUILD_ID}/campaigns`, readerCookie);
+        expect(JSON.parse(asReader.payload)).toContainEqual(
+            expect.objectContaining({ id: campaignId, canWrite: false }),
+        );
+
+        const removed = await fastify.inject({
+            method: 'DELETE',
+            url: `/api/v1/campaigns/${campaignId}/cover`,
+            headers: cookieHeader(managerCookie),
+        });
+        expect(removed.statusCode).toBe(204);
+        expect(campaignRepository.getCampaignById(campaignId)?.cover_object_key ?? null).toBeNull();
+        expect((await get(`/api/v1/campaigns/${campaignId}/cover/thumbnail`)).statusCode).toBe(404);
+    });
 });

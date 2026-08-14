@@ -168,6 +168,48 @@ describe('EntityImageGenerator', () => {
         ]);
     });
 
+    it('offers a place the tags a place can have, and not a person\'s', async () => {
+        const PLACE = '/api/v1/campaigns/7/location/loc1/image/generate';
+        server.use(
+            http.get('/api/v1/campaigns/7/location/loc1/profile', () => HttpResponse.json({
+                kind: 'place',
+                fields: ['architecture'],
+                manual_fields: [],
+                appearance: { architecture: 'basalt towers' },
+                appearance_text: 'basalt towers',
+                personality: null,
+                personality_text: null,
+                evidence: [],
+                confidence: 'HIGH',
+                is_manual: false,
+                provider: 'gemini',
+                model: 'gemini-3-flash-preview',
+                generated_at: 1,
+                stale_since_session_id: null,
+            })),
+            http.get(`${PLACE}/references`, () => HttpResponse.json([{
+                id: 'media:m1',
+                scope: 'entity',
+                imageUrl: '/keep.webp',
+                label: 'The black keep',
+                roles: ['subject_identity'],
+                instruction: null,
+                auto_selected: true,
+            }])),
+            http.get(`${PLACE}/pending`, () => HttpResponse.json(null)),
+        );
+
+        render({ entityType: 'location', entityId: 'loc1' });
+        const toggle = await screen.findByRole('button', { name: /The black keep/ });
+        const keep = within(toggle.closest('li')!);
+        const offered = within(keep.getByRole('combobox', { name: 'Add a tag' }))
+            .getAllByRole('option')
+            .map((option) => option.textContent);
+
+        expect(offered).toEqual(expect.arrayContaining(['Architecture', 'Landscape', 'Materials']));
+        expect(offered).not.toEqual(expect.arrayContaining(['Hair', 'Armour and equipment']));
+    });
+
     it('shows the cost and waits for a confirmation before spending anything', async () => {
         const user = userEvent.setup();
         const generate = vi.fn();

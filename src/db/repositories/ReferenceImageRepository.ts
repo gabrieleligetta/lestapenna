@@ -129,13 +129,13 @@ export const referenceImageRepository = {
     updateMetadata(
         campaignId: number,
         id: string,
-        fields: Pick<ReferenceImageEntry, 'roles_json' | 'instruction' | 'auto_select'>,
+        fields: Pick<ReferenceImageEntry, 'label' | 'roles_json' | 'instruction' | 'auto_select'>,
     ): ReferenceImageEntry | null {
         db.prepare(`
             UPDATE reference_image
-            SET roles_json = ?, instruction = ?, auto_select = ?
+            SET label = ?, roles_json = ?, instruction = ?, auto_select = ?
             WHERE campaign_id = ? AND id = ?
-        `).run(fields.roles_json, fields.instruction, fields.auto_select, campaignId, id);
+        `).run(fields.label, fields.roles_json, fields.instruction, fields.auto_select, campaignId, id);
         return referenceImageRepository.getById(campaignId, id);
     },
 };

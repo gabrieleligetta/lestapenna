@@ -100,6 +100,8 @@ export function CampaignsPage() {
                     active: t.campaigns.active,
                     year: t.overview.year,
                     location: t.overview.location,
+                    arcanumName: (arcanum) => t.tarot.arcana[arcanum],
+                    coverAlt: (name) => t.tarot.coverAlt(name),
                 }}
             />
             {modal}

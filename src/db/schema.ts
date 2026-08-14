@@ -200,7 +200,7 @@ const TABLES: string[] = [
     name TEXT NOT NULL,
     is_active INTEGER DEFAULT 0,
     created_at INTEGER
-, current_location TEXT, current_macro_location TEXT, current_micro_location TEXT, current_year INTEGER, allow_auto_character_update INTEGER DEFAULT 0, last_session_number INTEGER DEFAULT 0, party_alignment_moral TEXT DEFAULT 'NEUTRALE', party_alignment_ethical TEXT DEFAULT 'NEUTRALE', party_moral_score INTEGER DEFAULT 0, party_ethical_score INTEGER DEFAULT 0, language TEXT, embedding_model TEXT, embedding_dimension INTEGER, art_direction TEXT)`,
+, current_location TEXT, current_macro_location TEXT, current_micro_location TEXT, current_year INTEGER, allow_auto_character_update INTEGER DEFAULT 0, last_session_number INTEGER DEFAULT 0, party_alignment_moral TEXT DEFAULT 'NEUTRALE', party_alignment_ethical TEXT DEFAULT 'NEUTRALE', party_moral_score INTEGER DEFAULT 0, party_ethical_score INTEGER DEFAULT 0, language TEXT, embedding_model TEXT, embedding_dimension INTEGER, art_direction TEXT, tarot_arcana TEXT, cover_object_key TEXT, cover_thumbnail_key TEXT, cover_updated_at INTEGER)`,
     `CREATE TABLE IF NOT EXISTS character_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL,
@@ -833,6 +833,17 @@ const SCHEMA_UPGRADES: string[] = [
     // point of it is that the gallery looks like one world; NULL keeps the
     // built-in painterly default.
     `ALTER TABLE campaigns ADD COLUMN art_direction TEXT`,
+    // The picture on the campaign's card. It is presentation, not art direction:
+    // a cover is chosen to be looked at by the table, while `reference_image` of
+    // scope 'campaign' is fed to the image model — storing the cover there would
+    // have made choosing a cover silently change every portrait generated after.
+    // The major arcanum on the campaign's card. Drawn at creation and changed
+    // from the campaign's settings; NULL on campaigns older than the column,
+    // which fall back to a card derived from their id (see tarotArcana.ts).
+    `ALTER TABLE campaigns ADD COLUMN tarot_arcana TEXT`,
+    `ALTER TABLE campaigns ADD COLUMN cover_object_key TEXT`,
+    `ALTER TABLE campaigns ADD COLUMN cover_thumbnail_key TEXT`,
+    `ALTER TABLE campaigns ADD COLUMN cover_updated_at INTEGER`,
     // Per-field manual ownership in an appearance dossier. Without it the guard
     // is all-or-nothing: filling in one eye colour by hand would stop every
     // future analysis from adding anything at all.

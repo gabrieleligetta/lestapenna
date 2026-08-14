@@ -15,6 +15,8 @@ const SETTINGS: CampaignSettings = {
     party_name: 'The Ashen Hand',
     allow_auto_character_update: false,
     art_direction: null,
+    tarot_arcana: 'hermit',
+    cover_url: null,
 };
 
 const MEMBERS: CampaignMember[] = [
@@ -135,6 +137,28 @@ describe('CampaignSettingsPage', () => {
 
         await user.click(within(guestRow).getByRole('button', { name: 'Add to the table' }));
         await waitFor(() => expect(enrolled).toEqual({ role: 'PLAYER' }));
+    });
+
+    it('changes the campaign card from the settings, one click per arcanum', async () => {
+        const user = userEvent.setup();
+        let patched: Record<string, unknown> | null = null;
+        server.use(
+            campaignOverview(1),
+            jsonGet('/campaigns/1/settings', SETTINGS),
+            jsonGet('/campaigns/1/members', MEMBERS),
+            http.patch('/api/v1/campaigns/1/settings', async ({ request }) => {
+                patched = (await request.json()) as Record<string, unknown>;
+                return HttpResponse.json({ ...SETTINGS, tarot_arcana: 'tower' });
+            }),
+        );
+        renderWithProviders(<CampaignSettingsPage />, { route: ROUTE, path: PATH });
+
+        // The card it was dealt is the one already chosen.
+        const deck = await screen.findByRole('radiogroup', { name: 'Major arcanum' });
+        expect(within(deck).getByRole('radio', { name: /The Hermit/ })).toBeChecked();
+
+        await user.click(within(deck).getByRole('radio', { name: /The Tower/ }));
+        await waitFor(() => expect(patched).toEqual({ tarot_arcana: 'tower' }));
     });
 
     it('nega la modifica a chi non è master', async () => {

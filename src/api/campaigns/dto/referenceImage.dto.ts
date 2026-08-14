@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { REFERENCE_SCOPES, type ReferenceScope } from '../../../db/types';
 import {
     MAX_REFERENCE_INSTRUCTION_CHARS,
+    MAX_REFERENCE_LABEL_CHARS,
     REFERENCE_ROLES,
     type ReferenceRole,
 } from '../../../bard/imageReferences';
@@ -32,6 +33,13 @@ export class ReferenceImageDto {
 
 export class UpdateReferenceImageDto {
     @ApiProperty({ isArray: true, enum: REFERENCE_ROLES }) roles!: ReferenceRole[];
+    @ApiPropertyOptional({
+        type: String,
+        nullable: true,
+        maxLength: MAX_REFERENCE_LABEL_CHARS,
+        description: 'Omit to keep the current note; null to clear it.',
+    })
+    label?: string | null;
     @ApiPropertyOptional({ type: String, nullable: true, maxLength: MAX_REFERENCE_INSTRUCTION_CHARS })
     instruction?: string | null;
     @ApiPropertyOptional() auto_select?: boolean;

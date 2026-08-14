@@ -1,4 +1,5 @@
 import { ReferenceImagesPanel } from '../components/ReferenceImagesPanel';
+import { CampaignCardPanel } from '../components/CampaignCardPanel';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -246,6 +247,18 @@ export function CampaignSettingsPage() {
                     </ul>
                 )}
             </section>
+
+            {settings.data && (
+                <CampaignCardPanel
+                    campaignId={campaignId}
+                    campaignName={settings.data.name}
+                    arcanum={settings.data.tarot_arcana}
+                    coverUrl={settings.data.cover_url}
+                    readOnly={readOnly}
+                    busy={actions.busy}
+                    onChooseArcanum={(arcanum) => actions.updateSettings({ tarot_arcana: arcanum })}
+                />
+            )}
 
             <ReferenceImagesPanel campaignId={campaignId} scope="campaign" canEdit={!readOnly} />
 

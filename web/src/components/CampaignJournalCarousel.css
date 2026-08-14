@@ -1,3 +1,13 @@
+/*
+ * The shelf of campaigns, dealt as a hand of tarot cards.
+ *
+ * Two things here are not decoration. The track centres its cards instead of
+ * aligning them to a leading edge, because a shelf holding fewer cards than it
+ * has room for used to push them all against the right-hand side. And the deal
+ * animation lives on a wrapper rather than on the card, so the card keeps its
+ * own hover lift: an animation that fills forwards owns the transform property
+ * for good, and would have frozen every card flat.
+ */
 .campaign-journals {
     --journal-width: min(82vw, 18rem);
     position: relative;
@@ -53,26 +63,22 @@
 }
 
 .campaign-journals__track {
-    --journal-leading-padding: max(0.25rem, calc((100% - var(--journal-width)) / 2));
-    --journal-trailing-padding: max(
-        0.25rem,
-        calc(100% - var(--journal-width) - var(--journal-leading-padding))
-    );
     display: flex;
+    /* `safe` is what makes centring usable: once the cards outgrow the shelf,
+       centring alone would push the first one into the unreachable space to the
+       left of scroll position zero. */
+    justify-content: safe center;
     gap: var(--space-4);
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scroll-snap-type: inline mandatory;
-    scroll-padding-inline:
-        var(--journal-leading-padding)
-        var(--journal-trailing-padding);
     scrollbar-width: none;
+    scroll-padding-inline: var(--journal-edge-padding, 0px);
+    /* Room for the lift, the glow and the dealing arc, none of which may be
+       clipped by the scroll container. */
     margin: 0;
-    padding:
-        0.25rem
-        var(--journal-trailing-padding)
-        var(--space-4)
-        var(--journal-leading-padding);
+    padding: 0.75rem max(0.25rem, var(--journal-edge-padding, 0px)) var(--space-4);
+    perspective: 90rem;
     list-style: none;
 }
 
@@ -83,211 +89,445 @@
 .campaign-journals__item {
     flex: 0 0 var(--journal-width);
     min-width: 0;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
     scroll-snap-stop: always;
 }
 
-.campaign-journal {
-    --journal-ink: #f8ecd0;
-    --journal-muted: #d8c9aa;
-    --journal-edge: #cba45d;
-    --journal-cover: #352146;
-    --journal-cover-deep: #1b1128;
-    isolation: isolate;
+.tarot-deal {
+    display: block;
+    transform-style: preserve-3d;
+    animation: tarot-deal 900ms cubic-bezier(0.24, 0.9, 0.3, 1) var(--deal-delay, 0ms) backwards;
+}
+
+/*
+ * Dealt, the way a reader deals: the card is taken off the deck face down and
+ * **turned side to side**, as one turns a page.
+ *
+ * The axis is not a matter of taste. Turning a tarot card end over end swaps
+ * upright for reversed — two opposite readings of the same card — so a reader
+ * turns it around its vertical axis to preserve the orientation it was drawn
+ * in. `rotateY`, therefore, and never `rotateX`.
+ *
+ * It starts at a full half-turn, which is the only reason the back exists: at
+ * anything less the reader never sees it. `--deal-from` is the distance from
+ * this card's place to the middle of the shelf, measured after layout, so every
+ * card comes off the same stack rather than sliding in from off-screen.
+ * `backwards` holds the first frame during the delay, so a card waiting its turn
+ * is not visible sitting face-up in its place.
+ */
+@keyframes tarot-deal {
+    from {
+        opacity: 0;
+        transform: translate3d(var(--deal-from, -40%), -9%, 9rem) rotate(-9deg) scale(0.82);
+    }
+
+    14% {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    }
+}
+
+/*
+ * The light running across the face as it comes round, gone by the time the
+ * card has settled.
+ *
+ * It rides the sheen — the one element that is already clipped to the card —
+ * rather than a `filter` or a `drop-shadow` on anything above it. A filter is a
+ * grouping property: it flattens everything below it into one plane, which
+ * switches off `backface-visibility` and leaves the face-down card showing its
+ * own front, mirrored. That is the whole reason this glint is here and not
+ * three elements up.
+ */
+@keyframes tarot-glint {
+    0%, 52% { opacity: 0; transform: translateX(-46%); }
+    72% { opacity: 0.9; transform: translateX(-6%); }
+    100% { opacity: 0; transform: translateX(34%); }
+}
+
+/*
+ * The turn itself, on the card rather than on the wrapper that carries it
+ * across the shelf — and **linear**, so that half the time is half the turn.
+ * The two faces are swapped exactly at that half, and an eased rotation would
+ * have put the swap somewhere else entirely.
+ *
+ * No forwards fill: the moment it ends the card is back under its own rules,
+ * which is what leaves hover and focus free to move it.
+ */
+@keyframes tarot-flip {
+    from { transform: rotateY(-180deg); }
+    to { transform: rotateY(0deg); }
+}
+
+/*
+ * Which face is showing.
+ *
+ * Opacity, not `backface-visibility`. The declarative version is the right one
+ * on paper and does not survive contact with a composited ancestor animation:
+ * Chrome promotes the subtree into its own layers and goes on drawing the front
+ * — mirrored — through the back of the card. Two opacities crossing at the
+ * half-turn cannot be argued with.
+ */
+@keyframes tarot-face-down {
+    0%, 49.99% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+}
+
+@keyframes tarot-face-up {
+    0%, 49.99% { opacity: 0; }
+    50%, 100% { opacity: 1; }
+}
+
+.tarot-card {
+    --tarot-ink: #f8ecd0;
+    --tarot-muted: #d8c9aa;
+    --tarot-edge: #cba45d;
+    --tarot-cover: #352146;
+    --tarot-cover-deep: #1b1128;
+    position: relative;
+    display: block;
+    transform-style: preserve-3d;
+    color: var(--tarot-ink);
+    text-decoration: none;
+    transition: transform var(--motion-base, 180ms) ease;
+    animation: tarot-flip 900ms linear var(--deal-delay, 0ms) backwards;
+}
+
+/* Lifted, and leaning towards the pointer — the lean is a tilt of a few
+   degrees, never a turn: a card that goes past its edge is being read, not
+   pointed at. */
+.tarot-card:hover,
+.tarot-card:focus-visible {
+    transform:
+        translateY(-0.3rem)
+        scale(1.012)
+        rotateX(var(--tilt-x, 0deg))
+        rotateY(var(--tilt-y, 0deg));
+}
+
+.tarot-card:focus-visible {
+    outline: none;
+}
+
+/*
+ * The back of the card: a gilt lattice and a rosette, in the campaign's own
+ * colours. Turned a half-turn away from the reader and hidden from behind, so
+ * the only moment it is visible is the one where the card is still face down.
+ */
+.tarot-card__back {
+    position: absolute;
+    inset: 0;
+    border: 1px solid color-mix(in srgb, var(--tarot-edge) 62%, var(--border));
+    border-radius: 0.9rem;
+    background:
+        radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--tarot-edge) 34%, transparent) 0 2.2rem, transparent 2.25rem),
+        radial-gradient(circle at 50% 50%, transparent 0 2.6rem, color-mix(in srgb, var(--tarot-edge) 26%, transparent) 2.65rem 2.75rem, transparent 2.8rem),
+        repeating-linear-gradient(45deg, color-mix(in srgb, var(--tarot-edge) 20%, transparent) 0 1px, transparent 1px 0.62rem),
+        repeating-linear-gradient(-45deg, color-mix(in srgb, var(--tarot-edge) 20%, transparent) 0 1px, transparent 1px 0.62rem),
+        linear-gradient(150deg, var(--tarot-cover), var(--tarot-cover-deep));
+    box-shadow: inset 0 0 2.4rem rgb(0 0 0 / 0.5);
+    /* Face down until the card turns; at rest it is simply not there, so it can
+       never surface behind a settled card. */
+    opacity: 0;
+    transform: rotateY(180deg);
+    backface-visibility: hidden;
+    animation: tarot-face-down 900ms linear var(--deal-delay, 0ms) backwards;
+}
+
+/* The gilt rule of the back, inset like the one printed on the front. */
+.tarot-card__back::before {
+    content: '';
+    position: absolute;
+    inset: 0.55rem;
+    border: 1px solid color-mix(in srgb, var(--tarot-edge) 45%, transparent);
+    border-radius: 0.55rem;
+}
+
+.tarot-card__front {
     position: relative;
     display: flex;
     flex-direction: column;
-    min-height: 25rem;
-    overflow: hidden;
-    padding: 2.15rem 1.7rem 1.55rem 2rem;
-    border: 1px solid color-mix(in srgb, var(--journal-edge) 60%, var(--border));
-    border-radius: 0.45rem 1rem 1rem 0.45rem;
+    align-items: center;
+    min-height: 27rem;
+    padding: 1.35rem 1.5rem 1.1rem;
+    border: 1px solid color-mix(in srgb, var(--tarot-edge) 60%, var(--border));
+    border-radius: 0.9rem;
     background:
-        radial-gradient(circle at 73% 18%, rgb(255 232 172 / 0.13), transparent 24%),
-        linear-gradient(145deg, var(--journal-cover), var(--journal-cover-deep));
+        radial-gradient(circle at 22% 12%, rgb(255 232 172 / 0.12), transparent 26%),
+        radial-gradient(circle at 78% 84%, rgb(255 232 172 / 0.09), transparent 30%),
+        /* A thin scatter of stars, fixed rather than random: a card is printed
+           once, it does not twinkle differently on every render. */
+        radial-gradient(circle at 18% 34%, rgb(255 247 224 / 0.5) 0 0.045rem, transparent 0.05rem),
+        radial-gradient(circle at 63% 21%, rgb(255 247 224 / 0.38) 0 0.04rem, transparent 0.045rem),
+        radial-gradient(circle at 82% 46%, rgb(255 247 224 / 0.44) 0 0.05rem, transparent 0.055rem),
+        radial-gradient(circle at 34% 72%, rgb(255 247 224 / 0.32) 0 0.04rem, transparent 0.045rem),
+        radial-gradient(circle at 71% 88%, rgb(255 247 224 / 0.4) 0 0.045rem, transparent 0.05rem),
+        linear-gradient(160deg, var(--tarot-cover), var(--tarot-cover-deep));
     box-shadow:
-        inset 0.32rem 0 0 rgb(255 255 255 / 0.06),
-        inset 0.44rem 0 0 rgb(0 0 0 / 0.22),
-        0.45rem 0.8rem 1.7rem rgb(23 16 32 / 0.2);
-    color: var(--journal-ink);
-    text-decoration: none;
-    transform: translateY(0);
-    transition:
-        border-color var(--motion-base, 180ms) ease,
-        box-shadow var(--motion-base, 180ms) ease,
-        transform var(--motion-base, 180ms) ease;
+        inset 0 0 2.4rem rgb(0 0 0 / 0.42),
+        0 0.7rem 1.6rem rgb(23 16 32 / 0.28);
+    /* Not `overflow: hidden`: clipping is a grouping property, and a grouped
+       element is flattened into its parent's plane — which is where the front
+       went on being drawn, mirrored, while the card was still face down. The
+       one thing that needed clipping was the sheen, and it clips itself. */
+    backface-visibility: hidden;
+    transition: box-shadow var(--motion-base, 180ms) ease;
+    animation: tarot-face-up 900ms linear var(--deal-delay, 0ms) backwards;
 }
 
-.campaign-journal::before,
-.campaign-journal::after {
+/* The gilt inner rule, with its corner ticks: the frame printed on a card. */
+.tarot-card__front::before {
     content: '';
     position: absolute;
+    z-index: 0;
+    inset: 0.55rem;
+    border: 1px solid color-mix(in srgb, var(--tarot-edge) 52%, transparent);
+    border-radius: 0.55rem;
+    background:
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 0 0 / 0.9rem 1px no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 0 0 / 1px 0.9rem no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 100% 0 / 0.9rem 1px no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 100% 0 / 1px 0.9rem no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 0 100% / 0.9rem 1px no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 0 100% / 1px 0.9rem no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 100% 100% / 0.9rem 1px no-repeat,
+        linear-gradient(var(--tarot-edge), var(--tarot-edge)) 100% 100% / 1px 0.9rem no-repeat;
+    opacity: 0.75;
     pointer-events: none;
 }
 
-.campaign-journal::before {
-    z-index: -1;
-    inset: 0.7rem;
-    border: 1px solid rgb(229 197 126 / 0.3);
-    border-radius: 0.2rem 0.65rem 0.65rem 0.2rem;
-    background:
-        repeating-radial-gradient(
-            circle at var(--journal-origin) 28%,
-            transparent 0 1.65rem,
-            rgb(238 211 150 / 0.04) 1.7rem 1.76rem
-        );
+/* The sheen of a varnished card, swept across on hover. */
+.tarot-card__front::after {
+    content: '';
+    position: absolute;
+    z-index: 3;
+    inset: -20% -60%;
+    background: linear-gradient(
+        105deg,
+        transparent 42%,
+        rgb(255 255 255 / 0.12) 48%,
+        rgb(255 255 255 / 0.03) 54%,
+        transparent 60%
+    );
+    opacity: 0;
+    transform: translateX(-32%);
+    /* Back to exactly the card's face: the band's own box is 1.4× its height
+       and 2.2× its width, so the overflow is 0.2/1.4 and 0.6/2.2 of it. */
+    clip-path: inset(14.2857% 27.2727% round 0.9rem);
+    transition:
+        opacity var(--motion-base, 180ms) ease,
+        transform 620ms ease;
+    /* No fill mode: once the deal is over, hover governs this again. */
+    animation: tarot-glint 900ms linear var(--deal-delay, 0ms);
+    pointer-events: none;
 }
 
-.campaign-journal::after {
-    inset: 0;
-    z-index: -2;
-    opacity: 0.44;
-    background:
-        linear-gradient(115deg, transparent 0 46%, rgb(255 255 255 / 0.05) 46.2% 46.7%, transparent 47%),
-        repeating-linear-gradient(
-            var(--journal-angle),
-            transparent 0 2.25rem,
-            rgb(255 255 255 / 0.025) 2.3rem 2.36rem
-        );
+.tarot-card:hover .tarot-card__front::after,
+.tarot-card:focus-visible .tarot-card__front::after {
+    opacity: 1;
+    /* Follows the pointer when there is one; sweeps across on its own for a
+       card reached by keyboard. */
+    transform: translateX(var(--sheen-shift, 32%));
 }
 
-.campaign-journal:hover {
-    border-color: var(--journal-edge);
+.tarot-card:hover .tarot-card__front,
+.tarot-card:focus-visible .tarot-card__front {
+    border-color: var(--tarot-edge);
     box-shadow:
-        inset 0.32rem 0 0 rgb(255 255 255 / 0.08),
-        inset 0.44rem 0 0 rgb(0 0 0 / 0.22),
-        0.6rem 1rem 2rem rgb(23 16 32 / 0.24),
-        0 0 1.6rem color-mix(in srgb, var(--journal-edge) 23%, transparent);
-    transform: translateY(-0.2rem);
+        inset 0 0 2.4rem rgb(0 0 0 / 0.42),
+        0 1rem 2.2rem rgb(23 16 32 / 0.34),
+        0 0 1.8rem color-mix(in srgb, var(--tarot-edge) 30%, transparent);
 }
 
-.campaign-journal:focus-visible {
-    outline-color: var(--journal-edge);
+.tarot-card:focus-visible .tarot-card__front {
+    outline: 2px solid var(--tarot-edge);
     outline-offset: 0.25rem;
 }
 
-.campaign-journal--1 {
-    --journal-cover: #163c48;
-    --journal-cover-deep: #09242e;
-    --journal-edge: #83c6bd;
-}
-
-.campaign-journal--2 {
-    --journal-cover: #58302c;
-    --journal-cover-deep: #2d1717;
-    --journal-edge: #dfaa70;
-}
-
-.campaign-journal--3 {
-    --journal-cover: #263f2d;
-    --journal-cover-deep: #122218;
-    --journal-edge: #9fc47c;
-}
-
-.campaign-journal--4 {
-    --journal-cover: #26345b;
-    --journal-cover-deep: #121a35;
-    --journal-edge: #92aee8;
-}
-
-.campaign-journal--5 {
-    --journal-cover: #493543;
-    --journal-cover-deep: #271824;
-    --journal-edge: #d2a3be;
-}
-
-.campaign-journal.is-active {
-    box-shadow:
-        inset 0.32rem 0 0 rgb(255 255 255 / 0.08),
-        inset 0.44rem 0 0 rgb(0 0 0 / 0.22),
-        0.45rem 0.8rem 1.7rem rgb(23 16 32 / 0.2),
-        0 0 1.35rem color-mix(in srgb, var(--journal-edge) 18%, transparent);
-}
-
-.campaign-journal__ornament {
+.tarot-card__numeral {
     position: relative;
+    z-index: 2;
+    color: var(--tarot-edge);
+    font-family: var(--font-display, Georgia, serif);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+}
+
+.tarot-card__medallion {
+    position: relative;
+    z-index: 2;
     display: grid;
     place-items: center;
-    width: 4.8rem;
-    height: 4.8rem;
-    margin: 0 auto var(--space-5);
-    border: 1px solid color-mix(in srgb, var(--journal-edge) 66%, transparent);
+    width: 7.2rem;
+    height: 7.2rem;
+    margin: var(--space-3) auto var(--space-4);
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--tarot-edge) 70%, transparent);
     border-radius: 50%;
-    color: var(--journal-edge);
-    font-size: 1.15rem;
-    transform: rotate(45deg);
+    background: radial-gradient(circle at 50% 30%, rgb(255 232 172 / 0.14), transparent 68%);
+    box-shadow:
+        0 0 0 0.32rem color-mix(in srgb, var(--tarot-cover-deep) 76%, transparent),
+        0 0 0 0.36rem color-mix(in srgb, var(--tarot-edge) 34%, transparent),
+        0 0.4rem 1.1rem rgb(0 0 0 / 0.35);
+    transition: box-shadow var(--motion-base, 180ms) ease;
 }
 
-.campaign-journal__ornament::before {
-    content: '';
-    position: absolute;
-    width: 3.45rem;
-    height: 3.45rem;
-    border: 1px solid color-mix(in srgb, var(--journal-edge) 38%, transparent);
-    border-radius: 0.2rem;
+.tarot-card:hover .tarot-card__medallion {
+    box-shadow:
+        0 0 0 0.32rem color-mix(in srgb, var(--tarot-cover-deep) 76%, transparent),
+        0 0 0 0.36rem color-mix(in srgb, var(--tarot-edge) 62%, transparent),
+        0 0.4rem 1.4rem color-mix(in srgb, var(--tarot-edge) 26%, transparent);
 }
 
-.campaign-journal__ornament > span {
-    transform: rotate(-45deg);
+.tarot-card__cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
-.campaign-journal__monogram {
-    margin-bottom: var(--space-2);
-    color: var(--journal-edge);
-    font-size: var(--fs-0);
-    font-weight: 800;
-    letter-spacing: 0.18em;
+.tarot-card__art {
+    /* The viewBox is a card, not a square: sizing by height is what makes the
+       drawing fill the medallion instead of floating in the middle of it. */
+    height: 5.6rem;
+    width: 4.2rem;
+    color: var(--tarot-edge);
+    /* The drawing breathes; a cover picture, when there is one, does not. */
+    animation: tarot-art 6s ease-in-out infinite;
+}
+
+@keyframes tarot-art {
+    0%, 100% { opacity: 0.86; filter: drop-shadow(0 0 0.2rem color-mix(in srgb, var(--tarot-edge) 20%, transparent)); }
+    50% { opacity: 1; filter: drop-shadow(0 0 0.5rem color-mix(in srgb, var(--tarot-edge) 45%, transparent)); }
+}
+
+/* The name of the arcanum, engraved along the foot in the same hand as the
+   numeral at the head — which is where a printed card carries both. */
+.tarot-card__arcanum {
+    position: relative;
+    z-index: 2;
+    margin-top: var(--space-3);
+    padding-top: var(--space-2);
+    color: var(--tarot-edge);
+    font-family: var(--font-display, Georgia, serif);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
     text-align: center;
+    text-transform: uppercase;
+    text-wrap: balance;
 }
 
-.campaign-journal__title {
+.tarot-card__title {
+    position: relative;
+    z-index: 2;
     display: -webkit-box;
     overflow: hidden;
-    color: var(--journal-ink);
+    color: var(--tarot-ink);
     font-family: var(--font-display, Georgia, serif);
-    font-size: clamp(1.45rem, 4vw, 1.85rem);
+    font-size: clamp(1.35rem, 3.6vw, 1.7rem);
     font-weight: 700;
-    line-height: 1.12;
+    line-height: 1.14;
     text-align: center;
     text-wrap: balance;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
 }
 
-.campaign-journal__status {
+.tarot-card__status {
+    position: relative;
+    z-index: 2;
     display: flex;
     justify-content: center;
     margin-top: var(--space-3);
 }
 
-.campaign-journal__status .badge-success {
-    border-color: color-mix(in srgb, var(--journal-edge) 72%, transparent);
-    color: var(--journal-ink);
+.tarot-card__status .badge-success {
+    border-color: color-mix(in srgb, var(--tarot-edge) 72%, transparent);
+    color: var(--tarot-ink);
     background: rgb(255 255 255 / 0.07);
 }
 
-.campaign-journal__meta {
+.tarot-card__meta {
+    position: relative;
+    z-index: 2;
     display: grid;
     gap: var(--space-3);
+    width: 100%;
     margin-top: auto;
-    padding-top: var(--space-5);
-    border-top: 1px solid rgb(229 197 126 / 0.22);
-    color: var(--journal-muted);
+    padding-top: var(--space-4);
+    border-top: 1px solid color-mix(in srgb, var(--tarot-edge) 30%, transparent);
+    color: var(--tarot-muted);
     font-size: var(--fs-1);
 }
 
-.campaign-journal__meta > span {
+.tarot-card__meta > span {
     display: grid;
     gap: 0.1rem;
     overflow-wrap: anywhere;
 }
 
-.campaign-journal__meta-label {
-    color: var(--journal-edge);
+.tarot-card__meta-label {
+    color: var(--tarot-edge);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
+}
+
+.tarot-card--1 {
+    --tarot-cover: #163c48;
+    --tarot-cover-deep: #09242e;
+    --tarot-edge: #83c6bd;
+}
+
+.tarot-card--2 {
+    --tarot-cover: #58302c;
+    --tarot-cover-deep: #2d1717;
+    --tarot-edge: #dfaa70;
+}
+
+.tarot-card--3 {
+    --tarot-cover: #263f2d;
+    --tarot-cover-deep: #122218;
+    --tarot-edge: #9fc47c;
+}
+
+.tarot-card--4 {
+    --tarot-cover: #26345b;
+    --tarot-cover-deep: #121a35;
+    --tarot-edge: #92aee8;
+}
+
+.tarot-card--5 {
+    --tarot-cover: #493543;
+    --tarot-cover-deep: #271824;
+    --tarot-edge: #d2a3be;
+}
+
+/* The campaign being played now keeps a slow halo, so the shelf says which one
+   the table is at without anyone reading a badge. */
+.tarot-card.is-active .tarot-card__front {
+    animation: tarot-aura 4.5s ease-in-out infinite;
+}
+
+@keyframes tarot-aura {
+    0%, 100% {
+        box-shadow:
+            inset 0 0 2.4rem rgb(0 0 0 / 0.42),
+            0 0.7rem 1.6rem rgb(23 16 32 / 0.28),
+            0 0 1rem color-mix(in srgb, var(--tarot-edge) 14%, transparent);
+    }
+
+    50% {
+        box-shadow:
+            inset 0 0 2.4rem rgb(0 0 0 / 0.42),
+            0 0.7rem 1.6rem rgb(23 16 32 / 0.28),
+            0 0 2.1rem color-mix(in srgb, var(--tarot-edge) 34%, transparent);
+    }
 }
 
 @container campaign-journals (min-width: 40rem) {
@@ -295,7 +535,7 @@
         --journal-width: clamp(
             17rem,
             calc((100% - var(--space-4)) / 2.15),
-            23rem
+            21rem
         );
     }
 }
@@ -305,19 +545,40 @@
         --journal-width: clamp(
             17.5rem,
             calc((100% - var(--space-4) * 2) / 3),
-            22rem
+            21rem
         );
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .campaign-journals__button,
-    .campaign-journal {
+    .tarot-card,
+    .tarot-card__front,
+    .tarot-card__medallion {
         transition: none;
     }
 
+    .tarot-deal,
+    .tarot-card,
+    .tarot-card__back,
+    .tarot-card__front,
+    .tarot-card__art,
+    .tarot-card.is-active .tarot-card__front {
+        animation: none;
+    }
+
     .campaign-journals__button:hover:not(:disabled),
-    .campaign-journal:hover {
+    .tarot-card:hover,
+    .tarot-card:focus-visible {
         transform: none;
+    }
+
+    .tarot-card__front::after {
+        animation: none;
+    }
+
+    .tarot-card:hover .tarot-card__front::after,
+    .tarot-card:focus-visible .tarot-card__front::after {
+        opacity: 0;
     }
 }

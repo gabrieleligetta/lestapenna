@@ -1290,6 +1290,54 @@ export function useGenerationReferences(
     });
 }
 
+/**
+ * The picture on a campaign's card, and the two ways to change it.
+ *
+ * There is no query: the cover already travels with the campaign list, so a
+ * second request per card would fetch what the shelf is holding. What the
+ * component needs from here is the pair of mutations, and the invalidation that
+ * makes the card redraw itself afterwards.
+ */
+export function useCampaignCover(campaignId: string) {
+    const queryClient = useQueryClient();
+    const [busy, setBusy] = useState(false);
+
+    // The campaign list is the shelf; the settings row is where the cover is
+    // chosen. Both hold a copy of it, so both are told.
+    const invalidate = async () => {
+        await queryClient.invalidateQueries({ queryKey: ['guilds'] });
+        await queryClient.invalidateQueries({ queryKey: ['campaigns', campaignId] });
+    };
+
+    async function upload(file: File) {
+        const body = new FormData();
+        body.append('file', file);
+        setBusy(true);
+        try {
+            const saved = await apiFetch<{ coverUrl: string; updatedAt: number }>(
+                `/campaigns/${campaignId}/cover`,
+                { method: 'PUT', body },
+            );
+            await invalidate();
+            return saved;
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function remove() {
+        setBusy(true);
+        try {
+            await apiFetch<void>(`/campaigns/${campaignId}/cover`, { method: 'DELETE' });
+            await invalidate();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return { upload, remove, busy };
+}
+
 /** Every picture of one entity, the main one first. */
 export function useEntityImages(campaignId: string, entityType: MediaEntityType, entityId: string) {
     return useQuery({
@@ -1363,7 +1411,7 @@ export function useReferenceImages(
 
     async function update(
         id: string,
-        metadata: Pick<ReferenceImage, 'roles' | 'instruction' | 'auto_select'>,
+        metadata: Pick<ReferenceImage, 'label' | 'roles' | 'instruction' | 'auto_select'>,
     ) {
         const saved = await apiFetch<ReferenceImage>(
             `/campaigns/${campaignId}/references/${encodeURIComponent(id)}`,

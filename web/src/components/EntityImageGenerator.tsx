@@ -8,6 +8,7 @@ import {
     useGenerationReferences,
     usePendingImageJob,
 } from '../api/hooks';
+import { SUBJECT_KIND } from '../api/types';
 import type {
     AiJobAccepted,
     EntityImage,
@@ -401,6 +402,7 @@ export function EntityImageGenerator({
                                             <ReferenceMetadataFields
                                                 roles={directive.roles}
                                                 instruction={directive.instruction ?? ''}
+                                                kind={SUBJECT_KIND[entityType]}
                                                 disabled={busy !== null}
                                                 onRolesChange={(roles) => setReferences((current) => current.map((item) => (
                                                     item.id === candidate.id ? { ...item, roles } : item

@@ -16,7 +16,7 @@
     "@nestjs/swagger": "^11",
     "@snazzah/davey": "^0.1.9",
     "@types/pidusage": "^2.0.5",
-    "axios": "^1.18.0",
+    "axios": "^1.20.0",
     "better-sqlite3": "^12.5.0",
     "bullmq": "^5.81.2",
     "class-transformer": "^0.5",

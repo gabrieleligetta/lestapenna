@@ -94,7 +94,7 @@
   },
   "overrides": {
     "tar": "^7.5.22",
-    "handlebars": "^4.7.9",
+    "handlebars": "^4.7.10",
     "find-my-way": "^9.7.0",
     "protobufjs": "^7.6.5",
     "@babel/core": "^7.29.6",
@@ -106,7 +106,7 @@
   },
   "resolutions": {
     "tar": "^7.5.22",
-    "handlebars": "^4.7.9",
+    "handlebars": "^4.7.10",
     "find-my-way": "^9.7.0",
     "protobufjs": "^7.6.5",
     "@babel/core": "^7.29.6",
